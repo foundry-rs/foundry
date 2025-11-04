@@ -16,6 +16,7 @@ forgetest!(can_list_specific_chain, |_prj, cmd| {
 });
 
 forgetest_init!(can_test_no_cache, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear_cache();
 
     cmd.args(["test", "--no-cache"]).assert_success();

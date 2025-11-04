@@ -7,4 +7,4 @@ pub mod error;
 pub mod response;
 
 pub use error::BeaconError;
-pub use response::{BeaconResponse, BeaconResult};
+pub use response::BeaconResponse;

@@ -813,8 +813,8 @@ impl Backend {
         precompiles_map.extend(self.env.read().networks.precompiles());
 
         if let Some(factory) = &self.precompile_factory {
-            for (precompile, _) in &factory.precompiles() {
-                precompiles_map.insert(precompile.id().name().to_string(), *precompile.address());
+            for (address, precompile) in factory.precompiles() {
+                precompiles_map.insert(precompile.precompile_id().to_string(), address);
             }
         }
 
@@ -2840,6 +2840,42 @@ impl Backend {
         Ok(None)
     }
 
+    /// Returns the value associated with a key from the database
+    /// Currently only supports bytecode lookups.
+    ///
+    /// Based on Reth implementation: <https://github.com/paradigmxyz/reth/blob/66cfa9ed1a8c4bc2424aacf6fb2c1e67a78ee9a2/crates/rpc/rpc/src/debug.rs#L1146-L1178>
+    ///
+    /// Key should be: 0x63 (1-byte prefix) + 32 bytes (code_hash)
+    /// Total key length must be 33 bytes.
+    pub async fn debug_db_get(&self, key: String) -> Result<Option<Bytes>, BlockchainError> {
+        let key_bytes = if key.starts_with("0x") {
+            hex::decode(&key)
+                .map_err(|_| BlockchainError::Message("Invalid hex key".to_string()))?
+        } else {
+            key.into_bytes()
+        };
+
+        // Validate key length: must be 33 bytes (1 byte prefix + 32 bytes code hash)
+        if key_bytes.len() != 33 {
+            return Err(BlockchainError::Message(format!(
+                "Invalid key length: expected 33 bytes, got {}",
+                key_bytes.len()
+            )));
+        }
+
+        // Check for bytecode prefix (0x63 = 'c' in ASCII)
+        if key_bytes[0] != 0x63 {
+            return Err(BlockchainError::Message(
+                "Key prefix must be 0x63 for code hash lookups".to_string(),
+            ));
+        }
+
+        let code_hash = B256::from_slice(&key_bytes[1..33]);
+
+        // Use the existing debug_code_by_hash method to retrieve the bytecode
+        self.debug_code_by_hash(code_hash, None).await
+    }
+
     fn geth_trace(
         &self,
         tx: &MinedTransaction,
@@ -3171,6 +3207,7 @@ impl Backend {
             blob_gas_used,
         };
 
+        let inner = WithOtherFields { inner, other: Default::default() };
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
@@ -3815,25 +3852,11 @@ pub fn transaction_build(
         }
     }
 
-    let mut transaction: Transaction = eth_transaction.clone().into();
-
-    let effective_gas_price = if !eth_transaction.is_dynamic_fee() {
-        transaction.effective_gas_price(base_fee)
-    } else if block.is_none() && info.is_none() {
-        // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-        transaction.max_fee_per_gas()
-    } else {
-        // if transaction is already mined, gas price is considered base fee + priority
-        // fee: the effective gas price.
-        let base_fee = base_fee.map_or(0u128, |g| g as u128);
-        let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas().unwrap_or(0);
-
-        base_fee.saturating_add(max_priority_fee_per_gas)
-    };
-
-    transaction.effective_gas_price = Some(effective_gas_price);
+    let transaction = eth_transaction.into_rpc_transaction();
+    let effective_gas_price = transaction.effective_gas_price(base_fee);
 
     let envelope = transaction.inner;
+    let from = envelope.signer();
 
     // if a specific hash was provided we update the transaction's hash
     // This is important for impersonated transactions since they all use the
@@ -3871,13 +3894,8 @@ pub fn transaction_build(
     };
 
     let tx = Transaction {
-        inner: Recovered::new_unchecked(
-            envelope,
-            eth_transaction.recover().expect("can recover signed tx"),
-        ),
-        block_hash: block
-            .as_ref()
-            .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+        inner: Recovered::new_unchecked(envelope, from),
+        block_hash: block.as_ref().map(|block| block.header.hash_slow()),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
         // deprecated

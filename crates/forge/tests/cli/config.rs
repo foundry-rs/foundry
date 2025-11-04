@@ -377,6 +377,7 @@ forgetest!(can_show_config, |prj, cmd| {
 // - paths are resolved properly
 // - config supports overrides from env, and cli
 forgetest_init!(can_override_config, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.set_current_dir(prj.root());
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
@@ -443,6 +444,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
 });
 
 forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.set_current_dir(prj.root());
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
@@ -505,6 +507,7 @@ Installing solmate in [..] (url: https://github.com/transmissions11/solmate, tag
 });
 
 forgetest_init!(can_detect_config_vals, |prj, _cmd| {
+    prj.initialize_default_contracts();
     let url = "http://127.0.0.1:8545";
     let config = prj.config_from_output(["--no-auto-detect", "--rpc-url", url]);
     assert!(!config.auto_detect_solc);
@@ -525,6 +528,7 @@ forgetest_init!(can_detect_config_vals, |prj, _cmd| {
 
 // checks that `clean` removes dapptools style paths
 forgetest_init!(can_get_evm_opts, |prj, _cmd| {
+    prj.initialize_default_contracts();
     let url = "http://127.0.0.1:8545";
     let config = prj.config_from_output(["--rpc-url", url, "--ffi"]);
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
@@ -543,6 +547,7 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
 
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
+    prj.initialize_default_contracts();
     let config = prj.config_from_output(["--via-ir", "--no-metadata"]);
     assert!(config.via_ir);
     assert_eq!(config.cbor_metadata, false);
@@ -721,6 +726,7 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 
 // test that we can detect remappings from foundry.toml
 forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
+    prj.initialize_default_contracts();
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     similar_asserts::assert_eq!(
@@ -819,6 +825,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
 // test remappings with closer paths are prioritised
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
 forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
+    prj.initialize_default_contracts();
     let config = cmd.config();
 
     // create a new lib directly in the `lib` folder with conflicting remapping `forge-std/`
@@ -853,6 +860,7 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
 // with project defined `@openzeppelin/contracts` remapping
 // See <https://github.com/foundry-rs/foundry/issues/9271>
 forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
+    prj.initialize_default_contracts();
     let mut config = cmd.config();
     // Add `@utils/` remapping in project config.
     config.remappings = vec![
@@ -952,6 +960,7 @@ Please use [profile.default] instead or run `forge config --fix`.
 });
 
 forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
+    prj.initialize_default_contracts();
     // explicitly set remapping and libraries
     prj.update_config(|config| {
         config.remappings = vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()];
@@ -975,6 +984,7 @@ forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
 });
 
 forgetest_init!(can_parse_custom_fs_permissions, |prj, cmd| {
+    prj.initialize_default_contracts();
     // explicitly set fs permissions
     prj.update_config(|config| {
         config.fs_permissions = FsPermissions::new(vec![
@@ -1009,6 +1019,7 @@ forgetest_init!(can_parse_custom_fs_permissions, |prj, cmd| {
 
 #[cfg(not(target_os = "windows"))]
 forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
+    prj.initialize_default_contracts();
     // write config in packages/files/config.json
     let config_path = prj.root().join("packages").join("files");
     fs::create_dir_all(&config_path).unwrap();
@@ -1088,6 +1099,7 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
 // Tests that root paths are properly resolved even if submodule specifies remappings for them.
 // See <https://github.com/foundry-rs/foundry/issues/3440>
 forgetest_init!(test_submodule_root_path_remappings, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_script(
         "BaseScript.sol",
         r#"
@@ -1124,6 +1136,7 @@ contract MyScript is BaseScript {
 // For `src=src` config, remapping should be `src/ = src/`.
 // <https://github.com/foundry-rs/foundry/issues/9454>
 forgetest_init!(test_project_remappings, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.src = "src/contracts".into();
         config.remappings = vec![Remapping::from_str("contracts/=src/contracts/").unwrap().into()];
@@ -1373,6 +1386,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
 });
 
 forgetest_init!(test_optimizer_config, |prj, cmd| {
+    prj.initialize_default_contracts();
     // Default settings: optimizer disabled, optimizer runs 200.
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -1446,6 +1460,7 @@ optimizer_runs = 0
 });
 
 forgetest_init!(test_gas_snapshot_check_config, |prj, cmd| {
+    prj.initialize_default_contracts();
     // Default settings: gas_snapshot_check disabled.
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -1617,6 +1632,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 });
 
 forgetest_init!(test_gas_snapshot_emit_config, |prj, cmd| {
+    prj.initialize_default_contracts();
     // Default settings: gas_snapshot_emit enabled.
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -1719,6 +1735,7 @@ contract GasSnapshotEmitTest is DSTest {
 
 // Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
 forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_source(
         "v1/Counter.sol",
         r#"
@@ -1874,6 +1891,7 @@ contract Counter {
 
 // <https://github.com/foundry-rs/foundry/issues/11227>
 forgetest_init!(test_exclude_lints_config, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.lint.exclude_lints = vec![
             "asm-keccak256".to_string(),
@@ -1887,7 +1905,9 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
         ]
     });
     cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
 "#]]);
 });
@@ -1899,7 +1919,6 @@ forgetest_init!(test_fail_fast_config, |prj, cmd| {
         return;
     }
 
-    prj.wipe_contracts();
     prj.update_config(|config| {
         // Set large timeout for fuzzed tests so test campaign won't stop if fail fast not passed.
         config.fuzz.timeout = Some(3600);
@@ -2040,7 +2059,6 @@ forgetest_init!(test_failures_file_normalization, |prj, cmd| {
         config.test_failures_file = PathBuf::from("./my-custom-failures");
     });
 
-    prj.wipe_contracts();
     prj.add_test(
         "MixedTests.t.sol",
         r#"
