@@ -317,7 +317,9 @@ impl EtherscanVerificationProvider {
         };
 
         let compiler_version = if matches!(lang, ContractLanguage::Vyper) {
-            format!("vyper:{}", compiler_version.to_string().split('+').next().unwrap_or("0.0.0"))
+            let base = crate::utils::version_without_build(&compiler_version.to_string());
+            let base = if base.is_empty() { "0.0.0".to_string() } else { base };
+            format!("vyper:{}", base)
         } else {
             format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?)
         };
