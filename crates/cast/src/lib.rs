@@ -368,7 +368,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         Ok(if raw {
             let header: Header = block.into_inner().header.inner.try_into_header()?;
-            format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
+            hex::encode_prefixed(alloy_rlp::encode(&header))
         } else if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
@@ -792,7 +792,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             // also consider opstack deposit transactions
             let either_tx = tx.try_into_either::<OpTxEnvelope>()?;
             let encoded = either_tx.encoded_2718();
-            format!("0x{}", hex::encode(encoded))
+            hex::encode_prefixed(encoded)
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
@@ -1527,7 +1527,7 @@ impl SimpleCast {
         let val = serde_json::from_str(value)
             .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         let item = Item::value_to_item(&val)?;
-        Ok(format!("0x{}", hex::encode(alloy_rlp::encode(item))))
+        Ok(hex::encode_prefixed(alloy_rlp::encode(item)))
     }
 
     /// Converts a number of one base to another
