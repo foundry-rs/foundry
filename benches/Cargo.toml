@@ -10,7 +10,6 @@ path = "src/main.rs"
 
 [dependencies]
 foundry-test-utils.workspace = true
-foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util"] }
 eyre.workspace = true

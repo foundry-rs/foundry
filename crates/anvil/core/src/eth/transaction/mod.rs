@@ -209,6 +209,12 @@ pub struct MaybeImpersonatedTransaction {
     pub impersonated_sender: Option<Address>,
 }
 
+impl Typed2718 for MaybeImpersonatedTransaction {
+    fn ty(&self) -> u8 {
+        self.transaction.ty()
+    }
+}
+
 impl MaybeImpersonatedTransaction {
     /// Creates a new wrapper for the given transaction
     pub fn new(transaction: TypedTransaction) -> Self {
@@ -279,6 +285,16 @@ impl MaybeImpersonatedTransaction {
             effective_gas_price: None,
             inner: Recovered::new_unchecked(inner_envelope, from),
         }
+    }
+}
+
+impl Encodable2718 for MaybeImpersonatedTransaction {
+    fn encode_2718_len(&self) -> usize {
+        self.transaction.encode_2718_len()
+    }
+
+    fn encode_2718(&self, out: &mut dyn BufMut) {
+        self.transaction.encode_2718(out)
     }
 }
 
@@ -1293,30 +1309,16 @@ impl TypedReceipt {
 fn convert_receipt_to_rpc(
     receipt: ReceiptWithBloom<Receipt<alloy_primitives::Log>>,
 ) -> ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
-    let rpc_logs: Vec<alloy_rpc_types::Log> = receipt
-        .receipt
-        .logs
-        .into_iter()
-        .map(|log| alloy_rpc_types::Log {
-            inner: log,
-            block_hash: None,
-            block_number: None,
-            block_timestamp: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        })
-        .collect();
-
-    ReceiptWithBloom {
-        receipt: Receipt {
-            status: receipt.receipt.status,
-            cumulative_gas_used: receipt.receipt.cumulative_gas_used,
-            logs: rpc_logs,
-        },
-        logs_bloom: receipt.logs_bloom,
-    }
+    receipt.map_logs(|log| alloy_rpc_types::Log {
+        inner: log,
+        block_hash: None,
+        block_number: None,
+        block_timestamp: None,
+        transaction_hash: None,
+        transaction_index: None,
+        log_index: None,
+        removed: false,
+    })
 }
 
 impl TypedReceiptRpc {

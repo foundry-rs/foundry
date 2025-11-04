@@ -15,7 +15,7 @@ use foundry_cli::{
     utils,
     utils::LoadConfig,
 };
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr, time::Duration};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -40,6 +40,10 @@ pub struct SendTxArgs {
     /// The number of confirmations until the receipt is fetched.
     #[arg(long, default_value = "1")]
     confirmations: u64,
+
+    /// Polling interval for transaction receipts (in seconds).
+    #[arg(long, alias = "poll-interval", env = "ETH_POLL_INTERVAL")]
+    poll_interval: Option<u64>,
 
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
@@ -100,6 +104,7 @@ impl SendTxArgs {
             unlocked,
             path,
             timeout,
+            poll_interval,
         } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
@@ -134,6 +139,10 @@ impl SendTxArgs {
 
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
+
+        if let Some(interval) = poll_interval {
+            provider.client().set_poll_interval(Duration::from_secs(interval))
+        }
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
@@ -204,7 +213,6 @@ async fn cast_send<P: Provider<AnyNetwork>>(
 ) -> Result<()> {
     let cast = Cast::new(provider);
     let pending_tx = cast.send(tx).await?;
-
     let tx_hash = pending_tx.inner().tx_hash();
 
     if cast_async {

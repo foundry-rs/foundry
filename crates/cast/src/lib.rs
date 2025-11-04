@@ -27,7 +27,7 @@ use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     TransactionReceiptWithRevertReason,
-    abi::{coerce_value, encode_function_args, get_event, get_func},
+    abi::{coerce_value, encode_function_args, encode_function_args_packed, get_event, get_func},
     compile::etherscan_project,
     flatten,
     fmt::*,
@@ -49,7 +49,6 @@ use std::{
 };
 use tokio::signal::ctrl_c;
 
-use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 
 pub mod args;
@@ -323,15 +322,8 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(
-        &self,
-        mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
-        raw_tx = match raw_tx.strip_prefix("0x") {
-            Some(s) => s.to_string(),
-            None => raw_tx,
-        };
-        let tx = hex::decode(raw_tx)?;
+    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+        let tx = hex::decode(strip_0x(&raw_tx))?;
         let res = self.provider.send_raw_transaction(&tx).await?;
 
         Ok(res)
