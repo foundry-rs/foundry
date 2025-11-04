@@ -2,10 +2,6 @@
 use alloy_consensus::{
     Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
     TxEnvelope, TxLegacy, TxReceipt, Typed2718,
-    constants::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        LEGACY_TX_TYPE_ID,
-    },
     transaction::{
         Recovered, TxEip7702,
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
@@ -1360,147 +1356,13 @@ impl FromRecoveredTx<TypedTransaction> for TxEnv {
         }
 
         match tx {
-            TypedTransaction::Legacy(signed_tx) => {
-                let tx = signed_tx.tx();
-                let TxLegacy { nonce, gas_price, gas_limit, value, to, input, chain_id, .. } = tx;
-                Self {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id: *chain_id,
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *gas_price,
-                    gas_priority_fee: None,
-                    gas_limit: *gas_limit,
-                    access_list: vec![].into(),
-                    tx_type: LEGACY_TX_TYPE_ID,
-                    ..Default::default()
-                }
-            }
-            TypedTransaction::EIP2930(signed_tx) => {
-                let tx = signed_tx.tx();
-                let TxEip2930 {
-                    chain_id,
-                    nonce,
-                    gas_price,
-                    gas_limit,
-                    to,
-                    value,
-                    input,
-                    access_list,
-                    ..
-                } = tx;
-                Self {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *gas_price,
-                    gas_priority_fee: None,
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: EIP2930_TX_TYPE_ID,
-                    ..Default::default()
-                }
-            }
-            TypedTransaction::EIP1559(signed_tx) => {
-                let tx = signed_tx.tx();
-                let TxEip1559 {
-                    chain_id,
-                    nonce,
-                    max_priority_fee_per_gas,
-                    max_fee_per_gas,
-                    gas_limit,
-                    to,
-                    value,
-                    input,
-                    access_list,
-                    ..
-                } = tx;
-                Self {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: EIP1559_TX_TYPE_ID,
-                    ..Default::default()
-                }
-            }
+            TypedTransaction::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
+            TypedTransaction::EIP2930(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
+            TypedTransaction::EIP1559(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
             TypedTransaction::EIP4844(signed_tx) => {
-                let tx = signed_tx.tx().tx();
-                let TxEip4844 {
-                    chain_id,
-                    nonce,
-                    max_fee_per_blob_gas,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
-                    gas_limit,
-                    to,
-                    value,
-                    input,
-                    access_list,
-                    blob_versioned_hashes,
-                    ..
-                } = tx;
-                Self {
-                    caller,
-                    kind: TxKind::Call(*to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    max_fee_per_blob_gas: *max_fee_per_blob_gas,
-                    blob_hashes: blob_versioned_hashes.clone(),
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: EIP4844_TX_TYPE_ID,
-                    ..Default::default()
-                }
+                Self::from_recovered_tx(signed_tx.tx().tx(), caller)
             }
-            TypedTransaction::EIP7702(signed_tx) => {
-                let tx = signed_tx.tx();
-                let TxEip7702 {
-                    chain_id,
-                    nonce,
-                    gas_limit,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
-                    to,
-                    value,
-                    access_list,
-                    authorization_list,
-                    input,
-                } = tx;
-
-                let mut tx_env = Self {
-                    caller,
-                    kind: TxKind::Call(*to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: EIP7702_TX_TYPE_ID,
-                    ..Default::default()
-                };
-                tx_env.set_signed_authorization(authorization_list.clone());
-
-                tx_env
-            }
+            TypedTransaction::EIP7702(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
             TypedTransaction::Deposit(tx) => {
                 let TxDeposit { to, value, gas_limit, input, .. } = tx;
 
