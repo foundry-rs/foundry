@@ -63,7 +63,7 @@ impl WalletData {
     pub fn new(wallet: &PrivateKeySigner) -> Self {
         Self {
             address: wallet.address().to_checksum(None),
-            private_key: format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+            private_key: hex::encode_prefixed(wallet.credential().to_bytes()),
         }
     }
 }
@@ -146,7 +146,7 @@ impl VanityArgs {
         }
 
         sh_println!(
-            "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
+            "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: {}",
             timer.elapsed().as_secs_f64(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if let Some(nonce_val) = nonce {
@@ -155,7 +155,7 @@ impl VanityArgs {
                 String::new()
             },
             wallet.address().to_checksum(None),
-            hex::encode(wallet.credential().to_bytes()),
+            hex::encode_prefixed(wallet.credential().to_bytes()),
         )?;
 
         Ok(wallet)
