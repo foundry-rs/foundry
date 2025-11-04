@@ -371,7 +371,7 @@ Genesis Number
 
         for wallet in &self.genesis_accounts {
             available_accounts.push(format!("{:?}", wallet.address()));
-            private_keys.push(format!("0x{}", hex::encode(wallet.credential().to_bytes())));
+            private_keys.push(hex::encode_prefixed(wallet.credential().to_bytes()));
         }
 
         if let Some(generator) = &self.account_generator {
