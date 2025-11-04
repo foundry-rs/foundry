@@ -62,8 +62,10 @@ pub use invariant::InvariantExecutor;
 
 mod corpus;
 mod trace;
+pub mod remote;
 
 pub use trace::TracingExecutor;
+pub use remote::RemoteRpcExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 

@@ -31,13 +31,17 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, figment,
+    Config, TraceSource, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
     },
     filter::GlobMatcher,
 };
+use alloy_provider::Provider;
+use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_serde::WithOtherFields;
+use alloy_rpc_types::trace::geth::{CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     opts::EvmOpts,
@@ -59,6 +63,20 @@ use crate::{result::TestKind, traces::render_trace_arena_inner};
 pub use filter::FilterArgs;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
+
+fn render_remote_call_frame(frame: &alloy_rpc_types::trace::geth::CallFrame, indent: usize) -> String {
+    let mut out = String::new();
+    let pad = "  ".repeat(indent);
+    let to = frame.to.map(|a| format!("{a:?}")).unwrap_or_else(|| "<create>".to_string());
+    let from = frame.from.map(|a| format!("{a:?}")).unwrap_or_else(|| "<unknown>".to_string());
+    let gas_used = frame.gas_used.unwrap_or_default();
+    let status = if frame.error.is_some() { "REVERT" } else { "CALL" };
+    let _ = write!(out, "{pad}{status} {from} -> {to} gasUsed={gas_used}\n");
+    for c in &frame.calls {
+        out.push_str(&render_remote_call_frame(c, indent + 1));
+    }
+    out
+}
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -199,7 +217,14 @@ pub struct TestArgs {
 
     #[command(flatten)]
     pub watch: WatchArgs,
+
+    /// Source of traces: local or remote (via debug_traceCall)
+    #[arg(long, value_name = "local|remote")]
+    pub trace_source: Option<TraceSourceArg>,
 }
+
+#[derive(Clone, Debug, Copy, clap::ValueEnum)]
+pub enum TraceSourceArg { Local, Remote }
 
 impl TestArgs {
     pub async fn run(mut self) -> Result<TestOutcome> {
@@ -631,6 +656,44 @@ impl TestArgs {
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &mut result.traces {
+                    // If remote trace source is enabled, attempt to fetch and render remote trace
+                    if matches!(config.trace_source, TraceSource::Remote)
+                        && matches!(kind, TraceKind::Execution)
+                        && evm_opts.fork_url.is_some()
+                    {
+                        if let Ok(provider) = utils::get_provider(&config) {
+                            // Build a TransactionRequest from the top-level local trace as template
+                            if let Some(node) = arena.arena.nodes().first() {
+                                let tx = TransactionRequest::default()
+                                    .with_from(node.trace.caller)
+                                    .with_to(node.trace.address)
+                                    .with_input(alloy_primitives::Bytes::from(
+                                        node.trace.data.clone(),
+                                    ))
+                                    .with_value(node.trace.value);
+
+                                let opts = GethDebugTracingCallOptions::default().with_tracing_options(
+                                    GethDebugTracingOptions::default().with_tracer(
+                                        GethDebugTracerType::from(
+                                            GethDebugBuiltInTracerType::CallTracer,
+                                        ),
+                                    ).with_call_config(CallConfig::default().with_log())
+                                );
+
+                                if let Ok(trace) = provider
+                                    .debug_trace_call(WithOtherFields::new(tx), BlockId::latest(), opts)
+                                    .await
+                                {
+                                    if let GethTrace::CallTracer(frame) = trace {
+                                        let rendered = render_remote_call_frame(&frame, 0);
+                                        decoded_traces.push(rendered);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if identify_addresses {
                         decoder.identify(arena, &mut identifier);
                     }
@@ -921,6 +984,11 @@ impl Provider for TestArgs {
             dict.insert("show_progress".to_string(), true.into());
         }
 
+        if let Some(src) = self.trace_source {
+            let v = match src { TraceSourceArg::Local => "local", TraceSourceArg::Remote => "remote" };
+            dict.insert("trace_source".to_string(), v.into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -1056,5 +1124,15 @@ mod tests {
         };
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
+    }
+
+    #[test]
+    fn trace_source_arg_remote_parses() {
+        let args: TestArgs =
+            TestArgs::parse_from(["foundry-cli", "--trace-source", "remote"]);
+        assert!(matches!(args.trace_source, Some(super::TraceSourceArg::Remote)));
+
+        let (config, _evm_opts) = args.load_config_and_evm_opts().unwrap();
+        assert!(matches!(config.trace_source, foundry_config::TraceSource::Remote));
     }
 }

@@ -538,6 +538,11 @@ pub struct Config {
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
 
+    /// Source to use for generating execution traces
+    /// (local REVM by default or remote via debug_traceCall)
+    #[serde(default)]
+    pub trace_source: TraceSource,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information.
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -577,6 +582,15 @@ pub enum DenyLevel {
     Warnings,
     /// Exit with a non-zero code if any notes or warnings are found.
     Notes,
+}
+
+/// Source to use for execution traces
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TraceSource {
+    #[default]
+    Local,
+    Remote,
 }
 
 // Custom deserialization to make `DenyLevel` parsing case-insensitive and backwards compatible with
@@ -2580,6 +2594,7 @@ impl Default for Config {
             extra_args: vec![],
             networks: Default::default(),
             transaction_timeout: 120,
+            trace_source: TraceSource::Local,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
