@@ -1,4 +1,9 @@
-use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
+use crate::{
+    raw_wallet::RawWalletOpts,
+    registry::{WalletKind, WalletRegistry},
+    utils,
+    wallet_signer::WalletSigner,
+};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::Result;
@@ -126,17 +131,97 @@ impl WalletOpts {
             self.keystore_path.as_deref(),
             self.keystore_account_name.as_deref(),
         )? {
-            let (maybe_signer, maybe_pending) = utils::create_keystore_signer(
-                &path,
-                self.keystore_password.as_deref(),
-                self.keystore_password_file.as_deref(),
-            )?;
-            if let Some(pending) = maybe_pending {
-                pending.unlock()?
-            } else if let Some(signer) = maybe_signer {
-                signer
+            if path.exists() {
+                let (maybe_signer, maybe_pending) = utils::create_keystore_signer(
+                    &path,
+                    self.keystore_password.as_deref(),
+                    self.keystore_password_file.as_deref(),
+                )?;
+                if let Some(pending) = maybe_pending {
+                    pending.unlock()?
+                } else if let Some(signer) = maybe_signer {
+                    signer
+                } else {
+                    unreachable!()
+                }
+            } else if let Some(account_name) = self.keystore_account_name.as_deref() {
+                // Fallback: try wallet registry alias for hardware wallets
+                let reg = WalletRegistry::load().unwrap_or_default();
+                if let Some(entry) = reg.get(account_name) {
+                    match entry.kind {
+                        WalletKind::Ledger => {
+                            utils::create_ledger_signer(
+                                entry.hd_path.as_deref(),
+                                entry.mnemonic_index.unwrap_or(0),
+                            )
+                            .await?
+                        }
+                        WalletKind::Trezor => {
+                            utils::create_trezor_signer(
+                                entry.hd_path.as_deref(),
+                                entry.mnemonic_index.unwrap_or(0),
+                            )
+                            .await?
+                        }
+                    }
+                } else {
+                    eyre::bail!(
+                        "\
+Error accessing local wallet. Did you pass a keystore, hardware wallet, private key or mnemonic?
+
+Run the command with --help flag for more information or use the corresponding CLI
+flag to set your key via:
+
+--keystore
+--interactive
+--private-key
+--mnemonic-path
+--aws
+--gcp
+--trezor
+--ledger"
+                    )
+                }
             } else {
                 unreachable!()
+            }
+        } else if let Some(account_name) = self.keystore_account_name.as_deref() {
+            // If no keystore file resolved, try wallet registry alias for hardware wallets
+            let reg = WalletRegistry::load().unwrap_or_default();
+            if let Some(entry) = reg.get(account_name) {
+                match entry.kind {
+                    WalletKind::Ledger => {
+                        return utils::create_ledger_signer(
+                            entry.hd_path.as_deref(),
+                            entry.mnemonic_index.unwrap_or(0),
+                        )
+                        .await;
+                    }
+                    WalletKind::Trezor => {
+                        return utils::create_trezor_signer(
+                            entry.hd_path.as_deref(),
+                            entry.mnemonic_index.unwrap_or(0),
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                eyre::bail!(
+                    "\
+Error accessing local wallet. Did you pass a keystore, hardware wallet, private key or mnemonic?
+
+Run the command with --help flag for more information or use the corresponding CLI
+flag to set your key via:
+
+--keystore
+--interactive
+--private-key
+--mnemonic-path
+--aws
+--gcp
+--trezor
+--ledger"
+                )
             }
         } else {
             eyre::bail!(
