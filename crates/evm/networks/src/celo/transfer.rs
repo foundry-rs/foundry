@@ -38,7 +38,7 @@ pub fn precompile() -> DynPrecompile {
 /// Celo transfer precompile implementation.
 ///
 /// Uses load_account to modify balances directly, making it compatible with PrecompilesMap.
-pub fn celo_transfer_precompile(input: PrecompileInput<'_>) -> PrecompileResult {
+pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileResult {
     // Check minimum gas requirement
     if input.gas < CELO_TRANSFER_GAS_COST {
         return Err(PrecompileError::OutOfGas);
@@ -62,43 +62,38 @@ pub fn celo_transfer_precompile(input: PrecompileInput<'_>) -> PrecompileResult 
     let value = U256::from_be_slice(value_bytes);
 
     // Perform the transfer using load_account to modify balances directly
-    let mut internals = input.internals;
+    let internals = input.internals_mut();
 
     // Load and check the from account balance first
-    {
-        let from_account = match internals.load_account(from_address) {
-            Ok(account) => account,
-            Err(e) => {
-                return Err(PrecompileError::Other(format!("Failed to load from account: {e:?}")));
-            }
-        };
 
-        // Check if from account has sufficient balance
-        if from_account.data.info.balance < value {
-            return Err(PrecompileError::Other("Insufficient balance".into()));
+    let from_account = match internals.load_account(from_address) {
+        Ok(account) => account,
+        Err(e) => {
+            return Err(PrecompileError::Other(format!("Failed to load from account: {e:?}")));
         }
+    };
 
-        // Deduct balance from the from account
-        from_account.data.info.balance -= value;
+    // Check if from account has sufficient balance
+    if from_account.data.info.balance < value {
+        return Err(PrecompileError::Other("Insufficient balance".into()));
     }
 
-    // Load and update the to account
-    {
-        let to_account = match internals.load_account(to_address) {
-            Ok(account) => account,
-            Err(e) => {
-                return Err(PrecompileError::Other(format!("Failed to load to account: {e:?}")));
-            }
-        };
-
-        // Check for overflow in to account
-        if to_account.data.info.balance.checked_add(value).is_none() {
-            return Err(PrecompileError::Other("Balance overflow in to account".into()));
+    let to_account = match internals.load_account(to_address) {
+        Ok(account) => account,
+        Err(e) => {
+            return Err(PrecompileError::Other(format!("Failed to load to account: {e:?}")));
         }
+    };
 
-        // Add balance to the to account
-        to_account.data.info.balance += value;
+    // Check for overflow in to account
+    if to_account.data.info.balance.checked_add(value).is_none() {
+        return Err(PrecompileError::Other("Balance overflow in to account".into()));
     }
+
+    // Transfer the value between accounts
+    internals
+        .transfer(from_address, to_address, value)
+        .map_err(|e| PrecompileError::Other(format!("Failed to perform transfer: {e:?}")))?;
 
     // No output data for successful transfer
     Ok(PrecompileOutput::new(CELO_TRANSFER_GAS_COST, alloy_primitives::Bytes::new()))
