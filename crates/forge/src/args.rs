@@ -35,10 +35,19 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
         ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,
         ForgeSubcommand::Script(cmd) => {
-            if cmd.broadcast {
-                ForgeContext::ScriptBroadcast
-            } else if cmd.resume {
+            // Validate that broadcast and resume flags are not used together.
+            if cmd.broadcast && cmd.resume {
+                eyre::bail!(
+                    "Cannot use --broadcast and --resume flags together. \
+                    --resume is used to continue a previous broadcast attempt, \
+                    while --broadcast starts a new broadcast."
+                );
+            }
+            // Resume has priority in execution logic, so it should have priority in context too.
+            if cmd.resume {
                 ForgeContext::ScriptResume
+            } else if cmd.broadcast {
+                ForgeContext::ScriptBroadcast
             } else {
                 ForgeContext::ScriptDryRun
             }
