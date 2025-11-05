@@ -1252,6 +1252,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_logs": false,
     "timeout": null
   },
+  "trace_source": "local",
   "invariant": {
     "runs": 256,
     "depth": 500,
