@@ -386,14 +386,20 @@ impl<'a> ContractRunner<'a> {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
         });
 
-        let test_fail_functions =
-            functions.iter().filter(|func| func.test_function_kind().is_any_test_fail());
-        if test_fail_functions.clone().next().is_some() {
-            let fail = || {
-                TestResult::fail("`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string())
-            };
-            let test_results = test_fail_functions.map(|func| (func.signature(), fail())).collect();
-            return SuiteResult::new(start.elapsed(), test_results, warnings);
+        let test_fail_results: Vec<_> = functions
+            .iter()
+            .filter(|func| func.test_function_kind().is_any_test_fail())
+            .map(|func| {
+                (
+                    func.signature(),
+                    TestResult::fail(
+                        "`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string(),
+                    ),
+                )
+            })
+            .collect();
+        if !test_fail_results.is_empty() {
+            return SuiteResult::new(start.elapsed(), test_fail_results, warnings);
         }
 
         let early_exit = &self.tcfg.early_exit;
