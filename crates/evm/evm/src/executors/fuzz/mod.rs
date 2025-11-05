@@ -142,7 +142,7 @@ impl FuzzedExecutor {
         'stop: while continue_campaign(test_data.runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
             let input = if let Some(failure) = self.persisted_failure.take()
-                && func.selector() == failure.calldata[..4]
+                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
                 failure.calldata.clone()
             } else {
