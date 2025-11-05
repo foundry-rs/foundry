@@ -1432,10 +1432,13 @@ impl DatabaseExt for Backend {
             state_acc.set_code(bytecode_hash, bytecode);
         }
 
+        // Set the account's balance.
+        state_acc.set_balance(source.balance);
+
         // Set the account's storage, if the `storage` field is present.
-        journaled_state.state.get_mut(target).map(|acc| {
+        if let Some(acc) = journaled_state.state.get_mut(target) {
             if let Some(storage) = source.storage.as_ref() {
-                for (slot, value) in storage.iter() {
+                for (slot, value) in storage {
                     let slot = U256::from_be_bytes(slot.0);
                     acc.storage.insert(
                         slot,
@@ -1447,11 +1450,10 @@ impl DatabaseExt for Backend {
                     );
                 }
             }
-        });
 
-        // Set the account's nonce and balance.
-        state_acc.set_nonce(source.nonce.unwrap_or_default());
-        state_acc.set_balance(source.balance);
+            // Set the account's nonce.
+            acc.info.nonce = source.nonce.unwrap_or_default();
+        };
 
         // Touch the account to ensure the loaded information persists if called in `setUp`.
         journaled_state.touch(*target);
