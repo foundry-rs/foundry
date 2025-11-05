@@ -228,7 +228,7 @@ foundry-compilers = { version = "0.19.5", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
-foundry-fork-db = "0.19"
+foundry-fork-db = "0.20"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
@@ -281,17 +281,17 @@ alloy-rlp = "0.3"
 alloy-trie = "0.9"
 
 ## op-alloy
-op-alloy-consensus = "0.20.0"
-op-alloy-rpc-types = "0.20.0"
+op-alloy-consensus = "0.22.0"
+op-alloy-rpc-types = "0.22.0"
 op-alloy-flz = "0.13.1"
 
 ## revm
-revm = { version = "30.2.0", default-features = false }
-revm-inspectors = { version = "0.31.2", features = ["serde"] }
-op-revm = { version = "11.1.2", default-features = false }
+revm = { version = "31.0.0", default-features = false }
+revm-inspectors = { version = "0.32.0", features = ["serde"] }
+op-revm = { version = "12.0.0", default-features = false }
 ## alloy-evm
-alloy-evm = "0.22.3"
-alloy-op-evm = "0.22.3"
+alloy-evm = "0.23.1"
+alloy-op-evm = "0.23.1"
 
 ## cli
 anstream = "0.6"
