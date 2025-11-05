@@ -1862,9 +1862,7 @@ contract AContractTest is DSTest {
 "#]]);
 
     // no artifacts are to be written
-    let files = files_with_ext(prj.artifacts(), "json").collect::<Vec<_>>();
-
-    assert!(files.is_empty());
+    assert!(files_with_ext(prj.artifacts(), "json").next().is_none());
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10172>
