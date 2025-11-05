@@ -165,6 +165,7 @@ where
                 OpTransactionError::HaltedDepositPostRegolith => {
                     Self::DepositTransactionUnsupported
                 }
+                OpTransactionError::MissingEnvelopedTx => Self::InvalidTransaction(err.into()),
             },
             EVMError::Header(err) => match err {
                 InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
@@ -320,6 +321,9 @@ pub enum InvalidTransactionError {
     /// Deposit transaction error post regolith
     #[error("op-deposit failure post regolith")]
     DepositTxErrorPostRegolith,
+    /// Missing enveloped transaction
+    #[error("missing enveloped transaction")]
+    MissingEnvelopedTx,
 }
 
 impl From<InvalidTransaction> for InvalidTransactionError {
@@ -384,6 +388,7 @@ impl From<OpTransactionError> for InvalidTransactionError {
             OpTransactionError::Base(err) => err.into(),
             OpTransactionError::DepositSystemTxPostRegolith
             | OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
+            OpTransactionError::MissingEnvelopedTx => Self::MissingEnvelopedTx,
         }
     }
 }
