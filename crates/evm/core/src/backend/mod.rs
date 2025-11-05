@@ -1423,13 +1423,13 @@ impl DatabaseExt for Backend {
     ) -> Result<(), BackendError> {
         // Fetch the account from the journaled state. Will create a new account if it does
         // not already exist.
-        let mut state_acc = journaled_state.load_account(self, *target)?;
+        let mut state_acc = journaled_state.load_account_mut(self, *target)?;
 
         // Set the account's bytecode and code hash, if the `bytecode` field is present.
         if let Some(bytecode) = source.code.as_ref() {
-            state_acc.info.code_hash = keccak256(bytecode);
+            let bytecode_hash = keccak256(bytecode);
             let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
-            state_acc.info.code = Some(bytecode);
+            state_acc.set_code(bytecode_hash, bytecode);
         }
 
         // Set the account's storage, if the `storage` field is present.
@@ -1454,8 +1454,8 @@ impl DatabaseExt for Backend {
                 .collect();
         }
         // Set the account's nonce and balance.
-        state_acc.info.nonce = source.nonce.unwrap_or_default();
-        state_acc.info.balance = source.balance;
+        // state_acc.set_nonce(source.nonce.unwrap_or_default());
+        state_acc.set_balance(source.balance);
 
         // Touch the account to ensure the loaded information persists if called in `setUp`.
         journaled_state.touch(*target);
