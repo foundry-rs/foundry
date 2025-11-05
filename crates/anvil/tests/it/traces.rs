@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     abi::{Multicall, SimpleStorage},
     fork::fork_config,
