@@ -108,6 +108,7 @@ legacy_assertions = false
 celo = false
 bypass_prevrandao = false
 transaction_timeout = 120
+trace_source = "local"
 additional_compiler_profiles = []
 compilation_restrictions = []
 script_execution_protection = true
