@@ -1,0 +1,42 @@
+{
+  "name": "@foundry-rs/anvil",
+  "version": "0.0.0",
+  "type": "module",
+  "homepage": "https://getfoundry.sh/anvil",
+  "description": "Anvil is a fast local Ethereum development node",
+  "bin": {
+    "anvil": "./bin.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "postinstall": "TARGET_TOOL=anvil node ./dist/postinstall.mjs"
+  },
+  "optionalDependencies": {
+    "@foundry-rs/anvil-darwin-arm64": "0.0.0",
+    "@foundry-rs/anvil-darwin-amd64": "0.0.0",
+    "@foundry-rs/anvil-linux-arm64": "0.0.0",
+    "@foundry-rs/anvil-linux-amd64": "0.0.0",
+    "@foundry-rs/anvil-win32-amd64": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "foundry",
+    "testing",
+    "ethereum",
+    "solidity",
+    "blockchain",
+    "smart-contracts"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "directory": "npm",
+    "url": "https://github.com/foundry-rs/foundry"
+  }
+}

@@ -123,7 +123,7 @@ These are all the attributes that can be specified on cheatcode functions:
 - `#[cheatcode(status = <ident>)]`: The current status of the cheatcode. E.g. whether it is stable or experimental, etc. Defaults to `Stable`.
 - `#[cheatcode(safety = <ident>)]`: Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an unexpected way. Defaults to the group's safety if unspecified. If the group is ambiguous, then it must be specified manually.
 
-Multiple attributes can be specified by separating them with commas, e.g. `#[cheatcode(group = "evm", status = "unstable")]`.
+Multiple attributes can be specified by separating them with commas, e.g. `#[cheatcode(group = Evm, status = Experimental)]`.
 
 ### `Cheatcode` trait
 

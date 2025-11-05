@@ -1,6 +1,6 @@
 // config: line_length = 120
 // config: bracket_spacing = true
-function test() public {
+function repros() public {
     require(
         keccak256(abi.encodePacked("this is a long string")) == keccak256(abi.encodePacked("some other long string")),
         "string mismatch"
@@ -79,7 +79,7 @@ function returnLongBinaryOp() returns (bytes32) {
         bytes32(uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce)));
 }
 
-contract Orchestrator {
+contract Repros {
     function test() public {
         uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
         uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
@@ -130,5 +130,23 @@ contract Orchestrator {
     // https://github.com/foundry-rs/foundry/issues/11834
     function test_ffi_fuzz_addLiquidity_defaultPool(IPoolManager.ModifyLiquidityParams memory paramSeed) public {
         a = 1;
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/12324
+    function test_longCallWithOpts() {
+        flow.withdraw{ value: FLOW_MIN_FEE_WEI }({
+            streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
+        });
+        flow.withdraw{
+            value: FLOW_MIN_FEE_WEI /* cmnt */
+        }({
+            streamId: defaultStreamId,
+            to: users.eve,
+            /* cmnt */
+            amount: WITHDRAW_AMOUNT_6D
+        });
+        flow.withdraw{ value: FLOW_MIN_FEE_WEI }({ // cmnt
+            streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
+        });
     }
 }
