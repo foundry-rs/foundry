@@ -612,20 +612,8 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
                 TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
                 TxEnvelope::Eip4844(tx) => {
-                    // Convert from TxEip4844Variant to
-                    // TxEip4844Variant<BlobTransactionSidecarVariant>
                     let (variant, sig, hash) = tx.into_parts();
-                    let blob_variant = match variant {
-                        TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
-                        TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
-                            TxEip4844Variant::TxEip4844WithSidecar(
-                                TxEip4844WithSidecar::from_tx_and_sidecar(
-                                    tx_with_sidecar.tx,
-                                    BlobTransactionSidecarVariant::Eip4844(tx_with_sidecar.sidecar),
-                                ),
-                            )
-                        }
-                    };
+                    let blob_variant = variant.into();
                     Ok(Self::EIP4844(Signed::new_unchecked(blob_variant, sig, hash)))
                 }
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
@@ -1126,21 +1114,8 @@ impl Decodable2718 for TypedTransaction {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
             TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
             TxEnvelope::Eip4844(tx) => {
-                // Convert from standard TxEip4844Variant to BlobTransactionSidecarVariant
                 let (variant, sig, hash) = tx.into_parts();
-                let blob_variant = match variant {
-                    TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
-                    TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
-                        TxEip4844Variant::TxEip4844WithSidecar(
-                            TxEip4844WithSidecar::from_tx_and_sidecar(
-                                tx_with_sidecar.tx().clone(),
-                                BlobTransactionSidecarVariant::Eip4844(
-                                    tx_with_sidecar.sidecar().clone(),
-                                ),
-                            ),
-                        )
-                    }
-                };
+                let blob_variant = variant.into();
                 Ok(Self::EIP4844(Signed::new_unchecked(blob_variant, sig, hash)))
             }
             TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
@@ -1163,21 +1138,8 @@ impl From<TxEnvelope> for TypedTransaction {
             TxEnvelope::Eip2930(tx) => Self::EIP2930(tx),
             TxEnvelope::Eip1559(tx) => Self::EIP1559(tx),
             TxEnvelope::Eip4844(tx) => {
-                // Convert from standard TxEip4844Variant to BlobTransactionSidecarVariant
                 let (variant, sig, hash) = tx.into_parts();
-                let blob_variant = match variant {
-                    TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
-                    TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
-                        TxEip4844Variant::TxEip4844WithSidecar(
-                            TxEip4844WithSidecar::from_tx_and_sidecar(
-                                tx_with_sidecar.tx().clone(),
-                                BlobTransactionSidecarVariant::Eip4844(
-                                    tx_with_sidecar.sidecar().clone(),
-                                ),
-                            ),
-                        )
-                    }
-                };
+                let blob_variant = variant.into();
                 Self::EIP4844(Signed::new_unchecked(blob_variant, sig, hash))
             }
             TxEnvelope::Eip7702(tx) => Self::EIP7702(tx),
