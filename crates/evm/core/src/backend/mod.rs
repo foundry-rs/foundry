@@ -1433,28 +1433,24 @@ impl DatabaseExt for Backend {
         }
 
         // Set the account's storage, if the `storage` field is present.
-        if let Some(storage) = source.storage.as_ref() {
-            state_acc.storage = storage
-                .iter()
-                .map(|(slot, value)| {
+        journaled_state.state.get_mut(target).map(|acc| {
+            if let Some(storage) = source.storage.as_ref() {
+                for (slot, value) in storage.iter() {
                     let slot = U256::from_be_bytes(slot.0);
-                    (
+                    acc.storage.insert(
                         slot,
                         EvmStorageSlot::new_changed(
-                            state_acc
-                                .storage
-                                .get(&slot)
-                                .map(|s| s.present_value)
-                                .unwrap_or_default(),
+                            acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
                             U256::from_be_bytes(value.0),
                             0,
                         ),
-                    )
-                })
-                .collect();
-        }
+                    );
+                }
+            }
+        });
+
         // Set the account's nonce and balance.
-        // state_acc.set_nonce(source.nonce.unwrap_or_default());
+        state_acc.set_nonce(source.nonce.unwrap_or_default());
         state_acc.set_balance(source.balance);
 
         // Touch the account to ensure the loaded information persists if called in `setUp`.
