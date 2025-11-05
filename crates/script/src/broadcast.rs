@@ -314,11 +314,14 @@ impl BundledState {
                     .map(|tx_with_metadata| {
                         let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
-                        let kind = match tx_with_metadata.tx().clone() {
+                        let kind = match tx_with_metadata.tx() {
                             TransactionMaybeSigned::Signed { tx, .. } => {
-                                SendTransactionKind::Signed(tx)
+                                // Signed transactions are already complete, clone only once
+                                SendTransactionKind::Signed(tx.clone())
                             }
-                            TransactionMaybeSigned::Unsigned(mut tx) => {
+                            TransactionMaybeSigned::Unsigned(tx) => {
+                                // Clone once, then modify the clone to avoid mutating original
+                                let mut tx = tx.clone();
                                 let from = tx.from.expect("No sender for onchain transaction!");
 
                                 tx.set_chain_id(sequence.chain);
@@ -373,6 +376,8 @@ impl BundledState {
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                     ));
                     for (kind, is_fixed_gas_limit) in batch {
+                        // Clone only once for async future, since SendTransactionKind is already
+                        // prepared with all modifications
                         let fut = send_transaction(
                             provider.clone(),
                             kind.clone(),
