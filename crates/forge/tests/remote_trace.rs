@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, Bytes};
-use alloy_provider::Provider;
+use alloy_network::TransactionBuilder;
+use alloy_provider::ext::DebugApi;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_rpc_types::trace::geth::{
     CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
@@ -15,7 +16,7 @@ async fn debug_trace_call_parses_calltracer() {
 
     let _m = server.mock(|when, then| {
         when.method(httpmock::Method::POST).path("/")
-            .json_body_includes(serde_json::json!({"method":"debug_traceCall"}));
+            .json_body(serde_json::json!({"method":"debug_traceCall"}));
 
         then.status(200).json_body(serde_json::json!({
             "jsonrpc":"2.0",

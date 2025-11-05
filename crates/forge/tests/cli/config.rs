@@ -354,6 +354,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         extra_args: vec![],
         networks: Default::default(),
         transaction_timeout: 120,
+        trace_source: Default::default(),
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
