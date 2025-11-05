@@ -101,7 +101,7 @@ impl ListArgs {
     }
 
     fn list_local_senders(&self) -> Result<()> {
-        let keystore_path = self.dir.clone().unwrap_or_default();
+        let keystore_path = self.dir.as_deref().unwrap_or_default();
         let keystore_dir = if keystore_path.is_empty() {
             // Create the keystore default directory if it doesn't exist
             let default_dir = Config::foundry_keystores_dir().unwrap();
