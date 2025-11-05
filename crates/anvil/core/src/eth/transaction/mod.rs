@@ -1348,13 +1348,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
 
 impl FromRecoveredTx<TypedTransaction> for TxEnv {
     fn from_recovered_tx(tx: &TypedTransaction, caller: Address) -> Self {
-        fn transact_to(kind: &TxKind) -> TxKind {
-            match kind {
-                TxKind::Call(c) => TxKind::Call(*c),
-                TxKind::Create => TxKind::Create,
-            }
-        }
-
         match tx {
             TypedTransaction::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
             TypedTransaction::EIP2930(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
@@ -1363,24 +1356,7 @@ impl FromRecoveredTx<TypedTransaction> for TxEnv {
                 Self::from_recovered_tx(signed_tx.tx().tx(), caller)
             }
             TypedTransaction::EIP7702(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
-            TypedTransaction::Deposit(tx) => {
-                let TxDeposit { to, value, gas_limit, input, .. } = tx;
-
-                Self {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id: tx.chain_id(),
-                    nonce: 0,
-                    value: *value,
-                    gas_price: 0,
-                    gas_priority_fee: None,
-                    gas_limit: *gas_limit,
-                    access_list: vec![].into(),
-                    tx_type: DEPOSIT_TX_TYPE_ID,
-                    ..Default::default()
-                }
-            }
+            TypedTransaction::Deposit(tx) => Self::from_recovered_tx(tx, caller),
         }
     }
 }
