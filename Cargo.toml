@@ -256,6 +256,7 @@ alloy-signer-gcp = { version = "1.1.0", default-features = false }
 alloy-signer-ledger = { version = "1.1.0", default-features = false }
 alloy-signer-local = { version = "1.1.0", default-features = false }
 alloy-signer-trezor = { version = "1.1.0", default-features = false }
+alloy-signer-turnkey = { version = "1.1.0", default-features = false }
 alloy-transport = { version = "1.1.0", default-features = false }
 alloy-transport-http = { version = "1.1.0", default-features = false }
 alloy-transport-ipc = { version = "1.1.0", default-features = false }
