@@ -74,7 +74,7 @@ impl SessionSource {
     pub async fn inspect_with_source(
         &self,
         input: &str,
-        pre_cloned_source: Option<&SessionSource>,
+        pre_cloned_source: Option<&Self>,
     ) -> Result<(ControlFlow<()>, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
         let mut source = match pre_cloned_source {
@@ -95,7 +95,7 @@ impl SessionSource {
         };
 
         let mut source_without_inspector =
-            pre_cloned_source.map(|s| s.clone()).unwrap_or_else(|| self.clone());
+            pre_cloned_source.cloned().unwrap_or_else(|| self.clone());
 
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
