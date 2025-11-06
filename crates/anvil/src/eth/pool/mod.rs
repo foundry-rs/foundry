@@ -75,7 +75,7 @@ impl Pool {
     /// Returns the number of tx that are ready and queued for further execution
     pub fn txpool_status(&self) -> TxpoolStatus {
         // Note: naming differs here compared to geth's `TxpoolStatus`
-        let pending: u64 = self.ready_transactions().count().try_into().unwrap_or(0);
+        let pending: u64 = self.inner.read().ready_transactions.len().try_into().unwrap_or(0);
         let queued: u64 = self.inner.read().pending_transactions.len().try_into().unwrap_or(0);
         TxpoolStatus { pending, queued }
     }

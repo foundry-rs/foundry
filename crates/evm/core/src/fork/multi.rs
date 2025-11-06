@@ -8,7 +8,6 @@ use crate::Env;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{U256, map::HashMap};
 use alloy_provider::network::BlockResponse;
-use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
 use foundry_fork_db::{BackendHandler, BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use futures::{
@@ -202,8 +201,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<RetryProvider>;
-
+type Handler = BackendHandler;
 type CreateFuture =
     Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;

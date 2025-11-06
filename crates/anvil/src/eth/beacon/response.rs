@@ -1,15 +1,11 @@
 //! Beacon API response types
 
-use super::error::BeaconError;
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-
-/// Result type for beacon API operations
-pub type BeaconResult<T> = Result<T, BeaconError>;
 
 /// Generic Beacon API response wrapper
 ///
