@@ -38,6 +38,10 @@ pub struct ListArgs {
     #[arg(long, hide = !cfg!(feature = "gcp-kms"))]
     gcp: bool,
 
+    /// List accounts from Turnkey.
+    #[arg(long, hide = !cfg!(feature = "turnkey"))]
+    turnkey: bool,
+
     /// List all configured accounts.
     #[arg(long, group = "hw-wallets")]
     all: bool,
@@ -64,6 +68,7 @@ impl ListArgs {
             .trezor(self.trezor || self.all)
             .aws(self.aws || self.all)
             .gcp(self.gcp || (self.all && gcp_env_vars_set()))
+            .turnkey(self.turnkey || self.all)
             .interactives(0)
             .build()
             .expect("build multi wallet");
