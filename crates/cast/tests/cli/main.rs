@@ -22,6 +22,7 @@ use std::{fs, path::Path, str::FromStr};
 #[macro_use]
 extern crate foundry_test_utils;
 
+mod erc20;
 mod selectors;
 
 casttest!(print_short_version, |_prj, cmd| {
@@ -1637,9 +1638,9 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
 });
 
 casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
-    // As chain is not provided, a query is made to the provider to get the chain id, before the tx
-    // is built. Anvil is configured to use chain id 1 so that the produced tx will be the same
-    // as in the `mktx_raw_unsigned` test.
+    // As chain is not provided, a query is made to the provider to get the chain id, before the
+    // tx is built. Anvil is configured to use chain id 1 so that the produced tx will
+    // be the same as in the `mktx_raw_unsigned` test.
     let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
     cmd.args([
         "mktx",
@@ -2765,6 +2766,7 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     // Deploy counter contract.
     cmd.args([
         "script",
@@ -2933,6 +2935,7 @@ forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
         r#"
@@ -3034,6 +3037,7 @@ forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
         r#"
@@ -4199,3 +4203,16 @@ Transaction successfully executed.
 "#]]);
     }
 );
+casttest!(keccak_stdin_bytes, |_prj, cmd| {
+    cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
+0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
+
+"#]]);
+});
+
+casttest!(keccak_stdin_bytes_with_newline, |_prj, cmd| {
+    cmd.args(["keccak"]).stdin("0x12\n").assert_success().stdout_eq(str![[r#"
+0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
+
+"#]]);
+});

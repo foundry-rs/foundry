@@ -22,7 +22,6 @@ defaults:
     shell: bash
 
 env:
-  ACTIONS_RUNNER_DEBUG: true
   NPM_CONFIG_PROVENANCE: true
   NPM_REGISTRY_URL: "https://registry.npmjs.org"
 
@@ -32,22 +31,72 @@ jobs:
       contents: read
       actions: read
       id-token: write
-    name: ${{ matrix.os }}-${{ matrix.arch }}
+    name: ${{ matrix.tool }}-${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 3
       fail-fast: false
       matrix:
         include:
-          - os: linux
+          - tool: forge
+            os: linux
             arch: amd64
-          - os: linux
+          - tool: forge
+            os: linux
             arch: arm64
-          - os: darwin
+          - tool: forge
+            os: darwin
             arch: amd64
-          - os: darwin
+          - tool: forge
+            os: darwin
             arch: arm64
-          - os: win32
+          - tool: forge
+            os: win32
+            arch: amd64
+          - tool: cast
+            os: linux
+            arch: amd64
+          - tool: cast
+            os: linux
+            arch: arm64
+          - tool: cast
+            os: darwin
+            arch: amd64
+          - tool: cast
+            os: darwin
+            arch: arm64
+          - tool: cast
+            os: win32
+            arch: amd64
+          - tool: anvil
+            os: linux
+            arch: amd64
+          - tool: anvil
+            os: linux
+            arch: arm64
+          - tool: anvil
+            os: darwin
+            arch: amd64
+          - tool: anvil
+            os: darwin
+            arch: arm64
+          - tool: anvil
+            os: win32
+            arch: amd64
+          - tool: chisel
+            os: linux
+            arch: amd64
+          - tool: chisel
+            os: linux
+            arch: arm64
+          - tool: chisel
+            os: darwin
+            arch: amd64
+          - tool: chisel
+            os: darwin
+            arch: arm64
+          - tool: chisel
+            os: win32
             arch: amd64
     # Run automatically after a successful 'release' workflow, or manually if a run_id is provided
     if: >-
@@ -77,7 +126,7 @@ jobs:
           ls -la "$ARTIFACT_DIR" || true
 
       - name: Download Release Assets
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           merge-multiple: true
           # Download all foundry artifacts from the triggering release run
@@ -97,14 +146,6 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Install Dependencies
-        working-directory: ./npm
-        run: bun install --frozen-lockfile
-
-      - name: Transpile TS -> JS
-        working-directory: ./npm
-        run: bun run build
 
       - name: Derive RELEASE_VERSION
         id: release-version
@@ -142,33 +183,26 @@ jobs:
           ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         run: |
           set -euo pipefail
-          mkdir -p "$ARTIFACT_DIR/tmp"
 
-          FILE_PREFIX="$ARTIFACT_DIR/foundry_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}"
-          if [[ -f "${FILE_PREFIX}.zip" ]]; then
-            echo "Extracting ${FILE_PREFIX}.zip"
-            if ! command -v unzip >/dev/null 2>&1; then
-              sudo apt-get update -y && sudo apt-get install -y unzip
-            fi
-            unzip -o "${FILE_PREFIX}.zip" -d "$ARTIFACT_DIR/tmp"
-            BIN="$ARTIFACT_DIR/tmp/forge.exe"
-          else
-            echo "Extracting ${FILE_PREFIX}.tar.gz"
-            tar -xzf "${FILE_PREFIX}.tar.gz" -C "$ARTIFACT_DIR/tmp"
-            BIN="$ARTIFACT_DIR/tmp/forge"
-          fi
-
-          echo "Staging binary $BIN into @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
-          PLATFORM_NAME=${{ matrix.os }} ARCH=${{ matrix.arch }} FORGE_BIN_PATH="$BIN" bun ./scripts/prepublish.ts
+          bun ./scripts/stage-from-artifact.mjs \
+            --tool '${{ matrix.tool }}' \
+            --platform '${{ matrix.os }}' \
+            --arch '${{ matrix.arch }}' \
+            --release-version "$RELEASE_VERSION" \
+            --artifact-dir "$ARTIFACT_DIR"
 
       - name: Sanity Check Binary
         working-directory: ./npm
         run: |
           set -euo pipefail
-          PKG_DIR="./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
-          BIN="$PKG_DIR/bin/forge"
-          if [[ "${{ matrix.os }}" == "win32" ]]; then
-            BIN="$PKG_DIR/bin/forge.exe"
+          TOOL='${{ matrix.tool }}'
+          PLATFORM='${{ matrix.os }}'
+          ARCH='${{ matrix.arch }}'
+
+          PKG_DIR="./@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+          BIN="$PKG_DIR/bin/${TOOL}"
+          if [[ "$PLATFORM" == "win32" ]]; then
+            BIN="$PKG_DIR/bin/${TOOL}.exe"
           fi
           echo "Verifying binary at: $BIN"
           ls -la "$BIN"
@@ -195,11 +229,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          ls -la ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          TOOL='${{ matrix.tool }}'
+          PLATFORM='${{ matrix.os }}'
+          ARCH='${{ matrix.arch }}'
 
-          bun ./scripts/publish.ts ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          PACKAGE_DIR="./@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+          ls -la "$PACKAGE_DIR"
 
-          echo "Published @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
+          bun ./scripts/publish.mjs "$PACKAGE_DIR"
+
+          echo "Published @foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
 
   publish-meta:
     permissions:
@@ -234,13 +273,15 @@ jobs:
         working-directory: ./npm
         run: bun install --frozen-lockfile
 
-      - name: Transpile TS -> JS
+      - name: Typecheck
         working-directory: ./npm
-        run: bun run build
+        run: bun tsc --project tsconfig.json --noEmit
 
-      - name: Publish Meta
+      - name: Publish Meta Packages
         working-directory: ./npm
-        run: bun run ./scripts/publish.ts ./@foundry-rs/forge
+        run: |
+          set -euo pipefail
+          bun ./scripts/publish-meta.mjs --release-version "$RELEASE_VERSION"
         env:
           PROVENANCE: true
           VERSION_NAME: ${{ env.RELEASE_VERSION }}

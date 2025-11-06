@@ -21,6 +21,17 @@ pub async fn environment<N: Network, P: Provider<N>>(
     enable_tx_gas_limit: bool,
     configs: NetworkConfigs,
 ) -> eyre::Result<(Env, N::BlockResponse)> {
+    trace!(
+        %memory_limit,
+        ?override_gas_price,
+        ?override_chain_id,
+        ?pin_block,
+        %origin,
+        %disable_block_gas_limit,
+        %enable_tx_gas_limit,
+        ?configs,
+        "creating fork environment"
+    );
     let bn = match pin_block {
         Some(bn) => BlockNumberOrTag::Number(bn),
         None => BlockNumberOrTag::Latest,

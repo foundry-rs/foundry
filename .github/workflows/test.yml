@@ -65,7 +65,7 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@e43a5023a747770bfcb71ae048541a681714b951 # v2
+      - uses: taiki-e/install-action@81ee1d48d9194cdcab880cbdc7d36e87d39874cb # v2
         with:
           tool: nextest
 
@@ -113,4 +113,5 @@ jobs:
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+          ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
         run: cargo nextest run ${{ matrix.flags }}

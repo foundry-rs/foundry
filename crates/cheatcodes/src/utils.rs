@@ -260,8 +260,9 @@ impl Cheatcode for copyStorageCall {
 
         if let Ok(from_account) = ccx.ecx.journaled_state.load_account(*from) {
             let from_storage = from_account.storage.clone();
-            if let Ok(mut to_account) = ccx.ecx.journaled_state.load_account(*to) {
-                to_account.storage = from_storage;
+            if ccx.ecx.journaled_state.load_account(*to).is_ok() {
+                // SAFETY: We ensured the account was already loaded.
+                ccx.ecx.journaled_state.state.get_mut(to).unwrap().storage = from_storage;
                 if let Some(arbitrary_storage) = &mut ccx.state.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
                 }

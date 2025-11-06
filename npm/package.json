@@ -1,19 +1,16 @@
 {
   "private": true,
+  "type": "module",
   "imports": {
-    "#src/*": "./src/*",
+    "#*": "./src/*",
     "#scripts/*": "./scripts/*",
     "#package.json": "./package.json"
   },
-  "scripts": {
-    "build": "tsdown --config='tsdown.config.ts'",
-    "clean": "rm -rf bin dist && rm -rf ./@foundry-rs/forge*/bin ./@foundry-rs/forge*/dist ./@foundry-rs/forge*/*.tgz"
-  },
   "dependencies": {
-    "tsdown": "^0.15.1",
-    "typescript": "^5.9.2",
-    "@types/bun": "^1.2.22",
-    "@types/node": "^24.4.0"
+    "@types/bun": "^1.3.1",
+    "@types/node": "^24.9.1",
+    "bun": "^1.3.1",
+    "typescript": "^5.9.3"
   },
   "license": "MIT OR Apache-2.0",
   "$schema": "https://json.schemastore.org/package.json"
