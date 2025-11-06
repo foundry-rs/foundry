@@ -48,6 +48,8 @@ struct FuzzTestData {
     coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     logs: Vec<Log>,
+    // Stores logs from the last successful run (for display at verbosity >= 2)
+    last_run_logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
     deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
     // Runs performed in fuzz test.
@@ -198,6 +200,9 @@ impl FuzzedExecutor {
                             test_data.breakpoints.replace(case.breakpoints);
                         }
 
+                        // Always store logs from the last run for display at verbosity >= 2
+                        test_data.last_run_logs = case.logs.clone();
+
                         if self.config.show_logs {
                             test_data.logs.extend(case.logs);
                         }
@@ -255,6 +260,18 @@ impl FuzzedExecutor {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
+        // Include logs from the last run if show_logs is false, so they can be displayed
+        // at verbosity >= 2. If show_logs is true, test_data.logs already contains all logs.
+        // For failed tests, use logs from the counterexample.
+        let result_logs = if test_data.failure.is_some() {
+            // For failed tests, logs are already included in test_data.logs from the counterexample
+            test_data.logs
+        } else if self.config.show_logs {
+            test_data.logs
+        } else {
+            test_data.last_run_logs
+        };
+
         let mut result = FuzzTestResult {
             first_case: test_data.first_case.unwrap_or_default(),
             gas_by_case: test_data.gas_by_case,
@@ -262,7 +279,7 @@ impl FuzzedExecutor {
             skipped: false,
             reason: None,
             counterexample: None,
-            logs: test_data.logs,
+            logs: result_logs,
             labels: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
