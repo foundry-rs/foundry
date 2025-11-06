@@ -153,7 +153,6 @@ pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
 /// Configures the env for the given RPC transaction request.
 /// `impersonated_from` is the address of the impersonated account. This helps account for an
 /// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
-#[track_caller]
 pub fn configure_tx_req_env(
     env: &mut EnvMut<'_>,
     tx: &TransactionRequest,
