@@ -76,7 +76,7 @@ impl OpenChainClient {
         url: &str,
         body: &T,
     ) -> reqwest::Result<R> {
-        trace!(%url, body=?serde_json::to_string(body), "POST");
+        trace!(%url, body=?body, "POST");
         self.inner
             .post(url)
             .json(body)
@@ -296,7 +296,6 @@ impl OpenChainClient {
                         abi.functions()
                             .map(|func| func.signature())
                             .chain(abi.errors().map(|error| error.signature()))
-                            .collect::<Vec<_>>()
                     })
                     .collect();
 
