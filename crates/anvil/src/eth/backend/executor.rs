@@ -11,7 +11,6 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    inject_custom_precompiles,
     mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
@@ -361,7 +360,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             self.networks.inject_precompiles(evm.precompiles_mut());
 
             if let Some(factory) = &self.precompile_factory {
-                inject_custom_precompiles(&mut evm, factory.precompiles());
+                evm.precompiles_mut().extend_precompiles(factory.precompiles());
             }
 
             let cheats = Arc::new(self.cheats.clone());
