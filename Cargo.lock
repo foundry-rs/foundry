@@ -794,9 +794,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer-turnkey"
-version = "1.0.42"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77b4b9c45692130efaf631815b1489d9d3cf79867bf0b46bd3d202812ab77150"
+checksum = "5271719b6594785b7cd317a60ccfd8822469627dc9d3167836d7441cb3b9b087"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
