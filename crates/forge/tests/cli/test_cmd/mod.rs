@@ -4267,5 +4267,22 @@ contract MemoryLimitTest is Test {
 "#,
     );
 
-    cmd.arg("test").assert_failure().stdout_eq(str![[r#""#]]);
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/MemoryLimit.t.sol:MemoryLimitTest
+[PASS] test_inBounds() ([GAS])
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MemoryLimit.t.sol:MemoryLimitTest
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
