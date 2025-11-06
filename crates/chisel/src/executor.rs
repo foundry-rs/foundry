@@ -55,16 +55,49 @@ impl SessionSource {
     /// - `continue` is true if the input should be appended to the source
     /// - `formatted_output` is the formatted value, if any
     pub async fn inspect(&self, input: &str) -> Result<(ControlFlow<()>, Option<String>)> {
+        self.inspect_with_source(input, None).await
+    }
+
+    /// Inspect a contract element inside of the current session, optionally using a pre-cloned source.
+    ///
+    /// ### Takes
+    ///
+    /// - A solidity snippet
+    /// - An optional reference to a pre-cloned source that already has the input added
+    ///
+    /// ### Returns
+    ///
+    /// If the input is valid `Ok((continue, formatted_output))` where:
+    /// - `continue` is true if the input should be appended to the source
+    /// - `formatted_output` is the formatted value, if any
+    pub async fn inspect_with_source(
+        &self,
+        input: &str,
+        pre_cloned_source: Option<&SessionSource>,
+    ) -> Result<(ControlFlow<()>, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
-        let mut source = match self.clone_with_new_line(line) {
-            Ok((source, _)) => source,
-            Err(err) => {
-                debug!(%err, "failed to build new source");
-                return Ok((ControlFlow::Continue(()), None));
+        let mut source = match pre_cloned_source {
+            Some(pre_cloned) => {
+                match pre_cloned.clone_with_new_line(line) {
+                    Ok((source, _)) => source,
+                    Err(err) => {
+                        debug!(%err, "failed to build new source");
+                        return Ok((ControlFlow::Continue(()), None));
+                    }
+                }
+            }
+            None => {
+                match self.clone_with_new_line(line) {
+                    Ok((source, _)) => source,
+                    Err(err) => {
+                        debug!(%err, "failed to build new source");
+                        return Ok((ControlFlow::Continue(()), None));
+                    }
+                }
             }
         };
 
-        let mut source_without_inspector = self.clone();
+        let mut source_without_inspector = pre_cloned_source.map(|s| s.clone()).unwrap_or_else(|| self.clone());
 
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
