@@ -15,6 +15,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: docker-${{ github.head_ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -89,7 +93,7 @@ jobs:
             RUST_FEATURES=${{ env.RUST_FEATURES }}
             TAG_NAME=${{ inputs.tag_name }}
             VERGEN_GIT_SHA=${{ github.sha }}
-          project: zb6mp8tkd7
+          project: 8gkbxxjrpw
           context: .
           tags: ${{ steps.docker_tagging.outputs.docker_tags }}
           labels: ${{ steps.meta.outputs.labels }}
