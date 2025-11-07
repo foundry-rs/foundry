@@ -16,6 +16,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+
+  # Keep in sync with `docker-publish.yml`.
   RUST_PROFILE: maxperf
   RUST_FEATURES: aws-kms,gcp-kms,cli,asm-keccak,js-tracer
 
@@ -83,8 +85,6 @@ jobs:
       id-token: write
       packages: write
     with:
-      rust_profile: ${{ env.RUST_PROFILE }}
-      rust_features: ${{ env.RUST_FEATURES }}
       tag_name: ${{ needs.prepare.outputs.tag_name }}
 
   release:

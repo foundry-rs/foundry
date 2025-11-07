@@ -9,29 +9,19 @@ on:
         default: nightly
         description: The tag we're building for
         type: string
-      rust_profile:
-        default: maxperf
-        description: The Rust profile to build with
-        type: string
-      rust_features:
-        default: aws-kms,gcp-kms,cli,asm-keccak,js-tracer
-        description: The Rust features to build with
-        type: string
   workflow_call:
     inputs:
       tag_name:
-        required: true
-        type: string
-      rust_profile:
-        required: true
-        type: string
-      rust_features:
         required: true
         type: string
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+
+  # Keep in sync with `release.yml`.
+  RUST_PROFILE: maxperf
+  RUST_FEATURES: aws-kms,gcp-kms,cli,asm-keccak,js-tracer
 
 jobs:
   build:
@@ -95,8 +85,8 @@ jobs:
         uses: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
         with:
           build-args: |
-            RUST_PROFILE=${{ inputs.rust_profile }}
-            RUST_FEATURES=${{ inputs.rust_features }}
+            RUST_PROFILE=${{ env.RUST_PROFILE }}
+            RUST_FEATURES=${{ env.RUST_FEATURES }}
             TAG_NAME=${{ inputs.tag_name }}
             VERGEN_GIT_SHA=${{ github.sha }}
           project: zb6mp8tkd7
