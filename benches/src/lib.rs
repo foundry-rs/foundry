@@ -1,3 +1,5 @@
+//! Foundry benchmark runner.
+
 use crate::results::{HyperfineOutput, HyperfineResult};
 use eyre::{Result, WrapErr};
 use foundry_common::{sh_eprintln, sh_println};
