@@ -57,7 +57,7 @@ impl FromStr for RepoConfig {
         } else {
             // Create new config with custom rev or default
             // Name should follow the format: org-repo (with hyphen)
-            RepoConfig {
+            Self {
                 name: format!("{org}-{repo}"),
                 org: org.to_string(),
                 repo: repo.to_string(),
@@ -159,7 +159,7 @@ impl BenchmarkProject {
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
-        Ok(BenchmarkProject { name: config.name.to_string(), root_path, temp_project })
+        Ok(Self { name: config.name.to_string(), root_path, temp_project })
     }
 
     /// Install npm dependencies if package.json exists
