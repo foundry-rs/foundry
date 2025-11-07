@@ -1,6 +1,6 @@
 # This image is meant to enable cross-architecture builds.
-# It assumes the foundry binaries have already been compiled for `$TARGETPLATFORM` and are
-# locatable in `./dist/bin/$TARGETARCH`
+# It assumes the Foundry binaries have already been compiled for `$TARGETPLATFORM` and are
+# locatable in `./dist/bin/$TARGETARCH`.
 FROM ubuntu:22.04
 
 # Filled by docker buildx
