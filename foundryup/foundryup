@@ -3,7 +3,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.3.0"
+FOUNDRYUP_INSTALLER_VERSION="1.4.0"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
