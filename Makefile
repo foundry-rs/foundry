@@ -32,59 +32,21 @@ help: ## Display this help.
 build: ## Build the project.
 	cargo build --features "$(FEATURES)" --profile "$(PROFILE)"
 
-# The following commands use `cross` to build a cross-compile.
-#
-# These commands require that:
-#
-# - `cross` is installed (`cargo install cross`).
-# - Docker is running.
-# - The current user is in the `docker` group.
-#
-# The resulting binaries will be created in the `target/` directory.
-build-%:
-	cross build --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
-
-.PHONY: docker-build-push
-docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
-	# Build x86_64-unknown-linux-gnu.
-	cargo build --target x86_64-unknown-linux-gnu --features "jemalloc aws-kms gcp-kms turnkey cli asm-keccak js-tracer" --profile "$(PROFILE)"
-	mkdir -p $(BIN_DIR)/amd64
-	for bin in anvil cast chisel forge; do \
-		cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/amd64/; \
-	done
-
-	# Build aarch64-unknown-linux-gnu.
-	rustup target add aarch64-unknown-linux-gnu
-	RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc" cargo build --target aarch64-unknown-linux-gnu --features "aws-kms gcp-kms turnkey cli asm-keccak js-tracer" --profile "$(PROFILE)"
-	mkdir -p $(BIN_DIR)/arm64
-	for bin in anvil cast chisel forge; do \
-		cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/arm64/; \
-	done
-
-	docker buildx build --file ./Dockerfile.cross . \
-		--platform linux/amd64,linux/arm64 \
-		$(foreach tag,$(shell echo $(DOCKER_IMAGE_NAME) | tr ',' ' '),--tag $(tag)) \
-		--provenance=true \
-		--push
-
-.PHONY: docker-build-prepare
-docker-build-prepare: ## Prepare the Docker build environment.
-	docker run --privileged --rm tonistiigi/binfmt:qemu-v7.0.0-28 --install amd64,arm64
-	@if ! docker buildx inspect cross-builder &> /dev/null; then \
-		echo "Creating a new buildx builder instance"; \
-		docker buildx create --use --driver docker-container --name cross-builder; \
-	else \
-		echo "Using existing buildx builder instance"; \
-		docker buildx use cross-builder; \
-	fi
+.PHONY: build-docker
+build-docker: ## Build the docker image.
+	docker build . -t "$(DOCKER_IMAGE_NAME)" \
+	--build-arg "RUST_PROFILE=$(PROFILE)" \
+	--build-arg "RUST_FEATURES=$(FEATURES)" \
+	--build-arg "TAG_NAME=dev" \
+	--build-arg "VERGEN_GIT_SHA=$(shell git rev-parse HEAD)"
 
 ##@ Test
 
 ## Run unit/doc tests and generate html coverage report in `target/llvm-cov/html` folder.
-## Notice that `llvm-cov` supports doc tests only in nightly builds because the `--doc` flag 
+## Notice that `llvm-cov` supports doc tests only in nightly builds because the `--doc` flag
 ## is unstable (https://github.com/taiki-e/cargo-llvm-cov/issues/2).
 .PHONY: test-coverage
-test-coverage: 
+test-coverage:
 	cargo +nightly llvm-cov --no-report nextest -E 'kind(test) & !test(/\b(issue|ext_integration)/)' && \
 	cargo +nightly llvm-cov --no-report --doc && \
 	cargo +nightly llvm-cov report --doctests --open
