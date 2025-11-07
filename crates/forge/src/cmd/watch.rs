@@ -29,7 +29,7 @@ use watchexec_events::{
     filekind::{AccessKind, FileEventKind},
 };
 use watchexec_signals::Signal;
-use yansi::{Color, Paint};
+use yansi::Color;
 
 type SpawnHook = Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>;
 
