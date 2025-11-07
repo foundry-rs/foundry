@@ -194,9 +194,10 @@ impl ScriptSequence {
 
         // TODO: ideally we want the name of the function here if sig is calldata
         let filename = sig_to_file_name(sig);
+        let filename_with_ext = format!("{filename}-latest.json");
 
-        broadcast.push(format!("{filename}-latest.json"));
-        cache.push(format!("{filename}-latest.json"));
+        broadcast.push(&filename_with_ext);
+        cache.push(&filename_with_ext);
 
         Ok((broadcast, cache))
     }
@@ -237,7 +238,6 @@ pub fn sig_to_file_name(sig: &str) -> String {
         return sig.to_string();
     }
 
-    // return sig as is
     sig.to_string()
 }
 
