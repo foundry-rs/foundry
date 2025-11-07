@@ -47,13 +47,13 @@ impl PreSimulationState {
     /// left empty.
     ///
     /// Both modes will panic if any of the transactions have None for the `rpc` field.
-    pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
+    pub async fn fill_metadata(mut self) -> Result<FilledTransactionsState> {
         let address_to_abi = self.build_address_to_abi_map();
 
         let mut transactions = self
             .execution_result
             .transactions
-            .clone()
+            .take()
             .unwrap_or_default()
             .into_iter()
             .map(|tx| {
@@ -239,7 +239,7 @@ impl PreSimulationState {
             let mut script_config = self.script_config.clone();
             script_config.evm_opts.fork_url = Some(rpc.clone());
             let runner = script_config.get_runner().await?;
-            Ok((rpc.clone(), runner))
+            Ok((rpc, runner))
         });
         try_join_all(futs).await
     }
