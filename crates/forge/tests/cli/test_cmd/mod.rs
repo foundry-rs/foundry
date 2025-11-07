@@ -47,6 +47,10 @@ forgetest!(testdata, |_prj, cmd| {
     if orig_assert.get_output().status.success() {
         return;
     }
+    let stdout = orig_assert.get_output().stdout_lossy();
+    if let Some(i) = stdout.rfind("Suite result:") {
+        test_debug!("--- short stdout ---\n\n{}\n\n---", &stdout[i..]);
+    }
 
     // Retry failed tests.
     cmd.args(["--rerun"]);
