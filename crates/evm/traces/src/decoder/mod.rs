@@ -15,10 +15,7 @@ use foundry_common::{
 };
 use foundry_evm_core::{
     abi::{Vm, console},
-    constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
-        TEST_CONTRACT_ADDRESS,
-    },
+    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     decode::RevertDecoder,
     precompiles::{
         BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
@@ -176,7 +173,6 @@ impl CallTraceDecoder {
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
                 (CALLER, "DefaultSender".to_string()),
-                (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
                 (EC_RECOVER, "ECRecover".to_string()),
                 (SHA_256, "SHA-256".to_string()),
                 (RIPEMD_160, "RIPEMD-160".to_string()),
