@@ -4236,3 +4236,53 @@ contract InvariantOutputTest is Test {
         .assert_failure()
         .stdout_eq(file!["../../fixtures/invariant_traces.svg": TermSvg]);
 });
+
+forgetest_init!(memory_limit, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.memory_limit = 500 * 32;
+    });
+    prj.add_test(
+        "MemoryLimit.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Memory {
+    function allocate(uint256 n) external pure returns (uint256[] memory) {
+        return new uint256[](n);
+    }
+}
+
+contract MemoryLimitTest is Test {
+    Memory public m = new Memory();
+
+    function test_inBounds() public {
+        m.allocate(100);
+    }
+
+    function test_oom() public {
+        m.allocate(1000);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/MemoryLimit.t.sol:MemoryLimitTest
+[PASS] test_inBounds() ([GAS])
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MemoryLimit.t.sol:MemoryLimitTest
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
