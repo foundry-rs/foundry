@@ -11,7 +11,6 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    inject_custom_precompiles,
     mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
@@ -19,7 +18,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
 use alloy_evm::{
-    EthEvm, Evm,
+    EthEvm, Evm, FromRecoveredTx,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
@@ -35,10 +34,12 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
-use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
+use op_revm::{L1BlockInfo, OpContext, OpTransaction, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
+    context::{
+        Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
+    },
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
@@ -270,7 +271,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let mut tx_env = tx.to_revm_tx_env();
+        let mut tx_env: OpTransaction<TxEnv> =
+            FromRecoveredTx::from_recovered_tx(&tx.transaction.transaction, *tx.sender());
 
         if self.networks.is_optimism() {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
@@ -361,7 +363,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             self.networks.inject_precompiles(evm.precompiles_mut());
 
             if let Some(factory) = &self.precompile_factory {
-                inject_custom_precompiles(&mut evm, factory.precompiles());
+                evm.precompiles_mut().extend_precompiles(factory.precompiles());
             }
 
             let cheats = Arc::new(self.cheats.clone());

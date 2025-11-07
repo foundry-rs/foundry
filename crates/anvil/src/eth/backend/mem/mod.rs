@@ -27,7 +27,6 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
-    inject_custom_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -49,7 +48,7 @@ use alloy_eips::{
     eip7910::SystemContract,
 };
 use alloy_evm::{
-    Database, Evm,
+    Database, Evm, FromRecoveredTx,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
@@ -1180,7 +1179,7 @@ impl Backend {
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
-            inject_custom_precompiles(&mut evm, factory.precompiles());
+            evm.precompiles_mut().extend_precompiles(factory.precompiles());
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1206,7 +1205,10 @@ impl Backend {
         BlockchainError,
     > {
         let mut env = self.next_env();
-        env.tx = tx.pending_transaction.to_revm_tx_env();
+        env.tx = FromRecoveredTx::from_recovered_tx(
+            &tx.pending_transaction.transaction.transaction,
+            *tx.pending_transaction.sender(),
+        );
 
         if env.networks.is_optimism() {
             env.tx.enveloped_tx =
@@ -2769,7 +2771,10 @@ impl Backend {
 
             let target_tx = block.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-            let mut tx_env = target_tx.to_revm_tx_env();
+            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+                &target_tx.transaction.transaction,
+                *target_tx.sender(),
+            );
             if env.networks.is_optimism() {
                 tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
             }
