@@ -286,6 +286,13 @@ impl Backend {
             )
         };
 
+        // Sync EVM block.number with genesis for non-fork mode.
+        // Fork mode syncs in setup_fork_db_config() instead.
+        if fork.read().is_none() {
+            let mut write_env = env.write();
+            write_env.evm_env.block_env.number = U256::from(genesis.number);
+        }
+
         let start_timestamp = if let Some(fork) = fork.read().as_ref() {
             fork.timestamp()
         } else {
