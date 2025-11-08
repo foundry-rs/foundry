@@ -31,7 +31,6 @@ resolver = "2"
 [workspace.package]
 version = "1.4.4"
 edition = "2024"
-# Remember to update clippy.toml as well
 rust-version = "1.89"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
