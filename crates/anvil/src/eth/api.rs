@@ -291,6 +291,7 @@ impl EthApi {
             EthRequest::GetBlobSidecarsByBlockId(block_id) => {
                 self.anvil_get_blob_sidecars_by_block_id(block_id).to_rpc_result()
             }
+            EthRequest::GetGenesisTime(()) => self.anvil_get_genesis_time().to_rpc_result(),
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
@@ -1392,6 +1393,14 @@ impl EthApi {
     ) -> Result<Option<BlobTransactionSidecar>> {
         node_info!("anvil_getBlobSidecarsByBlockId");
         Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
+    }
+
+    /// Returns the genesis time for the Beacon chain
+    ///
+    /// Handler for Beacon API call: `GET /eth/v1/beacon/genesis`
+    pub fn anvil_get_genesis_time(&self) -> Result<u64> {
+        node_info!("anvil_getGenesisTime");
+        Ok(self.backend.genesis_time())
     }
 
     /// Get transaction by its hash.
