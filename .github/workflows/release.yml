@@ -19,7 +19,7 @@ env:
 
   # Keep in sync with `docker-publish.yml`.
   RUST_PROFILE: maxperf
-  RUST_FEATURES: aws-kms,gcp-kms,cli,asm-keccak,js-tracer
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
 
   LAST_STABLE_VERSION: "v1.4.4"
 
