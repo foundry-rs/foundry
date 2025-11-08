@@ -678,6 +678,14 @@ pub enum EthRequest {
         #[serde(deserialize_with = "deserialize_number")] U256,
     ),
 
+    /// Returns the transaction by sender and nonce
+    /// Returns the full transaction data.
+    #[serde(rename = "eth_getTransactionBySenderAndNonce")]
+    EthGetTransactionBySenderAndNonce(
+        Address,
+        #[serde(deserialize_with = "deserialize_number")] U256,
+    ),
+
     /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
     /// Given an ETH contract address, returns the tx hash and the direct address who created the
     /// contract.
@@ -1608,7 +1616,7 @@ true}]}"#;
                         2
                     ]
                 ]
-            ]
+            ]"""
         }
         "#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
