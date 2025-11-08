@@ -249,10 +249,8 @@ fn format_token(token: DynSolValue) -> String {
                 format!(
                     "0x{}",
                     format!("{i:x}")
-                        .char_indices()
-                        .skip(64 - bit_len / 4)
-                        .take(bit_len / 4)
-                        .map(|(_, c)| c)
+                        .chars()
+                        .skip(if i.is_negative() { 64 - bit_len / 4 } else { 0 })
                         .collect::<String>()
                 )
                 .cyan(),
