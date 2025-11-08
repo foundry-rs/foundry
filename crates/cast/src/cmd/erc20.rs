@@ -55,6 +55,10 @@ pub enum Erc20Subcommand {
     },
 
     /// Transfer ERC20 tokens.
+    ///
+    /// By default, this command will prompt for confirmation before sending the transaction,
+    /// displaying the amount in human-readable format (e.g., "100 USDC" instead of raw wei).
+    /// Use --yes to skip the confirmation prompt for non-interactive usage.
     #[command(visible_alias = "t")]
     Transfer {
         /// The ERC20 token contract address.
@@ -65,8 +69,15 @@ pub enum Erc20Subcommand {
         #[arg(value_parser = NameOrAddress::from_str)]
         to: NameOrAddress,
 
-        /// The amount to transfer.
+        /// The amount to transfer (in smallest unit, e.g., wei for 18 decimals).
         amount: String,
+
+        /// Skip confirmation prompt.
+        ///
+        /// By default, the command will prompt for confirmation before sending the transaction.
+        /// Use this flag to skip the prompt for scripts and non-interactive usage.
+        #[arg(long, short)]
+        yes: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -76,6 +87,10 @@ pub enum Erc20Subcommand {
     },
 
     /// Approve ERC20 token spending.
+    ///
+    /// By default, this command will prompt for confirmation before sending the transaction,
+    /// displaying the amount in human-readable format.
+    /// Use --yes to skip the confirmation prompt for non-interactive usage.
     #[command(visible_alias = "a")]
     Approve {
         /// The ERC20 token contract address.
@@ -86,8 +101,15 @@ pub enum Erc20Subcommand {
         #[arg(value_parser = NameOrAddress::from_str)]
         spender: NameOrAddress,
 
-        /// The amount to approve.
+        /// The amount to approve (in smallest unit, e.g., wei for 18 decimals).
         amount: String,
+
+        /// Skip confirmation prompt.
+        ///
+        /// By default, the command will prompt for confirmation before sending the transaction.
+        /// Use this flag to skip the prompt for scripts and non-interactive usage.
+        #[arg(long, short)]
+        yes: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -305,22 +327,150 @@ impl Erc20Subcommand {
                 sh_println!("{}", format_uint_exp(total_supply))?
             }
             // State-changing
-            Self::Transfer { token, to, amount, wallet, .. } => {
-                let token = token.resolve(&provider).await?;
-                let to = to.resolve(&provider).await?;
+            Self::Transfer { token, to, amount, yes, wallet, .. } => {
+                let token_addr = token.resolve(&provider).await?;
+                let to_addr = to.resolve(&provider).await?;
                 let amount = U256::from_str(&amount)?;
 
+                // If confirmation is not skipped, prompt user
+                if !yes {
+                    // Try to fetch token metadata for better UX
+                    let token_contract = IERC20::new(token_addr, &provider);
+
+                    // Fetch symbol (fallback to "TOKEN" if not available)
+                    let symbol = token_contract
+                        .symbol()
+                        .call()
+                        .await
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "TOKEN".to_string());
+
+                    // Fetch decimals (fallback to raw amount display if not available)
+                    let formatted_amount = match token_contract.decimals().call().await {
+                        Ok(decimals) if decimals <= 77 => {
+                            use alloy_primitives::utils::{ParseUnits, Unit};
+
+                            if let Some(unit) = Unit::new(decimals) {
+                                let formatted = ParseUnits::U256(amount).format_units(unit);
+
+                                let trimmed = if let Some(dot_pos) = formatted.find('.') {
+                                    let fractional = &formatted[dot_pos + 1..];
+                                    if fractional.chars().all(|c| c == '0') {
+                                        formatted[..dot_pos].to_string()
+                                    } else {
+                                        formatted
+                                            .trim_end_matches('0')
+                                            .trim_end_matches('.')
+                                            .to_string()
+                                    }
+                                } else {
+                                    formatted
+                                };
+                                format!("{trimmed} {symbol}")
+                            } else {
+                                sh_warn!(
+                                    "Warning: Could not fetch token decimals. Showing raw amount."
+                                )?;
+                                format!("{amount} {symbol} (raw amount)")
+                            }
+                        }
+                        _ => {
+                            // Could not fetch decimals, show raw amount
+                            sh_warn!(
+                                "Warning: Could not fetch token metadata (decimals/symbol). \
+                                The address may not be a valid ERC20 token contract."
+                            )?;
+                            format!("{amount} {symbol} (raw amount)")
+                        }
+                    };
+
+                    use dialoguer::Confirm;
+
+                    let prompt_msg =
+                        format!("Confirm transfer of {formatted_amount} to address {to_addr}");
+
+                    if !Confirm::new().with_prompt(prompt_msg).interact()? {
+                        eyre::bail!("Transfer cancelled by user");
+                    }
+                }
+
                 let provider = signing_provider(wallet, &provider).await?;
-                let tx = IERC20::new(token, &provider).transfer(to, amount).send().await?;
+                let tx =
+                    IERC20::new(token_addr, &provider).transfer(to_addr, amount).send().await?;
                 sh_println!("{}", tx.tx_hash())?
             }
-            Self::Approve { token, spender, amount, wallet, .. } => {
-                let token = token.resolve(&provider).await?;
-                let spender = spender.resolve(&provider).await?;
+            Self::Approve { token, spender, amount, yes, wallet, .. } => {
+                let token_addr = token.resolve(&provider).await?;
+                let spender_addr = spender.resolve(&provider).await?;
                 let amount = U256::from_str(&amount)?;
 
+                // If confirmation is not skipped, prompt user
+                if !yes {
+                    // Try to fetch token metadata for better UX
+                    let token_contract = IERC20::new(token_addr, &provider);
+
+                    // Fetch symbol (fallback to "TOKEN" if not available)
+                    let symbol = token_contract
+                        .symbol()
+                        .call()
+                        .await
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "TOKEN".to_string());
+
+                    // Fetch decimals (fallback to raw amount display if not available)
+                    let formatted_amount = match token_contract.decimals().call().await {
+                        Ok(decimals) if decimals <= 77 => {
+                            use alloy_primitives::utils::{ParseUnits, Unit};
+
+                            if let Some(unit) = Unit::new(decimals) {
+                                let formatted = ParseUnits::U256(amount).format_units(unit);
+                                let trimmed = if let Some(dot_pos) = formatted.find('.') {
+                                    let fractional = &formatted[dot_pos + 1..];
+                                    if fractional.chars().all(|c| c == '0') {
+                                        formatted[..dot_pos].to_string()
+                                    } else {
+                                        formatted
+                                            .trim_end_matches('0')
+                                            .trim_end_matches('.')
+                                            .to_string()
+                                    }
+                                } else {
+                                    formatted
+                                };
+                                format!("{trimmed} {symbol}")
+                            } else {
+                                sh_warn!(
+                                    "Warning: Could not fetch token decimals. Showing raw amount."
+                                )?;
+                                format!("{amount} {symbol} (raw amount)")
+                            }
+                        }
+                        _ => {
+                            // Could not fetch decimals, show raw amount
+                            sh_warn!(
+                                "Warning: Could not fetch token metadata (decimals/symbol). \
+                                The address may not be a valid ERC20 token contract."
+                            )?;
+                            format!("{amount} {symbol} (raw amount)")
+                        }
+                    };
+
+                    use dialoguer::Confirm;
+
+                    let prompt_msg = format!(
+                        "Confirm approval for {spender_addr} to spend {formatted_amount} from your account"
+                    );
+
+                    if !Confirm::new().with_prompt(prompt_msg).interact()? {
+                        eyre::bail!("Approval cancelled by user");
+                    }
+                }
+
                 let provider = signing_provider(wallet, &provider).await?;
-                let tx = IERC20::new(token, &provider).approve(spender, amount).send().await?;
+                let tx =
+                    IERC20::new(token_addr, &provider).approve(spender_addr, amount).send().await?;
                 sh_println!("{}", tx.tx_hash())?
             }
             Self::Mint { token, to, amount, wallet, .. } => {
