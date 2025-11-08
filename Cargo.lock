@@ -4442,7 +4442,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-bench"
-version = "0.1.0"
+version = "1.4.4"
 dependencies = [
  "chrono",
  "clap",

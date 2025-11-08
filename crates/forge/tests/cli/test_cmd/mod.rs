@@ -978,7 +978,7 @@ contract PrecompileLabelsTest is Test {
         vm.deal(address(0x000000000000000000636F6e736F6c652e6c6f67), 1 ether);
         vm.deal(address(0x4e59b44847b379578588920cA78FbF26c0B4956C), 1 ether);
         vm.deal(address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38), 1 ether);
-        vm.deal(address(0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84), 1 ether);
+        vm.deal(address(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496), 1 ether);
         vm.deal(address(1), 1 ether);
         vm.deal(address(2), 1 ether);
         vm.deal(address(3), 1 ether);
@@ -1011,7 +1011,7 @@ Traces:
     │   └─ ← [Return]
     ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
     │   └─ ← [Return]
-    ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
+    ├─ [0] VM::deal(PrecompileLabelsTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
     │   └─ ← [Return]
