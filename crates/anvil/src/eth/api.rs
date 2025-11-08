@@ -1477,8 +1477,8 @@ impl EthApi {
                 );
 
                 let WithOtherFields { inner: mut tx, other } = tx.0;
-                // we set the from field here explicitly to the set sender of the pending transaction,
-                // in case the transaction is impersonated.
+                // we set the from field here explicitly to the set sender of the pending
+                // transaction, in case the transaction is impersonated.
                 let from = *pending_tx.pending_transaction.sender();
                 tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
 
@@ -1506,7 +1506,8 @@ impl EthApi {
 
         while low <= high {
             let mid = low + (high - low) / 2;
-            let mid_nonce = self.transaction_count(sender, Some(mid.into())).await?.saturating_to::<u64>();
+            let mid_nonce =
+                self.transaction_count(sender, Some(mid.into())).await?.saturating_to::<u64>();
 
             if mid_nonce > target_nonce {
                 high = mid - 1;
@@ -1518,10 +1519,12 @@ impl EthApi {
         // search in the target block
         let target_block = low;
         if target_block <= latest_block
-            && let Some(txs) = self.backend.mined_transactions_by_block_number(target_block.into()).await
+            && let Some(txs) =
+                self.backend.mined_transactions_by_block_number(target_block.into()).await
         {
             for tx in txs {
-                if tx.from() == sender && tx.nonce() == target_nonce
+                if tx.from() == sender
+                    && tx.nonce() == target_nonce
                     && let Some(mined_tx) = self.backend.transaction_by_hash(tx.tx_hash()).await?
                 {
                     return Ok(Some(mined_tx));
