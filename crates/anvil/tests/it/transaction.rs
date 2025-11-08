@@ -2,6 +2,7 @@ use crate::{
     abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
+use alloy_consensus::Transaction;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
@@ -1380,4 +1381,97 @@ async fn can_send_tx_osaka_valid_with_limit_disabled() {
     let pending_tx = provider.send_transaction(tx).await.unwrap();
     let tx_receipt = pending_tx.get_receipt().await.unwrap();
     assert!(tx_receipt.inner.inner.is_success());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tx_by_sender_and_nonce() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let recipient = accounts[1].address();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let mut tx_hashes = std::collections::BTreeMap::new();
+
+    // send 4 transactions from the same sender with consecutive nonces
+    for i in 0..4 {
+        let tx_request = TransactionRequest::default()
+            .to(recipient)
+            .value(U256::from(1000 + i))
+            .from(sender)
+            .nonce(i as u64);
+
+        let tx = WithOtherFields::new(tx_request);
+        let pending_tx = provider.send_transaction(tx).await.unwrap();
+        tx_hashes.insert(i as u64, *pending_tx.tx_hash());
+    }
+
+    // mine all transactions
+    api.mine_one().await;
+
+    for nonce in 0..4 {
+        let result: Option<alloy_network::AnyRpcTransaction> = provider
+            .client()
+            .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(nonce)))
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let found_tx = result.unwrap();
+
+        assert_eq!(found_tx.inner.nonce(), nonce);
+        assert_eq!(found_tx.from(), sender);
+        assert_eq!(found_tx.inner.to(), Some(recipient));
+        assert_eq!(found_tx.inner.value(), U256::from(1000 + nonce));
+        assert_eq!(found_tx.inner.tx_hash(), tx_hashes[&nonce]);
+    }
+
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(999)))
+        .await
+        .unwrap();
+    assert!(result.is_none());
+
+    let different_sender = accounts[2].address();
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (different_sender, U256::from(0)))
+        .await
+        .unwrap();
+    assert!(result.is_none());
+
+    // send a pending transaction with explicit nonce 4
+    let pending_tx_request =
+        TransactionRequest::default().to(recipient).value(U256::from(5000)).from(sender).nonce(4);
+
+    let tx = WithOtherFields::new(pending_tx_request);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+
+    // find the pending transaction with nonce 4
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(4)))
+        .await
+        .unwrap();
+
+    assert!(result.is_some());
+    let found_tx = result.unwrap();
+    assert_eq!(found_tx.inner.nonce(), 4);
+    assert_eq!(found_tx.inner.tx_hash(), *pending_tx.tx_hash());
+
+    api.mine_one().await;
+
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(4)))
+        .await
+        .unwrap();
+
+    assert!(result.is_some());
+    let found_tx = result.unwrap();
+    assert_eq!(found_tx.inner.nonce(), 4);
 }
