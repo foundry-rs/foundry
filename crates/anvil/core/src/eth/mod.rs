@@ -1616,7 +1616,7 @@ true}]}"#;
                         2
                     ]
                 ]
-            ]"""
+            ]
         }
         "#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
