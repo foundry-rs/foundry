@@ -36,7 +36,7 @@ contract ExcludeContracts is Test {
     }
 
     function invariantTrueWorld() public {
-        require(hello.world() == true, "false world");
+        require(hello.world(), "false world");
     }
 }
 "#,
