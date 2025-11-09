@@ -730,6 +730,11 @@ impl Backend {
         self.env.write().evm_env.cfg_env.chain_id = chain_id;
     }
 
+    /// Returns the genesis data for the Beacon API.
+    pub fn genesis_time(&self) -> u64 {
+        self.genesis.timestamp
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)

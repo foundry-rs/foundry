@@ -202,6 +202,10 @@ pub enum EthRequest {
     #[serde(rename = "anvil_getBlobSidecarsByBlockId", with = "sequence")]
     GetBlobSidecarsByBlockId(BlockId),
 
+    /// Returns the genesis time for the chain
+    #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
+    GetGenesisTime(()),
+
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),
 
