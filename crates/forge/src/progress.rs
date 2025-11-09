@@ -34,7 +34,7 @@ impl TestsProgressState {
     }
 
     /// Creates new test suite progress and add it to overall progress.
-    pub fn start_suite_progress(&mut self, suite_name: &String) {
+    pub fn start_suite_progress(&mut self, suite_name: &str) {
         let suite_progress = self.multi.add(ProgressBar::new_spinner());
         suite_progress.set_style(
             indicatif::ProgressStyle::with_template("{spinner} {wide_msg:.bold.dim}")
