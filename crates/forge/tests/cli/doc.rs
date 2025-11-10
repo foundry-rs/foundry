@@ -69,3 +69,51 @@ contract Example is IExample {
     assert!(content.contains("Process multiple addresses"));
     assert!(content.contains("Process an address with a value"));
 });
+
+// Test that hyperlinks use relative paths, not absolute paths
+// fixes <https://github.com/foundry-rs/foundry/issues/12361>
+forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {
+    prj.add_source(
+        "IBase.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IBase {
+    function baseFunction() external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "Derived.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IBase.sol";
+
+/// @dev Inherits: {IBase}
+contract Derived is IBase {
+    function baseFunction() external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc", "--build"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/src/Derived.sol/contract.Derived.md");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    assert!(
+        content.contains("[IBase](/src/"),
+        "Hyperlink should use relative path starting with /src/, but found: {:?}",
+        content.lines().find(|line| line.contains("[IBase]")).unwrap_or("not found")
+    );
+    assert!(!content.contains("/Users/"), "Hyperlink should not contain absolute path /Users/");
+    assert!(!content.contains("/home/"), "Hyperlink should not contain absolute path /home/");
+    assert!(
+        content.contains("IBase.sol/interface.IBase.md"),
+        "Hyperlink should point to IBase.sol/interface.IBase.md"
+    );
+});
