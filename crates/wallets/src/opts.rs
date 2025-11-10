@@ -6,12 +6,13 @@ use serde::Serialize;
 
 /// The wallet options can either be:
 /// 1. Raw (via private key / mnemonic file, see `RawWallet`)
-/// 2. Ledger
-/// 3. Trezor
-/// 4. Keystore (via file path)
-/// 5. Browser wallet
-/// 6. AWS KMS
-/// 7. Google Cloud KMS
+/// 2. Keystore (via file path)
+/// 3. Ledger
+/// 4. Trezor
+/// 5. AWS KMS
+/// 6. Google Cloud KMS
+/// 7. Turnkey
+/// 8. Browser wallet
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct WalletOpts {
@@ -93,6 +94,15 @@ pub struct WalletOpts {
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
     pub gcp: bool,
 
+    /// Use Turnkey.
+    ///
+    /// Ensure the following environment variables are set: TURNKEY_API_PRIVATE_KEY,
+    /// TURNKEY_ORGANIZATION_ID, TURNKEY_ADDRESS.
+    ///
+    /// See: <https://docs.turnkey.com/getting-started/quickstart>
+    #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
+    pub turnkey: bool,
+
     /// Use a browser wallet.
     #[arg(long, help_heading = "Wallet options - browser")]
     pub browser: bool,
@@ -151,6 +161,14 @@ impl WalletOpts {
                 .parse()
                 .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be parsed into u64"))?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
+        } else if self.turnkey {
+            let api_private_key = get_env("TURNKEY_API_PRIVATE_KEY")?;
+            let organization_id = get_env("TURNKEY_ORGANIZATION_ID")?;
+            let address_str = get_env("TURNKEY_ADDRESS")?;
+            let address = address_str.parse().map_err(|_| {
+                eyre::eyre!("TURNKEY_ADDRESS could not be parsed as an Ethereum address")
+            })?;
+            WalletSigner::from_turnkey(api_private_key, organization_id, address)?
         } else if self.browser {
             WalletSigner::from_browser(
                 self.browser_port,
@@ -190,6 +208,7 @@ flag to set your key via:
 --mnemonic-path
 --aws
 --gcp
+--turnkey
 --trezor
 --ledger
 --browser
@@ -261,6 +280,7 @@ mod tests {
             trezor: false,
             aws: false,
             gcp: false,
+            turnkey: false,
             browser: false,
             browser_port: 9545,
             browser_development: false,

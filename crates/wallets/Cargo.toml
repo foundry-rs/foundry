@@ -41,6 +41,9 @@ aws-config = { version = "1", default-features = true, optional = true }
 # gcp-kms
 alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
 
+# turnkey
+alloy-signer-turnkey = { workspace = true, features = ["eip712"], optional = true }
+
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20"
@@ -60,3 +63,4 @@ reqwest = { workspace = true, features = ["json"] }
 [features]
 aws-kms = ["dep:alloy-signer-aws", "dep:aws-config"]
 gcp-kms = ["dep:alloy-signer-gcp"]
+turnkey = ["dep:alloy-signer-turnkey"]

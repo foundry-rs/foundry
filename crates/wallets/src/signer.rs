@@ -24,6 +24,9 @@ use alloy_signer_gcp::{
     },
 };
 
+#[cfg(feature = "turnkey")]
+use alloy_signer_turnkey::TurnkeySigner;
+
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
 /// Wrapper enum around different signers.
@@ -43,6 +46,9 @@ pub enum WalletSigner {
     /// Wrapper around Google Cloud KMS signer.
     #[cfg(feature = "gcp-kms")]
     Gcp(GcpSigner),
+    /// Wrapper around Turnkey signer.
+    #[cfg(feature = "turnkey")]
+    Turnkey(TurnkeySigner),
 }
 
 impl WalletSigner {
@@ -134,6 +140,30 @@ impl WalletSigner {
         }
     }
 
+    pub fn from_turnkey(
+        api_private_key: String,
+        organization_id: String,
+        address: Address,
+    ) -> Result<Self> {
+        #[cfg(feature = "turnkey")]
+        {
+            Ok(Self::Turnkey(TurnkeySigner::from_api_key(
+                &api_private_key,
+                organization_id,
+                address,
+                None,
+            )?))
+        }
+
+        #[cfg(not(feature = "turnkey"))]
+        {
+            let _ = api_private_key;
+            let _ = organization_id;
+            let _ = address;
+            Err(WalletSignerError::UnsupportedSigner("Turnkey"))
+        }
+    }
+
     pub fn from_private_key(private_key: &B256) -> Result<Self> {
         Ok(Self::Local(PrivateKeySigner::from_bytes(private_key)?))
     }
@@ -200,6 +230,10 @@ impl WalletSigner {
             Self::Gcp(gcp) => {
                 senders.insert(alloy_signer::Signer::address(gcp));
             }
+            #[cfg(feature = "turnkey")]
+            Self::Turnkey(turnkey) => {
+                senders.insert(alloy_signer::Signer::address(turnkey));
+            }
         }
         Ok(senders.into_iter().collect())
     }
@@ -237,6 +271,8 @@ macro_rules! delegate {
             Self::Aws($inner) => $e,
             #[cfg(feature = "gcp-kms")]
             Self::Gcp($inner) => $e,
+            #[cfg(feature = "turnkey")]
+            Self::Turnkey($inner) => $e,
         }
     };
 }

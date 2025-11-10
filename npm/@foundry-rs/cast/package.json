@@ -26,6 +26,14 @@
     "provenance": true,
     "registry": "https://registry.npmjs.org"
   },
+  "keywords": [
+    "foundry",
+    "testing",
+    "ethereum",
+    "solidity",
+    "blockchain",
+    "smart-contracts"
+  ],
   "license": "MIT OR Apache-2.0",
   "repository": {
     "directory": "npm",
