@@ -249,10 +249,8 @@ fn format_token(token: DynSolValue) -> String {
                 format!(
                     "0x{}",
                     format!("{i:x}")
-                        .char_indices()
-                        .skip(64 - bit_len / 4)
-                        .take(bit_len / 4)
-                        .map(|(_, c)| c)
+                        .chars()
+                        .skip(if i.is_negative() { 64 - bit_len / 4 } else { 0 })
                         .collect::<String>()
                 )
                 .cyan(),
@@ -264,16 +262,7 @@ fn format_token(token: DynSolValue) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
                 format!("uint{bit_len}").red(),
-                format!(
-                    "0x{}",
-                    format!("{i:x}")
-                        .char_indices()
-                        .skip(64 - bit_len / 4)
-                        .take(bit_len / 4)
-                        .map(|(_, c)| c)
-                        .collect::<String>()
-                )
-                .cyan(),
+                format!("0x{i:x}").cyan(),
                 hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )
