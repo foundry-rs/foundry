@@ -1,10 +1,11 @@
 use crate::eth::{
     EthApi,
-    beacon::{BeaconError, BeaconResponse, GenesisDetails},
+    beacon::{BeaconError, BeaconResponse},
 };
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, aliases::B32};
 use alloy_rpc_types_beacon::{
+    genesis::{GenesisData, GenesisResponse},
     header::Header,
     sidecar::{BlobData, GetBlobsResponse},
 };
@@ -99,12 +100,17 @@ pub async fn handle_get_blobs(
 /// GET /eth/v1/beacon/genesis
 pub async fn handle_get_genesis(State(api): State<EthApi>) -> Response {
     match api.anvil_get_genesis_time() {
-        Ok(genesis_time) => BeaconResponse::new(GenesisDetails {
-            genesis_time,
-            genesis_validators_root: B256::ZERO,
-            genesis_fork_version: B32::ZERO,
-        })
-        .into_response(),
+        Ok(genesis_time) => (
+            StatusCode::OK,
+            Json(GenesisResponse {
+                data: GenesisData {
+                    genesis_time,
+                    genesis_validators_root: B256::ZERO,
+                    genesis_fork_version: B32::ZERO,
+                },
+            }),
+        )
+            .into_response(),
         Err(_) => BeaconError::internal_error().into_response(),
     }
 }

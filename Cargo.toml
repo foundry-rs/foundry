@@ -247,7 +247,8 @@ alloy-provider = { version = "1.1.0", default-features = false }
 alloy-pubsub = { version = "1.1.0", default-features = false }
 alloy-rpc-client = { version = "1.1.0", default-features = false }
 alloy-rpc-types = { version = "1.1.0", default-features = true }
-alloy-rpc-types-beacon = { version = "1.1.0", default-features = true }
+#alloy-rpc-types-beacon = { version = "1.1.0", default-features = true }
+alloy-rpc-types-beacon = { git = "https://github.com/alloy-rs/alloy", rev = "99f6dc3e79f88cfe06a66e29b33ca5e2646451d0" }
 alloy-serde = { version = "1.1.0", default-features = false }
 alloy-signer = { version = "1.1.0", default-features = false }
 alloy-signer-aws = { version = "1.1.0", default-features = false }
