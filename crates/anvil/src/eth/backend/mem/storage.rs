@@ -10,7 +10,7 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::constants::EMPTY_WITHDRAWALS;
+use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -24,7 +24,7 @@ use alloy_rpc_types::{
     },
 };
 use anvil_core::eth::{
-    block::{Block, PartialHeader},
+    block::Block,
     transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
 };
 use foundry_evm::{
@@ -279,21 +279,30 @@ impl BlockchainStorage {
         let is_prague = spec_id >= SpecId::PRAGUE;
 
         // create a dummy genesis block
-        let partial_header = PartialHeader {
-            timestamp,
-            base_fee,
-            gas_limit: env.evm_env.block_env.gas_limit,
+        let header = Header {
+            parent_hash: Default::default(),
+            ommers_hash: Default::default(),
             beneficiary: env.evm_env.block_env.beneficiary,
+            state_root: Default::default(),
+            transactions_root: Default::default(),
+            receipts_root: Default::default(),
+            logs_bloom: Default::default(),
             difficulty: env.evm_env.block_env.difficulty,
+            number: genesis_number,
+            gas_limit: env.evm_env.block_env.gas_limit,
+            gas_used: 0,
+            timestamp,
+            extra_data: Default::default(),
+            mix_hash: Default::default(),
+            nonce: Default::default(),
+            base_fee_per_gas: base_fee,
             blob_gas_used: env.evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
             excess_blob_gas: env.evm_env.block_env.blob_excess_gas(),
-            number: genesis_number,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
-            ..Default::default()
         };
-        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
+        let block = Block::new::<MaybeImpersonatedTransaction>(header, vec![]);
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number = genesis_number;
@@ -679,12 +688,11 @@ mod tests {
     fn test_storage_dump_reload_cycle() {
         let mut dump_storage = BlockchainStorage::empty();
 
-        let partial_header = PartialHeader { gas_limit: 123456, ..Default::default() };
+        let header = Header { gas_limit: 123456, ..Default::default() };
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction =
             TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();
-        let block =
-            Block::new::<MaybeImpersonatedTransaction>(partial_header.clone(), vec![tx.clone()]);
+        let block = Block::new::<MaybeImpersonatedTransaction>(header.clone(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
 
@@ -697,7 +705,7 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, { partial_header.gas_limit });
+        assert_eq!(loaded_block.header.gas_limit, { header.gas_limit });
         let loaded_tx = loaded_block.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }

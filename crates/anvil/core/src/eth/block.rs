@@ -1,6 +1,5 @@
 use super::transaction::{TransactionInfo, TypedReceipt};
 use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root};
-use alloy_primitives::{Address, B64, B256, Bloom, Bytes, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions
@@ -27,97 +26,24 @@ impl Block {
     ///
     /// Note: if the `impersonate-tx` feature is enabled this will also accept
     /// `MaybeImpersonatedTransaction`.
-    pub fn new<T>(partial_header: PartialHeader, transactions: impl IntoIterator<Item = T>) -> Self
+    pub fn new<T>(mut header: Header, transactions: impl IntoIterator<Item = T>) -> Self
     where
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
         let transactions_root = calculate_transaction_root(&transactions);
 
-        Self {
-            header: Header {
-                parent_hash: partial_header.parent_hash,
-                beneficiary: partial_header.beneficiary,
-                ommers_hash: EMPTY_OMMER_ROOT_HASH,
-                state_root: partial_header.state_root,
-                transactions_root,
-                receipts_root: partial_header.receipts_root,
-                logs_bloom: partial_header.logs_bloom,
-                difficulty: partial_header.difficulty,
-                number: partial_header.number,
-                gas_limit: partial_header.gas_limit,
-                gas_used: partial_header.gas_used,
-                timestamp: partial_header.timestamp,
-                extra_data: partial_header.extra_data,
-                mix_hash: partial_header.mix_hash,
-                withdrawals_root: partial_header.withdrawals_root,
-                blob_gas_used: partial_header.blob_gas_used,
-                excess_blob_gas: partial_header.excess_blob_gas,
-                parent_beacon_block_root: partial_header.parent_beacon_block_root,
-                nonce: partial_header.nonce,
-                base_fee_per_gas: partial_header.base_fee,
-                requests_hash: partial_header.requests_hash,
-            },
-            transactions,
-            ommers: vec![],
-        }
-    }
-}
+        header.transactions_root = transactions_root;
+        header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
 
-/// Partial header definition without ommers hash and transactions root
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PartialHeader {
-    pub parent_hash: B256,
-    pub beneficiary: Address,
-    pub state_root: B256,
-    pub receipts_root: B256,
-    pub logs_bloom: Bloom,
-    pub difficulty: U256,
-    pub number: u64,
-    pub gas_limit: u64,
-    pub gas_used: u64,
-    pub timestamp: u64,
-    pub extra_data: Bytes,
-    pub mix_hash: B256,
-    pub blob_gas_used: Option<u64>,
-    pub excess_blob_gas: Option<u64>,
-    pub parent_beacon_block_root: Option<B256>,
-    pub nonce: B64,
-    pub base_fee: Option<u64>,
-    pub withdrawals_root: Option<B256>,
-    pub requests_hash: Option<B256>,
-}
-
-impl From<Header> for PartialHeader {
-    fn from(value: Header) -> Self {
-        Self {
-            parent_hash: value.parent_hash,
-            beneficiary: value.beneficiary,
-            state_root: value.state_root,
-            receipts_root: value.receipts_root,
-            logs_bloom: value.logs_bloom,
-            difficulty: value.difficulty,
-            number: value.number,
-            gas_limit: value.gas_limit,
-            gas_used: value.gas_used,
-            timestamp: value.timestamp,
-            extra_data: value.extra_data,
-            mix_hash: value.mix_hash,
-            nonce: value.nonce,
-            base_fee: value.base_fee_per_gas,
-            blob_gas_used: value.blob_gas_used,
-            excess_blob_gas: value.excess_blob_gas,
-            parent_beacon_block_root: value.parent_beacon_block_root,
-            requests_hash: value.requests_hash,
-            withdrawals_root: value.withdrawals_root,
-        }
+        Self { header, transactions, ommers: vec![] }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{
-        b256,
+        Address, B64, B256, Bloom, U256, b256,
         hex::{self, FromHex},
     };
     use alloy_rlp::Decodable;
