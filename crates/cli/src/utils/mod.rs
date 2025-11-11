@@ -630,7 +630,7 @@ ignore them in the `.gitignore` file."
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
     }
 
-    /// Returns true if the given path has no submodules by checking `git submodule status`
+    /// Returns true if the given path has submodules by checking `git submodule status`
     pub fn has_submodules<I, S>(self, paths: I) -> Result<bool>
     where
         I: IntoIterator<Item = S>,
