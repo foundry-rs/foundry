@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-use alloy_consensus::Header;
+use alloy_consensus::{BlockBody, Header};
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
@@ -584,19 +584,18 @@ impl From<Block> for SerializableBlock {
     fn from(block: Block) -> Self {
         Self {
             header: block.header,
-            transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().collect(),
+            transactions: block.body.transactions.into_iter().map(Into::into).collect(),
+            ommers: block.body.ommers.into_iter().collect(),
         }
     }
 }
 
 impl From<SerializableBlock> for Block {
     fn from(block: SerializableBlock) -> Self {
-        Self {
-            header: block.header,
-            transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().collect(),
-        }
+        let transactions = block.transactions.into_iter().map(Into::into).collect();
+        let ommers = block.ommers;
+        let body = BlockBody { transactions, ommers, withdrawals: None };
+        Self::new(block.header, body)
     }
 }
 

@@ -974,7 +974,7 @@ impl Backend {
                     if let Some(hash) = storage.hashes.remove(&n)
                         && let Some(block) = storage.blocks.remove(&hash)
                     {
-                        for tx in block.transactions {
+                        for tx in block.body.transactions {
                             let _ = storage.transactions.remove(&tx.hash());
                         }
                     }
@@ -2130,7 +2130,7 @@ impl Backend {
 
         let storage = self.blockchain.storage.read();
 
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             let Some(tx) = storage.transactions.get(&tx.hash()) else {
                 continue;
             };
@@ -2263,12 +2263,12 @@ impl Backend {
         &self,
         block: &Block,
     ) -> Option<Vec<AnyRpcTransaction>> {
-        let mut transactions = Vec::with_capacity(block.transactions.len());
+        let mut transactions = Vec::with_capacity(block.body.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
-        for hash in block.transactions.iter().map(|tx| tx.hash()) {
+        for hash in block.body.transactions.iter().map(|tx| tx.hash()) {
             let info = storage.transactions.get(&hash)?.info.clone();
-            let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+            let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
             let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
             transactions.push(tx);
@@ -2380,7 +2380,8 @@ impl Backend {
     pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
-        let Block { header, transactions, .. } = block;
+        let header = block.header.clone();
+        let transactions = block.body.transactions;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let Header { number, withdrawals_root, .. } = header;
@@ -2667,7 +2668,7 @@ impl Backend {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
         }
         Some(traces)
@@ -2724,12 +2725,13 @@ impl Backend {
         };
 
         let index = block
+            .body
             .transactions
             .iter()
             .position(|tx| tx.hash() == hash)
             .expect("transaction not found in block");
 
-        let pool_txs: Vec<Arc<PoolTransaction>> = block.transactions[..index]
+        let pool_txs: Vec<Arc<PoolTransaction>> = block.body.transactions[..index]
             .iter()
             .map(|tx| {
                 let pending_tx =
@@ -2781,7 +2783,7 @@ impl Backend {
 
             let _ = executor.execute();
 
-            let target_tx = block.transactions[index].clone();
+            let target_tx = block.body.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
             let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
                 &target_tx.transaction.transaction,
@@ -3095,7 +3097,7 @@ impl Backend {
         let mut receipts = Vec::new();
         let block = self.get_block(id)?;
 
-        for transaction in block.transactions {
+        for transaction in block.body.transactions {
             let receipt = self.mined_transaction_receipt(transaction.hash())?;
             receipts.push(receipt.inner);
         }
@@ -3110,7 +3112,7 @@ impl Backend {
 
         let index = info.transaction_index as usize;
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
-        let transaction = block.transactions[index].clone();
+        let transaction = block.body.transactions[index].clone();
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas;
@@ -3139,7 +3141,7 @@ impl Backend {
             TypedTransaction::Deposit(_) => 0_u128,
         };
 
-        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
+        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
         // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
@@ -3299,7 +3301,7 @@ impl Backend {
             let storage = self.blockchain.storage.read();
             let block = storage.blocks.get(&block_hash).cloned()?;
             let index: usize = index.into();
-            let tx = block.transactions.get(index)?.clone();
+            let tx = block.body.transactions.get(index)?.clone();
             let info = storage.transactions.get(&tx.hash())?.info.clone();
             (info, block, tx)
         };
@@ -3340,7 +3342,7 @@ impl Backend {
             let block = storage.blocks.get(&block_hash).cloned()?;
             (info, block)
         };
-        let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+        let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(
             Some(info.transaction_hash),
@@ -3370,6 +3372,7 @@ impl Backend {
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         Ok(self.get_block(id).map(|block| {
             block
+                .body
                 .transactions
                 .iter()
                 .filter_map(|tx| tx.as_ref().sidecar())
@@ -3412,7 +3415,7 @@ impl Backend {
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
-            for tx in &block.transactions {
+            for tx in &block.body.transactions {
                 let typed_tx = tx.as_ref();
                 if let Some(sidecar) = typed_tx.sidecar() {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
