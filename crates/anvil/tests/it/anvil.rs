@@ -4,7 +4,7 @@ use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_eips::BlockNumberOrTag;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, hex};
+use alloy_primitives::{Address, B256, U256, bytes, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::SolCall;
@@ -137,6 +137,30 @@ async fn test_can_use_default_genesis_block_number() {
     let provider = handle.http_provider();
 
     assert_eq!(0, provider.get_block(0.into()).await.unwrap().unwrap().header.number);
+}
+
+/// Verify that genesis block number affects both RPC and EVM execution layer.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_number_opcode_reflects_genesis_block_number() {
+    let genesis_number: u64 = 4242;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_genesis_block_number(Some(genesis_number))).await;
+    let provider = handle.http_provider();
+
+    // RPC layer should return configured genesis number
+    let bn = provider.get_block_number().await.unwrap();
+    assert_eq!(bn, genesis_number);
+
+    // Deploy bytecode that returns block.number
+    // 0x43 (NUMBER) 0x5f (PUSH0) 0x52 (MSTORE) 0x60 0x20 (PUSH1 0x20) 0x5f (PUSH0) 0xf3 (RETURN)
+    let target = Address::random();
+    api.anvil_set_code(target, bytes!("435f5260205ff3")).await.unwrap();
+
+    // EVM execution should reflect genesis number (+ 1 for pending block)
+    let tx = alloy_rpc_types::TransactionRequest::default().with_to(target);
+    let out = provider.call(tx.into()).await.unwrap();
+    let returned = U256::from_be_slice(out.as_ref());
+    assert_eq!(returned, U256::from(genesis_number + 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]

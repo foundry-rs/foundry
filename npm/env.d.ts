@@ -7,6 +7,8 @@ interface ImportMetaEnv {
 
   readonly PROVENANCE: 'true' | 'false'
 
+  TARGET_TOOL: 'forge' | 'cast' | 'anvil' | 'chisel'
+
   // release.yml#jobs:release:strategy:matrix:include:-|target
   readonly TARGET:
     | 'x86_64-unknown-linux-gnu'
@@ -17,18 +19,17 @@ interface ImportMetaEnv {
     | 'aarch64-apple-darwin'
     | 'x86_64-pc-windows-msvc'
   // <release.yml#jobs:release:strategy:matrix:include:-|arch>
-  readonly ARCH: 'amd64' | 'arm64'
+  readonly ARCH: 'amd64' | 'arm64' | 'aarch64'
   readonly IS_NIGHTLY: 'true' | 'false'
   // `${(env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name}`
   readonly VERSION_NAME: string
   // release.yml#jobs:release:strategy:matrix:include:-|platform
-  readonly PLATFORM_NAME: 'linux' | 'alpine' | 'darwin' | 'win32'
+  readonly PLATFORM_NAME: 'linux' | 'darwin' | 'win32'
   // `debug` / `release` / `maxperf` # <- always `maxperf`
   readonly PROFILE: 'debug' | 'release' | 'maxperf'
 
   // Used for local testing/development only
   readonly REGISTRY_URL: string
-  readonly PACKAGE_PATH: string
   readonly ALLOW_NO_INTEGRITY: 'true' | 'false'
 }
 

@@ -43,8 +43,11 @@ ensure_svm_releases!(
 
 // Ensures we can always test with the latest solc build
 forgetest_init!(can_test_with_latest_solc, |prj, cmd| {
-    let src = format!(
-        r#"
+    prj.initialize_default_contracts();
+    prj.add_test(
+        "Counter.2.t.sol",
+        &format!(
+            r#"
 pragma solidity ={LATEST_SOLC};
 
 import "forge-std/Test.sol";
@@ -55,8 +58,8 @@ contract CounterTest is Test {{
     }}
 }}
     "#
+        ),
     );
-    prj.add_test("Counter", &src);
 
     // we need to remove the pinned solc version for this
     prj.update_config(|c| {
@@ -65,7 +68,7 @@ contract CounterTest is Test {{
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/Counter.sol:CounterTest
+Ran 1 test for test/Counter.2.t.sol:CounterTest
 [PASS] testAssert() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...

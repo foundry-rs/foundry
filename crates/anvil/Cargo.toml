@@ -44,6 +44,7 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
+alloy-rpc-types-beacon.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",
@@ -88,6 +89,7 @@ async-trait.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+serde_with.workspace = true
 thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
@@ -111,6 +113,7 @@ alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
 alloy-eip5792.workspace = true
 rand.workspace = true
+reqwest.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 

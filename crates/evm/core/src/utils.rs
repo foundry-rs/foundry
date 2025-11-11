@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
+use foundry_evm_networks::NetworkConfigs;
 use revm::primitives::{
     eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
     hardfork::SpecId,
@@ -30,6 +31,7 @@ pub fn cold_path() {
 pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     env: EnvMut<'_>,
     block: &N::BlockResponse,
+    configs: NetworkConfigs,
 ) {
     use NamedChain::*;
 
@@ -55,12 +57,6 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 env.block.prevrandao = Some(env.block.difficulty.into());
                 return;
             }
-            Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk | RskTestnet | Gnosis | Chiado => {
-                if env.block.prevrandao.is_none() {
-                    // <https://github.com/foundry-rs/foundry/issues/4232>
-                    env.block.prevrandao = Some(B256::random());
-                }
-            }
             c if c.is_arbitrum() => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
@@ -76,6 +72,11 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
             }
             _ => {}
         }
+    }
+
+    if configs.bypass_prevrandao(env.cfg.chain_id) && env.block.prevrandao.is_none() {
+        // <https://github.com/foundry-rs/foundry/issues/4232>
+        env.block.prevrandao = Some(B256::random());
     }
 
     // if difficulty is `0` we assume it's past merge
@@ -140,7 +141,12 @@ pub fn get_function<'a>(
 pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
     let from = tx.from();
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
-        configure_tx_req_env(env, &tx.clone().into(), Some(from)).expect("cannot fail");
+        configure_tx_req_env(
+            env,
+            &TransactionRequest::from_transaction_with_sender(tx.clone(), from),
+            Some(from),
+        )
+        .expect("cannot fail");
     }
 }
 
@@ -179,8 +185,11 @@ pub fn configure_tx_req_env(
     env.tx.kind = to.unwrap_or(TxKind::Create);
     // If the transaction is impersonated, we need to set the caller to the from
     // address Ref: https://github.com/foundry-rs/foundry/issues/9541
-    env.tx.caller =
-        impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
+    env.tx.caller = if let Some(caller) = impersonated_from {
+        caller
+    } else {
+        from.ok_or_else(|| eyre::eyre!("missing `from` field"))?
+    };
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
     env.tx.nonce = nonce.unwrap_or_default();
     env.tx.value = value.unwrap_or_default();

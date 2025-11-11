@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract RecordAccess {
     function record() public returns (NestedRecordAccess) {
@@ -25,9 +24,7 @@ contract NestedRecordAccess {
     }
 }
 
-contract RecordTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract RecordTest is Test {
     function testRecordAccess() public {
         RecordAccess target = new RecordAccess();
 

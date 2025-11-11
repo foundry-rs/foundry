@@ -357,7 +357,7 @@ impl CallArgs {
                 ),
             };
 
-            let contracts_bytecode = fetch_contracts_bytecode_from_trace(&provider, &trace).await?;
+            let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &trace)?;
             handle_traces(
                 trace,
                 &config,

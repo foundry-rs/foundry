@@ -93,7 +93,7 @@ contract Yul {
             // empty bytes
             mstore(0xe0, 0x80)
 
-            let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
+            let s2 := call(sub(gas(), 5_000), pair, 0, 0x7c, 0xa4, 0, 0)
             if iszero(s2) {
                 revert(3, 3)
             }
@@ -171,7 +171,24 @@ contract Yul {
                     result, p := parseValue(input, 0, p, e)
                     mstore8(e, c) // Restore the original char at the end.
                 }
-                if or(lt(p, e), iszero(result)) { fail() }
+            }
+        }
+
+        assembly {
+            function parseNumber(s_, packed_, pIn_, end_) -> _item, _pOut {
+                _pOut := pIn_
+                if eq(chr(_pOut), 45) { _pOut := add(_pOut, 1) } // '-'.
+                if iszero(lt(sub(chr(_pOut), 48), 10)) { fail() } // Not '0'..'9'.
+                let c_ := chr(_pOut)
+                _pOut := add(_pOut, 1)
+                if iszero(eq(c_, 48)) { _pOut := skip0To9s(_pOut, end_, 0) } // Not '0'.
+                if eq(chr(_pOut), 46) { _pOut := skip0To9s(add(_pOut, 1), end_, 1) } // '.'.
+                let t_ := mload(_pOut)
+                if eq(or(0x20, byte(0, t_)), 101) {
+                    // forgefmt: disable-next-item
+                    _pOut := skip0To9s(add(byte(sub(byte(1, t_), 14), 0x010001), // '+', '-'.
+                        add(_pOut, 1)), end_, 1)
+                }
             }
         }
     }

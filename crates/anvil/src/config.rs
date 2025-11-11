@@ -1211,7 +1211,6 @@ impl NodeConfig {
                 .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(self.fork_request_retries)
-                .initial_backoff(1000)
                 .headers(self.fork_headers.clone())
                 .build()
                 .wrap_err("failed to establish provider to fork url")?,
@@ -1361,7 +1360,11 @@ latest block number: {latest_block}"
         };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), &block);
+        apply_chain_and_block_specific_env_changes::<AnyNetwork>(
+            env.as_env_mut(),
+            &block,
+            self.networks,
+        );
 
         let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {

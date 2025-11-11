@@ -37,6 +37,14 @@ impl AsDoc for CommentsRef<'_> {
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
 
+        // Write title tag(s)
+        let titles = self.include_tag(CommentTag::Title);
+        if !titles.is_empty() {
+            writer.write_bold(&format!("Title{}:", if titles.len() == 1 { "" } else { "s" }))?;
+            writer.writeln_raw(titles.iter().map(|t| &t.value).join(", "))?;
+            writer.writeln()?;
+        }
+
         // Write author tag(s)
         let authors = self.include_tag(CommentTag::Author);
         if !authors.is_empty() {

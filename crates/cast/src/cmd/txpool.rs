@@ -40,22 +40,26 @@ impl TxPoolSubcommands {
             Self::Content { args } => {
                 let config = args.load_config()?;
                 let provider = utils::get_provider(&config)?;
-                sh_println!("{:#?}", provider.txpool_content().await?)?;
+                let content = provider.txpool_content().await?;
+                sh_println!("{}", serde_json::to_string_pretty(&content)?)?;
             }
             Self::ContentFrom { from, args } => {
                 let config = args.load_config()?;
                 let provider = utils::get_provider(&config)?;
-                sh_println!("{:#?}", provider.txpool_content_from(from).await?)?;
+                let content = provider.txpool_content_from(from).await?;
+                sh_println!("{}", serde_json::to_string_pretty(&content)?)?;
             }
             Self::Inspect { args } => {
                 let config = args.load_config()?;
                 let provider = utils::get_provider(&config)?;
-                sh_println!("{:#?}", provider.txpool_inspect().await?)?;
+                let inspect = provider.txpool_inspect().await?;
+                sh_println!("{}", serde_json::to_string_pretty(&inspect)?)?;
             }
             Self::Status { args } => {
                 let config = args.load_config()?;
                 let provider = utils::get_provider(&config)?;
-                sh_println!("{:#?}", provider.txpool_status().await?)?;
+                let status = provider.txpool_status().await?;
+                sh_println!("{}", serde_json::to_string_pretty(&status)?)?;
             }
         };
 

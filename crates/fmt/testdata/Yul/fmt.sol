@@ -1,3 +1,4 @@
+// config: number_underscore = "thousands"
 contract Yul {
     function test() external {
         // https://github.com/euler-xyz/euler-contracts/blob/d4f207a4ac5a6e8ab7447a0f09d1399150c41ef4/contracts/vendor/MerkleProof.sol#L54
@@ -227,7 +228,28 @@ contract Yul {
                     result, p := parseValue(input, 0, p, e)
                     mstore8(e, c) // Restore the original char at the end.
                 }
-                if or(lt(p, e), iszero(result)) { fail() }
+            }
+        }
+
+        assembly {
+            function parseNumber(s_, packed_, pIn_, end_) -> _item, _pOut {
+                _pOut := pIn_
+                if eq(chr(_pOut), 45) { _pOut := add(_pOut, 1) } // '-'.
+                if iszero(lt(sub(chr(_pOut), 48), 10)) { fail() } // Not '0'..'9'.
+                let c_ := chr(_pOut)
+                _pOut := add(_pOut, 1)
+                if iszero(eq(c_, 48)) {
+                    _pOut := skip0To9s(_pOut, end_, 0)
+                } // Not '0'.
+                if eq(chr(_pOut), 46) {
+                    _pOut := skip0To9s(add(_pOut, 1), end_, 1)
+                } // '.'.
+                let t_ := mload(_pOut)
+                if eq(or(0x20, byte(0, t_)), 101) {
+                    // forgefmt: disable-next-item
+                    _pOut := skip0To9s(add(byte(sub(byte(1, t_), 14), 0x010001), // '+', '-'.
+                        add(_pOut, 1)), end_, 1)
+                }
             }
         }
     }

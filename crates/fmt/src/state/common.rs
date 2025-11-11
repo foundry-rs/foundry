@@ -23,7 +23,7 @@ impl<'ast> LitExt<'ast> for ast::Lit<'ast> {
 
 /// Language-specific pretty printing. Common for both: Solidity + Yul.
 impl<'ast> State<'_, 'ast> {
-    pub(super) fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
+    pub(super) fn print_lit_inner(&mut self, lit: &'ast ast::Lit<'ast>, is_yul: bool) {
         let ast::Lit { span, symbol, ref kind } = *lit;
         if self.handle_span(span, false) {
             return;
@@ -48,7 +48,7 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
             ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
-                self.print_num_literal(symbol.as_str());
+                self.print_num_literal(symbol.as_str(), is_yul);
             }
             ast::LitKind::Address(value) => self.word(value.to_string()),
             ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
@@ -56,7 +56,7 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn print_num_literal(&mut self, source: &str) {
+    fn print_num_literal(&mut self, source: &str, is_yul: bool) {
         fn strip_underscores_if(b: bool, s: &str) -> Cow<'_, str> {
             if b && s.contains('_') { Cow::Owned(s.replace('_', "")) } else { Cow::Borrowed(s) }
         }
@@ -66,9 +66,13 @@ impl<'ast> State<'_, 'ast> {
             config: config::NumberUnderscore,
             string: &str,
             is_dec: bool,
+            is_yul: bool,
             reversed: bool,
         ) {
-            if !config.is_thousands() || !is_dec || string.len() < 5 {
+            // The underscore thousand separator is only valid in Solidity decimal numbers.
+            // It is not supported by hex numbers, nor Yul literals.
+            // https://github.com/foundry-rs/foundry/issues/12111
+            if !config.is_thousands() || !is_dec || is_yul || string.len() < 5 {
                 out.push_str(string);
                 return;
             }
@@ -96,7 +100,7 @@ impl<'ast> State<'_, 'ast> {
         };
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
-        let strip_underscores = !config.is_preserve();
+        let strip_underscores = !config.is_preserve() || is_yul;
         let mut val = &strip_underscores_if(strip_underscores, val)[..];
         let mut exp = &strip_underscores_if(strip_underscores, exp)[..];
         let mut fract = &strip_underscores_if(strip_underscores, fract)[..];
@@ -115,20 +119,23 @@ impl<'ast> State<'_, 'ast> {
         if val.is_empty() {
             out.push('0');
         } else {
-            add_underscores(&mut out, config, val, is_dec, false);
+            add_underscores(&mut out, config, val, is_dec, is_yul, false);
         }
         if source.contains('.') {
             out.push('.');
-            if !fract.is_empty() {
-                add_underscores(&mut out, config, fract, is_dec, true);
-            } else {
-                out.push('0');
-            }
+            match (fract.is_empty(), exp.is_empty()) {
+                // `X.YeZ`: keep as is
+                (false, false) => out.push_str(fract),
+                // `X.Y`
+                (false, true) => add_underscores(&mut out, config, fract, is_dec, is_yul, true),
+                // `X.` -> `X.0`
+                (true, _) => out.push('0'),
+            };
         }
         if !exp.is_empty() {
             out.push('e');
             out.push_str(exp_sign);
-            add_underscores(&mut out, config, exp, is_dec, false);
+            add_underscores(&mut out, config, exp, is_dec, is_yul, false);
         }
 
         self.word(out);
@@ -277,6 +284,7 @@ impl<'ast> State<'_, 'ast> {
         values: &[T],
         mut get_span: S,
         format: ListFormat,
+        manual_opening: bool,
     ) -> bool
     where
         S: FnMut(&T) -> Span,
@@ -306,6 +314,14 @@ impl<'ast> State<'_, 'ast> {
                     self.s.offset(self.ind);
                 }
             };
+
+            // If manual opening flag is passed, we simply force the break, and skip the comment.
+            // It will be dealt with when printing the item in the main loop of `commasep`.
+            if manual_opening {
+                self.hardbreak();
+                self.s.offset(self.ind);
+                return true;
+            }
 
             let cmnt_config = if format.with_delimiters {
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
@@ -346,7 +362,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         if !values.is_empty() && !format.with_delimiters {
-            self.zerobreak();
+            format.print_break(true, values.len(), &mut self.s);
             self.s.offset(self.ind);
             return true;
         }
@@ -370,23 +386,37 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        let first = get_span(&values[0]);
-        // we can't simply check `peek_comment_before(pos_hi)` cause we would also account for
+        // We can't simply check `peek_comment_before(pos_hi)` cause we would also account for
         // comments in the child expression, and those don't matter.
-        let has_comments = self.peek_comment_before(first.lo()).is_some()
-            || self.peek_comment_between(first.hi(), pos_hi).is_some();
-        let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
+        let has_comments =
+            // check for comments before the first element
+            self.peek_comment_before(get_span(&values[0]).lo()).is_some() ||
+            // check for comments between elements
+            values.windows(2).any(|w| self.peek_comment_between(get_span(&w[0]).hi(), get_span(&w[1]).lo()).is_some()) ||
+            // check for comments after the last element
+            self.peek_comment_between(get_span(values.last().unwrap()).hi(), pos_hi).is_some();
 
+        // For calls with opts and args, which should break consistently, we need to skip the
+        // wrapping cbox to prioritize call args breaking before the call opts. Because of that, we
+        // must manually offset the breaks between args, so that they are properly indented.
+        let manual_opening =
+            format.is_consistent() && !format.with_delimiters && self.call_with_opts_and_args;
+        // When there are comments, we can preserve the cbox, as they will make it break
+        let manual_offset = !has_comments && manual_opening;
+
+        let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
         let skip_first_break = if format.with_delimiters || format.is_inline() {
             self.s.cbox(if format.no_ind { 0 } else { self.ind });
             if is_single_without_cmnts {
                 true
             } else {
-                self.commasep_opening_logic(values, &mut get_span, format)
+                self.commasep_opening_logic(values, &mut get_span, format, manual_opening)
             }
         } else {
-            let res = self.commasep_opening_logic(values, &mut get_span, format);
-            self.s.cbox(if format.no_ind { 0 } else { self.ind });
+            let res = self.commasep_opening_logic(values, &mut get_span, format, manual_opening);
+            if !manual_offset {
+                self.s.cbox(if format.no_ind { 0 } else { self.ind });
+            }
             res
         };
 
@@ -396,6 +426,9 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         } else if !skip_first_break && !format.is_inline() {
             format.print_break(true, values.len(), &mut self.s);
+            if manual_offset {
+                self.s.offset(self.ind);
+            }
         }
 
         if format.is_compact() && !(format.breaks_with_comments() && has_comments) {
@@ -478,6 +511,9 @@ impl<'ast> State<'_, 'ast> {
                 && !next_span.is_dummy()
             {
                 format.print_break(false, values.len(), &mut self.s);
+                if manual_offset {
+                    self.s.offset(self.ind);
+                }
             }
         }
 
@@ -500,11 +536,13 @@ impl<'ast> State<'_, 'ast> {
             self.word(sym);
         }
 
-        self.end();
+        if !manual_offset {
+            self.end();
+        }
         self.cursor.advance_to(pos_hi, true);
 
         if last_delimiter_break {
-            self.zerobreak();
+            format.print_break(true, values.len(), &mut self.s);
         }
     }
 
@@ -517,7 +555,9 @@ impl<'ast> State<'_, 'ast> {
         for (pos, ident) in path.segments().iter().delimited() {
             self.print_ident(ident);
             if !pos.is_last {
-                self.zerobreak();
+                if !self.emit_or_revert {
+                    self.zerobreak();
+                }
                 self.word(".");
             }
         }
@@ -579,7 +619,7 @@ impl<'ast> State<'_, 'ast> {
                                 self.s.offset(offset);
                             }
                         } else if style.is_isolated() {
-                            self.print_sep_unhandled(Separator::Space);
+                            self.print_sep_unhandled(Separator::Hardbreak);
                             self.s.offset(offset);
                         }
                     }
@@ -791,6 +831,10 @@ impl ListFormat {
         if let ListFormatKind::Yul { sym_post, .. } = self.kind { sym_post } else { None }
     }
 
+    pub(crate) fn is_consistent(&self) -> bool {
+        matches!(self.kind, ListFormatKind::Consistent)
+    }
+
     pub(crate) fn is_compact(&self) -> bool {
         matches!(self.kind, ListFormatKind::Compact)
     }
@@ -863,9 +907,9 @@ impl ListFormat {
         self
     }
 
-    pub(crate) fn no_delimiters(mut self) -> Self {
+    pub(crate) fn with_delimiters(mut self, with: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
-            self.with_delimiters = false;
+            self.with_delimiters = with;
         }
         self
     }

@@ -3,20 +3,15 @@ use itertools::Itertools;
 use std::{error::Error, fmt};
 
 /// A custom context type for Foundry specific error reporting via `eyre`.
+#[derive(Default)]
 pub struct Handler {
     debug_handler: Option<Box<dyn EyreHandler>>,
-}
-
-impl Default for Handler {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Handler {
     /// Create a new instance of the `Handler`.
     pub fn new() -> Self {
-        Self { debug_handler: None }
+        Self::default()
     }
 
     /// Override the debug handler with a custom one.

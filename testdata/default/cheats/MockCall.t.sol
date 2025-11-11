@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Mock {
     uint256 state = 0;
@@ -56,9 +55,7 @@ contract NestedMockDelegateCall {
     }
 }
 
-contract MockCallTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract MockCallTest is Test {
     function testMockGetters() public {
         Mock target = new Mock();
 
@@ -183,9 +180,7 @@ contract MockCallTest is DSTest {
     }
 }
 
-contract MockCallRevertTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract MockCallRevertTest is Test {
     error TestError(bytes msg);
 
     bytes constant ERROR_MESSAGE = "ERROR_MESSAGE";

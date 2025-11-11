@@ -47,7 +47,7 @@ use std::{
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
 use foundry_config::evm_spec_id;
-use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
+use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
 mod fork;
@@ -1085,7 +1085,7 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
         let debug_steps: Vec<DebugStep> =
-            steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
+            steps.iter().map(|step| convert_call_trace_ctx_to_debug_step(step)).collect();
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
@@ -1497,7 +1497,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                             });
                         let layout = storage_layouts.get(&storage_access.account);
                         // Update state diff. Do not overwrite the initial value if already set.
-                        match account_diff.state_diff.entry(storage_access.slot) {
+                        let entry = match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {
                                 // Get storage layout info for this slot
                                 // Include mapping slots if available for the account
@@ -1509,9 +1509,8 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
 
                                 let slot_info = layout.and_then(|layout| {
                                     let decoder = SlotIdentifier::new(layout.clone());
-                                    decoder
-                                        .identify(&storage_access.slot, mapping_slots)
-                                        .or_else(|| {
+                                    decoder.identify(&storage_access.slot, mapping_slots).or_else(
+                                        || {
                                             // Create a map of new values for bytes/string
                                             // identification. These values are used to determine
                                             // the length of the data which helps determine how many
@@ -1524,43 +1523,31 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                                 &storage_access.slot,
                                                 &current_base_slot_values,
                                             )
-                                        })
-                                        .map(|mut info| {
-                                            // Always decode values first
-                                            info.decode_values(
-                                                storage_access.previousValue,
-                                                storage_access.newValue,
-                                            );
-
-                                            // Then handle long bytes/strings if applicable
-                                            if info.is_bytes_or_string() {
-                                                info.decode_bytes_or_string_values(
-                                                    &storage_access.slot,
-                                                    &raw_changes_by_slot,
-                                                );
-                                            }
-
-                                            info
-                                        })
+                                        },
+                                    )
                                 });
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
                                     slot_info,
-                                });
+                                })
                             }
-                            Entry::Occupied(mut slot_state_diff) => {
-                                let entry = slot_state_diff.get_mut();
+                            Entry::Occupied(slot_state_diff) => {
+                                let entry = slot_state_diff.into_mut();
                                 entry.new_value = storage_access.newValue;
+                                entry
+                            }
+                        };
 
-                                // Update decoded values if we have slot info
-                                if let Some(ref mut slot_info) = entry.slot_info {
-                                    slot_info.decode_values(
-                                        entry.previous_value,
-                                        storage_access.newValue,
-                                    );
-                                }
+                        // Update decoded values if we have slot info
+                        if let Some(slot_info) = &mut entry.slot_info {
+                            slot_info.decode_values(entry.previous_value, storage_access.newValue);
+                            if slot_info.is_bytes_or_string() {
+                                slot_info.decode_bytes_or_string_values(
+                                    &storage_access.slot,
+                                    &raw_changes_by_slot,
+                                );
                             }
                         }
                     }

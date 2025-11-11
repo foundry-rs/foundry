@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
     Artifact, ArtifactId,
-    artifacts::{CompactContractBytecodeCow, Libraries},
+    artifacts::{CompactBytecode, CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
 };
 use rayon::prelude::*;
@@ -105,23 +105,28 @@ impl<'a> Linker<'a> {
     ) -> Result<(), LinkerError> {
         let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
-        let mut references = BTreeMap::new();
+        let mut references: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut extend = |bytecode: &CompactBytecode| {
+            for (file, libs) in &bytecode.link_references {
+                references.entry(file.clone()).or_default().extend(libs.keys().cloned());
+            }
+        };
         if let Some(bytecode) = &contract.bytecode {
-            references.extend(bytecode.link_references.clone());
+            extend(bytecode);
         }
         if let Some(deployed_bytecode) = &contract.deployed_bytecode
             && let Some(bytecode) = &deployed_bytecode.bytecode
         {
-            references.extend(bytecode.link_references.clone());
+            extend(bytecode);
         }
 
-        for (file, libs) in &references {
-            for contract in libs.keys() {
+        for (file, libs) in references {
+            for name in libs {
                 let id = self
-                    .find_artifact_id_by_library_path(file, contract, Some(&target.version))
+                    .find_artifact_id_by_library_path(&file, &name, Some(&target.version))
                     .ok_or_else(|| LinkerError::MissingLibraryArtifact {
-                        file: file.to_string(),
-                        name: contract.to_string(),
+                        file: file.clone(),
+                        name,
                     })?;
                 if deps.insert(id) {
                     self.collect_dependencies(id, deps)?;
@@ -409,9 +414,8 @@ mod tests {
                     .to_string_lossy();
                 let identifier = format!("{source}:{}", id.name);
 
-                // Skip ds-test as it always has no dependencies etc. (and the path is outside root
-                // so is not sanitized)
-                if identifier.contains("DSTest") {
+                // Skip test utils as they always have no dependencies.
+                if identifier.contains("utils/") {
                     return None;
                 }
 
@@ -701,7 +705,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib",
                     &[(
                         "default/linking/nested/Nested.t.sol:Lib",
-                        address!("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74"),
+                        address!("0x773253227cce756e50c3993ec6366b3ec27786f9"),
                     )],
                 )
                 .assert_dependencies(
@@ -711,12 +715,12 @@ mod tests {
                         // have the same address and nonce.
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
+                            Address::from_str("0x773253227cce756e50c3993ec6366b3ec27786f9")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
+                            Address::from_str("0xac231df03403867b05d092c26fc91b6b83f4bebe")
                                 .unwrap(),
                         ),
                     ],
@@ -726,12 +730,12 @@ mod tests {
                     &[
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
+                            Address::from_str("0x773253227cce756e50c3993ec6366b3ec27786f9")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
+                            Address::from_str("0xac231df03403867b05d092c26fc91b6b83f4bebe")
                                 .unwrap(),
                         ),
                     ],
@@ -742,6 +746,31 @@ mod tests {
                         "19bf59b7b67ae8edcbc6e53616080f61fa99285c061450ad601b0bc40c9adfc9"
                     ),
                 );
+        });
+    }
+
+    #[test]
+    fn link_samefile_union() {
+        link_test(testdata().join("default/linking/samefile_union"), |linker| {
+            linker
+                .assert_dependencies("default/linking/samefile_union/Libs.sol:LInit", &[])
+                .assert_dependencies("default/linking/samefile_union/Libs.sol:LRun", &[])
+                .assert_dependencies(
+                    "default/linking/samefile_union/SameFileUnion.t.sol:UsesBoth",
+                    &[
+                        (
+                            "default/linking/samefile_union/Libs.sol:LInit",
+                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
+                                .unwrap(),
+                        ),
+                        (
+                            "default/linking/samefile_union/Libs.sol:LRun",
+                            Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .test_with_sender_and_nonce(Address::default(), 1);
         });
     }
 

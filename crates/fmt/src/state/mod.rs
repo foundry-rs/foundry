@@ -98,6 +98,7 @@ impl CallStack {
 }
 
 pub(super) struct State<'sess, 'ast> {
+    // CORE COMPONENTS
     pub(super) s: pp::Printer,
     ind: isize,
 
@@ -107,15 +108,30 @@ pub(super) struct State<'sess, 'ast> {
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
 
+    // FORMATTING CONTEXT:
+    // Whether the source file uses CRLF (`\r\n`) line endings.
     has_crlf: bool,
+    // The current contract being formatted, if inside a contract definition.
     contract: Option<&'ast ast::ItemContract<'ast>>,
-    single_line_stmt: Option<bool>,
-    named_call_expr: bool,
-    binary_expr: Option<BinOpGroup>,
-    return_bin_expr: bool,
-    var_init: bool,
+    // Current block nesting depth (incremented for each `{...}` block entered).
     block_depth: usize,
+    // Stack tracking nested and chained function calls.
     call_stack: CallStack,
+
+    // Whether the current statement should be formatted as a single line, or not.
+    single_line_stmt: Option<bool>,
+    // The current binary expression chain context, if inside one.
+    binary_expr: Option<BinOpGroup>,
+    // Whether inside a `return` statement that contains a binary expression, or not.
+    return_bin_expr: bool,
+    // Whether inside a call with call options and at least one argument.
+    call_with_opts_and_args: bool,
+    // Whether to skip the index soft breaks because the callee fits inline.
+    skip_index_break: bool,
+    // Whether inside an `emit` or `revert` call with a qualified path, or not.
+    emit_or_revert: bool,
+    // Whether inside a variable initialization expression, or not.
+    var_init: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -204,9 +220,11 @@ impl<'sess> State<'sess, '_> {
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
-            named_call_expr: false,
+            call_with_opts_and_args: false,
+            skip_index_break: false,
             binary_expr: None,
             return_bin_expr: false,
+            emit_or_revert: false,
             var_init: false,
             block_depth: 0,
             call_stack: CallStack::default(),
@@ -232,11 +250,17 @@ impl<'sess> State<'sess, '_> {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
     }
 
+    /// Computes the space left, bounded by the max space left.
     fn space_left(&self) -> usize {
-        std::cmp::min(
-            self.s.space_left(),
-            self.config.line_length.saturating_sub(self.block_depth * self.config.tab_width),
-        )
+        std::cmp::min(self.s.space_left(), self.max_space_left(0))
+    }
+
+    /// Computes the maximum space left given the context information available:
+    /// `block_depth`, `tab_width`, and a user-defined unavailable size `prefix_len`.
+    fn max_space_left(&self, prefix_len: usize) -> usize {
+        self.config
+            .line_length
+            .saturating_sub(self.block_depth * self.config.tab_width + prefix_len)
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
@@ -389,11 +413,11 @@ impl State<'_, '_> {
                 } else if !first && let Some(char) = line.chars().next() {
                     // A line break or a space are required if this line:
                     // - starts with an operator.
+                    // - starts with one of the ternary operators
                     // - starts with a bracket and fmt config forces bracket spacing.
                     match char {
-                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' => {
-                            size += 1
-                        }
+                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
+                        | ':' => size += 1,
                         '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
@@ -846,15 +870,14 @@ impl<'sess> State<'sess, '_> {
                 if !self.config.wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
                 } else if self.config.wrap_comments {
-                    config.offset = self.ind;
+                    if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
+                        config.offset = 0;
+                    } else {
+                        config.offset = self.ind;
+                    }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
-                            self.print_wrapped_line(
-                                &line,
-                                prefix,
-                                if cmnt.is_doc { 0 } else { config.offset },
-                                cmnt.is_doc,
-                            );
+                            self.print_wrapped_line(&line, prefix, config.offset, cmnt.is_doc);
                         }
                         if !lpos.is_last {
                             config.hardbreak(&mut self.s);

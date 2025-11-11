@@ -27,11 +27,8 @@ pub struct LogsArgs {
     to_block: Option<BlockId>,
 
     /// The contract address to filter on.
-    #[arg(
-        long,
-        value_parser = NameOrAddress::from_str
-    )]
-    address: Option<NameOrAddress>,
+    #[arg(long, value_parser = NameOrAddress::from_str)]
+    address: Option<Vec<NameOrAddress>>,
 
     /// The signature of the event to filter logs by which will be converted to the first topic or
     /// a topic to filter on.
@@ -61,9 +58,14 @@ impl LogsArgs {
         let provider = utils::get_provider(&config)?;
 
         let cast = Cast::new(&provider);
-
-        let address = match address {
-            Some(address) => Some(address.resolve(&provider).await?),
+        let addresses = match address {
+            Some(addresses) => Some(
+                futures::future::try_join_all(addresses.into_iter().map(|address| {
+                    let provider = provider.clone();
+                    async move { address.resolve(&provider).await }
+                }))
+                .await?,
+            ),
             None => None,
         };
 
@@ -72,7 +74,7 @@ impl LogsArgs {
         let to_block =
             cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
 
-        let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
+        let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
             let logs = cast.filter_logs(filter).await?;
@@ -101,7 +103,7 @@ impl LogsArgs {
 fn build_filter(
     from_block: Option<BlockNumberOrTag>,
     to_block: Option<BlockNumberOrTag>,
-    address: Option<Address>,
+    address: Option<Vec<Address>>,
     sig_or_topic: Option<String>,
     topics_or_args: Vec<String>,
 ) -> Result<Filter, eyre::Error> {
@@ -223,7 +225,9 @@ mod tests {
             address: ValueOrArray::Value(address.unwrap()).into(),
             topics: [vec![].into(), vec![].into(), vec![].into(), vec![].into()],
         };
-        let filter = build_filter(from_block, to_block, address, None, vec![]).unwrap();
+        let filter =
+            build_filter(from_block, to_block, address.map(|addr| vec![addr]), None, vec![])
+                .unwrap();
         assert_eq!(filter, expected)
     }
 
@@ -362,6 +366,29 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_with_multiple_addresses() {
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: vec![Address::ZERO, ADDRESS.parse().unwrap()].into(),
+            topics: [
+                vec![TRANSFER_TOPIC.parse().unwrap()].into(),
+                vec![].into(),
+                vec![].into(),
+                vec![].into(),
+            ],
+        };
+        let filter = build_filter(
+            None,
+            None,
+            Some(vec![Address::ZERO, ADDRESS.parse().unwrap()]),
+            Some(TRANSFER_TOPIC.to_string()),
+            vec![],
+        )
+        .unwrap();
         assert_eq!(filter, expected)
     }
 

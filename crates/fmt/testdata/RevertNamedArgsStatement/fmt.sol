@@ -1,4 +1,4 @@
-// config: call_compact_args = false
+// config: prefer_compact = "events_errors"
 contract RevertNamedArgsStatement {
     error EmptyError();
     error SimpleError(uint256 val);
@@ -31,5 +31,7 @@ contract RevertNamedArgsStatement {
         revert /* comment2 */ SimpleError({ /* comment3 */ // comment4
             val: 0 // comment 5
         });
+
+        revert Errors.Unauthorized({caller: msg.sender, neededRole: role});
     }
 }

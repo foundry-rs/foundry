@@ -30,7 +30,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Account, Blob,
+    Account, Blob, Transaction,
     transaction::{Recovered, eip4844::TxEip4844Variant},
 };
 use alloy_dyn_abi::TypedData;
@@ -291,6 +291,7 @@ impl EthApi {
             EthRequest::GetBlobSidecarsByBlockId(block_id) => {
                 self.anvil_get_blob_sidecars_by_block_id(block_id).to_rpc_result()
             }
+            EthRequest::GetGenesisTime(()) => self.anvil_get_genesis_time().to_rpc_result(),
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
@@ -343,6 +344,7 @@ impl EthApi {
             EthRequest::DebugCodeByHash(hash, block) => {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
+            EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
@@ -499,6 +501,9 @@ impl EthApi {
             }
             EthRequest::OtsGetTransactionBySenderAndNonce(address, nonce) => {
                 self.ots_get_transaction_by_sender_and_nonce(address, nonce).await.to_rpc_result()
+            }
+            EthRequest::EthGetTransactionBySenderAndNonce(sender, nonce) => {
+                self.transaction_by_sender_and_nonce(sender, nonce).await.to_rpc_result()
             }
             EthRequest::OtsGetContractCreator(address) => {
                 self.ots_get_contract_creator(address).await.to_rpc_result()
@@ -775,18 +780,30 @@ impl EthApi {
         node_info!("eth_getAccountInfo");
 
         if let Some(fork) = self.get_fork() {
+            let block_request = self.block_request(block_number).await?;
             // check if the number predates the fork, if in fork mode
-            if let BlockRequest::Number(number) = self.block_request(block_number).await?
-                && fork.predates_fork(number)
-            {
-                // if this predates the fork we need to fetch balance, nonce, code individually
-                // because the provider might not support this endpoint
-                let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
-                let code = fork.get_code(address, number).map_err(BlockchainError::from);
-                let nonce = self.get_transaction_count(address, Some(number.into()));
-                let (balance, code, nonce) = try_join!(balance, code, nonce)?;
+            if let BlockRequest::Number(number) = block_request {
+                trace!(target: "node", "get_account_info: fork block {}, requested block {number}", fork.block_number());
+                return if fork.predates_fork(number) {
+                    // if this predates the fork we need to fetch balance, nonce, code individually
+                    // because the provider might not support this endpoint
+                    let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
+                    let code = fork.get_code(address, number).map_err(BlockchainError::from);
+                    let nonce = self.get_transaction_count(address, Some(number.into()));
+                    let (balance, code, nonce) = try_join!(balance, code, nonce)?;
 
-                return Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code });
+                    Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code })
+                } else {
+                    // Anvil node is at the same block or higher than the fork block,
+                    // return account info from backend to reflect current state.
+                    let account_info = self.backend.get_account(address).await?;
+                    let code = self.backend.get_code(address, Some(block_request)).await?;
+                    Ok(alloy_rpc_types::eth::AccountInfo {
+                        balance: account_info.balance,
+                        nonce: account_info.nonce,
+                        code,
+                    })
+                };
             }
         }
 
@@ -1359,6 +1376,16 @@ impl EthApi {
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
     }
 
+    /// Handler for RPC call: `anvil_getBlobsByBlockId`
+    pub fn anvil_get_blobs_by_block_id(
+        &self,
+        block_id: impl Into<BlockId>,
+        versioned_hashes: Vec<B256>,
+    ) -> Result<Option<Vec<Blob>>> {
+        node_info!("anvil_getBlobsByBlockId");
+        Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
+    }
+
     /// Handler for RPC call: `anvil_getBlobSidecarsByBlockId`
     pub fn anvil_get_blob_sidecars_by_block_id(
         &self,
@@ -1366,6 +1393,14 @@ impl EthApi {
     ) -> Result<Option<BlobTransactionSidecar>> {
         node_info!("anvil_getBlobSidecarsByBlockId");
         Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
+    }
+
+    /// Returns the genesis time for the Beacon chain
+    ///
+    /// Handler for Beacon API call: `GET /eth/v1/beacon/genesis`
+    pub fn anvil_get_genesis_time(&self) -> Result<u64> {
+        node_info!("anvil_getGenesisTime");
+        Ok(self.backend.genesis_time())
     }
 
     /// Get transaction by its hash.
@@ -1422,6 +1457,91 @@ impl EthApi {
     ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
         self.backend.transaction_by_block_number_and_index(block, idx).await
+    }
+
+    /// Returns the transaction by sender and nonce.
+    ///
+    /// This will check the mempool for pending transactions first, then perform a binary search
+    /// over mined blocks to find the transaction.
+    ///
+    /// Handler for ETH RPC call: `eth_getTransactionBySenderAndNonce`
+    pub async fn transaction_by_sender_and_nonce(
+        &self,
+        sender: Address,
+        nonce: U256,
+    ) -> Result<Option<AnyRpcTransaction>> {
+        node_info!("eth_getTransactionBySenderAndNonce");
+
+        // check pending txs first
+        for pending_tx in self.pool.ready_transactions().chain(self.pool.pending_transactions()) {
+            if U256::from(pending_tx.pending_transaction.nonce()) == nonce
+                && *pending_tx.pending_transaction.sender() == sender
+            {
+                let tx = transaction_build(
+                    Some(*pending_tx.pending_transaction.hash()),
+                    pending_tx.pending_transaction.transaction.clone(),
+                    None,
+                    None,
+                    Some(self.backend.base_fee()),
+                );
+
+                let WithOtherFields { inner: mut tx, other } = tx.0;
+                // we set the from field here explicitly to the set sender of the pending
+                // transaction, in case the transaction is impersonated.
+                let from = *pending_tx.pending_transaction.sender();
+                tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
+
+                return Ok(Some(AnyRpcTransaction(WithOtherFields { inner: tx, other })));
+            }
+        }
+
+        let highest_nonce = self.transaction_count(sender, None).await?.saturating_to::<u64>();
+        let target_nonce = nonce.saturating_to::<u64>();
+
+        // if the nonce is higher or equal to the highest nonce, the transaction doesn't exist
+        if target_nonce >= highest_nonce {
+            return Ok(None);
+        }
+
+        // no mined blocks yet
+        let latest_block = self.backend.best_number();
+        if latest_block == 0 {
+            return Ok(None);
+        }
+
+        // binary search for the block containing the transaction
+        let mut low = 1u64;
+        let mut high = latest_block;
+
+        while low <= high {
+            let mid = low + (high - low) / 2;
+            let mid_nonce =
+                self.transaction_count(sender, Some(mid.into())).await?.saturating_to::<u64>();
+
+            if mid_nonce > target_nonce {
+                high = mid - 1;
+            } else {
+                low = mid + 1;
+            }
+        }
+
+        // search in the target block
+        let target_block = low;
+        if target_block <= latest_block
+            && let Some(txs) =
+                self.backend.mined_transactions_by_block_number(target_block.into()).await
+        {
+            for tx in txs {
+                if tx.from() == sender
+                    && tx.nonce() == target_nonce
+                    && let Some(mined_tx) = self.backend.transaction_by_hash(tx.tx_hash()).await?
+                {
+                    return Ok(Some(mined_tx));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Returns transaction receipt by transaction hash.
@@ -1821,6 +1941,15 @@ impl EthApi {
     ) -> Result<Option<Bytes>> {
         node_info!("debug_codeByHash");
         self.backend.debug_code_by_hash(hash, block_id).await
+    }
+
+    /// Returns the value associated with a key from the database
+    /// Only supports bytecode lookups.
+    ///
+    /// Handler for RPC call: `debug_dbGet`
+    pub async fn debug_db_get(&self, key: String) -> Result<Option<Bytes>> {
+        node_info!("debug_dbGet");
+        self.backend.debug_db_get(key).await
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint
@@ -2625,6 +2754,7 @@ impl EthApi {
                         if !receipt
                             .inner
                             .inner
+                            .inner
                             .as_receipt_with_bloom()
                             .receipt
                             .status
@@ -3405,7 +3535,7 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
     let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),
-        return_revert!() => Err(InvalidTransactionError::Revert(Some(out.0.into())).into()),
+        return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
         reason => Err(BlockchainError::EvmError(reason)),
     }
 }

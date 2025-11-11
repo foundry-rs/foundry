@@ -66,3 +66,8 @@ pub fn test_debug(args: std::fmt::Arguments<'_>) {
     init_tracing();
     debug!("{args}");
 }
+
+pub fn test_trace(args: std::fmt::Arguments<'_>) {
+    init_tracing();
+    trace!("{args}");
+}

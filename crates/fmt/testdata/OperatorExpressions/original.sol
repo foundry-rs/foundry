@@ -58,3 +58,20 @@ function new_y(uint256 x, uint256 dx, uint256 x_basis, uint256 y, uint256 y_basi
         y * _VELODROME_TOKEN_BASIS / y_basis
     ) * y_basis / _VELODROME_TOKEN_BASIS * aReallyLongIdentifierThatMakesTheOperatorExpressionBreak;
 }
+
+contract Repro {
+    bytes4 public constant MINIMAL_INTERFACE_ID = this.calculateMinFeeWeiFor.selector ^ this.convertUSDFeeToWei.selector ^ this.execute.selector ^ this.getMinFeeUSDFor.selector;
+    bool isTestnet = chainId == ARBITRUM_SEPOLIA || chainId == BASE_SEPOLIA || chainId == MODE_SEPOLIA || chainId == OPTIMISM_SEPOLIA || chainId == SEPOLIA;
+
+    function test() {
+        assign = this.calculateMinFeeWeiFor.selector ^ this.convertUSDFeeToWei.selector ^ this.execute.selector ^ this.getMinFeeUSDFor.selector;
+        isMainnet = chainId == ABSTRACT || chainId == ARBITRUM || chainId == AVALANCHE || chainId == BASE
+            || chainId == BERACHAIN || chainId == BLAST || chainId == BSC || chainId == CHILIZ || chainId == COREDAO
+            || chainId == ETHEREUM || chainId == GNOSIS || chainId == HYPEREVM || chainId == LIGHTLINK || chainId == LINEA
+            || chainId == MODE || chainId == MORPH || chainId == OPTIMISM || chainId == POLYGON || chainId == SCROLL
+            || chainId == SEI || chainId == SOPHON || chainId == SUPERSEED || chainId == SONIC || chainId == UNICHAIN
+            || chainId == XDC || chainId == ZKSYNC;
+
+        callsGas += (3 * FixedPointMathLib.divUp(paramsLength, 32)) + FixedPointMathLib.mulDivUp(paramsLength, paramsLength, 524_288);
+    }
+}

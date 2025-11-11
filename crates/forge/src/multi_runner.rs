@@ -21,7 +21,7 @@ use foundry_evm::{
     Env,
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder, FailFast},
+    executors::{EarlyExit, Executor, ExecutorBuilder},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -307,8 +307,8 @@ pub struct TestRunnerConfig {
     pub isolation: bool,
     /// Networks with enabled features.
     pub networks: NetworkConfigs,
-    /// Whether to exit early on test failure.
-    pub fail_fast: FailFast,
+    /// Whether to exit early on test failure or if test run interrupted.
+    pub early_exit: EarlyExit,
 }
 
 impl TestRunnerConfig {
@@ -575,10 +575,7 @@ impl MultiContractRunnerBuilder {
                 if files.is_empty() { None } else { Some(&files) },
             )?;
             pcx.parse();
-            // Check if any sources exist, to avoid logging `error: no files found`
-            if !compiler.sess().source_map().is_empty() {
-                let _ = compiler.lower_asts();
-            }
+            let _ = compiler.lower_asts();
             Ok(())
         })?;
 
@@ -601,8 +598,8 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 networks: self.networks,
+                early_exit: EarlyExit::new(self.fail_fast || self.config.show_progress),
                 config: self.config,
-                fail_fast: FailFast::new(self.fail_fast),
             },
 
             fork: self.fork,
