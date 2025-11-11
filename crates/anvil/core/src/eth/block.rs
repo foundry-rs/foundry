@@ -1,9 +1,13 @@
 use super::transaction::{TransactionInfo, TypedReceipt};
-use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root};
-use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_consensus::{
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root,
+};
 
 // Type alias to optionally support impersonated transactions
 type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
+
+/// Type alias for Ethereum Block with Anvil's transaction type
+pub type Block = alloy_consensus::Block<Transaction>;
 
 /// Container type that gathers all block data
 #[derive(Clone, Debug)]
@@ -13,31 +17,22 @@ pub struct BlockInfo {
     pub receipts: Vec<TypedReceipt>,
 }
 
-/// An Ethereum Block
-#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
-pub struct Block {
-    pub header: Header,
-    pub transactions: Vec<Transaction>,
-    pub ommers: Vec<Header>,
-}
+/// Helper function to create a new block with Header and Anvil transactions
+///
+/// Note: if the `impersonate-tx` feature is enabled this will also accept
+/// `MaybeImpersonatedTransaction`.
+pub fn create_block<T>(mut header: Header, transactions: impl IntoIterator<Item = T>) -> Block
+where
+    T: Into<Transaction>,
+{
+    let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
+    let transactions_root = calculate_transaction_root(&transactions);
 
-impl Block {
-    /// Creates a new block.
-    ///
-    /// Note: if the `impersonate-tx` feature is enabled this will also accept
-    /// `MaybeImpersonatedTransaction`.
-    pub fn new<T>(mut header: Header, transactions: impl IntoIterator<Item = T>) -> Self
-    where
-        T: Into<Transaction>,
-    {
-        let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let transactions_root = calculate_transaction_root(&transactions);
+    header.transactions_root = transactions_root;
+    header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
 
-        header.transactions_root = transactions_root;
-        header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
-
-        Self { header, transactions, ommers: vec![] }
-    }
+    let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
+    Block::new(header, body)
 }
 
 #[cfg(test)]

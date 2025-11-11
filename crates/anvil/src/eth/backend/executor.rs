@@ -25,7 +25,7 @@ use alloy_evm::{
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
-    block::{Block, BlockInfo},
+    block::{BlockInfo, create_block},
     transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_evm::{
@@ -248,7 +248,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             ommers_hash: Default::default(),
             beneficiary,
             state_root: self.db.maybe_state_root().unwrap_or_default(),
-            transactions_root: Default::default(), // Will be computed by Block::new
+            transactions_root: Default::default(), // Will be computed by create_block
             receipts_root,
             logs_bloom: bloom,
             difficulty,
@@ -267,7 +267,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
         };
 
-        let block = Block::new(header, transactions);
+        let block = create_block(header, transactions);
         let block = BlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }

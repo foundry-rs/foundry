@@ -172,7 +172,7 @@ pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredP
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
-        let transaction_hash = block.transactions[receipt_index].hash();
+        let transaction_hash = block.body.transactions[receipt_index].hash();
         for log in receipt.logs() {
             if add_log(block_hash, log, &block, filter) {
                 logs.push(Log {
