@@ -22,8 +22,8 @@ use std::{
 };
 use yansi::Paint;
 
-/// Given a `Project`'s output, removes the matching ABI, Bytecode and
-/// Runtime Bytecode of the given contract.
+/// Given a `Project`'s output, finds the contract by path and name and returns its
+/// ABI, creation bytecode, and `ArtifactId`.
 #[track_caller]
 pub fn remove_contract(
     output: ProjectCompileOutput,
