@@ -239,7 +239,7 @@ impl<'a> InlineLink<'a> {
     }
 
     /// Parses the first inline link.
-    #[allow(unused)]
+    #[cfg(test)]
     fn capture(s: &'a str) -> Option<Self> {
         let cap = RE_INLINE_LINK.captures(s)?;
         Self::from_capture(cap)
@@ -267,16 +267,6 @@ impl<'a> InlineLink<'a> {
             name = part;
         }
         name
-    }
-
-    /// Returns the name of the referenced item and its arguments, if any.
-    ///
-    /// Eg: `safeMint-address-uint256-` returns `("safeMint", ["address", "uint256"])`
-    #[expect(unused)]
-    fn ref_name_exact(&self) -> (&str, impl Iterator<Item = &str> + '_) {
-        let identifier = self.exact_identifier();
-        let mut iter = identifier.split('-');
-        (iter.next().unwrap(), iter.filter(|s| !s.is_empty()))
     }
 
     /// Returns the content of the matched link.
