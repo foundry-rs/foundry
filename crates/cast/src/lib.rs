@@ -374,9 +374,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                     &get_pretty_block_attr(&block, &field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field")),
                 );
+
                 result.push('\n');
             }
-            result
+            result.trim_end().to_string()
         } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
