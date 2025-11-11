@@ -280,27 +280,18 @@ impl BlockchainStorage {
 
         // create a dummy genesis block
         let header = Header {
-            parent_hash: Default::default(),
-            ommers_hash: Default::default(),
-            beneficiary: env.evm_env.block_env.beneficiary,
-            state_root: Default::default(),
-            transactions_root: Default::default(),
-            receipts_root: Default::default(),
-            logs_bloom: Default::default(),
-            difficulty: env.evm_env.block_env.difficulty,
-            number: genesis_number,
-            gas_limit: env.evm_env.block_env.gas_limit,
-            gas_used: 0,
             timestamp,
-            extra_data: Default::default(),
-            mix_hash: Default::default(),
-            nonce: Default::default(),
             base_fee_per_gas: base_fee,
+            gas_limit: env.evm_env.block_env.gas_limit,
+            beneficiary: env.evm_env.block_env.beneficiary,
+            difficulty: env.evm_env.block_env.difficulty,
             blob_gas_used: env.evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
             excess_blob_gas: env.evm_env.block_env.blob_excess_gas(),
+            number: genesis_number,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+            ..Default::default()
         };
         let block = create_block(header, Vec::<MaybeImpersonatedTransaction>::new());
         let genesis_hash = block.header.hash_slow();
