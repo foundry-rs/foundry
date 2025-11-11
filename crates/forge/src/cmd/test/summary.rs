@@ -38,7 +38,10 @@ impl TestSummaryReport {
     fn format_json_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> String {
         let output = json!({
             "results": outcome.results.iter().map(|(contract, suite)| {
-                let (suite_path, suite_name) = contract.split_once(':').unwrap();
+                let (suite_path, suite_name) = match contract.split_once(':') {
+                    Some((path, name)) => (Some(path), name),
+                    None => (None, contract.as_str()),
+                };
                 let passed = suite.successes().count();
                 let failed = suite.failures().count();
                 let skipped = suite.skips().count();
@@ -50,7 +53,9 @@ impl TestSummaryReport {
                 });
 
                 if *is_detailed {
-                    result["file_path"] = serde_json::Value::String(suite_path.to_string());
+                    if let Some(path) = suite_path {
+                        result["file_path"] = serde_json::Value::String(path.to_string());
+                    }
                     result["duration"] = serde_json::Value::String(format!("{:.2?}", suite.duration));
                 }
 
@@ -84,7 +89,10 @@ impl TestSummaryReport {
         // Traverse the test_results vector and build the table
         for (contract, suite) in &outcome.results {
             let mut row = Row::new();
-            let (suite_path, suite_name) = contract.split_once(':').unwrap();
+            let (suite_path, suite_name) = match contract.split_once(':') {
+                Some((path, name)) => (Some(path), name),
+                None => (None, contract.as_str()),
+            };
 
             let passed = suite.successes().count();
             let mut passed_cell = Cell::new(passed);
@@ -113,7 +121,7 @@ impl TestSummaryReport {
             row.add_cell(skipped_cell);
 
             if self.is_detailed {
-                row.add_cell(Cell::new(suite_path));
+                row.add_cell(Cell::new(suite_path.unwrap_or("-")));
                 row.add_cell(Cell::new(format!("{:.2?}", suite.duration)));
             }
 
