@@ -141,7 +141,12 @@ pub fn get_function<'a>(
 pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
     let from = tx.from();
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
-        configure_tx_req_env(env, &tx.clone().into(), Some(from)).expect("cannot fail");
+        configure_tx_req_env(
+            env,
+            &TransactionRequest::from_transaction_with_sender(tx.clone(), from),
+            Some(from),
+        )
+        .expect("cannot fail");
     }
 }
 
@@ -180,8 +185,11 @@ pub fn configure_tx_req_env(
     env.tx.kind = to.unwrap_or(TxKind::Create);
     // If the transaction is impersonated, we need to set the caller to the from
     // address Ref: https://github.com/foundry-rs/foundry/issues/9541
-    env.tx.caller =
-        impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
+    env.tx.caller = if let Some(caller) = impersonated_from {
+        caller
+    } else {
+        from.ok_or_else(|| eyre::eyre!("missing `from` field"))?
+    };
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
     env.tx.nonce = nonce.unwrap_or_default();
     env.tx.value = value.unwrap_or_default();

@@ -89,6 +89,7 @@ async-trait.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+serde_with.workspace = true
 thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true

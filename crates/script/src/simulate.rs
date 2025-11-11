@@ -239,7 +239,7 @@ impl PreSimulationState {
             let mut script_config = self.script_config.clone();
             script_config.evm_opts.fork_url = Some(rpc.clone());
             let runner = script_config.get_runner().await?;
-            Ok((rpc.clone(), runner))
+            Ok((rpc, runner))
         });
         try_join_all(futs).await
     }

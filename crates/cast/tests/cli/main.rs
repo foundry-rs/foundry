@@ -4033,6 +4033,8 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
         "0x9999999999999999999999999999999999999999",
         "adjustPosition(int128)",
         "-33333",
+        "--gas-limit",
+        "1000000",
         "--rpc-url",
         rpc.as_str(),
     ])

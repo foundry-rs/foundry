@@ -27,7 +27,7 @@ use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     TransactionReceiptWithRevertReason,
-    abi::{coerce_value, encode_function_args, get_event, get_func},
+    abi::{coerce_value, encode_function_args, encode_function_args_packed, get_event, get_func},
     compile::etherscan_project,
     flatten,
     fmt::*,
@@ -49,7 +49,6 @@ use std::{
 };
 use tokio::signal::ctrl_c;
 
-use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 
 pub mod args;
