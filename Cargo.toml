@@ -285,13 +285,14 @@ op-alloy-consensus = "0.22.0"
 op-alloy-rpc-types = "0.22.0"
 op-alloy-flz = "0.13.1"
 
-## revm
+## alloy-evm
+alloy-evm = "0.23.2"
+alloy-op-evm = "0.23.2"
+
+# revm
 revm = { version = "31.0.0", default-features = false }
 revm-inspectors = { version = "0.32.0", features = ["serde"] }
 op-revm = { version = "12.0.0", default-features = false }
-## alloy-evm
-alloy-evm = "0.23.1"
-alloy-op-evm = "0.23.1"
 
 ## cli
 anstream = "0.6"
