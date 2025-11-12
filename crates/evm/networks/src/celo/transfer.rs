@@ -46,10 +46,13 @@ pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileRes
 
     // Validate input length (must be exactly 96 bytes: 32 + 32 + 32)
     if input.data.len() != 96 {
-        return Err(PrecompileError::Other(format!(
-            "Invalid input length for Celo transfer precompile: expected 96 bytes, got {}",
-            input.data.len()
-        )));
+        return Err(PrecompileError::Other(
+            format!(
+                "Invalid input length for Celo transfer precompile: expected 96 bytes, got {}",
+                input.data.len()
+            )
+            .into(),
+        ));
     }
 
     // Parse input: from (bytes 12-32), to (bytes 44-64), value (bytes 64-96)
@@ -69,7 +72,9 @@ pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileRes
     let from_account = match internals.load_account(from_address) {
         Ok(account) => account,
         Err(e) => {
-            return Err(PrecompileError::Other(format!("Failed to load from account: {e:?}")));
+            return Err(PrecompileError::Other(
+                format!("Failed to load from account: {e:?}").into(),
+            ));
         }
     };
 
@@ -81,7 +86,7 @@ pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileRes
     let to_account = match internals.load_account(to_address) {
         Ok(account) => account,
         Err(e) => {
-            return Err(PrecompileError::Other(format!("Failed to load to account: {e:?}")));
+            return Err(PrecompileError::Other(format!("Failed to load to account: {e:?}").into()));
         }
     };
 
@@ -93,7 +98,7 @@ pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileRes
     // Transfer the value between accounts
     internals
         .transfer(from_address, to_address, value)
-        .map_err(|e| PrecompileError::Other(format!("Failed to perform transfer: {e:?}")))?;
+        .map_err(|e| PrecompileError::Other(format!("Failed to perform transfer: {e:?}").into()))?;
 
     // No output data for successful transfer
     Ok(PrecompileOutput::new(CELO_TRANSFER_GAS_COST, alloy_primitives::Bytes::new()))
