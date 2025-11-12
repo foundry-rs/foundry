@@ -227,7 +227,7 @@ foundry-compilers = { version = "0.19.5", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
-foundry-fork-db = "0.20"
+foundry-fork-db = "0.21"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
@@ -286,12 +286,12 @@ op-alloy-rpc-types = "0.22.0"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.23.2"
-alloy-op-evm = "0.23.2"
+alloy-evm = "0.24.1"
+alloy-op-evm = "0.24.1"
 
 # revm
 revm = { version = "33.0.0", default-features = false }
-revm-inspectors = { version = "0.32.0", features = ["serde"] }
+revm-inspectors = { version = "0.33.0", features = ["serde"] }
 op-revm = { version = "14.0.0", default-features = false }
 
 ## cli
@@ -437,18 +437,18 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "237d0a0" }
-alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "237d0a0" }
+# alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "237d0a0" }
+# alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "237d0a0" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
 # op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
-revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "0aaab71" }
+# revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "0aaab71" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "main" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b4299fc" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b4299fc" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", rev = "0bea5f0" }
