@@ -451,7 +451,7 @@ op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b4299fc" }
 
 # solar
-solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", rev = "0bea5f0" }
-solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar.git", rev = "0bea5f0" }
-solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar.git", rev = "0bea5f0" }
-solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar.git", rev = "0bea5f0" }
+solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
