@@ -662,6 +662,13 @@ impl<'ast> State<'_, 'ast> {
                 next_enabled = !self.inline_config.is_disabled(next_span);
                 next_lo =
                     self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo());
+
+                // Print comments between this statement and the next one
+                // This handles isolated comments that appear after statements
+                // print_comments only processes comments where c.pos() < pos, so this will
+                // process comments between stmt.span.hi() and next_span.lo()
+                // Use default config to properly handle isolated comments and blank lines
+                self.print_comments(next_span.lo(), CommentConfig::default());
             }
 
             // when this stmt and the next one are enabled, break normally (except if last stmt)
