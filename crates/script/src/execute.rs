@@ -242,17 +242,19 @@ impl RpcData {
         });
 
         let chains = join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
-        if iter.clone().any(|(s, _)| !s) {
+        let unsupported: Vec<_> = chains
+            .iter()
+            .flatten()
+            .filter(|chain| !chain.supports_shanghai())
+            .collect();
+        if !unsupported.is_empty() {
             let msg = format!(
                 "\
 EIP-3855 is not supported in one or more of the RPCs used.
 Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
 For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
-                iter.filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| *chain as u64)
-                    .format(", ")
+                unsupported.iter().map(|chain| (**chain) as u64).format(", ")
             );
             sh_warn!("{msg}")?;
         }
