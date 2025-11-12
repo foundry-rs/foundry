@@ -87,6 +87,8 @@ impl FromStr for Dependency {
                     token.as_str(),
                     project.trim_end_matches(".git")
                 ))
+            } else if dependency.starts_with("git@") {
+                Some(format!("git@{brand}.{tld}:{}", project.trim_end_matches(".git")))
             } else {
                 Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")))
             }
@@ -176,17 +178,12 @@ mod tests {
                 None,
             ),
             (
-                "git@github.com:gakonst/lootloose@v1",
-                "https://github.com/gakonst/lootloose",
+                "git@github.com:gakonst/lootloose@tag=v1",
+                "git@github.com:gakonst/lootloose",
                 Some("v1"),
                 None,
             ),
-            (
-                "git@github.com:gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                None,
-            ),
+            ("git@github.com:gakonst/lootloose", "git@github.com:gakonst/lootloose", None, None),
             (
                 "https://gitlab.com/gakonst/lootloose",
                 "https://gitlab.com/gakonst/lootloose",
@@ -237,8 +234,8 @@ mod tests {
                 Some("loot"),
             ),
             (
-                "loot=git@github.com:gakonst/lootloose@v1",
-                "https://github.com/gakonst/lootloose",
+                "loot=git@github.com:gakonst/lootloose@tag=v1",
+                "git@github.com:gakonst/lootloose",
                 Some("v1"),
                 Some("loot"),
             ),

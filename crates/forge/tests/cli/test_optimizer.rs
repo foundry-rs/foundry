@@ -553,7 +553,7 @@ Compiling 22 files with [..]
 contract Counter {
     uint256 public number;
 
-    function setNumber(uint256 newNumber) public virtual {
+    function setNumber(uint256) public virtual {
         number = 12345;
     }
 
@@ -568,7 +568,7 @@ contract Counter {
     // compiled and both tests fail.
     cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 2 files with [..]
+Compiling 3 files with [..]
 ...
 [FAIL: assertion failed: 12347 != 1] test_Increment() (gas: [..])
 [FAIL: assertion failed: 12345 != 1] test_SetNumber() (gas: [..])
