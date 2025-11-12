@@ -47,6 +47,10 @@ forgetest!(testdata, |_prj, cmd| {
     if orig_assert.get_output().status.success() {
         return;
     }
+    let stdout = orig_assert.get_output().stdout_lossy();
+    if let Some(i) = stdout.rfind("Suite result:") {
+        test_debug!("--- short stdout ---\n\n{}\n\n---", &stdout[i..]);
+    }
 
     // Retry failed tests.
     cmd.args(["--rerun"]);
@@ -974,7 +978,7 @@ contract PrecompileLabelsTest is Test {
         vm.deal(address(0x000000000000000000636F6e736F6c652e6c6f67), 1 ether);
         vm.deal(address(0x4e59b44847b379578588920cA78FbF26c0B4956C), 1 ether);
         vm.deal(address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38), 1 ether);
-        vm.deal(address(0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84), 1 ether);
+        vm.deal(address(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496), 1 ether);
         vm.deal(address(1), 1 ether);
         vm.deal(address(2), 1 ether);
         vm.deal(address(3), 1 ether);
@@ -1007,7 +1011,7 @@ Traces:
     │   └─ ← [Return]
     ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
     │   └─ ← [Return]
-    ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
+    ├─ [0] VM::deal(PrecompileLabelsTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
     │   └─ ← [Return]
@@ -4235,4 +4239,54 @@ contract InvariantOutputTest is Test {
     cmd.args(["test", "--mt", "invariant_check_count", "--color", "always"])
         .assert_failure()
         .stdout_eq(file!["../../fixtures/invariant_traces.svg": TermSvg]);
+});
+
+forgetest_init!(memory_limit, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.memory_limit = 500 * 32;
+    });
+    prj.add_test(
+        "MemoryLimit.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Memory {
+    function allocate(uint256 n) external pure returns (uint256[] memory) {
+        return new uint256[](n);
+    }
+}
+
+contract MemoryLimitTest is Test {
+    Memory public m = new Memory();
+
+    function test_inBounds() public {
+        m.allocate(100);
+    }
+
+    function test_oom() public {
+        m.allocate(1000);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/MemoryLimit.t.sol:MemoryLimitTest
+[PASS] test_inBounds() ([GAS])
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MemoryLimit.t.sol:MemoryLimitTest
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });

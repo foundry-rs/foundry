@@ -46,7 +46,7 @@ use foundry_evm_core::{
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
-use foundry_wallets::multi_wallet::MultiWallet;
+use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
@@ -62,7 +62,6 @@ use revm::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
     primitives::hardfork::SpecId,
-    state::EvmStorageSlot,
 };
 use serde_json::Value;
 use std::{
@@ -317,8 +316,10 @@ impl ArbitraryStorage {
     /// - update account's storage with given value.
     pub fn save(&mut self, ecx: Ecx, address: Address, slot: U256, data: U256) {
         self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
-        if let Ok(mut account) = ecx.journaled_state.load_account(address) {
-            account.storage.insert(slot, EvmStorageSlot::new(data, 0));
+        if ecx.journaled_state.load_account(address).is_ok() {
+            ecx.journaled_state
+                .sstore(address, slot, data)
+                .expect("could not set arbitrary storage value");
         }
     }
 
@@ -335,15 +336,17 @@ impl ArbitraryStorage {
             None => {
                 storage_cache.insert(slot, new_value);
                 // Update source storage with new value.
-                if let Ok(mut source_account) = ecx.journaled_state.load_account(*source) {
-                    source_account.storage.insert(slot, EvmStorageSlot::new(new_value, 0));
+                if ecx.journaled_state.load_account(*source).is_ok() {
+                    ecx.journaled_state
+                        .sstore(*source, slot, new_value)
+                        .expect("could not copy arbitrary storage value");
                 }
                 new_value
             }
         };
         // Update target storage with new value.
-        if let Ok(mut target_account) = ecx.journaled_state.load_account(target) {
-            target_account.storage.insert(slot, EvmStorageSlot::new(value, 0));
+        if ecx.journaled_state.load_account(target).is_ok() {
+            ecx.journaled_state.sstore(target, slot, value).expect("could not set storage");
         }
         value
     }
