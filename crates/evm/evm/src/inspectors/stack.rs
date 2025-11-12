@@ -987,7 +987,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                     return Some(CallOutcome {
                         result,
                         memory_offset: call.return_memory_offset.clone(),
-                        was_precompile_called: false,
+                        was_precompile_called: true,
                         precompile_call_logs: vec![],
                     });
                 }

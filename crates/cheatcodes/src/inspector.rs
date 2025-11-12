@@ -746,7 +746,7 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
-                    was_precompile_called: false,
+                    was_precompile_called: true,
                     precompile_call_logs: vec![],
                 }),
                 Err(err) => Some(CallOutcome {
@@ -821,7 +821,7 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
-                    was_precompile_called: false,
+                    was_precompile_called: true,
                     precompile_call_logs: vec![],
                 });
             }
