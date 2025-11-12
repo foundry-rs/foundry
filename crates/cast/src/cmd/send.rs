@@ -226,7 +226,7 @@ impl SendTxArgs {
                 .wallet(wallet)
                 .connect_provider(&provider);
 
-            cast_send(provider, tx, cast_async, sync, confirmations, timeout).await
+            cast_send(provider, tx_request, cast_async, sync, confirmations, timeout).await
         }
     }
 }
