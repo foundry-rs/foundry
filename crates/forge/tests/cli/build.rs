@@ -412,3 +412,49 @@ with remappings:
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/12458>
+// <https://github.com/foundry-rs/foundry/issues/12496>
+forgetest!(build_with_invalid_natspec, |prj, cmd| {
+    prj.add_source(
+        "ContractWithInvalidNatspec.sol",
+        r#"
+contract ContractA {
+    /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
+}
+
+/// Some editors highlight `@note` or `@todo`
+/// @note foo bar
+
+/// @title ContractB
+contract ContractB {
+    /**
+    some example code in a comment:
+    import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+    */
+}
+   "#,
+    );
+
+    cmd.args(["build", "src/ContractWithInvalidNatspec.sol"]).assert_success().stderr_eq(str![[
+        r#"
+warning: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
+ [FILE]:5:5
+  |
+5 |     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+...
+
+warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
+ [FILE]:9:1
+  |
+9 | /// @note foo bar
+  | ^^^^^^^^^^^^^^^^^
+  |
+...
+
+
+"#
+    ]]);
+});

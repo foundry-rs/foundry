@@ -13,6 +13,8 @@ use alloy_signer_gcp::GcpSignerError;
 #[cfg(feature = "turnkey")]
 use alloy_signer_turnkey::TurnkeySignerError;
 
+use crate::wallet_browser::error::BrowserWalletError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum PrivateKeyError {
     #[error("Failed to create wallet from private key. Private key is invalid hex: {0}")]
@@ -43,6 +45,8 @@ pub enum WalletSignerError {
     #[cfg(feature = "turnkey")]
     Turnkey(#[from] TurnkeySignerError),
     #[error(transparent)]
+    Browser(#[from] BrowserWalletError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     InvalidHex(#[from] FromHexError),
@@ -63,5 +67,9 @@ impl WalletSignerError {
 
     pub fn turnkey_unsupported() -> Self {
         Self::UnsupportedSigner("Turnkey")
+    }
+
+    pub fn browser_unsupported() -> Self {
+        Self::UnsupportedSigner("Browser Wallet")
     }
 }

@@ -152,7 +152,11 @@ impl AsDoc for Document {
                                     .as_ref()
                                     .and_then(|link| {
                                         link.get(base_ident).map(|path| {
-                                            let path = Path::new("/").join(path);
+                                            let path = if cfg!(windows) {
+                                                Path::new("\\").join(path)
+                                            } else {
+                                                Path::new("/").join(path)
+                                            };
                                             Markdown::Link(&base_doc, &path.display().to_string())
                                                 .as_doc()
                                         })

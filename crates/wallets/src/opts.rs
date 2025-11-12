@@ -1,4 +1,4 @@
-use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
+use crate::{signer::WalletSigner, utils, wallet_raw::RawWalletOpts};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::Result;
@@ -6,12 +6,13 @@ use serde::Serialize;
 
 /// The wallet options can either be:
 /// 1. Raw (via private key / mnemonic file, see `RawWallet`)
-/// 2. Ledger
-/// 3. Trezor
-/// 4. Keystore (via file path)
+/// 2. Keystore (via file path)
+/// 3. Ledger
+/// 4. Trezor
 /// 5. AWS KMS
 /// 6. Google Cloud KMS
 /// 7. Turnkey
+/// 8. Browser wallet
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct WalletOpts {
@@ -101,6 +102,36 @@ pub struct WalletOpts {
     /// See: <https://docs.turnkey.com/getting-started/quickstart>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
     pub turnkey: bool,
+
+    /// Use a browser wallet.
+    #[arg(long, help_heading = "Wallet options - browser")]
+    pub browser: bool,
+
+    /// Port for the browser wallet server.
+    #[arg(
+        long,
+        help_heading = "Wallet options - browser",
+        value_name = "PORT",
+        default_value = "9545",
+        requires = "browser"
+    )]
+    pub browser_port: u16,
+
+    /// Whether to open the browser for wallet connection.
+    #[arg(
+        long,
+        help_heading = "Wallet options - browser",
+        default_value_t = false,
+        requires = "browser"
+    )]
+    pub browser_disable_open: bool,
+
+    /// Enable development mode for the browser wallet.
+    /// This relaxes certain security features for local development.
+    ///
+    /// **WARNING**: This should only be used in a development environment.
+    #[arg(long, help_heading = "Wallet options - browser", hide = true)]
+    pub browser_development: bool,
 }
 
 impl WalletOpts {
@@ -138,6 +169,13 @@ impl WalletOpts {
                 eyre::eyre!("TURNKEY_ADDRESS could not be parsed as an Ethereum address")
             })?;
             WalletSigner::from_turnkey(api_private_key, organization_id, address)?
+        } else if self.browser {
+            WalletSigner::from_browser(
+                self.browser_port,
+                !self.browser_disable_open,
+                self.browser_development,
+            )
+            .await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -173,6 +211,7 @@ flag to set your key via:
 --turnkey
 --trezor
 --ledger
+--browser
 
 Alternatively, when using the `cast send` or `cast mktx` commands with a local node
 or RPC that has unlocked accounts, the --unlocked or --ethsign flags can be used,
@@ -242,6 +281,10 @@ mod tests {
             aws: false,
             gcp: false,
             turnkey: false,
+            browser: false,
+            browser_port: 9545,
+            browser_development: false,
+            browser_disable_open: false,
         };
         match wallet.signer().await {
             Ok(_) => {
