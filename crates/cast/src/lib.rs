@@ -329,6 +329,19 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(res)
     }
 
+    /// Sends a transaction and waits for receipt synchronously
+    pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
+        // Send transaction and wait for receipt in one operation
+        // This provides synchronous behavior by eliminating manual polling
+        
+        let pending_tx = self.send(tx).await?;
+        let tx_hash = pending_tx.inner().tx_hash();
+        
+        // Wait for transaction receipt to be mined
+        let receipt = self.receipt(format!("{tx_hash:#x}"), None, 1, None, false).await?;
+        Ok(receipt)
+    }
+
     /// # Example
     ///
     /// ```
