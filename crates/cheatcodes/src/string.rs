@@ -161,8 +161,8 @@ where
             .map(|s| parse_value(s.as_ref(), ty))
             .collect::<Result<Vec<_>, _>>()
             .map(|vec| DynSolValue::Array(vec).abi_encode()),
-        // return the empty encoded Bytes when values is empty or the first element is empty
-        _ => Ok("".abi_encode()),
+        // return the empty encoded array when values is empty or the first element is empty
+        _ => Ok(DynSolValue::Array(Vec::new()).abi_encode()),
     }
 }
 
