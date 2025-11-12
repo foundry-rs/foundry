@@ -24,7 +24,3 @@ _
 .vite
 .wrangler
 *.zip
-
-
-.github/instructions/kluster-code-verify.instructions.md
-.kluster
