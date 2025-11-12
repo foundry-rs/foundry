@@ -285,31 +285,31 @@ impl FeeHistoryService {
                 .enumerate()
                 .map(|(i, receipt)| {
                     let gas_used = receipt.cumulative_gas_used();
-                    let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
-                    {
-                        Some(TypedTransaction::Legacy(t)) => {
-                            t.tx().gas_price.saturating_sub(base_fee)
-                        }
-                        Some(TypedTransaction::EIP2930(t)) => {
-                            t.tx().gas_price.saturating_sub(base_fee)
-                        }
-                        Some(TypedTransaction::EIP1559(t)) => t
-                            .tx()
-                            .max_priority_fee_per_gas
-                            .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
-                        // TODO: This probably needs to be extended to extract 4844 info.
-                        Some(TypedTransaction::EIP4844(t)) => t
-                            .tx()
-                            .tx()
-                            .max_priority_fee_per_gas
-                            .min(t.tx().tx().max_fee_per_gas.saturating_sub(base_fee)),
-                        Some(TypedTransaction::EIP7702(t)) => t
-                            .tx()
-                            .max_priority_fee_per_gas
-                            .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
-                        Some(TypedTransaction::Deposit(_)) => 0,
-                        None => 0,
-                    };
+                    let effective_reward =
+                        match block.body.transactions.get(i).map(|tx| &tx.transaction) {
+                            Some(TypedTransaction::Legacy(t)) => {
+                                t.tx().gas_price.saturating_sub(base_fee)
+                            }
+                            Some(TypedTransaction::EIP2930(t)) => {
+                                t.tx().gas_price.saturating_sub(base_fee)
+                            }
+                            Some(TypedTransaction::EIP1559(t)) => t
+                                .tx()
+                                .max_priority_fee_per_gas
+                                .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
+                            // TODO: This probably needs to be extended to extract 4844 info.
+                            Some(TypedTransaction::EIP4844(t)) => t
+                                .tx()
+                                .tx()
+                                .max_priority_fee_per_gas
+                                .min(t.tx().tx().max_fee_per_gas.saturating_sub(base_fee)),
+                            Some(TypedTransaction::EIP7702(t)) => t
+                                .tx()
+                                .max_priority_fee_per_gas
+                                .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
+                            Some(TypedTransaction::Deposit(_)) => 0,
+                            None => 0,
+                        };
 
                     (gas_used, effective_reward)
                 })
