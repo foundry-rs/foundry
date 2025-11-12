@@ -13,7 +13,6 @@ use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 use foundry_evm_networks::NetworkConfigs;
-use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
     net::IpAddr,
