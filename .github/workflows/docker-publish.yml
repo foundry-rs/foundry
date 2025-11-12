@@ -3,45 +3,47 @@ name: docker
 permissions: {}
 
 on:
-  # Trigger without any parameters a proactive rebuild
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        default: nightly
+        description: The tag we're building for
+        type: string
   workflow_call:
     inputs:
       tag_name:
         required: true
         type: string
 
+concurrency:
+  group: docker-${{ github.head_ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
-  # Will resolve to foundry-rs/foundry
   IMAGE_NAME: ${{ github.repository }}
+
+  # Keep in sync with `release.yml`.
+  RUST_PROFILE: maxperf
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
 
 jobs:
   build:
     name: build and push
-    runs-on: depot-ubuntu-22.04-16
+    runs-on: depot-ubuntu-latest
     permissions:
       contents: read
       id-token: write
       packages: write
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - name: Install gcc aarch64
-        id: aarch_64_setup
-        run: |
-          sudo apt update && sudo apt install -y gcc-aarch64-linux-gnu
+
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Login into registry ${{ env.REGISTRY }}
-        # Ensure this doesn't trigger on PR's
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -52,7 +54,7 @@ jobs:
       # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
@@ -80,5 +82,20 @@ jobs:
           printf "TAGS -> %s\n" "${{ steps.docker_tagging.outputs.docker_tags }}"
           printf "LABELS -> %s\n" "${{ steps.meta.outputs.labels }}"
 
-      - name: Build and push foundry image
-        run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} CARGO_TAG_NAME=${{ inputs.tag_name }} PROFILE=maxperf docker-build-push
+      - name: Set up Depot CLI
+        uses: depot/setup-action@b0b1ea4f69e92ebf5dea3f8713a1b0c37b2126a5 # v1
+
+      - name: Build and push Foundry image
+        uses: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
+        with:
+          build-args: |
+            RUST_PROFILE=${{ env.RUST_PROFILE }}
+            RUST_FEATURES=${{ env.RUST_FEATURES }}
+            TAG_NAME=${{ inputs.tag_name }}
+            VERGEN_GIT_SHA=${{ github.sha }}
+          project: 8gkbxxjrpw
+          context: .
+          tags: ${{ steps.docker_tagging.outputs.docker_tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          push: true

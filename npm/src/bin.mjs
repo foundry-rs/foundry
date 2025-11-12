@@ -143,7 +143,7 @@ function forwardSignal(signal) {
     if (!child.killed)
       child.kill(signal)
   } catch (error) {
-    if (!error || error.code !== 'ESRCH')
+    if (!error || (typeof error === 'object' && 'code' in error && error.code !== 'ESRCH'))
       throw error
   }
 

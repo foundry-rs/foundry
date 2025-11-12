@@ -58,6 +58,7 @@ fn beacon_router(api: EthApi) -> Router {
             get(beacon_handler::handle_get_blob_sidecars),
         )
         .route("/eth/v1/beacon/blobs/{block_id}", get(beacon_handler::handle_get_blobs))
+        .route("/eth/v1/beacon/genesis", get(beacon_handler::handle_get_genesis))
         .with_state(api)
 }
 

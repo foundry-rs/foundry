@@ -1,12 +1,5 @@
-use alloy_evm::{
-    Database, Evm,
-    eth::EthEvmContext,
-    precompiles::{DynPrecompile, PrecompilesMap},
-};
+use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
-use foundry_evm::core::either_evm::EitherEvm;
-use op_revm::OpContext;
-use revm::Inspector;
 use std::fmt::Debug;
 
 /// Object-safe trait that enables injecting extra precompiles when using
@@ -16,24 +9,11 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     fn precompiles(&self) -> Vec<(Address, DynPrecompile)>;
 }
 
-/// Inject custom precompiles into the EVM dynamically.
-pub fn inject_custom_precompiles<DB, I>(
-    evm: &mut EitherEvm<DB, I, PrecompilesMap>,
-    precompiles: Vec<(Address, DynPrecompile)>,
-) where
-    DB: Database,
-    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
-{
-    for (addr, precompile) in precompiles {
-        evm.precompiles_mut().apply_precompile(&addr, move |_| Some(precompile));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
 
-    use crate::{PrecompileFactory, inject_custom_precompiles};
+    use crate::PrecompileFactory;
     use alloy_evm::{
         EthEvm, Evm, EvmEnv,
         eth::EthEvmContext,
@@ -78,6 +58,7 @@ mod tests {
                     Ok(PrecompileOutput {
                         bytes: Bytes::copy_from_slice(input.data),
                         gas_used: 0,
+                        gas_refunded: 0,
                         reverted: false,
                     })
                 }),
@@ -194,7 +175,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -216,7 +197,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -241,7 +222,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -266,7 +247,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
