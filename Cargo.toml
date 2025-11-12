@@ -441,8 +441,8 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "237d0a0" }
 
 ## revm
-# revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
-# op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
+revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
+op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
 # revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "0aaab71" }
 
 ## foundry
