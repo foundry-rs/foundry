@@ -58,6 +58,7 @@ mod tests {
                     Ok(PrecompileOutput {
                         bytes: Bytes::copy_from_slice(input.data),
                         gas_used: 0,
+                        gas_refunded: 0,
                         reverted: false,
                     })
                 }),

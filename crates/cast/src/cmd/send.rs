@@ -1,7 +1,5 @@
-use crate::{
-    Cast,
-    tx::{self, CastTxBuilder},
-};
+use std::{path::PathBuf, str::FromStr, time::Duration};
+
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -15,7 +13,12 @@ use foundry_cli::{
     utils,
     utils::LoadConfig,
 };
-use std::{path::PathBuf, str::FromStr, time::Duration};
+use foundry_wallets::WalletSigner;
+
+use crate::{
+    Cast,
+    tx::{self, CastTxBuilder},
+};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -158,7 +161,7 @@ impl SendTxArgs {
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
-        if unlocked {
+        if unlocked && !eth.wallet.browser {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
                 let current_chain_id = provider.get_chain_id().await?;
@@ -192,14 +195,33 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
-            let (tx, _) = builder.build(&signer).await?;
+            // Browser wallets work differently as they sign and send the transaction in one step.
+            if eth.wallet.browser
+                && let WalletSigner::Browser(ref browser_signer) = signer
+            {
+                let (tx_request, _) = builder.build(from).await?;
+                let tx_hash = browser_signer.send_transaction_via_browser(tx_request.inner).await?;
+
+                if cast_async {
+                    sh_println!("{tx_hash:#x}")?;
+                } else {
+                    let receipt = Cast::new(&provider)
+                        .receipt(format!("{tx_hash:#x}"), None, confirmations, Some(timeout), false)
+                        .await?;
+                    sh_println!("{receipt}")?;
+                }
+
+                return Ok(());
+            }
+
+            let (tx_request, _) = builder.build(&signer).await?;
 
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
                 .connect_provider(&provider);
 
-            cast_send(provider, tx, cast_async, confirmations, timeout).await
+            cast_send(provider, tx_request, cast_async, confirmations, timeout).await
         }
     }
 }
