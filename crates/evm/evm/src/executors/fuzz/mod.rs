@@ -46,7 +46,8 @@ struct FuzzTestData {
     breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
     coverage: Option<HitMaps>,
-    // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs is false)
+    // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs
+    // is false)
     logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
     deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
@@ -198,8 +199,9 @@ impl FuzzedExecutor {
                             test_data.breakpoints.replace(case.breakpoints);
                         }
 
-                        // Always store logs from the last run in test_data.logs for display at verbosity >= 2.
-                        // When show_logs is true, accumulate all logs. When false, only keep the last run's logs.
+                        // Always store logs from the last run in test_data.logs for display at
+                        // verbosity >= 2. When show_logs is true,
+                        // accumulate all logs. When false, only keep the last run's logs.
                         if self.config.show_logs {
                             test_data.logs.extend(case.logs);
                         } else {
