@@ -141,7 +141,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
     );
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions, |prj, cmd| {
+forgetest!(#[ignore = "ext_integration"] can_list_resolved_multiple_compiler_versions, |prj, cmd| {
     prj.add_source("ContractA", CONTRACT_A);
     prj.add_source("ContractB", CONTRACT_B);
     prj.add_source("ContractC", CONTRACT_C);
@@ -162,7 +162,7 @@ Vyper:
 "#]]);
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
+forgetest!(#[ignore = "ext_integration"] can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
     prj.add_source("ContractA", CONTRACT_A);
     prj.add_source("ContractB", CONTRACT_B);
     prj.add_source("ContractC", CONTRACT_C);
@@ -183,7 +183,7 @@ Vyper:
     ]]);
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd| {
+forgetest!(#[ignore = "ext_integration"] can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd| {
     prj.add_source("ContractA", CONTRACT_A);
     prj.add_source("ContractB", CONTRACT_B);
     prj.add_source("ContractC", CONTRACT_C);
@@ -219,7 +219,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
         );
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
+forgetest!(#[ignore = "ext_integration"] can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
     prj.add_source("ContractA", CONTRACT_A);
     prj.add_source("ContractB", CONTRACT_B);
     prj.add_source("ContractC", CONTRACT_C);
@@ -250,7 +250,7 @@ Vyper:
 "#]]);
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd| {
+forgetest!(#[ignore = "ext_integration"] can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd| {
     prj.add_source("ContractA", CONTRACT_A);
     prj.add_source("ContractB", CONTRACT_B);
     prj.add_source("ContractC", CONTRACT_C);

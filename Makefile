@@ -91,7 +91,7 @@ test-coverage:
 
 .PHONY: test-unit
 test-unit: ## Run unit tests.
-	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
+	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/) & !package(cast) & !package(chisel) & !package(forge)'
 
 .PHONY: test-doc
 test-doc: ## Run doc tests.

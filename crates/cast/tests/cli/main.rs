@@ -1381,7 +1381,7 @@ revertReason         [..]Transaction too old, data: "0x08c379a000000000000000000
 });
 
 // tests that the revert reason is loaded using the correct `from` address.
-casttest!(revert_reason_from, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] revert_reason_from, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     // https://sepolia.etherscan.io/tx/0x10ee70cf9f5ced5c515e8d53bfab5ea9f5c72cd61b25fba455c8355ee286c4e4
     cmd.args([
@@ -2140,7 +2140,7 @@ casttest!(storage_layout_complex_md, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(storage_layout_complex_proxy, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] storage_layout_complex_proxy, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -3926,7 +3926,7 @@ Transaction successfully executed.
 // instead of being treated as command flags
 
 // Test that cast call accepts negative numbers as function arguments
-casttest!(cast_call_negative_numbers, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] cast_call_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     // Test with negative int parameter - should not treat -456789 as a flag
     cmd.args([
@@ -3941,7 +3941,7 @@ casttest!(cast_call_negative_numbers, |_prj, cmd| {
 });
 
 // Test negative numbers with multiple parameters
-casttest!(cast_call_multiple_negative_numbers, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] cast_call_multiple_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "call",
@@ -3957,7 +3957,7 @@ casttest!(cast_call_multiple_negative_numbers, |_prj, cmd| {
 });
 
 // Test negative numbers mixed with flags
-casttest!(cast_call_negative_with_flags, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] cast_call_negative_with_flags, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "call",
@@ -3992,7 +3992,7 @@ For more information, try '--help'.
 });
 
 // Test cast estimate with negative numbers
-casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] cast_estimate_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "estimate",
@@ -4006,7 +4006,7 @@ casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
 });
 
 // Test cast mktx with negative numbers
-casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] cast_mktx_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "mktx",
@@ -4024,7 +4024,7 @@ casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
 });
 
 // Test cast access-list with negative numbers
-casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
+casttest!(#[ignore = "ext_integration"] cast_access_list_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "access-list",

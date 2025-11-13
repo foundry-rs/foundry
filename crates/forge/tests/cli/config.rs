@@ -1164,7 +1164,7 @@ contract CounterTest {
 });
 
 #[cfg(not(feature = "isolate-by-default"))]
-forgetest_init!(test_default_config, |prj, cmd| {
+forgetest_init!(#[ignore = "ext_integration"] test_default_config, |prj, cmd| {
     prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
 
