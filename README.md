@@ -1,3 +1,4 @@
+> Note: In multi-contract test setups, forge aggregates gas usage per call context. Developers may observe higher totals when factory patterns or nested calls are involved.
 <div align="center">
   <img src=".github/assets/banner.png" alt="Foundry banner" />
 
