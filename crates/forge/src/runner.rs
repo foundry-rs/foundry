@@ -282,60 +282,76 @@ impl<'a> ContractRunner<'a> {
         FuzzFixtures::new(fixtures)
     }
 
+        /// Validates a special function (setUp, afterInvariant, etc.) and returns early if there are
+    /// multiple declarations or other validation errors.
+    /// 
+    /// Returns `Ok(functions)` if validation passed, or `Err(SuiteResult)` with early return result.
+    fn validate_special_function(
+        &self,
+        filter: impl Fn(&&Function) -> bool,
+        expected_name: &str,
+        warnings: &mut Vec<String>,
+        start: Instant,
+    ) -> Result<Vec<&Function>, SuiteResult> {
+        let functions: Vec<_> = self.contract.abi.functions().filter(filter).collect();
+
+        // Check for multiple declarations
+        if functions.len() > 1 {
+            return Err(SuiteResult::new(
+                start.elapsed(),
+                [(
+                    format!("{}()", expected_name),
+                    TestResult::fail(format!("multiple {} functions", expected_name)),
+                )]
+                .into(),
+                warnings.clone(),
+            ));
+        }
+
+        // Check for incorrect naming (e.g., "setup" instead of "setUp")
+        for &func in &functions {
+            if func.name != expected_name {
+                warnings.push(format!(
+                    "Found invalid {} function \"{}\" did you mean \"{}()\"?",
+                    expected_name.to_lowercase(),
+                    func.signature(),
+                    expected_name
+                ));
+            }
+        }
+
+        Ok(functions)
+    }
+
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(mut self, filter: &dyn TestFilter) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
 
         // Check if `setUp` function with valid signature declared.
-        let setup_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
+        let setup_fns = match self.validate_special_function(
+            |func| func.name.is_setup(),
+            "setUp",
+            &mut warnings,
+            start,
+        ) {
+            Ok(fns) => fns,
+            Err(result) => return result,
+        };
         let call_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
-        // There is a single miss-cased `setUp` function, so we add a warning
-        for &setup_fn in &setup_fns {
-            if setup_fn.name != "setUp" {
-                warnings.push(format!(
-                    "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                    setup_fn.signature()
-                ));
-            }
-        }
-
-        // There are multiple setUp function, so we return a single test result for `setUp`
-        if setup_fns.len() > 1 {
-            return SuiteResult::new(
-                start.elapsed(),
-                [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
-                    .into(),
-                warnings,
-            );
-        }
-
+        
         // Check if `afterInvariant` function with valid signature declared.
-        let after_invariant_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.name.is_after_invariant()).collect();
-        if after_invariant_fns.len() > 1 {
-            // Return a single test result failure if multiple functions declared.
-            return SuiteResult::new(
-                start.elapsed(),
-                [(
-                    "afterInvariant()".to_string(),
-                    TestResult::fail("multiple afterInvariant functions".to_string()),
-                )]
-                .into(),
-                warnings,
-            );
-        }
-        let call_after_invariant = after_invariant_fns.first().is_some_and(|after_invariant_fn| {
-            let match_sig = after_invariant_fn.name == "afterInvariant";
-            if !match_sig {
-                warnings.push(format!(
-                    "Found invalid afterInvariant function \"{}\" did you mean \"afterInvariant()\"?",
-                    after_invariant_fn.signature()
-                ));
-            }
-            match_sig
-        });
+         let after_invariant_fns = match self.validate_special_function(
+            |func| func.name.is_after_invariant(),
+            "afterInvariant",
+            &mut warnings,
+            start,
+        ) {
+            Ok(fns) => fns,
+            Err(result) => return result,
+        };
+        let call_after_invariant =
+            after_invariant_fns.len() == 1 && after_invariant_fns[0].name == "afterInvariant";
 
         // Invariant testing requires tracing to figure out what contracts were created.
         // We also want to disable `debug` for setup since we won't be using those traces.
