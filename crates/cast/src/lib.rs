@@ -339,7 +339,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None, false).await?;
+    /// let block = cast.block(5, true, vec![], false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -348,14 +348,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         &self,
         block: B,
         full: bool,
-        field: Option<String>,
+        fields: Vec<String>,
         raw: bool,
     ) -> Result<String> {
         let block = block.into();
-        if let Some(ref field) = field
-            && field == "transactions"
-            && !full
-        {
+        if fields.contains(&"transactions".into()) && !full {
             eyre::bail!("use --full to view transactions")
         }
 
@@ -369,9 +366,17 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(if raw {
             let header: Header = block.into_inner().header.inner.try_into_header()?;
             format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
-        } else if let Some(ref field) = field {
-            get_pretty_block_attr(&block, field)
-                .unwrap_or_else(|| format!("{field} is not a valid block field"))
+        } else if !fields.is_empty() {
+            let mut result = String::new();
+            for field in fields {
+                result.push_str(
+                    &get_pretty_block_attr(&block, &field)
+                        .unwrap_or_else(|| format!("{field} is not a valid block field")),
+                );
+
+                result.push('\n');
+            }
+            result.trim_end().to_string()
         } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
@@ -385,7 +390,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             block.into(),
             false,
             // Select only select field
-            Some(field),
+            vec![field],
             false,
         )
         .await?
@@ -414,14 +419,15 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             0,
             false,
             // Select only block hash
-            Some(String::from("hash")),
+            vec![String::from("hash")],
             false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                match &(Self::block(self, 1920000, false, vec![String::from("hash")], false)
+                    .await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
@@ -464,7 +470,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
+                match &(Self::block(self, 1, false, vec![String::from("hash")], false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
