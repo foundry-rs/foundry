@@ -553,7 +553,7 @@ Compiling 22 files with [..]
 contract Counter {
     uint256 public number;
 
-    function setNumber(uint256 newNumber) public virtual {
+    function setNumber(uint256) public virtual {
         number = 12345;
     }
 

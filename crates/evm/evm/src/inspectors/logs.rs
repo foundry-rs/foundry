@@ -32,6 +32,8 @@ impl LogCollector {
             return Some(CallOutcome {
                 result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
                 memory_offset: inputs.return_memory_offset.clone(),
+                was_precompile_called: true,
+                precompile_call_logs: vec![],
             });
         }
         None
@@ -48,7 +50,7 @@ impl<CTX> Inspector<CTX, EthInterpreter> for LogCollector
 where
     CTX: ContextTr,
 {
-    fn log(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
+    fn log_full(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
         self.logs.push(log);
     }
 
