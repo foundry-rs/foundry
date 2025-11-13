@@ -462,17 +462,17 @@ struct Compilation {
 impl From<SourcifyMetadata> for Metadata {
     fn from(metadata: SourcifyMetadata) -> Self {
         let SourcifyMetadata { abi, compilation } = metadata;
+        let (contract_name, compiler_version) = compilation
+            .map(|c| (c.name, c.compiler_version))
+            .unwrap_or_else(|| (String::new(), String::new()));
         // Defaulted fields may be fetched from sourcify but we don't make use of them.
         Self {
             source_code: foundry_block_explorers::contract::SourceCodeMetadata::Sources(
                 Default::default(),
             ),
             abi: Box::<str>::from(abi.unwrap_or_default()).into(),
-            contract_name: compilation.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-            compiler_version: compilation
-                .as_ref()
-                .map(|c| c.compiler_version.clone())
-                .unwrap_or_default(),
+            contract_name,
+            compiler_version,
             optimization_used: 0,
             runs: 0,
             constructor_arguments: Default::default(),
