@@ -46,10 +46,8 @@ struct FuzzTestData {
     breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
     coverage: Option<HitMaps>,
-    // Stores logs for all fuzz cases
+    // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs is false)
     logs: Vec<Log>,
-    // Stores logs from the last successful run (for display at verbosity >= 2)
-    last_run_logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
     deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
     // Runs performed in fuzz test.
@@ -200,11 +198,12 @@ impl FuzzedExecutor {
                             test_data.breakpoints.replace(case.breakpoints);
                         }
 
-                        // Always store logs from the last run for display at verbosity >= 2
-                        test_data.last_run_logs = case.logs.clone();
-
+                        // Always store logs from the last run in test_data.logs for display at verbosity >= 2.
+                        // When show_logs is true, accumulate all logs. When false, only keep the last run's logs.
                         if self.config.show_logs {
                             test_data.logs.extend(case.logs);
+                        } else {
+                            test_data.logs = case.logs;
                         }
 
                         HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
@@ -260,17 +259,11 @@ impl FuzzedExecutor {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
-        // Include logs from the last run if show_logs is false, so they can be displayed
-        // at verbosity >= 2. If show_logs is true, test_data.logs already contains all logs.
-        // For failed tests, use logs from the counterexample.
-        let result_logs = if test_data.failure.is_some() {
-            // For failed tests, logs are already included in test_data.logs from the counterexample
-            test_data.logs
-        } else if self.config.show_logs {
-            test_data.logs
-        } else {
-            test_data.last_run_logs
-        };
+        // test_data.logs already contains the appropriate logs:
+        // - For failed tests: logs from the counterexample
+        // - For successful tests with show_logs=true: all logs from all runs
+        // - For successful tests with show_logs=false: logs from the last run only
+        let result_logs = test_data.logs;
 
         let mut result = FuzzTestResult {
             first_case: test_data.first_case.unwrap_or_default(),
