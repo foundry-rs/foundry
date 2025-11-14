@@ -40,6 +40,11 @@ pub struct SendTxArgs {
     #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
 
+    /// Wait for transaction receipt synchronously instead of polling.
+    /// Note: uses `eth_sendTransactionSync` which may not be supported by all clients.
+    #[arg(long, conflicts_with = "async")]
+    sync: bool,
+
     /// The number of confirmations until the receipt is fetched.
     #[arg(long, default_value = "1")]
     confirmations: u64,
@@ -100,6 +105,7 @@ impl SendTxArgs {
             to,
             mut sig,
             cast_async,
+            sync,
             mut args,
             tx,
             confirmations,
@@ -183,7 +189,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, timeout).await
+            cast_send(provider, tx, cast_async, sync, confirmations, timeout).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -221,7 +227,7 @@ impl SendTxArgs {
                 .wallet(wallet)
                 .connect_provider(&provider);
 
-            cast_send(provider, tx_request, cast_async, confirmations, timeout).await
+            cast_send(provider, tx_request, cast_async, sync, confirmations, timeout).await
         }
     }
 }
@@ -230,19 +236,27 @@ async fn cast_send<P: Provider<AnyNetwork>>(
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
     cast_async: bool,
+    sync: bool,
     confs: u64,
     timeout: u64,
 ) -> Result<()> {
-    let cast = Cast::new(provider);
-    let pending_tx = cast.send(tx).await?;
-    let tx_hash = pending_tx.inner().tx_hash();
+    let cast = Cast::new(&provider);
 
-    if cast_async {
-        sh_println!("{tx_hash:#x}")?;
-    } else {
-        let receipt =
-            cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+    if sync {
+        // Send transaction and wait for receipt synchronously
+        let receipt = cast.send_sync(tx).await?;
         sh_println!("{receipt}")?;
+    } else {
+        let pending_tx = cast.send(tx).await?;
+        let tx_hash = pending_tx.inner().tx_hash();
+
+        if cast_async {
+            sh_println!("{tx_hash:#x}")?;
+        } else {
+            let receipt =
+                cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+            sh_println!("{receipt}")?;
+        }
     }
 
     Ok(())
