@@ -412,3 +412,22 @@ contract ExpectRevertCountWithReverter is Test {
         reverter.revertWithMessage("revert");
     }
 }
+
+contract ExpectRevertWithErrorTest is Test {
+    /// Ref: <https://github.com/foundry-rs/foundry/issues/12511>
+    function test_f() external {
+        bytes memory v = abi.encodeWithSignature("Error(string)", "");
+        vm.expectRevert(v);
+        this.f(v);
+
+        bytes memory v1 = abi.encodeWithSignature("Error(string)", unicode"🙀");
+        vm.expectRevert(v1);
+        this.f(v1);
+    }
+
+    function f(bytes memory v) external pure {
+        assembly {
+            revert(add(v, 32), mload(v))
+        }
+    }
+}
