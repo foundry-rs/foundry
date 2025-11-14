@@ -281,7 +281,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut tx_env: OpTransaction<TxEnv> =
             FromRecoveredTx::from_recovered_tx(&tx.transaction.transaction, *tx.sender());
 
-        if let TypedTransaction::EIP7702(tx_7702) = &tx.transaction.transaction {
+        if let TypedTransaction::EIP7702(tx_7702) = &tx.transaction.transaction
+            && self.cheats.has_recover_overrides()
+        {
             // Override invalid recovered authorizations with signature overrides from cheat manager
             let cheated_auths = tx_7702
                 .tx()
