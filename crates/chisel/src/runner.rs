@@ -87,8 +87,8 @@ impl ChiselRunner {
 
         // Append the input to the `RUN_SELECTOR` to form the calldata
         let mut calldata = RUN_SELECTOR.to_vec();
-        if let Some(mut input) = self.input.clone() {
-            calldata.append(&mut input);
+        if let Some(input) = &self.input {
+            calldata.extend_from_slice(input);
         }
 
         let res = self.executor.transact_raw(self.sender, address, calldata.into(), U256::ZERO)?;
