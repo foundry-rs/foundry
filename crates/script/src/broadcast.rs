@@ -1,9 +1,5 @@
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
-use crate::{
-    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
-};
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
@@ -28,6 +24,11 @@ use foundry_common::{
 use foundry_config::Config;
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
+
+use crate::{
+    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
+    sequence::ScriptSequenceKind, verify::BroadcastedState,
+};
 
 pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx: &mut WithOtherFields<TransactionRequest>,
