@@ -145,6 +145,7 @@ impl ScriptSequence {
         Ok(())
     }
 
+    /// Adds a transaction receipt to the sequence.
     pub fn add_receipt(&mut self, receipt: AnyTransactionReceipt) {
         self.receipts.push(receipt);
     }
@@ -154,6 +155,10 @@ impl ScriptSequence {
         self.receipts.sort_by_key(|r| (r.block_number, r.transaction_index));
     }
 
+    /// Adds a transaction hash to the pending list.
+    ///
+    /// Sets the hash for the transaction at the given `index` and adds it to the pending list
+    /// if it's not already present.
     pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
         if !self.pending.contains(&tx_hash) {
             self.transactions[index].hash = Some(tx_hash);
@@ -161,6 +166,7 @@ impl ScriptSequence {
         }
     }
 
+    /// Removes a transaction hash from the pending list.
     pub fn remove_pending(&mut self, tx_hash: TxHash) {
         self.pending.retain(|element| element != &tx_hash);
     }
@@ -212,6 +218,9 @@ impl ScriptSequence {
         self.transactions.iter().map(|tx| tx.tx())
     }
 
+    /// Fills sensitive data (RPC URLs) from the cached sensitive sequence.
+    ///
+    /// The `sensitive` sequence must have the same number of transactions as this sequence.
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
         self.transactions
             .iter_mut()
