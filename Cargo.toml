@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.4.4"
+version = "1.5.0"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Foundry Contributors"]
