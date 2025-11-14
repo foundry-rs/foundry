@@ -13,7 +13,6 @@ use soldeer_commands::{Command, Verbosity, commands::install::Install};
 use std::{
     io::IsTerminal,
     path::{Path, PathBuf},
-    str,
     sync::LazyLock,
 };
 use yansi::Paint;
