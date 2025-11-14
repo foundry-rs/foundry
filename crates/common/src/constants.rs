@@ -1,6 +1,5 @@
 //! Commonly used constants.
 
-use alloy_eips::Typed2718;
 use alloy_network::AnyTxEnvelope;
 use alloy_primitives::{Address, B256, Signature, address};
 use std::time::Duration;
