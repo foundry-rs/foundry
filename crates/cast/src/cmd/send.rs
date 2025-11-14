@@ -41,6 +41,7 @@ pub struct SendTxArgs {
     cast_async: bool,
 
     /// Wait for transaction receipt synchronously instead of polling.
+    /// Note: uses `eth_sendTransactionSync` which may not be supported by all clients.
     #[arg(long, conflicts_with = "async")]
     sync: bool,
 
