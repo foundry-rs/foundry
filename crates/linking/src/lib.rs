@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
-    Artifact, ArtifactId,
+    ArtifactId,
     artifacts::{CompactBytecode, CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
 };
