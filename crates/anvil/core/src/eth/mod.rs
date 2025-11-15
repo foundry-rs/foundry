@@ -817,6 +817,27 @@ mod tests {
     }
 
     #[test]
+    fn test_eth_protocol_version() {
+        let s = r#"{"method": "eth_protocolVersion", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_hashrate() {
+        let s = r#"{"method": "eth_hashrate", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_coinbase() {
+        let s = r#"{"method": "eth_coinbase", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_custom_impersonate_account() {
         let s = r#"{"method": "anvil_impersonateAccount", "params":
 ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
