@@ -315,15 +315,10 @@ mod tests {
         .unwrap();
 
         for part in &source_unit.0 {
-            if let pt::SourceUnitPart::ImportDirective(import) = part {
-                match import {
-                    pt::Import::Plain(path, _) => {
-                        let loc = path.loc();
-                        // Should return location from the filename
-                        assert!(loc.start() > 0 || loc.end() > 0);
-                    }
-                    _ => {}
-                }
+            if let pt::SourceUnitPart::ImportDirective(pt::Import::Plain(path, _)) = part {
+                let loc = path.loc();
+                // Should return location from the filename
+                assert!(loc.start() > 0 || loc.end() > 0);
             }
         }
     }
