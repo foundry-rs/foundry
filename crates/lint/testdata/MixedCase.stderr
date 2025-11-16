@@ -134,3 +134,11 @@ LL |     function NOT_ELEMENTARY_RETURN() external view returns (uint256[] memor
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+LL | contract MixedCaseTest {
+   |          ^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+

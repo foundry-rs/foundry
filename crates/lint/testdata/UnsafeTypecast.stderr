@@ -1,3 +1,11 @@
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL | contract Repros {
+   |          ^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
