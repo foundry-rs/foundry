@@ -101,6 +101,11 @@ impl<'a> TUIContext<'a> {
         }
     }
 
+    /// Returns the active buffer bytes based on the current buffer kind.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `active_buffer` is `BufferKind::Memory` and the current step's memory is `None`.
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
             BufferKind::Memory => self.current_step().memory.as_ref().unwrap().as_bytes(),
@@ -285,6 +290,9 @@ impl TUIContext<'_> {
         ControlFlow::Continue(())
     }
 
+    /// Moves to the previous debug step, or to the last step of the previous call if at the first step.
+    ///
+    /// If already at the first step of the first call, does nothing.
     fn step_back(&mut self) {
         if self.current_step > 0 {
             self.current_step -= 1;
@@ -294,6 +302,9 @@ impl TUIContext<'_> {
         }
     }
 
+    /// Moves to the next debug step, or to the first step of the next call if at the last step.
+    ///
+    /// If already at the last step of the last call, does nothing.
     fn step(&mut self) {
         if self.current_step < self.n_steps() - 1 {
             self.current_step += 1;
