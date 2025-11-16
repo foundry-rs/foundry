@@ -223,7 +223,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.22.0", default-features = false }
-foundry-compilers = { version = "0.19.5", default-features = false, features = [
+foundry-compilers = { version = "0.19.6", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
