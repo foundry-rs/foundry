@@ -57,7 +57,8 @@ pub const TYPE_BINDING_PREFIX: &str = "string constant schema_";
 ///
 /// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS], [MONAD_SYSTEM_ADDRESS] and [Address::ZERO]
 pub fn is_known_system_sender(sender: Address) -> bool {
-    [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, MONAD_SYSTEM_ADDRESS, Address::ZERO].contains(&sender)
+    [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, MONAD_SYSTEM_ADDRESS, Address::ZERO]
+        .contains(&sender)
 }
 
 pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
