@@ -4,7 +4,7 @@ use eyre::{Context, Result};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::BuildOpts,
-    utils::{LoadConfig, cache_local_signatures},
+    utils::{Git, LoadConfig, cache_local_signatures},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
@@ -81,6 +81,7 @@ impl BuildArgs {
         }
 
         self.check_soldeer_lock_consistency(&config).await;
+        self.check_foundry_lock_consistency(&config);
 
         let project = config.project()?;
 
@@ -242,6 +243,63 @@ impl BuildArgs {
                 Err(e) => {
                     sh_warn!("Dependency '{}' integrity check error: {}", dep_name, e).ok();
                 }
+            }
+        }
+    }
+
+    /// Check foundry.lock file consistency with git submodules
+    fn check_foundry_lock_consistency(&self, config: &Config) {
+        use crate::lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
+
+        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
+        if !foundry_lock_path.exists() {
+            return;
+        }
+
+        let git = match Git::new(&config.root) {
+            Ok(git) => git,
+            Err(_) => return, // Skip if not a git repo
+        };
+
+        let mut lockfile = Lockfile::new(&config.root).with_git(&git);
+        if lockfile.read().is_err() {
+            return;
+        }
+
+        let deps = lockfile.dependencies();
+
+        for (dep_path, dep_identifier) in deps {
+            let full_path = config.root.join(&dep_path);
+
+            if !full_path.exists() {
+                sh_warn!("Dependency '{}' not found at expected path", dep_path.display()).ok();
+                continue;
+            }
+
+            let actual_rev = match git.get_rev("HEAD", &full_path) {
+                Ok(rev) => rev,
+                Err(_) => {
+                    sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display())
+                        .ok();
+                    continue;
+                }
+            };
+
+            // Compare with the expected revision from lockfile
+            let expected_rev = match dep_identifier {
+                DepIdentifier::Branch { rev, .. }
+                | DepIdentifier::Tag { rev, .. }
+                | DepIdentifier::Rev { rev, .. } => rev.clone(),
+            };
+
+            if actual_rev != expected_rev {
+                sh_warn!(
+                    "Dependency '{}' revision mismatch: expected '{}', found '{}'",
+                    dep_path.display(),
+                    expected_rev,
+                    actual_rev
+                )
+                .ok();
             }
         }
     }
