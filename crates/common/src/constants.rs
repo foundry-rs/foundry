@@ -39,8 +39,7 @@ pub const ARBITRUM_SENDER: Address = address!("0x0000000000000000000000000000000
 /// See also <https://github.com/ethereum-optimism/optimism/blob/65ec61dde94ffa93342728d324fecf474d228e1f/specs/deposits.md#l1-attributes-deposited-transaction>
 pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
-/// Monad system contract address.
-/// Receives stake reward payouts via `syscallReward(address)` (selector `0x791bdcf3`).
+/// The system address, the sender of the first transaction in every block:
 pub const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
 
 /// Transaction identifier of System transaction types
