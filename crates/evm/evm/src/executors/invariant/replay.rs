@@ -4,7 +4,7 @@ use crate::executors::{
     invariant::shrink::{shrink_sequence, shrink_sequence_value},
 };
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{I256, Log, map::HashMap};
+use alloy_primitives::{I256, Log, U256, map::HashMap};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
@@ -69,7 +69,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     let (invariant_result, invariant_success) = call_invariant_function(
         &executor,
         invariant_contract.address,
-        invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
+        invariant_contract.invariant_fn.abi_encode_input(&[])?.into(),
     )?;
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
     logs.extend(invariant_result.logs);
@@ -86,6 +86,41 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
             call_after_invariant_function(&executor, invariant_contract.address)?;
         traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
         logs.extend(after_invariant_result.logs);
+    }
+
+    Ok(counterexample_sequence)
+}
+
+pub fn generate_counterexample<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
+    known_contracts: &ContractsByArtifact,
+    mut ided_contracts: ContractsByAddress,
+    inputs: &[BasicTxDetails],
+    show_solidity: bool,
+) -> Result<Vec<BaseCounterExample>> {
+    if executor.inspector().tracer.is_none() {
+        executor.set_tracing(TraceMode::Call);
+    }
+
+    let mut counterexample_sequence = vec![];
+
+    for tx in inputs {
+        let call_result = executor.transact_raw(
+            tx.sender,
+            tx.call_details.target,
+            tx.call_details.calldata.clone(),
+            U256::ZERO,
+        )?;
+
+        ided_contracts
+            .extend(load_contracts(call_result.traces.iter().map(|a| &a.arena), known_contracts));
+
+        counterexample_sequence.push(BaseCounterExample::from_invariant_call(
+            tx,
+            &ided_contracts,
+            call_result.traces,
+            show_solidity,
+        ));
     }
 
     Ok(counterexample_sequence)
