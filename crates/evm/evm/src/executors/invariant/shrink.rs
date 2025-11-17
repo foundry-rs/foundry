@@ -50,7 +50,7 @@ pub(crate) fn shrink_sequence(
     }
 
     let target_address = invariant_contract.address;
-    let calldata: Bytes = invariant_contract.invariant_function.selector().to_vec().into();
+    let calldata: Bytes = invariant_contract.invariant_fn.selector().to_vec().into();
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
     let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;

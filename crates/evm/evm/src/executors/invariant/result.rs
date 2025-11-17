@@ -18,7 +18,8 @@ use std::{borrow::Cow, collections::HashMap};
 /// The outcome of an invariant fuzz test
 #[derive(Debug)]
 pub struct InvariantFuzzTestResult {
-    pub error: Option<InvariantFuzzError>,
+    /// Errors recorded per invariant.
+    pub errors: HashMap<String, InvariantFuzzError>,
     /// Every successful fuzz test case
     pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
@@ -36,18 +37,39 @@ pub struct InvariantFuzzTestResult {
     pub failed_corpus_replays: usize,
 }
 
-/// Enriched results of an invariant run check.
-///
-/// Contains the success condition and call results of the last run
-pub(crate) struct RichInvariantResults {
-    pub(crate) can_continue: bool,
-    pub(crate) call_result: Option<RawCallResult>,
-}
-
-impl RichInvariantResults {
-    fn new(can_continue: bool, call_result: Option<RawCallResult>) -> Self {
-        Self { can_continue, call_result }
+/// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
+/// external `invariant_failures.failed_invariant` map and returns a generic error.
+/// Either returns the call result if successful, or nothing if there was an error.
+pub(crate) fn invariant_preflight_check(
+    invariant_contract: &InvariantContract<'_>,
+    invariant_config: &InvariantConfig,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
+    executor: &Executor,
+    calldata: &[BasicTxDetails],
+    invariant_failures: &mut InvariantFailures,
+) -> Result<()> {
+    let (call_result, success) = call_invariant_function(
+        executor,
+        invariant_contract.address,
+        invariant_contract.invariant_fn.abi_encode_input(&[])?.into(),
+    )?;
+    if !success {
+        // We only care about invariants which we haven't broken yet.
+        invariant_failures.record_failure(
+            invariant_contract.invariant_fn,
+            InvariantFuzzError::BrokenInvariant(FailedInvariantCaseData::new(
+                invariant_contract,
+                invariant_config.shrink_run_limit,
+                invariant_config.fail_on_revert,
+                targeted_contracts,
+                calldata,
+                &call_result,
+                &invariant_inner_sequence(executor),
+            )),
+        );
     }
+
+    Ok(())
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
@@ -60,37 +82,48 @@ pub(crate) fn assert_invariants(
     executor: &Executor,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
-) -> Result<Option<RawCallResult>> {
-    let mut inner_sequence = vec![];
-
-    if let Some(fuzzer) = &executor.inspector().fuzzer
-        && let Some(call_generator) = &fuzzer.call_generator
-    {
-        inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
-    }
-
-    let (call_result, success) = call_invariant_function(
-        executor,
-        invariant_contract.address,
-        invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
-    )?;
-    if !success {
+) -> Result<()> {
+    let inner_sequence = invariant_inner_sequence(executor);
+    // We only care about invariants which we haven't broken yet.
+    for (invariant, fail_on_revert) in &invariant_contract.invariant_fns {
         // We only care about invariants which we haven't broken yet.
-        if invariant_failures.error.is_none() {
-            let case_data = FailedInvariantCaseData::new(
-                invariant_contract,
-                invariant_config,
-                targeted_contracts,
-                calldata,
-                call_result,
-                &inner_sequence,
+        if invariant_failures.has_failure(invariant) {
+            continue;
+        }
+
+        let (call_result, success) = call_invariant_function(
+            executor,
+            invariant_contract.address,
+            invariant.abi_encode_input(&[])?.into(),
+        )?;
+        if !success {
+            invariant_failures.record_failure(
+                invariant,
+                InvariantFuzzError::BrokenInvariant(FailedInvariantCaseData::new(
+                    invariant_contract,
+                    invariant_config.shrink_run_limit,
+                    *fail_on_revert,
+                    targeted_contracts,
+                    calldata,
+                    &call_result,
+                    &inner_sequence,
+                )),
             );
-            invariant_failures.error = Some(InvariantFuzzError::BrokenInvariant(case_data));
-            return Ok(None);
         }
     }
 
-    Ok(Some(call_result))
+    Ok(())
+}
+
+/// Helper function to initialize invariant inner sequence.
+fn invariant_inner_sequence(executor: &Executor) -> Vec<Option<BasicTxDetails>> {
+    let mut seq = vec![];
+    if let Some(fuzzer) = &executor.inspector().fuzzer
+        && let Some(call_generator) = &fuzzer.call_generator
+    {
+        seq.extend(call_generator.last_sequence.read().iter().cloned());
+    }
+    seq
 }
 
 /// Returns if invariant test can continue and last successful call result of the invariant test
@@ -102,9 +135,7 @@ pub(crate) fn can_continue(
     invariant_config: &InvariantConfig,
     call_result: RawCallResult,
     state_changeset: &StateChangeset,
-) -> Result<RichInvariantResults> {
-    let mut call_results = None;
-
+) -> Result<bool> {
     let handlers_succeeded = || {
         invariant_test.targeted_contracts.targets.lock().keys().all(|address| {
             invariant_run.executor.is_success(
@@ -116,48 +147,46 @@ pub(crate) fn can_continue(
         })
     };
 
+    let failures = &mut invariant_test.test_data.failures;
     // Assert invariants if the call did not revert and the handlers did not fail.
     if !call_result.reverted && handlers_succeeded() {
         if let Some(traces) = call_result.traces {
             invariant_run.run_traces.push(traces);
         }
-
-        call_results = assert_invariants(
+        assert_invariants(
             invariant_contract,
             invariant_config,
             &invariant_test.targeted_contracts,
             &invariant_run.executor,
             &invariant_run.inputs,
-            &mut invariant_test.test_data.failures,
+            failures,
         )?;
-        if call_results.is_none() {
-            return Ok(RichInvariantResults::new(false, None));
-        }
     } else {
         // Increase the amount of reverts.
-        let invariant_data = &mut invariant_test.test_data;
-        invariant_data.failures.reverts += 1;
-        // If fail on revert is set, we must return immediately.
-        if invariant_config.fail_on_revert {
-            let case_data = FailedInvariantCaseData::new(
-                invariant_contract,
-                invariant_config,
-                &invariant_test.targeted_contracts,
-                &invariant_run.inputs,
-                call_result,
-                &[],
-            );
-            invariant_data.failures.revert_reason = Some(case_data.revert_reason.clone());
-            invariant_data.failures.error = Some(InvariantFuzzError::Revert(case_data));
-
-            return Ok(RichInvariantResults::new(false, None));
-        } else if call_result.reverted {
-            // If we don't fail test on revert then remove last reverted call from inputs.
-            // This improves shrinking performance as irrelevant calls won't be checked again.
-            invariant_run.inputs.pop();
+        failures.reverts += 1;
+        // If fail on revert is set, record invariant failure.
+        for (invariant, fail_on_revert) in &invariant_contract.invariant_fns {
+            if *fail_on_revert {
+                let case_data = FailedInvariantCaseData::new(
+                    invariant_contract,
+                    invariant_config.shrink_run_limit,
+                    *fail_on_revert,
+                    &invariant_test.targeted_contracts,
+                    &invariant_run.inputs,
+                    &call_result,
+                    &[],
+                );
+                failures
+                    .errors
+                    .insert(invariant.name.clone(), InvariantFuzzError::Revert(case_data));
+            }
         }
+        // Remove last reverted call from inputs.
+        // This improves shrinking performance as irrelevant calls won't be checked again.
+        invariant_run.inputs.pop();
     }
-    Ok(RichInvariantResults::new(true, call_results))
+    // Stop execution if all invariants are broken.
+    Ok(failures.can_continue(invariant_contract.invariant_fns.len()))
 }
 
 /// Given the executor state, asserts conditions within `afterInvariant` function.
@@ -174,13 +203,17 @@ pub(crate) fn assert_after_invariant(
     if !success {
         let case_data = FailedInvariantCaseData::new(
             invariant_contract,
-            invariant_config,
+            invariant_config.shrink_run_limit,
+            invariant_config.fail_on_revert,
             &invariant_test.targeted_contracts,
             &invariant_run.inputs,
-            call_result,
+            &call_result,
             &[],
         );
-        invariant_test.set_error(InvariantFuzzError::BrokenInvariant(case_data));
+        invariant_test.set_error(
+            invariant_contract.invariant_fn,
+            InvariantFuzzError::BrokenInvariant(case_data),
+        );
     }
     Ok(success)
 }

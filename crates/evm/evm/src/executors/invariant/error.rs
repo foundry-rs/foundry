@@ -1,10 +1,11 @@
 use super::InvariantContract;
 use crate::executors::RawCallResult;
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
-use foundry_config::InvariantConfig;
 use foundry_evm_core::decode::RevertDecoder;
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
+use std::{collections::HashMap, fmt};
 
 /// Stores information about failures and reverts of the invariant tests.
 #[derive(Clone, Default)]
@@ -14,7 +15,7 @@ pub struct InvariantFailures {
     /// The latest revert reason of a run.
     pub revert_reason: Option<String>,
     /// Maps a broken invariant to its specific error.
-    pub error: Option<InvariantFuzzError>,
+    pub errors: HashMap<String, InvariantFuzzError>,
 }
 
 impl InvariantFailures {
@@ -22,8 +23,32 @@ impl InvariantFailures {
         Self::default()
     }
 
-    pub fn into_inner(self) -> (usize, Option<InvariantFuzzError>) {
-        (self.reverts, self.error)
+    pub fn into_inner(self) -> (usize, HashMap<String, InvariantFuzzError>) {
+        (self.reverts, self.errors)
+    }
+
+    pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
+        self.errors.insert(invariant.name.clone(), failure);
+    }
+
+    pub fn has_failure(&self, invariant: &Function) -> bool {
+        self.errors.contains_key(&invariant.name)
+    }
+
+    pub fn get_failure(&self, invariant: &Function) -> Option<&InvariantFuzzError> {
+        self.errors.get(&invariant.name)
+    }
+
+    pub fn can_continue(&self, invariants: usize) -> bool {
+        self.errors.len() < invariants
+    }
+}
+
+impl fmt::Display for InvariantFailures {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(f, "      ❌ Failures: {}", self.errors.len())?;
+        Ok(())
     }
 }
 
@@ -70,10 +95,11 @@ pub struct FailedInvariantCaseData {
 impl FailedInvariantCaseData {
     pub fn new(
         invariant_contract: &InvariantContract<'_>,
-        invariant_config: &InvariantConfig,
+        shrink_run_limit: u32,
+        fail_on_revert: bool,
         targeted_contracts: &FuzzRunIdentifiedContracts,
         calldata: &[BasicTxDetails],
-        call_result: RawCallResult,
+        call_result: &RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         // Collect abis of fuzzed and invariant contracts to decode custom error.
@@ -82,7 +108,7 @@ impl FailedInvariantCaseData {
             .with_abi(invariant_contract.abi)
             .decode(call_result.result.as_ref(), call_result.exit_reason);
 
-        let func = invariant_contract.invariant_function;
+        let func = invariant_contract.invariant_fn;
         debug_assert!(func.inputs.is_empty());
         let origin = func.name.as_str();
         Self {
@@ -95,8 +121,8 @@ impl FailedInvariantCaseData {
             addr: invariant_contract.address,
             calldata: func.selector().to_vec().into(),
             inner_sequence: inner_sequence.to_vec(),
-            shrink_run_limit: invariant_config.shrink_run_limit,
-            fail_on_revert: invariant_config.fail_on_revert,
+            shrink_run_limit,
+            fail_on_revert,
         }
     }
 }
