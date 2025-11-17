@@ -669,7 +669,7 @@ impl Type {
                     // Array / bytes members
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
-                        "length" if ty.is_dynamic() || ty.is_array() || ty.is_fixed_bytes() => {
+                        "length" if ty.is_dynamic() || ty.is_array() => {
                             return Self::Builtin(DynSolType::Uint(256));
                         }
                         "pop" if ty.is_dynamic_array() => return ty,
@@ -1090,10 +1090,31 @@ impl Type {
     #[inline]
     fn is_dynamic(&self) -> bool {
         match self {
-            // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are
-            // not dynamic, nor are tuples of non-dynamic types.
-            Self::Builtin(DynSolType::Bytes | DynSolType::String | DynSolType::Array(_)) => true,
+            // Builtin types: recurse through tuples and fixed arrays to detect any dynamic member
+            Self::Builtin(ty) => {
+                let mut stack: Vec<&DynSolType> = vec![ty];
+                while let Some(t) = stack.pop() {
+                    match t {
+                        DynSolType::Bytes | DynSolType::String | DynSolType::Array(_) => {
+                            return true;
+                        }
+                        DynSolType::FixedArray(inner, _) => stack.push(inner),
+                        DynSolType::Tuple(types) => {
+                            for tt in types {
+                                stack.push(tt);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                false
+            }
+            // Dynamic arrays are always dynamic
             Self::Array(_) => true,
+            // Fixed arrays are dynamic only if their element type is dynamic
+            Self::FixedArray(inner, _) => inner.is_dynamic(),
+            // Tuples are dynamic if any component is dynamic
+            Self::Tuple(types) => types.iter().filter_map(|t| t.as_ref()).any(|t| t.is_dynamic()),
             _ => false,
         }
     }
@@ -1114,10 +1135,6 @@ impl Type {
     #[inline]
     fn is_dynamic_array(&self) -> bool {
         matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
-    }
-
-    fn is_fixed_bytes(&self) -> bool {
-        matches!(self, Self::Builtin(DynSolType::FixedBytes(_)))
     }
 }
 
