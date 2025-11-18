@@ -1,5 +1,7 @@
-use std::io::{self, BufRead, Write};
-use std::str::FromStr;
+use std::{
+    io::{self, BufRead, Write},
+    str::FromStr,
+};
 
 use crate::{format_uint_exp, tx::signing_provider};
 use alloy_eips::BlockId;
