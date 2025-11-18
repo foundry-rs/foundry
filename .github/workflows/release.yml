@@ -16,8 +16,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-  PROFILE: maxperf
-  STABLE_VERSION: "v1.4.3"
+
+  # Keep in sync with `docker-publish.yml`.
+  RUST_PROFILE: maxperf
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+
+  LAST_STABLE_VERSION: "v1.4.4"
 
 jobs:
   prepare:
@@ -171,12 +175,12 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--target $TARGET --profile $PROFILE --bins
-            --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak,js-tracer)
+          flags=(--target $TARGET --profile $RUST_PROFILE --bins
+            --no-default-features --features "$RUST_FEATURES")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
@@ -206,7 +210,7 @@ jobs:
         id: artifacts
         env:
           PLATFORM_NAME: ${{ matrix.platform }}
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           ARCH: ${{ matrix.arch }}
         shell: bash
@@ -238,7 +242,7 @@ jobs:
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         env:
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
         shell: bash
         run: |
@@ -275,7 +279,7 @@ jobs:
 
       # Creates the release for this specific version
       - name: Create release
-        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2.4.1
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
         with:
           name: ${{ needs.prepare.outputs.release_name }}
           tag_name: ${{ needs.prepare.outputs.tag_name }}
@@ -290,7 +294,7 @@ jobs:
       # tagged `nightly` for compatibility with `foundryup`
       - name: Update nightly release
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2.4.1
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
         with:
           name: "Nightly"
           tag_name: "nightly"

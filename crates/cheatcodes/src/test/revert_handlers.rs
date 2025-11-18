@@ -1,7 +1,8 @@
 use crate::{Error, Result};
+use alloy_dyn_abi::{DynSolValue, ErrorExt};
 use alloy_primitives::{Address, Bytes, address, hex};
 use alloy_sol_types::{SolError, SolValue};
-use foundry_common::ContractsByArtifact;
+use foundry_common::{ContractsByArtifact, abi::get_error};
 use foundry_evm_core::decode::RevertDecoder;
 use revm::interpreter::{InstructionResult, return_ok};
 use spec::Vm;
@@ -96,24 +97,34 @@ fn handle_revert(
     if actual_revert == expected_reason
         || (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
     {
-        Ok(())
-    } else {
-        let (actual, expected) = if let Some(contracts) = known_contracts {
-            let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
-            (
-                &decoder.decode(actual_revert.as_slice(), Some(status)),
-                &decoder.decode(expected_reason, Some(status)),
-            )
-        } else {
-            (&stringify(&actual_revert), &stringify(expected_reason))
-        };
-
-        if expected == actual {
-            return Ok(());
-        }
-
-        Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
+        return Ok(());
     }
+
+    // If expected reason is `Error(string)` then decode and compare with actual revert.
+    // See <https://github.com/foundry-rs/foundry/issues/12511>
+    if let Ok(e) = get_error("Error(string)")
+        && let Ok(dec) = e.decode_error(expected_reason)
+        && let Some(DynSolValue::String(revert_str)) = dec.body.first()
+        && revert_str.as_str() == String::from_utf8_lossy(&actual_revert)
+    {
+        return Ok(());
+    }
+
+    let (actual, expected) = if let Some(contracts) = known_contracts {
+        let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
+        (
+            &decoder.decode(actual_revert.as_slice(), Some(status)),
+            &decoder.decode(expected_reason, Some(status)),
+        )
+    } else {
+        (&stringify(&actual_revert), &stringify(expected_reason))
+    };
+
+    if expected == actual {
+        return Ok(());
+    }
+
+    Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
 }
 
 pub(crate) fn handle_assume_no_revert(

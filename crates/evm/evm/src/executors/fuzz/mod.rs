@@ -142,7 +142,7 @@ impl FuzzedExecutor {
         'stop: while continue_campaign(test_data.runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
             let input = if let Some(failure) = self.persisted_failure.take()
-                && func.selector() == failure.calldata[..4]
+                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
                 failure.calldata.clone()
             } else {
@@ -238,7 +238,9 @@ impl FuzzedExecutor {
                             if self.config.max_test_rejects > 0
                                 && test_data.rejects >= self.config.max_test_rejects
                             {
-                                test_data.failure = Some(err);
+                                test_data.failure = Some(TestCaseError::reject(
+                                    FuzzError::TooManyRejects(self.config.max_test_rejects),
+                                ));
                                 break 'stop;
                             }
                         }
@@ -327,9 +329,7 @@ impl FuzzedExecutor {
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::TooManyRejects(
-                self.config.max_test_rejects,
-            )));
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let (breakpoints, deprecated_cheatcodes) =

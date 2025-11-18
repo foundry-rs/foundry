@@ -553,7 +553,7 @@ Compiling 22 files with [..]
 contract Counter {
     uint256 public number;
 
-    function setNumber(uint256 newNumber) public virtual {
+    function setNumber(uint256) public virtual {
         number = 12345;
     }
 
@@ -568,7 +568,7 @@ contract Counter {
     // compiled and both tests fail.
     cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 2 files with [..]
+Compiling 3 files with [..]
 ...
 [FAIL: assertion failed: 12347 != 1] test_Increment() (gas: [..])
 [FAIL: assertion failed: 12345 != 1] test_SetNumber() (gas: [..])
@@ -711,6 +711,82 @@ Compiling 2 files with [..]
 ...
 [FAIL: assertion failed: 5678 != 1] test_Increment() (gas: [..])
 [FAIL: assertion failed: 1234 != 1] test_SetNumber() (gas: [..])
+...
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/12452>
+// - CounterMock contract is Counter contract
+// - CounterMock declared in CounterTest
+//
+// ├── src
+// │ └── Counter.sol
+// └── test
+//    ├── Counter.t.sol
+forgetest_init!(preprocess_mock_declared_in_test_contract, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    function add(uint256 x, uint256 y) public pure returns (uint256) {
+        return x + y;
+    }
+}
+    "#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "src/Counter.sol";
+
+contract CounterMock is Counter {}
+
+contract CounterTest is Test {
+    function test_add() public {
+        CounterMock impl = new CounterMock();
+        assertEq(impl.add(2, 2), 4);
+    }
+}
+    "#,
+    );
+    // 20 files plus one mock file are compiled on first run.
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 21 files with [..]
+...
+
+"#]]);
+    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+No files changed, compilation skipped
+...
+
+"#]]);
+
+    // Change Counter implementation to fail tests.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    function add(uint256 x, uint256 y) public pure returns (uint256) {
+        return x + y + 1;
+    }
+}
+    "#,
+    );
+    // Assert that Counter and CounterTest files are compiled and tests fail.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 2 files with [..]
+...
+[FAIL: assertion failed: 5 != 4] test_add() (gas: [..])
 ...
 
 "#]]);

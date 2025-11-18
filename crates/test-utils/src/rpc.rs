@@ -52,6 +52,7 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/rpc",
+        // "reth-ethereum-full.ithaca.xyz/rpc",
     ],
 );
 shuffled_list!(
@@ -77,6 +78,7 @@ shuffled_list!(
         "sepolia.drpc.org",
         "1rpc.io/sepolia",
         "rpc.sepolia.org",
+        // "reth-ethereum-full.ithaca.xyz/ws",
     ],
 );
 
