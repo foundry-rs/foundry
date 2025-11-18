@@ -1422,7 +1422,10 @@ impl EthApi {
         }
 
         let typed_tx = self.build_typed_tx_request(request, nonce)?;
-        let tx = self.sign_request(&from, typed_tx)?;
+        let tx = build_typed_transaction(
+            typed_tx,
+            Signature::new(Default::default(), Default::default(), false),
+        )?;
 
         let raw = tx.encoded_2718().to_vec().into();
 
