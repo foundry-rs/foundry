@@ -238,7 +238,9 @@ impl FuzzedExecutor {
                             if self.config.max_test_rejects > 0
                                 && test_data.rejects >= self.config.max_test_rejects
                             {
-                                test_data.failure = Some(err);
+                                test_data.failure = Some(TestCaseError::reject(
+                                    FuzzError::TooManyRejects(self.config.max_test_rejects),
+                                ));
                                 break 'stop;
                             }
                         }
@@ -327,9 +329,7 @@ impl FuzzedExecutor {
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::TooManyRejects(
-                self.config.max_test_rejects,
-            )));
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let (breakpoints, deprecated_cheatcodes) =

@@ -5,15 +5,13 @@ use foundry_compilers::{
     multi::{MultiCompilerLanguage, MultiCompilerParser},
     solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
-use foundry_config::{Config, semver::Version};
+use foundry_config::Config;
 use rayon::prelude::*;
-use solar::{interface::MIN_SOLIDITY_VERSION as MSV, sema::ParsingContext};
+use solar::{interface::MIN_SOLIDITY_VERSION, sema::ParsingContext};
 use std::{
     collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
 };
-
-const MIN_SUPPORTED_VERSION: Version = Version::new(MSV.0, MSV.1, MSV.2);
 
 /// Configures a [`ParsingContext`] from [`Config`].
 ///
@@ -62,10 +60,10 @@ pub fn configure_pcx(
         .1
         .into_iter()
         // Filter unsupported versions
-        .filter(|(v, _, _)| v >= &MIN_SUPPORTED_VERSION)
+        .filter(|(v, _, _)| v >= &MIN_SOLIDITY_VERSION)
         // Always pick the latest version
         .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-        .map_or((MIN_SUPPORTED_VERSION, Sources::default()), |(v, s, _)| (v, s));
+        .map_or((MIN_SOLIDITY_VERSION, Sources::default()), |(v, s, _)| (v, s));
 
     if sources.is_empty() {
         sh_warn!("no files found. Solar doesn't support Solidity versions prior to 0.8.0")?;
@@ -132,12 +130,12 @@ pub fn get_solar_sources_from_compile_output(
 
     // Read all sources and find the latest version.
     let (version, sources) = {
-        let (mut max_version, mut sources) = (MIN_SUPPORTED_VERSION, Sources::new());
+        let (mut max_version, mut sources) = (MIN_SOLIDITY_VERSION, Sources::new());
         for (id, _) in output.artifact_ids() {
             if let Ok(path) = dunce::canonicalize(&id.source)
                 && source_paths.remove(&path)
             {
-                if id.version < MIN_SUPPORTED_VERSION {
+                if id.version < MIN_SOLIDITY_VERSION {
                     continue;
                 } else if max_version < id.version {
                     max_version = id.version;
