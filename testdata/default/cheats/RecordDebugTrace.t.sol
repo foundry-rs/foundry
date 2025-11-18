@@ -66,7 +66,7 @@ contract OutOfGas {
 contract RecordDebugTraceTest is Test {
     /**
      * The goal of this test is to ensure the debug steps provide the correct OPCODE with its stack
-     * and memory input used. The test checke MSTORE and MLOAD and ensure it records the expected
+     * and memory input used. The test check MSTORE and MLOAD and ensure it records the expected
      * stack and memory inputs.
      */
     function testDebugTraceCanRecordOpcodeWithStackAndMemoryData() public {
