@@ -327,10 +327,46 @@ impl TestRunnerConfig {
         // self.debug = N/A;
         // self.decode_internal = N/A;
 
-        // TODO: self.evm_opts
+        // Sync EvmOpts from Config.
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
+        self.evm_opts.initial_balance = config.initial_balance;
+        self.evm_opts.sender = config.sender;
+        self.evm_opts.ffi = config.ffi;
+        self.evm_opts.verbosity = config.verbosity;
+        self.evm_opts.memory_limit = config.memory_limit;
+        self.evm_opts.isolate = config.isolate;
+        self.evm_opts.disable_block_gas_limit = config.disable_block_gas_limit;
+        self.evm_opts.enable_tx_gas_limit = config.enable_tx_gas_limit;
+        self.evm_opts.networks = self.networks;
+        self.evm_opts.create2_deployer = config.create2_deployer;
 
-        // TODO: self.env
+        // Sync EvmOpts::Env from Config.
+        self.evm_opts.env.gas_limit = config.gas_limit;
+        self.evm_opts.env.block_gas_limit = config.block_gas_limit;
+        self.evm_opts.env.gas_price = config.gas_price;
+        self.evm_opts.env.tx_origin = config.tx_origin;
+        self.evm_opts.env.block_base_fee_per_gas = config.block_base_fee_per_gas;
+        self.evm_opts.env.block_coinbase = config.block_coinbase;
+        self.evm_opts.env.block_timestamp = config.block_timestamp;
+        self.evm_opts.env.block_number = config.block_number;
+        self.evm_opts.env.block_difficulty = config.block_difficulty;
+        self.evm_opts.env.block_prevrandao = config.block_prevrandao;
+        self.evm_opts.env.code_size_limit = config.code_size_limit;
+        self.evm_opts.env.chain_id = config.chain.map(|c| c.id());
+
+        self.env.evm_env.block_env.number = self.evm_opts.env.block_number;
+        self.env.evm_env.block_env.beneficiary = self.evm_opts.env.block_coinbase;
+        self.env.evm_env.block_env.timestamp = self.evm_opts.env.block_timestamp;
+        self.env.evm_env.block_env.difficulty = U256::from(self.evm_opts.env.block_difficulty);
+        self.env.evm_env.block_env.prevrandao = Some(self.evm_opts.env.block_prevrandao);
+        self.env.evm_env.block_env.basefee = self.evm_opts.env.block_base_fee_per_gas;
+        self.env.evm_env.block_env.gas_limit = self.evm_opts.gas_limit();
+        self.env.tx.gas_price = self.evm_opts.env.gas_price.unwrap_or_default().into();
+        self.env.tx.gas_limit = self.evm_opts.gas_limit();
+        self.env.tx.caller = self.sender;
+        if let Some(chain_id) = self.evm_opts.env.chain_id {
+            self.env.evm_env.cfg_env.chain_id = chain_id;
+        }
 
         self.config = config;
     }
@@ -349,12 +385,21 @@ impl TestRunnerConfig {
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.networks(self.networks);
-        // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
+        inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
         executor.set_spec_id(self.spec_id);
-        // executor.set_gas_limit(self.evm_opts.gas_limit());
+        executor.set_gas_limit(self.evm_opts.gas_limit());
         executor.set_legacy_assertions(self.config.legacy_assertions);
+    }
+
+    /// Applies Env settings to the given executor. Intended for contract-level configuration
+    /// before `setUp()` is executed. Do not use at function-level to avoid overriding
+    /// environment changes made during setup or by cheatcodes.
+    pub fn configure_executor_env(&self, executor: &mut Executor) {
+        let inspector = executor.inspector_mut();
+        inspector.set_env(&self.env);
+        executor.env_mut().clone_from(&self.env);
     }
 
     /// Creates a new executor with this configuration.
