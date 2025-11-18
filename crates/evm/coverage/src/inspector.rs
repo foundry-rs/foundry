@@ -73,7 +73,8 @@ impl LineCoverageCollector {
     #[cold]
     #[inline(never)]
     fn insert_map(&mut self, interpreter: &mut Interpreter) {
-        let hash = interpreter.bytecode.hash().unwrap();
+        let hash_ref = interpreter.bytecode.get_or_calculate_hash();
+        let hash = B256::from(*hash_ref);
         self.current_hash = hash;
         // Converts the mutable reference to a `NonNull` pointer.
         self.current_map = self
