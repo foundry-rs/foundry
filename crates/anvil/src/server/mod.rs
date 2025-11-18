@@ -8,6 +8,7 @@ use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
 use std::{io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
+mod beacon_error;
 mod beacon_handler;
 pub mod error;
 mod handler;

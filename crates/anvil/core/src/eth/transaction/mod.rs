@@ -1273,6 +1273,18 @@ impl Decodable2718 for TypedReceipt {
 
 pub type ReceiptResponse = WithOtherFields<TransactionReceipt<TypedReceiptRpc>>;
 
+/// Response type for `eth_fillTransaction` RPC method.
+///
+/// This type represents a transaction that has been "filled" with default values
+/// for missing fields like nonce, gas limit, and fee parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FillTransactionResult<T> {
+    /// RLP-encoded transaction bytes
+    pub raw: Bytes,
+    /// Filled transaction request
+    pub tx: T,
+}
+
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
     let WithOtherFields {
         inner:
