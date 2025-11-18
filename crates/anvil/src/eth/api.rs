@@ -1430,15 +1430,11 @@ impl EthApi {
 
         let raw = tx.encoded_2718().to_vec().into();
 
-        let mut tx = transaction_build(
-            None,
-            MaybeImpersonatedTransaction::new(tx),
-            None,
-            None,
-            None,
-        );
-        
-        // Set the correct `from` address (overrides the recovered zero address from dummy signature)
+        let mut tx =
+            transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
+
+        // Set the correct `from` address (overrides the recovered zero address from dummy
+        // signature)
         tx.0.inner.inner = Recovered::new_unchecked(tx.0.inner.inner.into_inner(), from);
 
         Ok(FillTransactionResult { raw, tx })
