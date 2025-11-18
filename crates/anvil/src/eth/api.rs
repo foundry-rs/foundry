@@ -72,8 +72,9 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{
-            FillTransactionResult, PendingTransaction, ReceiptResponse, TypedTransaction,
-            TypedTransactionRequest, transaction_request_to_typed,
+            FillTransactionResult, MaybeImpersonatedTransaction, PendingTransaction,
+            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
+            transaction_request_to_typed,
         },
         wallet::WalletCapabilities,
     },
@@ -1373,7 +1374,7 @@ impl EthApi {
     pub async fn fill_transaction(
         &self,
         mut request: WithOtherFields<TransactionRequest>,
-    ) -> Result<FillTransactionResult<TypedTransaction>> {
+    ) -> Result<FillTransactionResult<AnyRpcTransaction>> {
         node_info!("eth_fillTransaction");
 
         let from = match request.as_ref().from() {
@@ -1428,6 +1429,13 @@ impl EthApi {
         )?;
 
         let raw = tx.encoded_2718().to_vec().into();
+
+        let mut tx =
+            transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
+
+        // Set the correct `from` address (overrides the recovered zero address from dummy
+        // signature)
+        tx.0.inner.inner = Recovered::new_unchecked(tx.0.inner.inner.into_inner(), from);
 
         Ok(FillTransactionResult { raw, tx })
     }
