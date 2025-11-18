@@ -9,7 +9,7 @@ use crate::{
             self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
-            notifications::NewBlockNotifications,
+            notifications::{NewBlockNotifications, ReorgedBlockNotifications},
             validate::TransactionValidator,
         },
         error::{
@@ -3317,6 +3317,12 @@ impl EthApi {
     /// Returns a new block event stream that yields Notifications when a new block was added
     pub fn new_block_notifications(&self) -> NewBlockNotifications {
         self.backend.new_block_notifications()
+    }
+
+    /// Returns a new reorged block event stream that yields Notifications when blocks are removed
+    /// due to reorg
+    pub fn new_reorged_block_notifications(&self) -> ReorgedBlockNotifications {
+        self.backend.new_reorged_block_notifications()
     }
 
     /// Returns a new listeners for ready transactions
