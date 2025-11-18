@@ -83,7 +83,10 @@ pub enum Erc20Subcommand {
     /// displaying the amount in human-readable format (e.g., "100 USDC" instead of raw wei).
     ///
     /// For non-interactive usage (scripts, CI/CD), you can pipe 'yes' to skip the prompt:
-    ///     yes | cast erc20 transfer <token> <to> <amount> [options]
+    ///
+    /// ```sh
+    /// yes | cast erc20 transfer <TOKEN> <TO> <AMOUNT> [OPTIONS]
+    /// ```
     #[command(visible_alias = "t")]
     Transfer {
         /// The ERC20 token contract address.
@@ -110,7 +113,10 @@ pub enum Erc20Subcommand {
     /// displaying the amount in human-readable format.
     ///
     /// For non-interactive usage (scripts, CI/CD), you can pipe 'yes' to skip the prompt:
-    ///     yes | cast erc20 approve <token> <spender> <amount> [options]
+    ///
+    /// ```sh
+    /// yes | cast erc20 approve <TOKEN> <SPENDER> <AMOUNT> [OPTIONS]
+    /// ```
     #[command(visible_alias = "a")]
     Approve {
         /// The ERC20 token contract address.
