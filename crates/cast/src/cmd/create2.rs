@@ -257,10 +257,10 @@ impl Create2Args {
 }
 
 fn get_regex_hex_string(s: String) -> Result<String> {
-    let s = s.strip_prefix("0x").unwrap_or(&s);
-    let pad_width = s.len() + s.len() % 2;
-    hex::decode(format!("{s:0<pad_width$}"))?;
-    Ok(s.to_string())
+    let stripped = crate::strip_0x(&s);
+    let pad_width = stripped.len() + stripped.len() % 2;
+    hex::decode(format!("{stripped:0<pad_width$}"))?;
+    Ok(stripped.to_string())
 }
 
 #[cfg(test)]
