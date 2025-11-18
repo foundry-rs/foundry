@@ -772,10 +772,19 @@ impl<'a> FunctionRunner<'a> {
             identified_contracts,
             &self.cr.mcr.known_contracts,
         );
+
+        // Filter out additional invariants to test if we already have a persisted failure.
         let invariant_contract = InvariantContract {
             address: self.address,
             invariant_fn: func,
-            invariant_fns: invariants,
+            invariant_fns: invariants
+                .into_iter()
+                .filter(|(invariant_fn, _)| {
+                    *invariant_fn == func
+                        || (invariant_config.continuous_run
+                            && !canonicalized(failure_dir.join(invariant_fn.name.clone())).exists())
+                })
+                .collect(),
             call_after_invariant,
             abi: &self.cr.contract.abi,
         };
@@ -893,6 +902,7 @@ impl<'a> FunctionRunner<'a> {
             .errors
             .get(&invariant_contract.invariant_fn.name)
             .and_then(|err| err.revert_reason());
+        let mut other_failures = vec![];
 
         if success {
             // If invariants ran successfully, replay the last run to collect logs and
@@ -965,12 +975,20 @@ impl<'a> FunctionRunner<'a> {
                     continue;
                 }
 
-                // Generate counterexamples for other invariants broken.
-                if let Some(error) = invariant_result.errors.get(&invariant.name)
+                // Generate counterexamples for broken invariant, if there is no failure persisted
+                // already.
+                let persisted_failure = canonicalized(failure_dir.join(invariant.name.clone()));
+                if !persisted_failure.exists()
+                    && let Some(error) = invariant_result.errors.get(&invariant.name)
                     && let InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) = error
                     && let TestError::Fail(_, ref calls) = case_data.test_error
                 {
+                    other_failures.push(format!(
+                        "{}: {}",
+                        invariant.name,
+                        error.revert_reason().unwrap_or_default()
+                    ));
                     match generate_counterexample(
                         self.clone_executor(),
                         &self.cr.mcr.known_contracts,
@@ -982,7 +1000,7 @@ impl<'a> FunctionRunner<'a> {
                             // Persist error in invariant failure dir.
                             record_invariant_failure(
                                 failure_dir.as_path(),
-                                canonicalized(failure_dir.join(invariant.name.clone())).as_path(),
+                                persisted_failure.as_path(),
                                 &call_sequence,
                                 test_bytecode,
                             );
@@ -999,6 +1017,7 @@ impl<'a> FunctionRunner<'a> {
             invariant_result.gas_report_traces,
             success,
             reason,
+            other_failures,
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
