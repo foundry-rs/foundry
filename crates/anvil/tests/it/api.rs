@@ -550,9 +550,8 @@ async fn test_fill_transaction_fills_all_missing_fields() {
     // Should fill all required fields and be EIP-1559
     assert!(filled.tx.is_eip1559());
     assert!(filled.tx.gas_limit() > 0);
-    let essentials = filled.tx.essentials();
-    assert!(essentials.max_fee_per_gas.is_some());
-    assert!(essentials.max_priority_fee_per_gas.is_some());
+    assert!(filled.tx.max_fee_per_gas() > 0);
+    assert!(filled.tx.max_priority_fee_per_gas().is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -578,8 +577,7 @@ async fn test_fill_transaction_eip4844_blob_fee() {
         filled.tx.max_fee_per_blob_gas().is_some(),
         "max_fee_per_blob_gas should be filled for blob tx"
     );
-    let essentials = filled.tx.essentials();
-    assert!(essentials.blob_versioned_hashes.is_some(), "blob_versioned_hashes should be present");
+    assert!(filled.tx.blob_versioned_hashes().is_some(), "blob_versioned_hashes should be present");
 }
 
 #[tokio::test(flavor = "multi_thread")]
