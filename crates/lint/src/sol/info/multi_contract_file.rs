@@ -27,17 +27,14 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFile {
 
         if count > 1 {
             // Point at the second contract's name to make the diagnostic actionable.
-            if let Some(span) = unit
-                .items
+            unit.items
                 .iter()
                 .filter_map(|item| match &item.kind {
                     ast::ItemKind::Contract(c) => Some(c.name.span),
                     _ => None,
                 })
-                .nth(1)
-            {
-                ctx.emit(&MULTI_CONTRACT_FILE, span);
-            }
+                .skip(1)
+                .for_each(|span| ctx.emit(&MULTI_CONTRACT_FILE, span));
         }
     }
 }
