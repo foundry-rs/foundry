@@ -382,6 +382,7 @@ jiff = { version = "0.2", default-features = false, features = [
 heck = "0.5"
 uuid = "1.18.1"
 flate2 = "1.1"
+ethereum_ssz = "0.10"
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
