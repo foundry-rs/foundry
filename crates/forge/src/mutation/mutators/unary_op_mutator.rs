@@ -1,7 +1,7 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType, UnaryOpMutated};
 use eyre::Result;
-use solar_parse::ast::{ExprKind, LitKind, UnOpKind};
+use solar::ast::{ExprKind, LitKind, UnOpKind};
 
 pub struct UnaryOperatorMutator;
 

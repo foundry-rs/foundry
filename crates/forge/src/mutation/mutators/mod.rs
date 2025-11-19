@@ -7,7 +7,7 @@ pub mod unary_op_mutator;
 pub mod mutator_registry;
 
 use eyre::Result;
-use solar_parse::ast::{Expr, Span, VariableDefinition};
+use solar::ast::{Expr, Span, VariableDefinition};
 use std::path::PathBuf;
 
 use crate::mutation::Mutant;

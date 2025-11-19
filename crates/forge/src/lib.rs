@@ -9,6 +9,10 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
+// Required for optional features (aws-kms, gcp-kms, turnkey)
+#[cfg(any(feature = "aws-kms", feature = "gcp-kms", feature = "turnkey"))]
+use foundry_wallets as _;
+
 pub mod args;
 pub mod cmd;
 pub mod opts;

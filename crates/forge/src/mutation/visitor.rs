@@ -1,5 +1,5 @@
 use crate::mutation::{mutant::OwnedLiteral, mutators::Mutator};
-use solar_parse::ast::{Expr, Span, VariableDefinition, visit::Visit};
+use solar::ast::{Expr, Span, VariableDefinition, visit::Visit};
 use std::{ops::ControlFlow, path::PathBuf};
 
 use crate::mutation::{

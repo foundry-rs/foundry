@@ -1,7 +1,7 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
 use eyre::{OptionExt, Result};
-use solar_parse::ast::{BinOp, BinOpKind, ExprKind};
+use solar::ast::{BinOp, BinOpKind, ExprKind};
 
 pub struct BinaryOpMutator;
 

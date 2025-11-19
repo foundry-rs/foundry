@@ -43,6 +43,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use tokio::signal;
 use tracing::Span;
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
@@ -395,14 +396,22 @@ impl<'a> ContractRunner<'a> {
             return SuiteResult::new(start.elapsed(), test_results, warnings);
         }
 
-        let fail_fast = &self.tcfg.fail_fast;
+        let early_exit = &self.tcfg.early_exit;
+
+        if self.progress.is_some() {
+            let interrupt = early_exit.clone();
+            self.tokio_handle.spawn(async move {
+                signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+                interrupt.record_exit();
+            });
+        }
 
         let test_results = functions
             .par_iter()
-            .map(|&func| {
+            .filter_map(|&func| {
                 // Early exit if we're running with fail-fast and a test already failed.
-                if fail_fast.should_stop() {
-                    return (func.signature(), TestResult::setup_result(setup.clone()));
+                if early_exit.should_stop() {
+                    return None;
                 }
 
                 let start = Instant::now();
@@ -435,10 +444,10 @@ impl<'a> ContractRunner<'a> {
 
                 // Set fail fast flag if current test failed.
                 if res.status.is_failure() {
-                    fail_fast.record_fail();
+                    early_exit.record_exit();
                 }
 
-                (sig, res)
+                Some((sig, res))
             })
             .collect::<BTreeMap<_, _>>();
 
@@ -637,7 +646,7 @@ impl<'a> FunctionRunner<'a> {
         let mut result = FuzzTestResult::default();
 
         for i in 0..fixtures_len {
-            if self.tcfg.fail_fast.should_stop() {
+            if self.tcfg.early_exit.should_stop() {
                 return self.result;
             }
 
@@ -753,6 +762,14 @@ impl<'a> FunctionRunner<'a> {
         };
         let show_solidity = invariant_config.show_solidity;
 
+        let progress = start_fuzz_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            invariant_config.timeout,
+            invariant_config.runs,
+        );
+
         // Try to replay recorded failure if any.
         if let Some(mut call_sequence) =
             persisted_call_sequence(failure_file.as_path(), test_bytecode)
@@ -781,26 +798,51 @@ impl<'a> FunctionRunner<'a> {
                 invariant_contract.call_after_invariant,
             ) && !success
             {
-                let _ = sh_warn!(
-                    "\
-                            Replayed invariant failure from {:?} file. \
-                            Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
+                let warn = format!(
+                    "Replayed invariant failure from {:?} file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
                     failure_file.as_path()
                 );
-                // If sequence still fails then replay error to collect traces and
-                // exit without executing new runs.
-                let _ = replay_run(
-                    &invariant_contract,
+
+                if let Some(ref progress) = progress {
+                    progress.set_prefix(format!("{}\n{warn}\n", &func.name));
+                } else {
+                    let _ = sh_warn!("{warn}");
+                }
+
+                // If sequence still fails then replay error to collect traces and exit without
+                // executing new runs.
+                match replay_error(
+                    evm.config(),
                     self.clone_executor(),
+                    &txes,
+                    None,
+                    &invariant_contract,
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
-                    &txes,
-                    show_solidity,
-                );
+                    progress.as_ref(),
+                    &self.tcfg.early_exit,
+                ) {
+                    Ok(replayed_call_sequence) => {
+                        if !replayed_call_sequence.is_empty() {
+                            call_sequence = replayed_call_sequence;
+                            // Persist error in invariant failure dir.
+                            record_invariant_failure(
+                                failure_dir.as_path(),
+                                failure_file.as_path(),
+                                &call_sequence,
+                                test_bytecode,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        error!(%err, "Failed to replay invariant error");
+                    }
+                }
+
                 self.result.invariant_replay_fail(
                     replayed_entirely,
                     &invariant_contract.invariant_function.name,
@@ -810,19 +852,12 @@ impl<'a> FunctionRunner<'a> {
             }
         }
 
-        let progress = start_fuzz_progress(
-            self.cr.progress,
-            self.cr.name,
-            &func.name,
-            invariant_config.timeout,
-            invariant_config.runs,
-        );
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             progress.as_ref(),
-            &self.tcfg.fail_fast,
+            &self.tcfg.early_exit,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -844,47 +879,52 @@ impl<'a> FunctionRunner<'a> {
                 | InvariantFuzzError::Revert(case_data) => {
                     // Replay error to create counterexample and to collect logs, traces and
                     // coverage.
-                    match replay_error(
-                        &case_data,
-                        &invariant_contract,
-                        self.clone_executor(),
-                        &self.cr.mcr.known_contracts,
-                        identified_contracts.clone(),
-                        &mut self.result.logs,
-                        &mut self.result.traces,
-                        &mut self.result.line_coverage,
-                        &mut self.result.deprecated_cheatcodes,
-                        progress.as_ref(),
-                        show_solidity,
-                    ) {
-                        Ok(call_sequence) => {
-                            if !call_sequence.is_empty() {
-                                // Persist error in invariant failure dir.
-                                if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
-                                    error!(%err, "Failed to create invariant failure dir");
-                                } else if let Err(err) = foundry_common::fs::write_json_file(
-                                    failure_file.as_path(),
-                                    &InvariantPersistedFailure {
-                                        call_sequence: call_sequence.clone(),
-                                        driver_bytecode: Some(test_bytecode.clone()),
-                                    },
-                                ) {
-                                    error!(%err, "Failed to record call sequence");
+                    match case_data.test_error {
+                        TestError::Abort(_) => {}
+                        TestError::Fail(_, ref calls) => {
+                            match replay_error(
+                                evm.config(),
+                                self.clone_executor(),
+                                calls,
+                                Some(case_data.inner_sequence),
+                                &invariant_contract,
+                                &self.cr.mcr.known_contracts,
+                                identified_contracts.clone(),
+                                &mut self.result.logs,
+                                &mut self.result.traces,
+                                &mut self.result.line_coverage,
+                                &mut self.result.deprecated_cheatcodes,
+                                progress.as_ref(),
+                                &self.tcfg.early_exit,
+                            ) {
+                                Ok(call_sequence) => {
+                                    if !call_sequence.is_empty() {
+                                        // Persist error in invariant failure dir.
+                                        record_invariant_failure(
+                                            failure_dir.as_path(),
+                                            failure_file.as_path(),
+                                            &call_sequence,
+                                            test_bytecode,
+                                        );
+
+                                        let original_seq_len = if let TestError::Fail(_, calls) =
+                                            &case_data.test_error
+                                        {
+                                            calls.len()
+                                        } else {
+                                            call_sequence.len()
+                                        };
+
+                                        counterexample = Some(CounterExample::Sequence(
+                                            original_seq_len,
+                                            call_sequence,
+                                        ))
+                                    }
                                 }
-
-                                let original_seq_len =
-                                    if let TestError::Fail(_, calls) = &case_data.test_error {
-                                        calls.len()
-                                    } else {
-                                        call_sequence.len()
-                                    };
-
-                                counterexample =
-                                    Some(CounterExample::Sequence(original_seq_len, call_sequence))
+                                Err(err) => {
+                                    error!(%err, "Failed to replay invariant error");
+                                }
                             }
-                        }
-                        Err(err) => {
-                            error!(%err, "Failed to replay invariant error");
                         }
                     };
                 }
@@ -973,7 +1013,7 @@ impl<'a> FunctionRunner<'a> {
             self.address,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
-            &self.tcfg.fail_fast,
+            &self.tcfg.early_exit,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -1124,4 +1164,27 @@ fn test_paths(
     let failures_dir = canonicalized(persist_dir.join("failures").join(contract));
     let failure_file = canonicalized(failures_dir.join(test_name));
     (failures_dir, failure_file)
+}
+
+/// Helper function to persist invariant failure.
+fn record_invariant_failure(
+    failure_dir: &Path,
+    failure_file: &Path,
+    call_sequence: &[BaseCounterExample],
+    test_bytecode: &Bytes,
+) {
+    if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
+        error!(%err, "Failed to create invariant failure dir");
+        return;
+    }
+
+    if let Err(err) = foundry_common::fs::write_json_file(
+        failure_file,
+        &InvariantPersistedFailure {
+            call_sequence: call_sequence.to_owned(),
+            driver_bytecode: Some(test_bytecode.clone()),
+        },
+    ) {
+        error!(%err, "Failed to record call sequence");
+    }
 }

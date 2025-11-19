@@ -30,7 +30,6 @@ use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
-use shrink::shrink_sequence;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
@@ -52,7 +51,7 @@ use serde_json::json;
 
 mod shrink;
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EvmError, FailFast, FuzzTestTimer, corpus::CorpusManager,
+    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, FuzzTestTimer, corpus::CorpusManager,
 };
 pub use shrink::check_sequence;
 
@@ -323,6 +322,10 @@ impl<'a> InvariantExecutor<'a> {
         }
     }
 
+    pub fn config(self) -> InvariantConfig {
+        self.config
+    }
+
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`.
     pub fn invariant_fuzz(
         &mut self,
@@ -330,7 +333,7 @@ impl<'a> InvariantExecutor<'a> {
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
         progress: Option<&ProgressBar>,
-        fail_fast: &FailFast,
+        early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -345,7 +348,7 @@ impl<'a> InvariantExecutor<'a> {
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut last_metrics_report = Instant::now();
         let continue_campaign = |runs: u32| {
-            if fail_fast.should_stop() {
+            if early_exit.should_stop() {
                 return false;
             }
 

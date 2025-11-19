@@ -1,12 +1,11 @@
 use crate::executors::{
-    Executor,
-    invariant::{
-        call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
-    },
+    EarlyExit, Executor,
+    invariant::{call_after_invariant_function, call_invariant_function},
 };
 use alloy_primitives::{Address, Bytes, U256};
+use foundry_config::InvariantConfig;
 use foundry_evm_core::constants::MAGIC_ASSUME;
-use foundry_evm_fuzz::BasicTxDetails;
+use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 
@@ -33,30 +32,28 @@ impl CallSequenceShrinker {
     }
 }
 
-/// Shrinks the failure case to its smallest sequence of calls.
-///
-/// The shrunk call sequence always respect the order failure is reproduced as it is tested
-/// top-down.
 pub(crate) fn shrink_sequence(
-    failed_case: &FailedInvariantCaseData,
+    config: &InvariantConfig,
+    invariant_contract: &InvariantContract<'_>,
     calls: &[BasicTxDetails],
     executor: &Executor,
-    call_after_invariant: bool,
     progress: Option<&ProgressBar>,
+    early_exit: &EarlyExit,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
     // Reset run count and display shrinking message.
     if let Some(progress) = progress {
-        progress.set_length(failed_case.shrink_run_limit as usize as u64);
+        progress.set_length(config.shrink_run_limit as u64);
         progress.reset();
         progress.set_message(" Shrink");
     }
 
+    let target_address = invariant_contract.address;
+    let calldata: Bytes = invariant_contract.invariant_function.selector().to_vec().into();
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let (_, success) =
-        call_invariant_function(executor, failed_case.addr, failed_case.calldata.clone())?;
+    let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
     if !success {
         return Ok(vec![]);
     }
@@ -64,7 +61,11 @@ pub(crate) fn shrink_sequence(
     let mut call_idx = 0;
 
     let mut shrinker = CallSequenceShrinker::new(calls.len());
-    for _ in 0..failed_case.shrink_run_limit {
+    for _ in 0..config.shrink_run_limit {
+        if early_exit.should_stop() {
+            break;
+        }
+
         // Remove call at current index.
         shrinker.included_calls.clear(call_idx);
 
@@ -72,10 +73,10 @@ pub(crate) fn shrink_sequence(
             executor.clone(),
             calls,
             shrinker.current().collect(),
-            failed_case.addr,
-            failed_case.calldata.clone(),
-            failed_case.fail_on_revert,
-            call_after_invariant,
+            target_address,
+            calldata.clone(),
+            config.fail_on_revert,
+            invariant_contract.call_after_invariant,
         ) {
             // If candidate sequence still fails, shrink until shortest possible.
             Ok((false, _)) if shrinker.included_calls.count() == 1 => break,

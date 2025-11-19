@@ -22,6 +22,7 @@ use std::{fs, path::Path, str::FromStr};
 #[macro_use]
 extern crate foundry_test_utils;
 
+mod erc20;
 mod selectors;
 
 casttest!(print_short_version, |_prj, cmd| {
@@ -141,9 +142,17 @@ transactions:        [
 "#]]);
 
     // <https://etherscan.io/block/15007840>
-    cmd.cast_fuse().args(["block", "15007840", "-f", "hash", "--rpc-url", eth_rpc_url.as_str()]);
+    cmd.cast_fuse().args([
+        "block",
+        "15007840",
+        "-f",
+        "hash,timestamp",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ]);
     cmd.assert_success().stdout_eq(str![[r#"
 0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415
+1655904485
 
 "#]]);
 });
@@ -1311,6 +1320,7 @@ casttest!(to_base, |_prj, cmd| {
 });
 
 // tests that revert reason is only present if transaction has reverted.
+
 casttest!(receipt_revert_reason, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
 
@@ -1322,27 +1332,25 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
-
+    .stdout_eq(format!(r#"
 blockHash            0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
 blockNumber          16239315
-contractAddress      
+contractAddress      {}
 cumulativeGasUsed    10743428
 effectiveGasPrice    10539984136
 from                 0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
 gasUsed              21000
 logs                 []
 logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                 
+root                 {}
 status               1 (success)
 transactionHash      0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
 transactionIndex     116
 type                 0
-blobGasPrice         
-blobGasUsed          
+blobGasPrice         {}
+blobGasUsed          {}
 to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
-
-"#]]);
+"#,"", "", "", ""));
 
     let rpc = next_http_archive_rpc_url();
 
@@ -1355,30 +1363,27 @@ to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
             rpc.as_str(),
         ])
         .assert_success()
-        .stdout_eq(str![[r#"
-
+        .stdout_eq(format!(r#"
 blockHash            0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
 blockNumber          14839405
-contractAddress      
+contractAddress      {}
 cumulativeGasUsed    20273649
 effectiveGasPrice    21491736378
 from                 0x3cF412d970474804623bb4e3a42dE13F9bCa5436
 gasUsed              24952
 logs                 []
 logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                 
+root                 {}
 status               0 (failed)
 transactionHash      0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
 transactionIndex     173
 type                 2
-blobGasPrice         
-blobGasUsed          
+blobGasPrice         {}
+blobGasUsed          {}
 to                   0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
 revertReason         [..]Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
-
-"#]]);
+"#,"","","",""));
 });
-
 // tests that the revert reason is loaded using the correct `from` address.
 casttest!(revert_reason_from, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
@@ -1390,28 +1395,26 @@ casttest!(revert_reason_from, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
-
+    .stdout_eq(format!(r#"
 blockHash            0x32663d7730c9ea8e1de6d99854483e25fcc05bb56c91c0cc82f9f04944fbffc1
 blockNumber          7823353
-contractAddress      
+contractAddress      {}
 cumulativeGasUsed    7500797
 effectiveGasPrice    14296851013
 from                 0x3583fF95f96b356d716881C871aF7Eb55ea34a93
 gasUsed              25815
 logs                 []
 logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                 
+root                 {}
 status               0 (failed)
 transactionHash      0x10ee70cf9f5ced5c515e8d53bfab5ea9f5c72cd61b25fba455c8355ee286c4e4
 transactionIndex     96
 type                 0
-blobGasPrice         
-blobGasUsed          
+blobGasPrice         {}
+blobGasUsed          {}
 to                   0x91b5d4111a4C038153b24e31F75ccdC47123595d
 revertReason         Counter is too large, data: "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000014436f756e74657220697320746f6f206c61726765000000000000000000000000"
-
-"#]]);
+"#, "", "", "", ""));
 });
 
 // tests that `cast --parse-bytes32-address` command is working correctly.
@@ -1637,9 +1640,9 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
 });
 
 casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
-    // As chain is not provided, a query is made to the provider to get the chain id, before the tx
-    // is built. Anvil is configured to use chain id 1 so that the produced tx will be the same
-    // as in the `mktx_raw_unsigned` test.
+    // As chain is not provided, a query is made to the provider to get the chain id, before the
+    // tx is built. Anvil is configured to use chain id 1 so that the produced tx will
+    // be the same as in the `mktx_raw_unsigned` test.
     let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
     cmd.args([
         "mktx",
@@ -2494,6 +2497,31 @@ casttest!(send_eip7702, async |_prj, cmd| {
 "#]]);
 });
 
+casttest!(send_sync, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    let output = cmd
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--sync",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("transactionHash"));
+    assert!(output.contains("blockNumber"));
+    assert!(output.contains("gasUsed"));
+});
+
 casttest!(hash_message, |_prj, cmd| {
     cmd.args(["hash-message", "hello"]).assert_success().stdout_eq(str![[r#"
 0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
@@ -2765,6 +2793,7 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     // Deploy counter contract.
     cmd.args([
         "script",
@@ -2933,6 +2962,7 @@ forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
         r#"
@@ -3034,6 +3064,7 @@ forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
         r#"
@@ -4027,6 +4058,8 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
         "0x9999999999999999999999999999999999999999",
         "adjustPosition(int128)",
         "-33333",
+        "--gas-limit",
+        "1000000",
         "--rpc-url",
         rpc.as_str(),
     ])
@@ -4199,3 +4232,16 @@ Transaction successfully executed.
 "#]]);
     }
 );
+casttest!(keccak_stdin_bytes, |_prj, cmd| {
+    cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
+0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
+
+"#]]);
+});
+
+casttest!(keccak_stdin_bytes_with_newline, |_prj, cmd| {
+    cmd.args(["keccak"]).stdin("0x12\n").assert_success().stdout_eq(str![[r#"
+0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
+
+"#]]);
+});

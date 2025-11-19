@@ -5,9 +5,9 @@ mod visitor;
 
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
-use solar_parse::{
-    Parser,
+use solar::{
     ast::interface::{Session, source_map::FileName},
+    parse::Parser,
 };
 use std::sync::Arc;
 
@@ -19,7 +19,7 @@ use crate::mutation::{
 pub use crate::mutation::reporter::MutationReporter;
 
 use crate::result::TestOutcome;
-use solar_parse::ast::{Span, visit::Visit};
+use solar::ast::{Span, visit::Visit};
 use std::{collections::HashSet, path::PathBuf};
 
 pub struct MutationsSummary {
@@ -281,8 +281,8 @@ impl MutationHandler {
         // Clone survived_spans for use in the closure
         let survived_spans_clone = self.survived_spans.clone();
 
-        let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
-            let arena = solar_parse::ast::Arena::new();
+        let _ = sess.enter(|| -> solar::interface::Result<()> {
+            let arena = solar::ast::Arena::new();
             let mut parser =
                 Parser::from_lazy_source_code(&sess, &arena, FileName::from(path.clone()), || {
                     Ok((*target_content).to_string())

@@ -9,7 +9,7 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
+use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
@@ -18,7 +18,10 @@ use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
 };
-use foundry_common::fmt::format_tokens;
+use foundry_common::{
+    fmt::format_tokens,
+    provider::{RetryProvider, RetryProviderWithSigner},
+};
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use itertools::Itertools;
@@ -314,8 +317,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         self.tx.set_kind(self.state.kind);
 
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
-        let input = Bytes::copy_from_slice(&self.state.input);
-        self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
+        self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
 
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
@@ -440,6 +442,7 @@ impl<P, S> CastTxBuilder<P, S>
 where
     P: Provider<AnyNetwork>,
 {
+    /// Populates the blob sidecar for the transaction if any blob data was provided.
     pub fn with_blob_data(mut self, blob_data: Option<Vec<u8>>) -> Result<Self> {
         let Some(blob_data) = blob_data else { return Ok(self) };
 
@@ -470,4 +473,16 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         return Ok(Some(decoded_error));
     }
     Ok(None)
+}
+
+/// Creates a provider with wallet for signing transactions locally.
+pub async fn signing_provider(
+    wallet: WalletOpts,
+    provider: &RetryProvider,
+) -> eyre::Result<RetryProviderWithSigner> {
+    let wallet = alloy_network::EthereumWallet::from(wallet.signer().await?);
+    Ok(alloy_provider::ProviderBuilder::default()
+        .with_recommended_fillers()
+        .wallet(wallet)
+        .connect_provider(provider.clone()))
 }

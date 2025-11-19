@@ -3,7 +3,6 @@
 use foundry_test_utils::str;
 
 forgetest_init!(failing_test_after_failed_setup, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "FailingTestAfterFailedSetup.t.sol",
         r#"
@@ -45,7 +44,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(legacy_assertions, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "LegacyAssertions.t.sol",
         r#"
@@ -99,7 +97,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(payment_failure, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "PaymentFailure.t.sol",
         r#"

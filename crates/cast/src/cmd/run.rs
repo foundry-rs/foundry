@@ -1,11 +1,11 @@
-use crate::debug::handle_traces;
+use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_changes};
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
-    map::{HashMap, HashSet},
+    map::{AddressSet, HashMap},
 };
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -25,13 +25,13 @@ use foundry_config::{
 use foundry_evm::{
     Env,
     core::env::AsEnvMut,
-    executors::{EvmError, TracingExecutor},
+    executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
     utils::configure_tx_env,
 };
-
-use crate::utils::apply_chain_and_block_specific_env_changes;
+use futures::TryFutureExt;
+use revm::DatabaseRef;
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -151,15 +151,16 @@ impl RunArgs {
         let tx_block_number =
             tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
-        // fetch the block the transaction was mined in
-        let block = provider.get_block(tx_block_number.into()).full().await?;
-
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let (mut env, fork, chain, networks) =
-            TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
+        let (block, (mut env, fork, chain, networks)) = tokio::try_join!(
+            // fetch the block the transaction was mined in
+            provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
+            TracingExecutor::get_fork_material(&mut config, evm_opts)
+        )?;
+
         let mut evm_version = self.evm_version;
 
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
@@ -303,7 +304,7 @@ impl RunArgs {
             }
         };
 
-        let contracts_bytecode = fetch_contracts_bytecode_from_trace(&provider, &result).await?;
+        let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &result)?;
         handle_traces(
             result,
             &config,
@@ -321,34 +322,32 @@ impl RunArgs {
     }
 }
 
-pub async fn fetch_contracts_bytecode_from_trace(
-    provider: &RootProvider<AnyNetwork>,
+pub fn fetch_contracts_bytecode_from_trace(
+    executor: &Executor,
     result: &TraceResult,
 ) -> Result<HashMap<Address, Bytes>> {
     let mut contracts_bytecode = HashMap::default();
     if let Some(ref traces) = result.traces {
-        let addresses = gather_trace_addresses(traces);
-        let results = futures::future::join_all(addresses.into_iter().map(async |a| {
-            (
-                a,
-                provider.get_code_at(a).await.unwrap_or_else(|e| {
-                    sh_warn!("Failed to fetch code for {a:?}: {e:?}").ok();
-                    Bytes::new()
-                }),
-            )
-        }))
-        .await;
-        for (address, code) in results {
-            if !code.is_empty() {
-                contracts_bytecode.insert(address, code);
+        contracts_bytecode.extend(gather_trace_addresses(traces).filter_map(|addr| {
+            // All relevant bytecodes should already be cached in the executor.
+            let code = executor
+                .backend()
+                .basic_ref(addr)
+                .inspect_err(|e| _ = sh_warn!("Failed to fetch code for {addr}: {e}"))
+                .ok()??
+                .code?
+                .bytes();
+            if code.is_empty() {
+                return None;
             }
-        }
+            Some((addr, code))
+        }));
     }
     Ok(contracts_bytecode)
 }
 
-fn gather_trace_addresses(traces: &Traces) -> HashSet<Address> {
-    let mut addresses = HashSet::default();
+fn gather_trace_addresses(traces: &Traces) -> impl Iterator<Item = Address> {
+    let mut addresses = AddressSet::default();
     for (_, trace) in traces {
         for node in trace.arena.nodes() {
             if !node.trace.address.is_zero() {
@@ -359,7 +358,7 @@ fn gather_trace_addresses(traces: &Traces) -> HashSet<Address> {
             }
         }
     }
-    addresses
+    addresses.into_iter()
 }
 
 impl figment::Provider for RunArgs {

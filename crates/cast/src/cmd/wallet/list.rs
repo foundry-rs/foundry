@@ -4,7 +4,7 @@ use std::env;
 
 use foundry_common::{fs, sh_err, sh_println};
 use foundry_config::Config;
-use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
+use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
 
 /// CLI arguments for `cast wallet list`.
 #[derive(Clone, Debug, Parser)]
@@ -38,6 +38,10 @@ pub struct ListArgs {
     #[arg(long, hide = !cfg!(feature = "gcp-kms"))]
     gcp: bool,
 
+    /// List accounts from Turnkey.
+    #[arg(long, hide = !cfg!(feature = "turnkey"))]
+    turnkey: bool,
+
     /// List all configured accounts.
     #[arg(long, group = "hw-wallets")]
     all: bool,
@@ -64,6 +68,7 @@ impl ListArgs {
             .trezor(self.trezor || self.all)
             .aws(self.aws || self.all)
             .gcp(self.gcp || (self.all && gcp_env_vars_set()))
+            .turnkey(self.turnkey || self.all)
             .interactives(0)
             .build()
             .expect("build multi wallet");
@@ -101,7 +106,7 @@ impl ListArgs {
     }
 
     fn list_local_senders(&self) -> Result<()> {
-        let keystore_path = self.dir.clone().unwrap_or_default();
+        let keystore_path = self.dir.as_deref().unwrap_or_default();
         let keystore_dir = if keystore_path.is_empty() {
             // Create the keystore default directory if it doesn't exist
             let default_dir = Config::foundry_keystores_dir().unwrap();

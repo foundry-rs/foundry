@@ -1,6 +1,5 @@
 // <https://github.com/foundry-rs/foundry/issues/9482>
-forgetest_init!(bind_unlinked_bytecode, |prj, cmd| {
-    prj.wipe();
+forgetest!(bind_unlinked_bytecode, |prj, cmd| {
     prj.add_source(
         "SomeLibContract.sol",
         r#"

@@ -2,7 +2,10 @@
 // select mutants) Use Solar:
 use super::visitor::AssignVarTypes;
 use serde::{Deserialize, Serialize};
-use solar_parse::ast::{BinOpKind, LitKind, Span, StrKind, UnOpKind};
+use solar::{
+    interface::BytePos,
+    parse::ast::{BinOpKind, LitKind, Span, StrKind, UnOpKind},
+};
 use std::{fmt::Display, path::PathBuf};
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
@@ -245,7 +248,7 @@ pub struct Mutant {
     pub mutation: MutationType,
 }
 
-// Custom serialization for Span (since solar_parse::ast::Span doesn't implement Serialize)
+// Custom serialization for Span (since solar::parse::ast::Span doesn't implement Serialize)
 fn serialize_span<S>(span: &Span, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -270,10 +273,7 @@ where
         hi: u32,
     }
     let helper = SpanHelper::deserialize(deserializer)?;
-    Ok(Span::new(
-        solar_parse::interface::BytePos(helper.lo),
-        solar_parse::interface::BytePos(helper.hi),
-    ))
+    Ok(Span::new(BytePos(helper.lo), BytePos(helper.hi)))
 }
 
 impl Display for Mutant {

@@ -6,7 +6,7 @@ use crate::mutation::{
 
 use alloy_primitives::U256;
 use eyre::Result;
-use solar_parse::ast::{ExprKind, Span};
+use solar::ast::{ExprKind, Span};
 
 pub struct AssignmentMutator;
 

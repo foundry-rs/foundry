@@ -1,6 +1,6 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
-use solar_parse::ast::ExprKind;
+use solar::ast::ExprKind;
 
 use eyre::Result;
 
