@@ -77,6 +77,7 @@ impl ListArgs {
             .gcp(self.gcp || (self.all && gcp_env_vars_set()))
             .turnkey(self.turnkey || self.all)
             .interactives(0)
+            .interactive(false)
             .build()
             .expect("build multi wallet");
 
