@@ -25,9 +25,9 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFile {
 
         // Check which types are exempted
         let exceptions = &ctx.config.lint_specific.multi_contract_file_exceptions;
-        let allow_interfaces = exceptions.contains(&ContractException::Interface);
-        let allow_libraries = exceptions.contains(&ContractException::Library);
-        let allow_abstract = exceptions.contains(&ContractException::AbstractContract);
+        let should_lint_interfaces = !exceptions.contains(&ContractException::Interface);
+        let should_lint_libraries = !exceptions.contains(&ContractException::Library);
+        let should_lint_abstract = !exceptions.contains(&ContractException::AbstractContract);
 
         // Collect spans of all contract-like items, skipping those that are exempted
         let relevant_spans: Vec<_> = unit
@@ -35,13 +35,14 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFile {
             .iter()
             .filter_map(|item| match &item.kind {
                 ast::ItemKind::Contract(c) => {
-                    let should_skip = match c.kind {
-                        ast::ContractKind::Interface => allow_interfaces,
-                        ast::ContractKind::Library => allow_libraries,
-                        ast::ContractKind::AbstractContract => allow_abstract,
-                        ast::ContractKind::Contract => false, // Regular contracts are never skipped
+                    let should_lint = match c.kind {
+                        ast::ContractKind::Interface => should_lint_interfaces,
+
+                        ast::ContractKind::Library => should_lint_libraries,
+                        ast::ContractKind::AbstractContract => should_lint_abstract,
+                        ast::ContractKind::Contract => true, // Regular contracts are always linted
                     };
-                    (!should_skip).then_some(c.name.span)
+                    should_lint.then_some(c.name.span)
                 }
                 _ => None,
             })
