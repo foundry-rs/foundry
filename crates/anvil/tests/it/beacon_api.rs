@@ -1,5 +1,5 @@
 use crate::utils::http_provider;
-use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
+use alloy_consensus::{Blob, SidecarBuilder, SimpleCoder, Transaction};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{B256, FixedBytes, U256, b256};
@@ -8,6 +8,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_rpc_types_beacon::{genesis::GenesisResponse, sidecar::GetBlobsResponse};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
+use ssz::Decode;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_beacon_api_get_blob_sidecars() {
@@ -107,15 +108,58 @@ async fn test_beacon_api_get_blobs() {
 
     let response = client.get(&url).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").and_then(|h| h.to_str().ok()),
+        Some("application/json"),
+        "Expected application/json content-type header"
+    );
 
     let blobs_response: GetBlobsResponse = response.json().await.unwrap();
-
     // Verify response structure
     assert!(!blobs_response.execution_optimistic);
     assert!(!blobs_response.finalized);
 
     // Verify we have blob data from all transactions
     assert_eq!(blobs_response.data.len(), 3, "Expected 3 blobs from 3 transactions");
+
+    // Test response with SSZ encoding
+    let url = format!("{}/eth/v1/beacon/blobs/{}", handle.http_endpoint(), block_number);
+    let response = client
+        .get(&url)
+        .header(axum::http::header::ACCEPT, "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").and_then(|h| h.to_str().ok()),
+        Some("application/octet-stream"),
+        "Expected application/octet-stream content-type header"
+    );
+
+    let body_bytes = response.bytes().await.unwrap();
+
+    // Decode the SSZ-encoded blobs in a spawned thread with larger stack to handle recursion
+    let decoded_blobs = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024) // 8MB stack for SSZ decoding of large blobs
+        .spawn(move || Vec::<Blob>::from_ssz_bytes(&body_bytes))
+        .expect("Failed to spawn decode thread")
+        .join()
+        .expect("Decode thread panicked")
+        .expect("Failed to decode SSZ-encoded blobs");
+
+    // Verify we got exactly 3 blobs
+    assert_eq!(
+        decoded_blobs.len(),
+        3,
+        "Expected 3 blobs from SSZ-encoded response, got {}",
+        decoded_blobs.len()
+    );
+
+    // Verify the decoded blobs match the JSON response blobs
+    for (i, (decoded, json)) in decoded_blobs.iter().zip(blobs_response.data.iter()).enumerate() {
+        assert_eq!(decoded, json, "Blob {i} mismatch between SSZ and JSON responses");
+    }
 
     // Test filtering with versioned_hashes query parameter - single hash
     let url = format!(
