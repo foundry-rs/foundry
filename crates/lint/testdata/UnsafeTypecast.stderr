@@ -1,6 +1,14 @@
 note[multi-contract-file]: prefer having only one contract, interface or library per file
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
+LL | contract UnsafeTypecast {
+   |          ^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
 LL | contract Repros {
    |          ^^^^^^
    |

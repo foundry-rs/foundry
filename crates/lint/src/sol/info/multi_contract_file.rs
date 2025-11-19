@@ -3,6 +3,7 @@ use crate::{
     sol::{Severity, SolLint, info::MultiContractFile},
 };
 
+use foundry_config::lint::ContractException;
 use solar::ast::{self as ast};
 
 declare_forge_lint!(
@@ -22,19 +23,33 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFile {
             return;
         }
 
-        // Count contract-like items (contracts, interfaces, libraries) in this source unit.
-        let count = unit.count_contracts();
+        // Check which types are exempted
+        let exceptions = &ctx.config.lint_specific.multi_contract_file_exceptions;
+        let allow_interfaces = exceptions.contains(&ContractException::Interface);
+        let allow_libraries = exceptions.contains(&ContractException::Library);
+        let allow_abstract = exceptions.contains(&ContractException::AbstractContract);
 
-        if count > 1 {
-            // Point at the second contract's name to make the diagnostic actionable.
-            unit.items
-                .iter()
-                .filter_map(|item| match &item.kind {
-                    ast::ItemKind::Contract(c) => Some(c.name.span),
-                    _ => None,
-                })
-                .skip(1)
-                .for_each(|span| ctx.emit(&MULTI_CONTRACT_FILE, span));
+        // Collect spans of all contract-like items, skipping those that are exempted
+        let relevant_spans: Vec<_> = unit
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ast::ItemKind::Contract(c) => {
+                    let should_skip = match c.kind {
+                        ast::ContractKind::Interface => allow_interfaces,
+                        ast::ContractKind::Library => allow_libraries,
+                        ast::ContractKind::AbstractContract => allow_abstract,
+                        ast::ContractKind::Contract => false, // Regular contracts are never skipped
+                    };
+                    (!should_skip).then_some(c.name.span)
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Flag all if there's more than one
+        if relevant_spans.len() > 1 {
+            relevant_spans.into_iter().for_each(|span| ctx.emit(&MULTI_CONTRACT_FILE, span));
         }
     }
 }

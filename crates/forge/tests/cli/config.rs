@@ -146,10 +146,13 @@ severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
+
+[lint.lint_specific]
 mixed_case_exceptions = [
     "ERC",
     "URI",
 ]
+multi_contract_file_exceptions = []
 
 [doc]
 out = "docs"
@@ -1339,10 +1342,13 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
-    "mixed_case_exceptions": [
-      "ERC",
-      "URI"
-    ]
+    "lint_specific": {
+      "mixed_case_exceptions": [
+        "ERC",
+        "URI"
+      ],
+      "multi_contract_file_exceptions": []
+    }
   },
   "doc": {
     "out": "docs",

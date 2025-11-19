@@ -41,6 +41,14 @@ LL |         uint256 Enabled_MixedCase_Variable = 1;
 note[multi-contract-file]: prefer having only one contract, interface or library per file
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
+LL | contract AsmKeccak256 {
+   |          ^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
 LL | contract OtherAsmKeccak256 {
    |          ^^^^^^^^^^^^^^^^^
    |
