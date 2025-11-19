@@ -1214,8 +1214,7 @@ fn inner_start_gas_snapshot(
     name: Option<String>,
 ) -> Result {
     // Revert if there is an active gas snapshot as we can only have one active snapshot at a time.
-    if ccx.state.gas_metering.active_gas_snapshot.is_some() {
-        let (group, name) = ccx.state.gas_metering.active_gas_snapshot.as_ref().unwrap().clone();
+    if let Some((group, name)) = &ccx.state.gas_metering.active_gas_snapshot {
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
@@ -1241,10 +1240,9 @@ fn inner_stop_gas_snapshot(
     name: Option<String>,
 ) -> Result {
     // If group and name are not provided, use the last snapshot group and name.
-    let (group, name) = group.zip(name).unwrap_or_else(|| {
-        let (group, name) = ccx.state.gas_metering.active_gas_snapshot.as_ref().unwrap().clone();
-        (group, name)
-    });
+    let (group, name) = group
+        .zip(name)
+        .unwrap_or_else(|| ccx.state.gas_metering.active_gas_snapshot.clone().unwrap());
 
     if let Some(record) = ccx
         .state
