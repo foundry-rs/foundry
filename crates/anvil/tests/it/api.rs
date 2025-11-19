@@ -4,8 +4,8 @@ use crate::{
     abi::{Multicall, SimpleStorage},
     utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
-use alloy_consensus::{SignableTransaction, Transaction, TxEip1559};
-use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
+use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559};
+use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844, TxSignerSync};
 use alloy_primitives::{
     Address, B256, ChainId, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
@@ -465,4 +465,167 @@ async fn can_get_code_by_hash() {
 
     let code = api.debug_code_by_hash(code_hash, None).await.unwrap();
     assert_eq!(&code.unwrap(), foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fill_transaction_fills_chain_id() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+
+    let tx_req = TransactionRequest::default()
+        .with_from(from)
+        .with_to(Address::random())
+        .with_gas_limit(21_000);
+
+    let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
+
+    // Should fill with the chain id from provider
+    assert!(filled.tx.chain_id().is_some());
+    assert_eq!(filled.tx.chain_id().unwrap(), CHAIN_ID);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fill_transaction_fills_nonce() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    // Send a transaction to increment nonce
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(100));
+    let tx = WithOtherFields::new(tx);
+    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    // Now the account should have nonce 1
+    let tx_req = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1000))
+        .with_gas_limit(21_000);
+
+    let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
+
+    assert_eq!(filled.tx.nonce(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fill_transaction_preserves_provided_fields() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+
+    let provided_nonce = 100u64;
+    let provided_gas_limit = 50_000u64;
+
+    let tx_req = TransactionRequest::default()
+        .with_from(from)
+        .with_to(Address::random())
+        .with_value(U256::from(1000))
+        .with_nonce(provided_nonce)
+        .with_gas_limit(provided_gas_limit);
+
+    let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
+
+    // Should preserve the provided nonce and gas limit
+    assert_eq!(filled.tx.nonce(), provided_nonce);
+    assert_eq!(filled.tx.gas_limit(), provided_gas_limit);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fill_transaction_fills_all_missing_fields() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+
+    // Create a simple transfer transaction with minimal fields
+    let tx_req = TransactionRequest::default().with_from(from).with_to(Address::random());
+
+    let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
+
+    // Should fill all required fields and be EIP-1559
+    assert!(filled.tx.is_eip1559());
+    assert!(filled.tx.gas_limit() > 0);
+    assert!(filled.tx.max_fee_per_gas() > 0);
+    assert!(filled.tx.max_priority_fee_per_gas().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fill_transaction_eip4844_blob_fee() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+
+    let mut builder = SidecarBuilder::<SimpleCoder>::new();
+    builder.ingest(b"dummy blob");
+    let sidecar = builder.build().unwrap();
+
+    // EIP-4844 blob transaction with sidecar but no blob fee
+    let mut tx_req = TransactionRequest::default().with_from(from).with_to(Address::random());
+    tx_req.sidecar = Some(sidecar);
+    tx_req.transaction_type = Some(3); // EIP-4844
+
+    let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
+
+    // Blob transaction should have max_fee_per_blob_gas filled
+    assert!(
+        filled.tx.max_fee_per_blob_gas().is_some(),
+        "max_fee_per_blob_gas should be filled for blob tx"
+    );
+    assert!(filled.tx.blob_versioned_hashes().is_some(), "blob_versioned_hashes should be present");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fill_transaction_eip4844_preserves_blob_fee() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+
+    let provided_blob_fee = 5_000_000u128;
+
+    let mut builder = SidecarBuilder::<SimpleCoder>::new();
+    builder.ingest(b"dummy blob");
+    let sidecar = builder.build().unwrap();
+
+    // EIP-4844 blob transaction with blob fee already set
+    let mut tx_req = TransactionRequest::default()
+        .with_from(from)
+        .with_to(Address::random())
+        .with_max_fee_per_blob_gas(provided_blob_fee);
+    tx_req.sidecar = Some(sidecar);
+    tx_req.transaction_type = Some(3); // EIP-4844
+
+    let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
+
+    // Should preserve the provided blob fee
+    assert_eq!(
+        filled.tx.max_fee_per_blob_gas(),
+        Some(provided_blob_fee),
+        "should preserve provided max_fee_per_blob_gas"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fill_transaction_non_blob_tx_no_blob_fee() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+
+    // EIP-1559 transaction without blob fields
+    let mut tx_req = TransactionRequest::default().with_from(from).with_to(Address::random());
+    tx_req.transaction_type = Some(2); // EIP-1559
+
+    let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
+
+    // Non-blob transaction should NOT have blob fee filled
+    assert!(
+        filled.tx.max_fee_per_blob_gas().is_none(),
+        "max_fee_per_blob_gas should not be set for non-blob tx"
+    );
 }

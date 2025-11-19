@@ -45,9 +45,9 @@ impl BeaconError {
         Self::new(BeaconErrorCode::InternalError, "Internal server error")
     }
 
-    /// Helper function to create a 500 Internal Server Error with the given details
-    pub fn internal_error_with_details(error: impl Display) -> Self {
-        Self::new(BeaconErrorCode::InternalError, format!("Internal server error: {error}"))
+    /// Helper function to create a 410 Gone error for deprecated endpoints
+    pub fn deprecated_endpoint_with_hint(hint: impl Display) -> Self {
+        Self::new(BeaconErrorCode::Gone, format!("This endpoint is deprecated. {hint}"))
     }
 
     /// Converts to an Axum response
@@ -86,6 +86,7 @@ impl IntoResponse for BeaconError {
 pub enum BeaconErrorCode {
     BadRequest = 400,
     NotFound = 404,
+    Gone = 410,
     InternalError = 500,
 }
 
@@ -100,6 +101,7 @@ impl BeaconErrorCode {
         match self {
             Self::BadRequest => "Bad Request",
             Self::NotFound => "Not Found",
+            Self::Gone => "Gone",
             Self::InternalError => "Internal Server Error",
         }
     }

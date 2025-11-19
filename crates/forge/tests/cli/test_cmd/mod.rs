@@ -1744,6 +1744,15 @@ contract ATest is DSTest {
         b = new B();
         vm.resetGasMetering();
     }
+
+    // https://github.com/foundry-rs/foundry/issues/12474
+    function testMemoryOnReset(uint8[1] memory x) public {
+        uint8[1] memory z;
+        z[0] = x[0];
+        assertEq(z[0], x[0]);
+        vm.resetGasMetering();
+        assertEq(x[0], z[0]);
+    }
 }
      "#,
     );

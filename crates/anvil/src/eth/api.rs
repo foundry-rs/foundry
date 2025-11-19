@@ -41,8 +41,8 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionResponse,
-    eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionBuilder4844,
+    TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, Signature, TxHash, TxKind, U64, U256,
@@ -72,7 +72,8 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{
-            PendingTransaction, ReceiptResponse, TypedTransaction, TypedTransactionRequest,
+            FillTransactionResult, MaybeImpersonatedTransaction, PendingTransaction,
+            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
             transaction_request_to_typed,
         },
         wallet::WalletCapabilities,
@@ -279,6 +280,9 @@ impl EthApi {
                 .estimate_gas(call, block, EvmOverrides::new(state_override, block_overrides))
                 .await
                 .to_rpc_result(),
+            EthRequest::EthFillTransaction(request) => {
+                self.fill_transaction(request).await.to_rpc_result()
+            }
             EthRequest::EthGetRawTransactionByHash(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
@@ -1359,6 +1363,81 @@ impl EthApi {
         )
         .await
         .map(U256::from)
+    }
+
+    /// Fills a transaction request with default values for missing fields.
+    ///
+    /// This method populates missing transaction fields like nonce, gas limit,
+    /// chain ID, and fee parameters with appropriate defaults.
+    ///
+    /// Handler for ETH RPC call: `eth_fillTransaction`
+    pub async fn fill_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+    ) -> Result<FillTransactionResult<AnyRpcTransaction>> {
+        node_info!("eth_fillTransaction");
+
+        let from = match request.as_ref().from() {
+            Some(from) => from,
+            None => self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)?,
+        };
+
+        let nonce = if let Some(nonce) = request.as_ref().nonce() {
+            nonce
+        } else {
+            self.request_nonce(&request, from).await?.0
+        };
+
+        if request.as_ref().has_eip4844_fields()
+            && request.as_ref().max_fee_per_blob_gas().is_none()
+        {
+            // Use the next block's blob base fee for better accuracy
+            let blob_fee = self.backend.fees().get_next_block_blob_base_fee_per_gas();
+            request.as_mut().set_max_fee_per_blob_gas(blob_fee);
+        }
+
+        if request.as_ref().blob_sidecar().is_some()
+            && request.as_ref().blob_versioned_hashes.is_none()
+        {
+            request.as_mut().populate_blob_hashes();
+        }
+
+        if request.as_ref().gas_limit().is_none() {
+            let estimated_gas = self
+                .estimate_gas(request.clone(), Some(BlockId::latest()), EvmOverrides::default())
+                .await?;
+            request.as_mut().set_gas_limit(estimated_gas.to());
+        }
+
+        if request.as_ref().gas_price().is_none() {
+            let tip = if let Some(tip) = request.as_ref().max_priority_fee_per_gas() {
+                tip
+            } else {
+                let tip = self.lowest_suggestion_tip();
+                request.as_mut().set_max_priority_fee_per_gas(tip);
+                tip
+            };
+            if request.as_ref().max_fee_per_gas().is_none() {
+                request.as_mut().set_max_fee_per_gas(self.gas_price() + tip);
+            }
+        }
+
+        let typed_tx = self.build_typed_tx_request(request, nonce)?;
+        let tx = build_typed_transaction(
+            typed_tx,
+            Signature::new(Default::default(), Default::default(), false),
+        )?;
+
+        let raw = tx.encoded_2718().to_vec().into();
+
+        let mut tx =
+            transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
+
+        // Set the correct `from` address (overrides the recovered zero address from dummy
+        // signature)
+        tx.0.inner.inner = Recovered::new_unchecked(tx.0.inner.inner.into_inner(), from);
+
+        Ok(FillTransactionResult { raw, tx })
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`

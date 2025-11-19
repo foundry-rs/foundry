@@ -330,6 +330,34 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(res)
     }
 
+    /// Sends a transaction and waits for receipt synchronously
+    pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
+        let mut receipt: TransactionReceiptWithRevertReason =
+            self.provider.send_transaction_sync(tx).await?.into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, None)
+    }
+
+    /// Helper method to format transaction receipts consistently
+    fn format_receipt(
+        &self,
+        receipt: TransactionReceiptWithRevertReason,
+        field: Option<String>,
+    ) -> Result<String> {
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(&receipt, field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
+        } else if shell::is_json() {
+            // to_value first to sort json object keys
+            serde_json::to_value(&receipt)?.to_string()
+        } else {
+            receipt.pretty()
+        })
+    }
+
     /// # Example
     ///
     /// ```
@@ -863,15 +891,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         // Allow to fail silently
         let _ = receipt.update_revert_reason(&self.provider).await;
 
-        Ok(if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt, field)
-                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
-        } else if shell::is_json() {
-            // to_value first to sort json object keys
-            serde_json::to_value(&receipt)?.to_string()
-        } else {
-            receipt.pretty()
-        })
+        self.format_receipt(receipt, field)
     }
 
     /// Perform a raw JSON-RPC request
