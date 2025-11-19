@@ -252,9 +252,9 @@ impl FeeHistoryService {
         };
 
         let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default();
-        let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
-        let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
+        let base_fee = header.base_fee_per_gas.map(u128::from).unwrap_or_default();
+        let excess_blob_gas = header.excess_blob_gas.map(u128::from);
+        let blob_gas_used = header.blob_gas_used.map(u128::from);
         let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
 
         let mut item = FeeHistoryCacheItem {
@@ -277,7 +277,7 @@ impl FeeHistoryService {
             let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
             item.gas_used_ratio = gas_used / block.header.gas_limit as f64;
             item.blob_gas_used_ratio =
-                blob_gas_used.map(|g| g / MAX_BLOBS_PER_BLOCK_ELECTRA as f64).unwrap_or(0 as f64);
+                blob_gas_used.map(|g| g / MAX_BLOBS_PER_BLOCK_ELECTRA as f64).unwrap_or(0.0);
 
             // extract useful tx info (gas_used, effective_reward)
             let mut transactions: Vec<(_, _)> = receipts
@@ -307,8 +307,7 @@ impl FeeHistoryService {
                                 .tx()
                                 .max_priority_fee_per_gas
                                 .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
-                            Some(TypedTransaction::Deposit(_)) => 0,
-                            None => 0,
+                            Some(TypedTransaction::Deposit(_)) | None => 0,
                         };
 
                     (gas_used, effective_reward)
