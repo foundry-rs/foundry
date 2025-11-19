@@ -11,22 +11,26 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    inject_custom_precompiles,
     mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
-    Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root,
+    Header, Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS,
+    proofs::calculate_receipt_root, transaction::Either,
 };
-use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
+use alloy_eips::{
+    eip7685::EMPTY_REQUESTS_HASH,
+    eip7702::{RecoveredAuthority, RecoveredAuthorization},
+    eip7840::BlobParams,
+};
 use alloy_evm::{
-    EthEvm, Evm,
+    EthEvm, Evm, FromRecoveredTx,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
-    block::{Block, BlockInfo, PartialHeader},
+    block::{BlockInfo, create_block},
     transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_evm::{
@@ -35,10 +39,12 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
-use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
+use op_revm::{L1BlockInfo, OpContext, OpTransaction, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
+    context::{
+        Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
+    },
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
@@ -210,7 +216,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             let receipt = tx.create_receipt(&mut cumulative_gas_used);
 
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
-            build_logs_bloom(logs.clone(), &mut bloom);
+            build_logs_bloom(&logs, &mut bloom);
 
             let contract_address = out.as_ref().and_then(|out| {
                 if let Output::Create(_, contract_address) = out {
@@ -242,10 +248,12 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
 
         let receipts_root = calculate_receipt_root(&receipts);
 
-        let partial_header = PartialHeader {
+        let header = Header {
             parent_hash,
+            ommers_hash: Default::default(),
             beneficiary,
             state_root: self.db.maybe_state_root().unwrap_or_default(),
+            transactions_root: Default::default(), // Will be computed by create_block
             receipts_root,
             logs_bloom: bloom,
             difficulty,
@@ -256,7 +264,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             extra_data: Default::default(),
             mix_hash: mix_hash.unwrap_or_default(),
             nonce: Default::default(),
-            base_fee,
+            base_fee_per_gas: base_fee,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             blob_gas_used: cumulative_blob_gas_used,
             excess_blob_gas,
@@ -264,13 +272,43 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
         };
 
-        let block = Block::new(partial_header, transactions.clone());
+        let block = create_block(header, transactions);
         let block = BlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let mut tx_env = tx.to_revm_tx_env();
+        let mut tx_env: OpTransaction<TxEnv> =
+            FromRecoveredTx::from_recovered_tx(&tx.transaction.transaction, *tx.sender());
+
+        if let TypedTransaction::EIP7702(tx_7702) = &tx.transaction.transaction
+            && self.cheats.has_recover_overrides()
+        {
+            // Override invalid recovered authorizations with signature overrides from cheat manager
+            let cheated_auths = tx_7702
+                .tx()
+                .authorization_list
+                .iter()
+                .zip(tx_env.base.authorization_list)
+                .map(|(signed_auth, either_auth)| {
+                    either_auth.right_and_then(|recovered_auth| {
+                        if recovered_auth.authority().is_none()
+                            && let Ok(signature) = signed_auth.signature()
+                            && let Some(override_addr) =
+                                self.cheats.get_recover_override(&signature.as_bytes().into())
+                        {
+                            Either::Right(RecoveredAuthorization::new_unchecked(
+                                recovered_auth.into_parts().0,
+                                RecoveredAuthority::Valid(override_addr),
+                            ))
+                        } else {
+                            Either::Right(recovered_auth)
+                        }
+                    })
+                })
+                .collect();
+            tx_env.base.authorization_list = cheated_auths;
+        }
 
         if self.networks.is_optimism() {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
@@ -361,7 +399,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             self.networks.inject_precompiles(evm.precompiles_mut());
 
             if let Some(factory) = &self.precompile_factory {
-                inject_custom_precompiles(&mut evm, factory.precompiles());
+                evm.precompiles_mut().extend_precompiles(factory.precompiles());
             }
 
             let cheats = Arc::new(self.cheats.clone());
@@ -451,7 +489,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 }
 
 /// Inserts all logs into the bloom
-fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
+fn build_logs_bloom(logs: &[Log], bloom: &mut Bloom) {
     for log in logs {
         bloom.accrue(BloomInput::Raw(&log.address[..]));
         for topic in log.topics() {

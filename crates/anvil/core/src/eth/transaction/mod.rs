@@ -9,6 +9,7 @@ use alloy_consensus::{
 };
 
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
+use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
 use alloy_primitives::{Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256};
 use alloy_rlp::{Decodable, Encodable, Header};
@@ -202,6 +203,12 @@ pub struct MaybeImpersonatedTransaction {
     pub impersonated_sender: Option<Address>,
 }
 
+impl Typed2718 for MaybeImpersonatedTransaction {
+    fn ty(&self) -> u8 {
+        self.transaction.ty()
+    }
+}
+
 impl MaybeImpersonatedTransaction {
     /// Creates a new wrapper for the given transaction
     pub fn new(transaction: TypedTransaction) -> Self {
@@ -232,6 +239,56 @@ impl MaybeImpersonatedTransaction {
             return self.transaction.impersonated_hash(sender);
         }
         self.transaction.hash()
+    }
+
+    /// Converts the transaction into an [`RpcTransaction`]
+    pub fn into_rpc_transaction(self) -> RpcTransaction {
+        let hash = self.hash();
+        let from = self.recover().unwrap_or_default();
+        let envelope = self.transaction.try_into_eth().expect("cant build deposit transactions");
+
+        // NOTE: we must update the hash because the tx can be impersonated, this requires forcing
+        // the hash
+        let inner_envelope = match envelope {
+            TxEnvelope::Legacy(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip2930(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip1559(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip4844(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip7702(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash))
+            }
+        };
+
+        RpcTransaction {
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            inner: Recovered::new_unchecked(inner_envelope, from),
+        }
+    }
+}
+
+impl Encodable2718 for MaybeImpersonatedTransaction {
+    fn encode_2718_len(&self) -> usize {
+        self.transaction.encode_2718_len()
+    }
+
+    fn encode_2718(&self, out: &mut dyn BufMut) {
+        self.transaction.encode_2718(out)
     }
 }
 
@@ -275,86 +332,7 @@ impl Deref for MaybeImpersonatedTransaction {
 
 impl From<MaybeImpersonatedTransaction> for RpcTransaction {
     fn from(value: MaybeImpersonatedTransaction) -> Self {
-        let hash = value.hash();
-        let sender = value.recover().unwrap_or_default();
-        to_alloy_transaction_with_hash_and_sender(value.transaction, hash, sender)
-    }
-}
-
-pub fn to_alloy_transaction_with_hash_and_sender(
-    transaction: TypedTransaction,
-    hash: B256,
-    from: Address,
-) -> RpcTransaction {
-    match transaction {
-        TypedTransaction::Legacy(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP2930(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP1559(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP4844(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP7702(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::Deposit(_t) => {
-            unreachable!("cannot reach here, handled in `transaction_build` ")
-        }
+        value.into_rpc_transaction()
     }
 }
 
@@ -406,196 +384,6 @@ impl PendingTransaction {
 
     pub fn sender(&self) -> &Address {
         &self.sender
-    }
-
-    /// Converts the [PendingTransaction] into the [TxEnv] context that [`revm`](foundry_evm)
-    /// expects.
-    ///
-    /// Base [`TxEnv`] is encapsulated in the [`op_revm::OpTransaction`]
-    pub fn to_revm_tx_env(&self) -> OpTransaction<TxEnv> {
-        fn transact_to(kind: &TxKind) -> TxKind {
-            match kind {
-                TxKind::Call(c) => TxKind::Call(*c),
-                TxKind::Create => TxKind::Create,
-            }
-        }
-
-        let caller = *self.sender();
-        match &self.transaction.transaction {
-            TypedTransaction::Legacy(tx) => {
-                let chain_id = tx.tx().chain_id;
-                let TxLegacy { nonce, gas_price, gas_limit, value, to, input, .. } = tx.tx();
-                OpTransaction::new(TxEnv {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id,
-                    nonce: *nonce,
-                    value: (*value),
-                    gas_price: *gas_price,
-                    gas_priority_fee: None,
-                    gas_limit: *gas_limit,
-                    access_list: vec![].into(),
-                    tx_type: 0,
-                    ..Default::default()
-                })
-            }
-            TypedTransaction::EIP2930(tx) => {
-                let TxEip2930 {
-                    chain_id,
-                    nonce,
-                    gas_price,
-                    gas_limit,
-                    to,
-                    value,
-                    input,
-                    access_list,
-                    ..
-                } = tx.tx();
-                OpTransaction::new(TxEnv {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *gas_price,
-                    gas_priority_fee: None,
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: 1,
-                    ..Default::default()
-                })
-            }
-            TypedTransaction::EIP1559(tx) => {
-                let TxEip1559 {
-                    chain_id,
-                    nonce,
-                    max_priority_fee_per_gas,
-                    max_fee_per_gas,
-                    gas_limit,
-                    to,
-                    value,
-                    input,
-                    access_list,
-                    ..
-                } = tx.tx();
-                OpTransaction::new(TxEnv {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: 2,
-                    ..Default::default()
-                })
-            }
-            TypedTransaction::EIP4844(tx) => {
-                let TxEip4844 {
-                    chain_id,
-                    nonce,
-                    max_fee_per_blob_gas,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
-                    gas_limit,
-                    to,
-                    value,
-                    input,
-                    access_list,
-                    blob_versioned_hashes,
-                    ..
-                } = tx.tx().tx();
-                OpTransaction::new(TxEnv {
-                    caller,
-                    kind: TxKind::Call(*to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    max_fee_per_blob_gas: *max_fee_per_blob_gas,
-                    blob_hashes: blob_versioned_hashes.clone(),
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: 3,
-                    ..Default::default()
-                })
-            }
-            TypedTransaction::EIP7702(tx) => {
-                let TxEip7702 {
-                    chain_id,
-                    nonce,
-                    gas_limit,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
-                    to,
-                    value,
-                    access_list,
-                    authorization_list,
-                    input,
-                } = tx.tx();
-
-                let mut tx = TxEnv {
-                    caller,
-                    kind: TxKind::Call(*to),
-                    data: input.clone(),
-                    chain_id: Some(*chain_id),
-                    nonce: *nonce,
-                    value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: 4,
-                    ..Default::default()
-                };
-                tx.set_signed_authorization(authorization_list.clone());
-
-                OpTransaction::new(tx)
-            }
-            TypedTransaction::Deposit(tx) => {
-                let chain_id = tx.chain_id();
-                let TxDeposit {
-                    source_hash,
-                    to,
-                    mint,
-                    value,
-                    gas_limit,
-                    is_system_transaction,
-                    input,
-                    ..
-                } = tx;
-
-                let base = TxEnv {
-                    caller,
-                    kind: transact_to(to),
-                    data: input.clone(),
-                    chain_id,
-                    nonce: 0,
-                    value: *value,
-                    gas_price: 0,
-                    gas_priority_fee: None,
-                    gas_limit: { *gas_limit },
-                    access_list: vec![].into(),
-                    tx_type: DEPOSIT_TX_TYPE_ID,
-                    ..Default::default()
-                };
-
-                let deposit = DepositTransactionParts {
-                    source_hash: *source_hash,
-                    mint: Some(*mint),
-                    is_system_transaction: *is_system_transaction,
-                };
-
-                OpTransaction { base, deposit, enveloped_tx: None }
-            }
-        }
     }
 }
 
@@ -651,6 +439,21 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
 }
 
 impl TypedTransaction {
+    /// Converts the transaction into a [`TxEnvelope`].
+    ///
+    /// Returns an error if the transaction is a Deposit transaction, which is not part of the
+    /// standard Ethereum transaction types.
+    pub fn try_into_eth(self) -> Result<TxEnvelope, Self> {
+        match self {
+            Self::Legacy(tx) => Ok(TxEnvelope::Legacy(tx)),
+            Self::EIP2930(tx) => Ok(TxEnvelope::Eip2930(tx)),
+            Self::EIP1559(tx) => Ok(TxEnvelope::Eip1559(tx)),
+            Self::EIP4844(tx) => Ok(TxEnvelope::Eip4844(tx)),
+            Self::EIP7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
+            Self::Deposit(_) => Err(self),
+        }
+    }
+
     /// Returns true if the transaction uses dynamic fees: EIP1559, EIP4844 or EIP7702
     pub fn is_dynamic_fee(&self) -> bool {
         matches!(self, Self::EIP1559(_) | Self::EIP4844(_) | Self::EIP7702(_))
@@ -1191,30 +994,16 @@ impl TypedReceipt {
 fn convert_receipt_to_rpc(
     receipt: ReceiptWithBloom<Receipt<alloy_primitives::Log>>,
 ) -> ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
-    let rpc_logs: Vec<alloy_rpc_types::Log> = receipt
-        .receipt
-        .logs
-        .into_iter()
-        .map(|log| alloy_rpc_types::Log {
-            inner: log,
-            block_hash: None,
-            block_number: None,
-            block_timestamp: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        })
-        .collect();
-
-    ReceiptWithBloom {
-        receipt: Receipt {
-            status: receipt.receipt.status,
-            cumulative_gas_used: receipt.receipt.cumulative_gas_used,
-            logs: rpc_logs,
-        },
-        logs_bloom: receipt.logs_bloom,
-    }
+    receipt.map_logs(|log| alloy_rpc_types::Log {
+        inner: log,
+        block_hash: None,
+        block_number: None,
+        block_timestamp: None,
+        transaction_hash: None,
+        transaction_index: None,
+        log_index: None,
+        removed: false,
+    })
 }
 
 impl TypedReceiptRpc {
@@ -1482,7 +1271,19 @@ impl Decodable2718 for TypedReceipt {
     }
 }
 
-pub type ReceiptResponse = TransactionReceipt<TypedReceiptRpc>;
+pub type ReceiptResponse = WithOtherFields<TransactionReceipt<TypedReceiptRpc>>;
+
+/// Response type for `eth_fillTransaction` RPC method.
+///
+/// This type represents a transaction that has been "filled" with default values
+/// for missing fields like nonce, gas limit, and fee parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FillTransactionResult<T> {
+    /// RLP-encoded transaction bytes
+    pub raw: Bytes,
+    /// Filled transaction request
+    pub tx: T,
+}
 
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
     let WithOtherFields {
@@ -1504,52 +1305,90 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         other,
     } = receipt;
 
-    Some(TransactionReceipt {
-        transaction_hash,
-        transaction_index,
-        block_hash,
-        block_number,
-        gas_used,
-        contract_address,
-        effective_gas_price,
-        from,
-        to,
-        blob_gas_price,
-        blob_gas_used,
-        inner: match r#type {
-            0x00 => TypedReceiptRpc::Legacy(receipt_with_bloom),
-            0x01 => TypedReceiptRpc::EIP2930(receipt_with_bloom),
-            0x02 => TypedReceiptRpc::EIP1559(receipt_with_bloom),
-            0x03 => TypedReceiptRpc::EIP4844(receipt_with_bloom),
-            0x04 => TypedReceiptRpc::EIP7702(receipt_with_bloom),
-            0x7E => TypedReceiptRpc::Deposit(OpDepositReceiptWithBloom {
-                receipt: OpDepositReceipt {
-                    inner: Receipt {
-                        status: alloy_consensus::Eip658Value::Eip658(receipt_with_bloom.status()),
-                        cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
-                        logs: receipt_with_bloom
-                            .receipt
-                            .logs
-                            .into_iter()
-                            .map(|l| l.inner)
-                            .collect(),
+    Some(WithOtherFields {
+        inner: TransactionReceipt {
+            transaction_hash,
+            transaction_index,
+            block_hash,
+            block_number,
+            gas_used,
+            contract_address,
+            effective_gas_price,
+            from,
+            to,
+            blob_gas_price,
+            blob_gas_used,
+            inner: match r#type {
+                0x00 => TypedReceiptRpc::Legacy(receipt_with_bloom),
+                0x01 => TypedReceiptRpc::EIP2930(receipt_with_bloom),
+                0x02 => TypedReceiptRpc::EIP1559(receipt_with_bloom),
+                0x03 => TypedReceiptRpc::EIP4844(receipt_with_bloom),
+                0x04 => TypedReceiptRpc::EIP7702(receipt_with_bloom),
+                0x7E => TypedReceiptRpc::Deposit(OpDepositReceiptWithBloom {
+                    receipt: OpDepositReceipt {
+                        inner: Receipt {
+                            status: alloy_consensus::Eip658Value::Eip658(
+                                receipt_with_bloom.status(),
+                            ),
+                            cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
+                            logs: receipt_with_bloom
+                                .receipt
+                                .logs
+                                .into_iter()
+                                .map(|l| l.inner)
+                                .collect(),
+                        },
+                        deposit_nonce: other
+                            .get_deserialized::<U64>("depositNonce")
+                            .transpose()
+                            .ok()?
+                            .map(|v| v.to()),
+                        deposit_receipt_version: other
+                            .get_deserialized::<U64>("depositReceiptVersion")
+                            .transpose()
+                            .ok()?
+                            .map(|v| v.to()),
                     },
-                    deposit_nonce: other
-                        .get_deserialized::<U64>("depositNonce")
-                        .transpose()
-                        .ok()?
-                        .map(|v| v.to()),
-                    deposit_receipt_version: other
-                        .get_deserialized::<U64>("depositReceiptVersion")
-                        .transpose()
-                        .ok()?
-                        .map(|v| v.to()),
-                },
-                logs_bloom: receipt_with_bloom.logs_bloom,
-            }),
-            _ => return None,
+                    logs_bloom: receipt_with_bloom.logs_bloom,
+                }),
+                _ => return None,
+            },
         },
+        other,
     })
+}
+
+impl FromRecoveredTx<TypedTransaction> for TxEnv {
+    fn from_recovered_tx(tx: &TypedTransaction, caller: Address) -> Self {
+        match tx {
+            TypedTransaction::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
+            TypedTransaction::EIP2930(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
+            TypedTransaction::EIP1559(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
+            TypedTransaction::EIP4844(signed_tx) => {
+                Self::from_recovered_tx(signed_tx.tx().tx(), caller)
+            }
+            TypedTransaction::EIP7702(signed_tx) => Self::from_recovered_tx(signed_tx.tx(), caller),
+            TypedTransaction::Deposit(tx) => Self::from_recovered_tx(tx, caller),
+        }
+    }
+}
+
+impl FromRecoveredTx<TypedTransaction> for OpTransaction<TxEnv> {
+    fn from_recovered_tx(tx: &TypedTransaction, caller: Address) -> Self {
+        let base = TxEnv::from_recovered_tx(tx, caller);
+
+        let deposit = if let TypedTransaction::Deposit(deposit_tx) = tx {
+            DepositTransactionParts {
+                source_hash: deposit_tx.source_hash,
+                mint: Some(deposit_tx.mint),
+                is_system_transaction: deposit_tx.is_system_transaction,
+            }
+        } else {
+            Default::default()
+        };
+
+        Self { base, deposit, enveloped_tx: None }
+    }
 }
 
 #[cfg(test)]
@@ -1797,5 +1636,39 @@ mod tests {
         }"#;
 
         let _typed_tx: TypedTransaction = serde_json::from_str(tx).unwrap();
+    }
+
+    #[test]
+    fn test_from_recovered_tx_legacy() {
+        let tx = r#"
+        {
+            "Legacy": {
+                "chainId": "0x1",
+                "nonce": "0x0",
+                "gas": "0x5208",
+                "gasPrice": "0x1",
+                "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                "value": "0x1",
+                "input": "0x",
+                "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+                "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+                "v": "0x1b",
+                "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
+            }
+        }"#;
+
+        let typed_tx: TypedTransaction = serde_json::from_str(tx).unwrap();
+        let sender = typed_tx.recover().unwrap();
+
+        // Test TxEnv conversion via FromRecoveredTx trait
+        let tx_env = TxEnv::from_recovered_tx(&typed_tx, sender);
+        assert_eq!(tx_env.caller, sender);
+        assert_eq!(tx_env.gas_limit, 0x5208);
+        assert_eq!(tx_env.gas_price, 1);
+
+        // Test OpTransaction<TxEnv> conversion via FromRecoveredTx trait
+        let op_tx = OpTransaction::<TxEnv>::from_recovered_tx(&typed_tx, sender);
+        assert_eq!(op_tx.base.caller, sender);
+        assert_eq!(op_tx.base.gas_limit, 0x5208);
     }
 }

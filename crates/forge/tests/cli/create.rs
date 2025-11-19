@@ -128,6 +128,7 @@ forgetest!(can_create_oracle_on_amoy, |prj, cmd| {
 // tests that we can deploy the template contract
 forgetest_async!(can_create_template_contract, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
@@ -280,6 +281,7 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 // tests that we can deploy the template contract
 forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();

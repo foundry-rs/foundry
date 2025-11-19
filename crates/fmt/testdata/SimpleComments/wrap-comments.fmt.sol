@@ -1,6 +1,10 @@
 // config: line_length = 60
 // config: wrap_comments = true
 contract SimpleComments {
+    uint40 constant PERIOD = uint40(12345); // ~578 days
+    // Represents the depletion timestamp
+    uint40 constant WARP_PERIOD = FEB_1_2025 + PERIOD;
+
     //´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:
     // VARIABLES
     //.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•
@@ -46,8 +50,8 @@ contract SimpleComments {
 
     function test4() public view returns (uint256) {
         uint256 abc; // long postfix comment that exceeds
-            // line width. the comment should be split and
-            // carried over to the next line
+        // line width. the comment should be split and
+        // carried over to the next line
         uint256 abc2; // reallylongsinglewordcommentthatexceedslinewidththecommentshouldbesplitandcarriedovertothenextline
 
         // long prefix comment that exceeds line width. the

@@ -1,7 +1,6 @@
 use super::*;
 
 forgetest_init!(storage, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "name",
         r#"

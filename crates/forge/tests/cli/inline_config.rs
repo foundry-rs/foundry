@@ -204,7 +204,6 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
     use serde::{Deserialize, Deserializer};
     use std::{fs, path::Path};
 
-    prj.wipe_contracts();
     prj.add_test(
         "inline.sol",
         r#"
@@ -330,7 +329,6 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 });
 
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "inline.sol",
         r#"

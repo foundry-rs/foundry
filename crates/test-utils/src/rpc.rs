@@ -52,7 +52,7 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/rpc",
-        "reth-ethereum-full.ithaca.xyz/rpc",
+        // "reth-ethereum-full.ithaca.xyz/rpc",
     ],
 );
 shuffled_list!(
@@ -67,7 +67,7 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/ws",
-        "reth-ethereum-full.ithaca.xyz/ws",
+        // "reth-ethereum-full.ithaca.xyz/ws",
     ],
 );
 
@@ -187,6 +187,13 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         return "https://celo.drpc.org".to_string();
     }
 
+    if matches!(chain, Arbitrum) {
+        let rpc_url = env::var("ARBITRUM_RPC").unwrap_or_default();
+        if !rpc_url.is_empty() {
+            return rpc_url;
+        }
+    }
+
     let reth_works = true;
     let domain = if reth_works && matches!(chain, Mainnet) {
         *(if is_ws { &WS_DOMAINS } else { &HTTP_DOMAINS }).next()
@@ -195,8 +202,8 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         let key = DRPC_KEYS.next();
         let network = match chain {
             Mainnet => "ethereum",
-            Arbitrum => "arbitrum",
             Polygon => "polygon",
+            Arbitrum => "arbitrum",
             Sepolia => "sepolia",
             _ => "",
         };

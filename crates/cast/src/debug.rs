@@ -17,7 +17,7 @@ use foundry_evm::traces::{
 pub(crate) async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
-    chain: Option<Chain>,
+    chain: Chain,
     contracts_bytecode: &HashMap<Address, Bytes>,
     labels: Vec<String>,
     with_local_artifacts: bool,
@@ -56,7 +56,7 @@ pub(crate) async fn handle_traces(
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_label_disabled(disable_label);
-    let mut identifier = TraceIdentifiers::new().with_external(config, chain)?;
+    let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
         identifier = identifier.with_local_and_bytecodes(contracts, contracts_bytecode);

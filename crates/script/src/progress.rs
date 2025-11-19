@@ -171,8 +171,8 @@ impl ScriptProgress {
         progress
     }
 
-    /// Traverses a set of pendings and either finds receipts, or clears them from
-    /// the deployment sequence.
+    /// Traverses a set of pending transactions and either finds receipts, or clears
+    /// them from the deployment sequence.
     ///
     /// For each `tx_hash`, we check if it has confirmed. If it has
     /// confirmed, we push the receipt (if successful) or push an error (if

@@ -1,0 +1,42 @@
+{
+  "name": "@foundry-rs/cast",
+  "version": "0.0.0",
+  "type": "module",
+  "homepage": "https://getfoundry.sh/cast",
+  "description": "Swiss Army knife for interacting with Ethereum applications from the command line",
+  "bin": {
+    "cast": "./bin.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "postinstall": "TARGET_TOOL=cast node ./dist/postinstall.mjs"
+  },
+  "optionalDependencies": {
+    "@foundry-rs/cast-darwin-arm64": "0.0.0",
+    "@foundry-rs/cast-darwin-amd64": "0.0.0",
+    "@foundry-rs/cast-linux-arm64": "0.0.0",
+    "@foundry-rs/cast-linux-amd64": "0.0.0",
+    "@foundry-rs/cast-win32-amd64": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "foundry",
+    "testing",
+    "ethereum",
+    "solidity",
+    "blockchain",
+    "smart-contracts"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "directory": "npm",
+    "url": "https://github.com/foundry-rs/foundry"
+  }
+}

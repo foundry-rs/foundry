@@ -3,6 +3,7 @@
 use foundry_test_utils::{forgetest_init, str};
 
 forgetest_init!(should_run_table_tests, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_test(
         "CounterTable.t.sol",
         r#"
@@ -129,7 +130,6 @@ Tip: Run `forge test --rerun` to retry only the 6 failed tests
 // Table tests should show logs and contribute to coverage.
 // <https://github.com/foundry-rs/foundry/issues/11066>
 forgetest_init!(should_show_logs_and_add_coverage, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source(
         "Counter.sol",
         r#"

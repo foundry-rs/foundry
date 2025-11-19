@@ -172,10 +172,12 @@ end_of_record
 }
 
 forgetest_init!(basic, |prj, cmd| {
+    prj.initialize_default_contracts();
     basic_base(prj, cmd);
 });
 
 forgetest_init!(basic_crlf, |prj, cmd| {
+    prj.initialize_default_contracts();
     // Manually replace `\n` with `\r\n` in the source file.
     let make_crlf = |path: &Path| {
         fs::write(path, fs::read_to_string(path).unwrap().replace('\n', "\r\n")).unwrap()

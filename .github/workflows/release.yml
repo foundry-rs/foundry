@@ -16,8 +16,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-  PROFILE: maxperf
-  STABLE_VERSION: "v1.4.3"
+
+  # Keep in sync with `docker-publish.yml`.
+  RUST_PROFILE: maxperf
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+
+  LAST_STABLE_VERSION: "v1.4.4"
 
 jobs:
   prepare:
@@ -64,7 +68,7 @@ jobs:
 
       - name: Build changelog
         id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@d702b5bb7c23735c8afc130dac9c4c8b8eb669e8 # v6
+        uses: mikepenz/release-changelog-builder-action@439f79b5b5428107c7688c1d2b0e8bacc9b8792c # v6
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ env.IS_NIGHTLY == 'true' && 'nightly' || env.STABLE_VERSION }}
@@ -88,7 +92,7 @@ jobs:
       id-token: write
       contents: write
       attestations: write
-    name: ${{ matrix.target }} (${{ matrix.runner }})
+    name: release ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     needs: prepare
@@ -146,6 +150,11 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        if: ${{ contains(matrix.runner, 'depot') }}
+      - run: printf 'RUSTC_WRAPPER=sccache\n' >> "$GITHUB_ENV"
+        if: ${{ contains(matrix.runner, 'depot') }}
+
       - name: Apple M1 setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
@@ -154,8 +163,11 @@ jobs:
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross --rev baf457efc2555225af47963475bd70e8d2f5993f
+        uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # v2
+        with:
+          git: https://github.com/cross-rs/cross
+          rev: baf457efc2555225af47963475bd70e8d2f5993f
+          tool: cross
 
       - name: Build binaries
         env:
@@ -163,12 +175,12 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--target $TARGET --profile $PROFILE --bins
-            --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak,js-tracer)
+          flags=(--target $TARGET --profile $RUST_PROFILE --bins
+            --no-default-features --features "$RUST_FEATURES")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
@@ -198,7 +210,7 @@ jobs:
         id: artifacts
         env:
           PLATFORM_NAME: ${{ matrix.platform }}
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           ARCH: ${{ matrix.arch }}
         shell: bash
@@ -220,7 +232,7 @@ jobs:
           printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           retention-days: 1
           name: ${{ steps.artifacts.outputs.file_name }}
@@ -230,7 +242,7 @@ jobs:
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         env:
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
         shell: bash
         run: |
@@ -267,7 +279,7 @@ jobs:
 
       # Creates the release for this specific version
       - name: Create release
-        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2.4.1
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
         with:
           name: ${{ needs.prepare.outputs.release_name }}
           tag_name: ${{ needs.prepare.outputs.tag_name }}
@@ -282,7 +294,7 @@ jobs:
       # tagged `nightly` for compatibility with `foundryup`
       - name: Update nightly release
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2.4.1
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
         with:
           name: "Nightly"
           tag_name: "nightly"
