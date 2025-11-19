@@ -231,7 +231,6 @@ pub struct Config {
     /// Glob patterns for file paths to skip when building and executing contracts.
     pub skip: Vec<GlobMatcher>,
     /// Whether to forcefully clean all project artifacts before running commands.
-    // todo(onbjerg): is this useful anymore?
     pub force: bool,
     /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
@@ -308,7 +307,6 @@ pub struct Config {
     /// List of solidity error codes to always silence in the compiler output.
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// List of file paths to ignore.
-    // todo(onbjerg): how is this different from `skip`?
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
     /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
@@ -401,7 +399,6 @@ pub struct Config {
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     ///
     /// The default is 128MiB.
-    // todo(onbjerg): this seems unused.
     pub memory_limit: u64,
     /// Additional output selection for all contracts, such as "ir", "devdoc", "storageLayout",
     /// etc.
@@ -434,10 +431,8 @@ pub struct Config {
     #[serde(default)]
     pub extra_output_files: Vec<ContractOutputSelection>,
     /// Whether to print the names of the compiled contracts.
-    // todo(onbjerg): this seems unused.
     pub names: bool,
     /// Whether to print the sizes of the compiled contracts.
-    // todo(onbjerg): this seems unused.
     pub sizes: bool,
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
