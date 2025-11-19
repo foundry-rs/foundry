@@ -290,9 +290,9 @@ alloy-evm = "0.24.1"
 alloy-op-evm = "0.24.1"
 
 # revm
-revm = { version = "33.0.0", default-features = false }
+revm = { version = "33.1.0", default-features = false }
 revm-inspectors = { version = "0.33.0", features = ["serde"] }
-op-revm = { version = "14.0.0", default-features = false }
+op-revm = { version = "14.1.0", default-features = false }
 
 ## cli
 anstream = "0.6"
@@ -440,8 +440,8 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "237d0a0" }
 
 ## revm
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
-op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
+# revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
+# op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
 # revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "0aaab71" }
 
 ## foundry
