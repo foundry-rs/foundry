@@ -93,14 +93,12 @@ pub struct MultiWalletOpts {
     /// Open an interactive prompt to enter your private key.
     ///
     /// Takes a value for the number of keys to enter.
-    #[arg(
-        long,
-        short,
-        help_heading = "Wallet options - raw",
-        default_value = "0",
-        value_name = "NUM"
-    )]
+    #[arg(long, help_heading = "Wallet options - raw", default_value = "0", value_name = "NUM")]
     pub interactives: u32,
+
+    /// Open an interactive prompt to enter your private key.
+    #[arg(long, short, help_heading = "Wallet options - raw", conflicts_with = "interactives")]
+    pub interactive: bool,
 
     /// Use the provided private keys.
     #[arg(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
@@ -263,6 +261,9 @@ impl MultiWalletOpts {
         }
         if let Some(mnemonics) = self.mnemonics()? {
             signers.extend(mnemonics);
+        }
+        if self.interactive {
+            pending.push(PendingSigner::Interactive);
         }
         if self.interactives > 0 {
             pending.extend(std::iter::repeat_n(

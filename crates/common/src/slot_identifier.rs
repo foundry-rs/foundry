@@ -488,7 +488,13 @@ impl SlotIdentifier {
                 };
                 // Get the base slot value from storage_values
                 if let Some(base_value) = storage_values.get(&base_slot)
-                    && let Some(info) = self.handle_bytes_string(slot_u256, &slot_str, base_value)
+                    && let Some(info) = self.handle_bytes_string(
+                        storage,
+                        storage_type,
+                        slot_u256,
+                        &slot_str,
+                        base_value,
+                    )
                 {
                     return Some(info);
                 }
@@ -850,79 +856,74 @@ impl SlotIdentifier {
     ///   bytes/strings)
     fn handle_bytes_string(
         &self,
+        storage: &Storage,
+        storage_type: &StorageType,
         slot: U256,
         slot_str: &str,
         base_slot_value: &B256,
     ) -> Option<SlotInfo> {
-        for storage in &self.storage_layout.storage {
-            // Get the type information and base slot
-            let Some(storage_type) = self.storage_layout.types.get(&storage.storage_type) else {
-                continue;
+        // Only handle bytes/string encoded variables for this specific storage entry
+        if storage_type.encoding != ENCODING_BYTES {
+            return None;
+        }
+
+        // Check if this is the main slot for this variable
+        let base_slot = U256::from_str(&storage.slot).ok()?;
+        if slot == base_slot {
+            // Parse the type to get the correct DynSolType
+            let dyn_type = if storage_type.label == "string" {
+                DynSolType::String
+            } else if storage_type.label == "bytes" {
+                DynSolType::Bytes
+            } else {
+                return None;
             };
 
-            // Skip if not bytes or string encoding
-            if storage_type.encoding != ENCODING_BYTES {
-                continue;
-            }
+            return Some(SlotInfo {
+                label: storage.label.clone(),
+                slot_type: StorageTypeInfo {
+                    label: storage_type.label.clone(),
+                    dyn_sol_type: dyn_type,
+                },
+                offset: storage.offset,
+                slot: slot_str.to_string(),
+                members: None,
+                decoded: None,
+                keys: None,
+            });
+        }
 
-            // Check if this is the main slot
-            let base_slot = U256::from_str(&storage.slot).ok()?;
-            if slot == base_slot {
-                // Parse the type to get the correct DynSolType
-                let dyn_type = if storage_type.label == "string" {
-                    DynSolType::String
-                } else if storage_type.label == "bytes" {
-                    DynSolType::Bytes
-                } else {
-                    continue;
-                };
+        // Check if it could be a data slot for this long bytes/string
+        // Calculate where data slots would start for this variable
+        let data_start =
+            U256::from_be_bytes(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()).0);
+
+        // Get the length from the base slot value to calculate exact number of slots
+        // For long bytes/strings, the length is stored as (length * 2 + 1) in the base slot
+        let length_byte = base_slot_value.0[31];
+        if length_byte & 1 == 1 {
+            // It's a long bytes/string
+            let length = U256::from_be_bytes(base_slot_value.0) >> 1;
+            // Calculate number of slots needed (round up)
+            let num_slots = (length + U256::from(31)) / U256::from(32);
+
+            // Check if our slot is within the data region
+            if slot >= data_start && slot < data_start + num_slots {
+                let slot_index = (slot - data_start).to::<usize>();
 
                 return Some(SlotInfo {
-                    label: storage.label.clone(),
+                    label: format!("{}[{}]", storage.label, slot_index),
                     slot_type: StorageTypeInfo {
                         label: storage_type.label.clone(),
-                        dyn_sol_type: dyn_type,
+                        // Type is assigned as FixedBytes(32) for data slots
+                        dyn_sol_type: DynSolType::FixedBytes(32),
                     },
-                    offset: storage.offset,
+                    offset: 0,
                     slot: slot_str.to_string(),
                     members: None,
                     decoded: None,
                     keys: None,
                 });
-            }
-
-            // Check if it could be a data slot for this long bytes/string
-            // Calculate where data slots would start for this variable
-            let data_start =
-                U256::from_be_bytes(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()).0);
-
-            // Get the length from the base slot value to calculate exact number of slots
-            // For long bytes/strings, the length is stored as (length * 2 + 1) in the base slot
-            let length_byte = base_slot_value.0[31];
-            if length_byte & 1 == 1 {
-                // It's a long bytes/string
-                let length = U256::from_be_bytes(base_slot_value.0) >> 1;
-                // Calculate number of slots needed (round up)
-                let num_slots = (length + U256::from(31)) / U256::from(32);
-
-                // Check if our slot is within the data region
-                if slot >= data_start && slot < data_start + num_slots {
-                    let slot_index = (slot - data_start).to::<usize>();
-
-                    return Some(SlotInfo {
-                        label: format!("{}[{}]", storage.label, slot_index),
-                        slot_type: StorageTypeInfo {
-                            label: storage_type.label.clone(),
-                            // Type is assigned as FixedBytes(32) for data slots
-                            dyn_sol_type: DynSolType::FixedBytes(32),
-                        },
-                        offset: 0,
-                        slot: slot_str.to_string(),
-                        members: None,
-                        decoded: None,
-                        keys: None,
-                    });
-                }
             }
         }
 

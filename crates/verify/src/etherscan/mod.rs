@@ -282,7 +282,7 @@ impl EtherscanVerificationProvider {
             let api_url = api_url.trim_end_matches('/');
             let base_url = if !is_etherscan {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
-                api_url.strip_prefix("/api").unwrap_or(api_url)
+                api_url.strip_suffix("/api").unwrap_or(api_url)
             } else {
                 base_url.unwrap_or(api_url)
             };
