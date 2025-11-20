@@ -446,7 +446,7 @@ forgetest!(test_fork_backtrace, |prj, cmd| {
     prj.add_test("ForkBacktrace.t.sol", include_str!("../fixtures/backtraces/ForkBacktrace.t.sol"));
 
     let output = cmd
-        .args(["test", "-vvvvv", "--fork-url", &fork_url, "--match-contract", "ForkBacktraceTest"])
+        .args(["test", "-vvvvv", "--rpc-url", &fork_url, "--match-contract", "ForkBacktraceTest"])
         .assert_failure();
 
     output.stdout_eq(str![[r#"
@@ -501,7 +501,7 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
             "--mt",
             "testTransferFromWithoutApproval",
             "-vvvvv",
-            "--fork-url",
+            "--rpc-url",
             &fork_url,
             "--etherscan-api-key",
             &etherscan_api_key,
