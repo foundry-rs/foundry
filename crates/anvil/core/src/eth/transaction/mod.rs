@@ -1398,19 +1398,18 @@ mod tests {
     fn test_from_recovered_tx_legacy() {
         let tx = r#"
         {
-            "Legacy": {
-                "chainId": "0x1",
-                "nonce": "0x0",
-                "gas": "0x5208",
-                "gasPrice": "0x1",
-                "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-                "value": "0x1",
-                "input": "0x",
-                "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
-                "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
-                "v": "0x1b",
-                "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
-            }
+            "type": "0x0",
+            "chainId": "0x1",
+            "nonce": "0x0",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+            "value": "0x1",
+            "input": "0x",
+            "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+            "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+            "v": "0x1b",
+            "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
         }"#;
 
         let typed_tx: TypedTransaction = serde_json::from_str(tx).unwrap();
