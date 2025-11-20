@@ -1272,7 +1272,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false
+    "show_solidity": false,
+    "max_time_delay": null,
+    "max_block_delay": null
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
