@@ -198,9 +198,13 @@ function extractFileFromTarball(tarballBuffer, filepath) {
       8
     )
 
+    const sizeInvalid = !Number.isFinite(fileSize) || Number.isNaN(fileSize) || fileSize < 0
+    if (sizeInvalid) {
+      const target = fileName === filepath ? filepath : fileName || '(unnamed entry)'
+      throw new Error(`Invalid size for ${target} in tarball`)
+    }
+
     if (fileName === filepath) {
-      if (!Number.isFinite(fileSize) || Number.isNaN(fileSize) || fileSize < 0)
-        throw new Error(`Invalid size for ${filepath} in tarball`)
       if (fileSize > MAX_BINARY_BYTES)
         throw new Error(`Binary size for ${filepath} exceeds maximum allowed threshold`)
       return tarballBuffer.subarray(offset, offset + fileSize)
