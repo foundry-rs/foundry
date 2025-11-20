@@ -61,6 +61,8 @@ pub(crate) fn shrink_sequence(
     let mut call_idx = 0;
 
     let mut shrinker = CallSequenceShrinker::new(calls.len());
+    // Track consecutive executor errors during shrinking to avoid producing misleading results.
+    let mut error_count = 0usize;
     for _ in 0..config.shrink_run_limit {
         if early_exit.should_stop() {
             break;
@@ -81,8 +83,26 @@ pub(crate) fn shrink_sequence(
             // If candidate sequence still fails, shrink until shortest possible.
             Ok((false, _)) if shrinker.included_calls.count() == 1 => break,
             // Restore last removed call as it caused sequence to pass invariant.
-            Ok((true, _)) => shrinker.included_calls.set(call_idx),
-            _ => {}
+            Ok((true, _)) => {
+                // candidate passed; restore the removed call
+                shrinker.included_calls.set(call_idx);
+                // reset error counter after a successful check
+                error_count = 0;
+            }
+            Err(e) => {
+                // An executor/backend error occurred; this is inconclusive for shrinking.
+                // Restore the removed call and keep track of errors. If errors persist, abort.
+                shrinker.included_calls.set(call_idx);
+                error_count += 1;
+                if error_count >= 3 {
+                    return Err(e);
+                }
+            }
+            _ => {
+                // Ok((false, _)) with more than one call remaining: continue shrinking normally
+                // reset error counter on successful evaluation
+                error_count = 0;
+            }
         }
 
         if let Some(progress) = progress {
