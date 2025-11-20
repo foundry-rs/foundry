@@ -58,7 +58,14 @@ impl ListArgs {
             || self.all
             || (!self.ledger && !self.trezor && !self.aws && !self.gcp)
         {
-            let _ = self.list_local_senders();
+            match self.list_local_senders() {
+                Ok(()) => {}
+                Err(e) => {
+                    if !self.all {
+                        sh_err!("{}", e)?;
+                    }
+                }
+            }
         }
 
         // Create options for multi wallet - ledger, trezor and AWS
@@ -70,6 +77,7 @@ impl ListArgs {
             .gcp(self.gcp || (self.all && gcp_env_vars_set()))
             .turnkey(self.turnkey || self.all)
             .interactives(0)
+            .interactive(false)
             .build()
             .expect("build multi wallet");
 

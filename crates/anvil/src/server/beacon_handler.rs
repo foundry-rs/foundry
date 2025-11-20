@@ -9,10 +9,49 @@ use alloy_rpc_types_beacon::{
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use hyper::StatusCode;
+use ssz::Encode;
 use std::{collections::HashMap, str::FromStr as _};
+
+/// Helper function to determine if the Accept header indicates a preference for SSZ (octet-stream)
+/// over JSON.
+pub fn must_be_ssz(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|accept_str| {
+            let mut octet_stream_q = 0.0;
+            let mut json_q = 0.0;
+
+            // Parse each media type in the Accept header
+            for media_type in accept_str.split(',') {
+                let media_type = media_type.trim();
+                let quality = media_type
+                    .split(';')
+                    .find_map(|param| {
+                        let param = param.trim();
+                        if let Some(q) = param.strip_prefix("q=") {
+                            q.parse::<f32>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(1.0); // Default quality factor is 1.0
+
+                if media_type.starts_with("application/octet-stream") {
+                    octet_stream_q = quality;
+                } else if media_type.starts_with("application/json") {
+                    json_q = quality;
+                }
+            }
+
+            // Prefer octet-stream if it has higher quality factor
+            octet_stream_q > json_q
+        })
+        .unwrap_or(false)
+}
 
 /// Handles incoming Beacon API requests for blob sidecars
 ///
@@ -32,6 +71,7 @@ pub async fn handle_get_blob_sidecars(
 ///
 /// GET /eth/v1/beacon/blobs/{block_id}
 pub async fn handle_get_blobs(
+    headers: HeaderMap,
     State(api): State<EthApi>,
     Path(block_id): Path<String>,
     Query(versioned_hashes): Query<HashMap<String, String>>,
@@ -50,11 +90,18 @@ pub async fn handle_get_blobs(
 
     // Get the blob sidecars using existing EthApi logic
     match api.anvil_get_blobs_by_block_id(block_id, versioned_hashes) {
-        Ok(Some(blobs)) => (
-            StatusCode::OK,
-            Json(GetBlobsResponse { execution_optimistic: false, finalized: false, data: blobs }),
-        )
-            .into_response(),
+        Ok(Some(blobs)) => {
+            if must_be_ssz(&headers) {
+                blobs.as_ssz_bytes().into_response()
+            } else {
+                Json(GetBlobsResponse {
+                    execution_optimistic: false,
+                    finalized: false,
+                    data: blobs,
+                })
+                .into_response()
+            }
+        }
         Ok(None) => BeaconError::block_not_found().into_response(),
         Err(_) => BeaconError::internal_error().into_response(),
     }
@@ -67,17 +114,67 @@ pub async fn handle_get_blobs(
 /// GET /eth/v1/beacon/genesis
 pub async fn handle_get_genesis(State(api): State<EthApi>) -> Response {
     match api.anvil_get_genesis_time() {
-        Ok(genesis_time) => (
-            StatusCode::OK,
-            Json(GenesisResponse {
-                data: GenesisData {
-                    genesis_time,
-                    genesis_validators_root: B256::ZERO,
-                    genesis_fork_version: B32::ZERO,
-                },
-            }),
-        )
-            .into_response(),
+        Ok(genesis_time) => Json(GenesisResponse {
+            data: GenesisData {
+                genesis_time,
+                genesis_validators_root: B256::ZERO,
+                genesis_fork_version: B32::ZERO,
+            },
+        })
+        .into_response(),
         Err(_) => BeaconError::internal_error().into_response(),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn header_map_with_accept(accept: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::ACCEPT, HeaderValue::from_str(accept).unwrap());
+        headers
+    }
+
+    #[test]
+    fn test_must_be_ssz() {
+        let test_cases = vec![
+            (None, false, "no Accept header"),
+            (Some("application/json"), false, "JSON only"),
+            (Some("application/octet-stream"), true, "octet-stream only"),
+            (Some("application/octet-stream;q=1.0,application/json;q=0.9"), true, "SSZ preferred"),
+            (
+                Some("application/json;q=1.0,application/octet-stream;q=0.9"),
+                false,
+                "JSON preferred",
+            ),
+            (Some("application/octet-stream;q=0.5,application/json;q=0.5"), false, "equal quality"),
+            (
+                Some("text/html;q=0.9, application/octet-stream;q=1.0, application/json;q=0.8"),
+                true,
+                "multiple types",
+            ),
+            (
+                Some("application/octet-stream ; q=1.0 , application/json ; q=0.9"),
+                true,
+                "whitespace handling",
+            ),
+            (Some("application/octet-stream, application/json;q=0.9"), true, "default quality"),
+        ];
+
+        for (accept_header, expected, description) in test_cases {
+            let headers = match accept_header {
+                None => HeaderMap::new(),
+                Some(header) => header_map_with_accept(header),
+            };
+            assert_eq!(
+                must_be_ssz(&headers),
+                expected,
+                "Test case '{}' failed: expected {}, got {}",
+                description,
+                expected,
+                !expected
+            );
+        }
     }
 }
