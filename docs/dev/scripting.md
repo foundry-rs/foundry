@@ -10,40 +10,38 @@
 
 ```mermaid
 graph TD;
-    ScriptArgs::run_script-->ScriptArgs::compile;
-    ScriptArgs::compile-->A{ScriptArgs::execute};
-    A-- "(resume || verify) && !broadcast" -->B{ScriptArgs::resume_deployment};
-    A-- "broadcast" -->ScriptArgs::handle_broadcastable_transactions;
+    ScriptArgs::run_script-->PreprocessedState::compile;
+    PreprocessedState::compile-->A{PreExecutionState::execute};
+    A-- "(resume || verify) && !broadcast" -->B{CompiledState::resume};
+    A-- "broadcast" -->ScriptRunner::script;
 
     B-- multi-chain --> MultiChainSequence::load
-    B-- single-chain --> ScriptArgs::resume_single_deployment
-    ScriptArgs::resume_single_deployment--> ScriptSequence::load
-    ScriptSequence::load--> receipts::wait_for_pending
-    receipts::wait_for_pending -- resume --> ScriptArgs::send_transactions
+    B-- single-chain --> ScriptSequence::load
+    ScriptSequence::load--> BundledState::wait_for_pending
+    BundledState::wait_for_pending -- resume --> BundledState::broadcast
 
     MultiChainSequence::load --> ScriptArgs::multi_chain_deployment
 
-    ScriptArgs::multi_chain_deployment-- "resume[..]" --> receipts::wait_for_pending
-    ScriptArgs::multi_chain_deployment-- "resume[..]" --> ScriptArgs::send_transactions
-    ScriptArgs::multi_chain_deployment-- "broadcast[..]" --> ScriptArgs::send_transactions
+    ScriptArgs::multi_chain_deployment-- "resume[..]" --> BundledState::wait_for_pending
+    ScriptArgs::multi_chain_deployment-- "resume[..]" --> BundledState::broadcast
+    ScriptArgs::multi_chain_deployment-- "broadcast[..]" --> BundledState::broadcast
 
-    ScriptArgs::send_transactions--verify-->ScriptArgs::verify_contracts
+    BundledState::broadcast--verify-->BroadcastedState::verify
 
 
-    ScriptArgs::handle_broadcastable_transactions-->ScriptConfig::collect_rpcs;
-    ScriptConfig::collect_rpcs-->ScriptArgs::create_script_sequences
-    ScriptArgs::create_script_sequences--"[..]"-->C{Skip onchain simulation};
+    ScriptRunner::script-->RpcData::from_transactions;
+    RpcData::from_transactions-->FilledTransactionsState::bundle
+    FilledTransactionsState::bundle--"[..]"-->C{Skip onchain simulation};
     C--yes-->D{"How many sequences?"};
-    C--no-->ScriptArgs::fills_transactions_with_gas;
-    ScriptArgs::fills_transactions_with_gas-->ScriptArgs::onchain_simulation;
-    ScriptArgs::onchain_simulation-->D;
+    C--no-->PreSimulationState::fill_metadata;
+    PreSimulationState::fill_metadata-->PreSimulationState::simulate_and_fill;
+    PreSimulationState::simulate_and_fill-->D;
 
     D--"+1 seq"-->MultiChainSequence::new
-    D--"1 seq"-->ScriptSequence::new
+    D--"1 seq"-->ScriptSequenceKind::Single
 
-    MultiChainSequence::new-->ScriptArgs::multi_chain_deployment
-    ScriptSequence::new-->ScriptArgs::single_deployment
-    ScriptArgs::single_deployment-->ScriptArgs::send_transactions
+    MultiChainSequence::new-->ScriptSequenceKind::Multi
+    ScriptSequenceKind::Single-->BundledState::broadcast
 ```
 
 ### Notes
@@ -54,23 +52,22 @@ graph TD;
 
 ```mermaid
 graph TD;
-ScriptArgs::execute-- "(resume || verify) && !broadcast" -->ScriptArgs::resume_deployment;
+PreExecutionState::execute-- "(resume || verify) && !broadcast" -->CompiledState::resume;
 ```
 
-3. `ScriptArgs::execute` executes the script, while `ScriptArgs::onchain_simulation` only executes the broadcastable transactions collected by `ScriptArgs::execute`.
+3. `PreExecutionState::execute` executes the script, while `PreSimulationState::simulate_and_fill` executes the broadcastable transactions collected by `ScriptRunner::script`.
 
 ## Script Execution
 
 ```mermaid
 graph TD;
-subgraph ScriptArgs::execute
-a[*]-->ScriptArgs::prepare_runner
+subgraph PreExecutionState::execute
+a[*]-->ScriptConfig::get_runner_with_cheatcodes
 subgraph ::prepare_runner
-ScriptArgs::prepare_runner--fork_url-->Backend::spawn;
-ScriptArgs::prepare_runner-->Backend::spawn;
+ScriptConfig::get_runner_with_cheatcodes--fork_url-->Backend::spawn;
+ScriptConfig::get_runner_with_cheatcodes-->Backend::spawn;
 end
-Backend::spawn-->
-ScriptRunner-->ScriptRunner::setup;
+Backend::spawn-->ScriptRunner-->ScriptRunner::setup;
 subgraph ::setup
 ScriptRunner::setup--libraries-->Executor::deploy;
 ScriptRunner::setup--ScriptContract-->Executor::deploy;
@@ -81,7 +78,7 @@ Executor::call_committing-->ScriptRunner::script;
 ScriptRunner::script--"run()"-->Executor::call;
 end
 end
-Executor::call-. BroadcastableTransactions .->ScriptArgs::handle_broadcastable_transactions;
+Executor::call-. BroadcastableTransactions .->PreSimulationState::fill_metadata;
 ```
 
 ## Nonce Management
