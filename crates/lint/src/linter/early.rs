@@ -50,7 +50,7 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
     ///
     /// ### Example
     /// ```rust,ignore
-    /// fn check_full_source_unit(&mut self, ctx: &LintContext<'ast>, ast: &'ast ast::SourceUnit<'ast>) {
+    /// fn check_full_source_unit(&mut self, ctx: &LintContext<'ast, '_>, ast: &'ast ast::SourceUnit<'ast>) {
     ///     // Check if the lint is enabled before performing expensive work.
     ///     if ctx.is_lint_enabled(MY_EXPENSIVE_LINT.id) {
     ///         // ... perform computation and emit diagnostics ...
