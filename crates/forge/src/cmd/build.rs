@@ -4,7 +4,7 @@ use eyre::{Context, Result};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
-    utils::{Git, LoadConfig, cache_local_signatures},,
+    utils::{Git, LoadConfig, cache_local_signatures},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
