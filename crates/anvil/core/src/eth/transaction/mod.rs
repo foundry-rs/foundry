@@ -537,22 +537,6 @@ impl TypedTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TransactionEssentials {
-    pub kind: TxKind,
-    pub input: Bytes,
-    pub nonce: u64,
-    pub gas_limit: u64,
-    pub gas_price: Option<u128>,
-    pub max_fee_per_gas: Option<u128>,
-    pub max_priority_fee_per_gas: Option<u128>,
-    pub max_fee_per_blob_gas: Option<u128>,
-    pub blob_versioned_hashes: Option<Vec<B256>>,
-    pub value: U256,
-    pub chain_id: Option<u64>,
-    pub access_list: AccessList,
-}
-
 /// Represents all relevant information of an executed transaction
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionInfo {
