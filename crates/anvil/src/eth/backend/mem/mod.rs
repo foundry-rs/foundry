@@ -131,7 +131,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     io::{Read, Write},
-    ops::Not,
+    ops::{Mul, Not},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -3775,7 +3775,13 @@ impl TransactionValidator for Backend {
                 ));
             }
 
-            let max_cost = tx.max_cost();
+            let max_cost =
+                (tx.gas_limit() as u128).saturating_mul(tx.max_fee_per_gas()).saturating_add(
+                    tx.blob_gas_used()
+                        .map(|g| g as u128)
+                        .unwrap_or(0)
+                        .mul(tx.max_fee_per_blob_gas().unwrap_or(0)),
+                );
             let value = tx.value();
             match &tx.transaction {
                 TypedTransaction::Deposit(deposit_tx) => {

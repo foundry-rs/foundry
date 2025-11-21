@@ -27,7 +27,7 @@ use op_alloy_consensus::{
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, Mul};
+use std::ops::Deref;
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
@@ -454,23 +454,6 @@ impl TypedTransaction {
             Self::EIP7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
             Self::Deposit(_) => Err(self),
         }
-    }
-
-    /// Max cost of the transaction
-    /// It is the gas limit multiplied by the gas price,
-    /// and if the transaction is EIP-4844, the result of (total blob gas cost * max fee per blob
-    /// gas) is also added
-    pub fn max_cost(&self) -> u128 {
-        let mut max_cost = (self.gas_limit() as u128).saturating_mul(self.max_fee_per_gas());
-
-        max_cost = max_cost.saturating_add(
-            self.blob_gas_used()
-                .map(|g| g as u128)
-                .unwrap_or(0)
-                .mul(self.max_fee_per_blob_gas().unwrap_or(0)),
-        );
-
-        max_cost
     }
 
     pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
