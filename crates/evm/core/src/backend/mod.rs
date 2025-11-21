@@ -720,7 +720,18 @@ impl Backend {
     /// Since each `Fork` tracks logs separately, we need to merge them to get _all_ of them
     pub fn merged_logs(&self, mut logs: Vec<Log>) -> Vec<Log> {
         if let Some((_, active)) = self.active_fork_ids {
-            let mut all_logs = Vec::with_capacity(logs.len());
+            // Calculate total capacity needed to avoid reallocations
+            let total_capacity = logs.len()
+                + self
+                    .inner
+                    .forks
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, f)| {
+                        if idx != active { f.as_ref().map(|f| f.journaled_state.logs.len()) } else { None }
+                    })
+                    .sum::<usize>();
+            let mut all_logs = Vec::with_capacity(total_capacity);
 
             self.inner
                 .forks
