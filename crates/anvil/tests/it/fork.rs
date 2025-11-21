@@ -855,8 +855,17 @@ async fn test_reset_fork_on_new_blocks() {
     stream.next().await.unwrap();
     stream.next().await.unwrap();
 
-    let next_block = anvil_provider.get_block_number().await.unwrap();
-
+    // Give the reset task a brief window to apply; poll until the block advances.
+    let mut next_block = anvil_provider.get_block_number().await.unwrap();
+    if next_block <= current_block {
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            next_block = anvil_provider.get_block_number().await.unwrap();
+            if next_block > current_block {
+                break;
+            }
+        }
+    }
     assert!(next_block > current_block, "nextblock={next_block} currentblock={current_block}")
 }
 

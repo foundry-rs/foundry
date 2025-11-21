@@ -67,6 +67,17 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/ws",
+    ],
+);
+
+shuffled_list!(
+    SEPOLIA_HTTP_DOMAINS,
+    vec![
+        //
+        "ethereum-sepolia.publicnode.com",
+        "sepolia.drpc.org",
+        "1rpc.io/sepolia",
+        "rpc.sepolia.org",
         // "reth-ethereum-full.ithaca.xyz/ws",
     ],
 );
@@ -173,6 +184,12 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     if matches!(chain, Base) {
         return "https://mainnet.base.org".to_string();
+    }
+
+    if matches!(chain, Sepolia) {
+        // Prefer stable public Sepolia endpoints over DRPC for tests, and rotate
+        let domain = SEPOLIA_HTTP_DOMAINS.next();
+        return format!("https://{domain}");
     }
 
     if matches!(chain, Optimism) {

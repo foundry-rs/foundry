@@ -660,7 +660,7 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
 });
 
 // checks that init fails when the provided template doesn't exist
-forgetest!(fail_init_nonexistent_template, |prj, cmd| {
+forgetest!(#[ignore = "ext_integration"] fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 remote: Not Found
