@@ -416,18 +416,13 @@ impl<'a> ContractRunner<'a> {
 
                 let start = Instant::now();
 
-                let _guard = self.tokio_handle.enter();
-
-                let _guard;
-                let current_span = tracing::Span::current();
-                if current_span.is_none() || current_span.id() != self.span.id() {
-                    _guard = self.span.enter();
-                }
+                let _tokio_guard = self.tokio_handle.enter();
 
                 let sig = func.signature();
                 let kind = func.test_function_kind();
 
-                let _guard = debug_span!(
+                let _test_span_guard = debug_span!(
+                    parent: &self.span,
                     "test",
                     %kind,
                     name = %if enabled!(tracing::Level::TRACE) { &sig } else { &func.name },
