@@ -277,20 +277,15 @@ impl BuildArgs {
             return;
         }
 
-        let git = match Git::new(&config.root) {
-            Ok(git) => git,
-            Err(_) => return, // Skip if not a git repo
-        };
+        let git = Git::new(&config.root);
 
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
         if lockfile.read().is_err() {
             return;
         }
 
-        let deps = lockfile.dependencies();
-
-        for (dep_path, dep_identifier) in deps {
-            let full_path = config.root.join(&dep_path);
+        for (dep_path, dep_identifier) in lockfile.iter() {
+            let full_path = config.root.join(dep_path);
 
             if !full_path.exists() {
                 sh_warn!("Dependency '{}' not found at expected path", dep_path.display()).ok();
