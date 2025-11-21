@@ -3752,8 +3752,8 @@ impl TransactionValidator for Backend {
                     return Err(InvalidTransactionError::FeeCapTooLow);
                 }
 
-                if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
-                    (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+                if let (Some(max_priority_fee_per_gas), max_fee_per_gas) =
+                    (tx.as_ref().max_priority_fee_per_gas(), tx.as_ref().max_fee_per_gas())
                     && max_priority_fee_per_gas > max_fee_per_gas
                 {
                     warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
@@ -3764,7 +3764,7 @@ impl TransactionValidator for Backend {
             // EIP-4844 blob fee validation
             if env.evm_env.cfg_env.spec >= SpecId::CANCUN
                 && tx.transaction.is_eip4844()
-                && let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
+                && let Some(max_fee_per_blob_gas) = tx.as_ref().max_fee_per_blob_gas()
                 && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
                 && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
             {
