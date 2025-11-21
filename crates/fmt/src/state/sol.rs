@@ -881,12 +881,14 @@ impl<'ast> State<'_, 'ast> {
             }
             _ => {
                 // General case: handle calls, complex successors, and other expressions
-                let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &rhs.kind {
-                    let callee_size = get_callee_head_size(call_expr);
-                    callee_size + lhs_size > space_left
-                        && callee_size + self.config.tab_width < space_left
-                } else {
-                    false
+                let callee_doesnt_fit = match &rhs.kind {
+                    ast::ExprKind::Call(call_expr, ..) => {
+                        let callee_size = get_callee_head_size(call_expr);
+                        callee_size + lhs_size > space_left
+                            && callee_size + self.config.tab_width < space_left
+                    }
+                    ast::ExprKind::Lit(_, _) => rhs_size + lhs_size + 1 >= space_left,
+                    _ => false,
                 };
 
                 if (lhs_size + 1 >= space_left && !is_call_chain(&rhs.kind, false))
@@ -916,11 +918,18 @@ impl<'ast> State<'_, 'ast> {
                         }
                     }
                 } else {
+                    let needs_offset = !callee_doesnt_fit && fits_alone_no_cmnts;
+                    let separator = if callee_doesnt_fit || needs_offset {
+                        Separator::Space
+                    } else {
+                        Separator::Nbsp
+                    };
                     if !self.is_bol_or_only_ind() {
-                        self.print_sep_unhandled(Separator::Space);
+                        self.print_sep_unhandled(separator);
                     }
                     // apply type-dependent indentation if type info is available
-                    if let Some(ty) = ty
+                    if needs_offset
+                        && let Some(ty) = ty
                         && matches!(ty, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..))
                     {
                         self.s.offset(self.ind);

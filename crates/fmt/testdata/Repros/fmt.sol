@@ -393,3 +393,28 @@ contract WETHHook is BaseTokenWrapperHook {
         weth = WETH(payable(_weth));
     }
 }
+
+contract A {
+    function a() external {
+        bytes32 guid = _lzSend({
+            _dstEid: dstEid,
+            _message: message,
+            _options: OptionsBuilder.newOptions()
+                .addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),
+            _fee: MessagingFee({nativeFee: msg.value, lzTokenFee: 0}),
+            _refundAddress: msg.sender
+        })
+        .guid;
+    }
+
+    function b() external view returns (uint256) {
+        return _quote({
+            _dstEid: dstEid,
+            _message: message,
+            _options: OptionsBuilder.newOptions()
+                .addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),
+            _payInLzToken: false
+        })
+        .nativeFee;
+    }
+}
