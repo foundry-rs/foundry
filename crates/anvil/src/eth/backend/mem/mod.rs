@@ -27,7 +27,6 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
-    inject_custom_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -49,7 +48,7 @@ use alloy_eips::{
     eip7910::SystemContract,
 };
 use alloy_evm::{
-    Database, Evm,
+    Database, Evm, FromRecoveredTx,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
@@ -286,6 +285,13 @@ impl Backend {
                 genesis.number,
             )
         };
+
+        // Sync EVM block.number with genesis for non-fork mode.
+        // Fork mode syncs in setup_fork_db_config() instead.
+        if fork.read().is_none() {
+            let mut write_env = env.write();
+            write_env.evm_env.block_env.number = U256::from(genesis.number);
+        }
 
         let start_timestamp = if let Some(fork) = fork.read().as_ref() {
             fork.timestamp()
@@ -724,6 +730,11 @@ impl Backend {
         self.env.write().evm_env.cfg_env.chain_id = chain_id;
     }
 
+    /// Returns the genesis data for the Beacon API.
+    pub fn genesis_time(&self) -> u64 {
+        self.genesis.timestamp
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)
@@ -813,8 +824,8 @@ impl Backend {
         precompiles_map.extend(self.env.read().networks.precompiles());
 
         if let Some(factory) = &self.precompile_factory {
-            for (precompile, _) in &factory.precompiles() {
-                precompiles_map.insert(precompile.id().name().to_string(), *precompile.address());
+            for (address, precompile) in factory.precompiles() {
+                precompiles_map.insert(precompile.precompile_id().to_string(), address);
             }
         }
 
@@ -963,7 +974,7 @@ impl Backend {
                     if let Some(hash) = storage.hashes.remove(&n)
                         && let Some(block) = storage.blocks.remove(&hash)
                     {
-                        for tx in block.transactions {
+                        for tx in block.body.transactions {
                             let _ = storage.transactions.remove(&tx.hash());
                         }
                     }
@@ -1180,7 +1191,7 @@ impl Backend {
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
-            inject_custom_precompiles(&mut evm, factory.precompiles());
+            evm.precompiles_mut().extend_precompiles(factory.precompiles());
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1206,7 +1217,10 @@ impl Backend {
         BlockchainError,
     > {
         let mut env = self.next_env();
-        env.tx = tx.pending_transaction.to_revm_tx_env();
+        env.tx = FromRecoveredTx::from_recovered_tx(
+            &tx.pending_transaction.transaction.transaction,
+            *tx.pending_transaction.sender(),
+        );
 
         if env.networks.is_optimism() {
             env.tx.enveloped_tx =
@@ -2116,7 +2130,7 @@ impl Backend {
 
         let storage = self.blockchain.storage.read();
 
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             let Some(tx) = storage.transactions.get(&tx.hash()) else {
                 continue;
             };
@@ -2249,12 +2263,12 @@ impl Backend {
         &self,
         block: &Block,
     ) -> Option<Vec<AnyRpcTransaction>> {
-        let mut transactions = Vec::with_capacity(block.transactions.len());
+        let mut transactions = Vec::with_capacity(block.body.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
-        for hash in block.transactions.iter().map(|tx| tx.hash()) {
+        for hash in block.body.transactions.iter().map(|tx| tx.hash()) {
             let info = storage.transactions.get(&hash)?.info.clone();
-            let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+            let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
             let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
             transactions.push(tx);
@@ -2366,7 +2380,8 @@ impl Backend {
     pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
-        let Block { header, transactions, .. } = block;
+        let header = block.header.clone();
+        let transactions = block.body.transactions;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let Header { number, withdrawals_root, .. } = header;
@@ -2653,7 +2668,7 @@ impl Backend {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
         }
         Some(traces)
@@ -2710,12 +2725,13 @@ impl Backend {
         };
 
         let index = block
+            .body
             .transactions
             .iter()
             .position(|tx| tx.hash() == hash)
             .expect("transaction not found in block");
 
-        let pool_txs: Vec<Arc<PoolTransaction>> = block.transactions[..index]
+        let pool_txs: Vec<Arc<PoolTransaction>> = block.body.transactions[..index]
             .iter()
             .map(|tx| {
                 let pending_tx =
@@ -2767,9 +2783,12 @@ impl Backend {
 
             let _ = executor.execute();
 
-            let target_tx = block.transactions[index].clone();
+            let target_tx = block.body.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-            let mut tx_env = target_tx.to_revm_tx_env();
+            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+                &target_tx.transaction.transaction,
+                *target_tx.sender(),
+            );
             if env.networks.is_optimism() {
                 tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
             }
@@ -2838,6 +2857,42 @@ impl Backend {
         }
 
         Ok(None)
+    }
+
+    /// Returns the value associated with a key from the database
+    /// Currently only supports bytecode lookups.
+    ///
+    /// Based on Reth implementation: <https://github.com/paradigmxyz/reth/blob/66cfa9ed1a8c4bc2424aacf6fb2c1e67a78ee9a2/crates/rpc/rpc/src/debug.rs#L1146-L1178>
+    ///
+    /// Key should be: 0x63 (1-byte prefix) + 32 bytes (code_hash)
+    /// Total key length must be 33 bytes.
+    pub async fn debug_db_get(&self, key: String) -> Result<Option<Bytes>, BlockchainError> {
+        let key_bytes = if key.starts_with("0x") {
+            hex::decode(&key)
+                .map_err(|_| BlockchainError::Message("Invalid hex key".to_string()))?
+        } else {
+            key.into_bytes()
+        };
+
+        // Validate key length: must be 33 bytes (1 byte prefix + 32 bytes code hash)
+        if key_bytes.len() != 33 {
+            return Err(BlockchainError::Message(format!(
+                "Invalid key length: expected 33 bytes, got {}",
+                key_bytes.len()
+            )));
+        }
+
+        // Check for bytecode prefix (0x63 = 'c' in ASCII)
+        if key_bytes[0] != 0x63 {
+            return Err(BlockchainError::Message(
+                "Key prefix must be 0x63 for code hash lookups".to_string(),
+            ));
+        }
+
+        let code_hash = B256::from_slice(&key_bytes[1..33]);
+
+        // Use the existing debug_code_by_hash method to retrieve the bytecode
+        self.debug_code_by_hash(code_hash, None).await
     }
 
     fn geth_trace(
@@ -3042,7 +3097,7 @@ impl Backend {
         let mut receipts = Vec::new();
         let block = self.get_block(id)?;
 
-        for transaction in block.transactions {
+        for transaction in block.body.transactions {
             let receipt = self.mined_transaction_receipt(transaction.hash())?;
             receipts.push(receipt.inner);
         }
@@ -3057,7 +3112,7 @@ impl Backend {
 
         let index = info.transaction_index as usize;
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
-        let transaction = block.transactions[index].clone();
+        let transaction = block.body.transactions[index].clone();
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas;
@@ -3086,7 +3141,7 @@ impl Backend {
             TypedTransaction::Deposit(_) => 0_u128,
         };
 
-        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
+        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
         // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
@@ -3171,6 +3226,7 @@ impl Backend {
             blob_gas_used,
         };
 
+        let inner = WithOtherFields { inner, other: Default::default() };
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
@@ -3245,7 +3301,7 @@ impl Backend {
             let storage = self.blockchain.storage.read();
             let block = storage.blocks.get(&block_hash).cloned()?;
             let index: usize = index.into();
-            let tx = block.transactions.get(index)?.clone();
+            let tx = block.body.transactions.get(index)?.clone();
             let info = storage.transactions.get(&tx.hash())?.info.clone();
             (info, block, tx)
         };
@@ -3286,7 +3342,7 @@ impl Backend {
             let block = storage.blocks.get(&block_hash).cloned()?;
             (info, block)
         };
-        let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+        let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(
             Some(info.transaction_hash),
@@ -3316,6 +3372,7 @@ impl Backend {
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         Ok(self.get_block(id).map(|block| {
             block
+                .body
                 .transactions
                 .iter()
                 .filter_map(|tx| tx.as_ref().sidecar())
@@ -3358,7 +3415,7 @@ impl Backend {
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
-            for tx in &block.transactions {
+            for tx in &block.body.transactions {
                 let typed_tx = tx.as_ref();
                 if let Some(sidecar) = typed_tx.sidecar() {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
@@ -3815,25 +3872,11 @@ pub fn transaction_build(
         }
     }
 
-    let mut transaction: Transaction = eth_transaction.clone().into();
-
-    let effective_gas_price = if !eth_transaction.is_dynamic_fee() {
-        transaction.effective_gas_price(base_fee)
-    } else if block.is_none() && info.is_none() {
-        // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-        transaction.max_fee_per_gas()
-    } else {
-        // if transaction is already mined, gas price is considered base fee + priority
-        // fee: the effective gas price.
-        let base_fee = base_fee.map_or(0u128, |g| g as u128);
-        let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas().unwrap_or(0);
-
-        base_fee.saturating_add(max_priority_fee_per_gas)
-    };
-
-    transaction.effective_gas_price = Some(effective_gas_price);
+    let transaction = eth_transaction.into_rpc_transaction();
+    let effective_gas_price = transaction.effective_gas_price(base_fee);
 
     let envelope = transaction.inner;
+    let from = envelope.signer();
 
     // if a specific hash was provided we update the transaction's hash
     // This is important for impersonated transactions since they all use the
@@ -3871,13 +3914,8 @@ pub fn transaction_build(
     };
 
     let tx = Transaction {
-        inner: Recovered::new_unchecked(
-            envelope,
-            eth_transaction.recover().expect("can recover signed tx"),
-        ),
-        block_hash: block
-            .as_ref()
-            .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+        inner: Recovered::new_unchecked(envelope, from),
+        block_hash: block.as_ref().map(|block| block.header.hash_slow()),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
         // deprecated

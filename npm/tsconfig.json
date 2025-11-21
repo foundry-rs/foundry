@@ -31,15 +31,7 @@
     "types": [
       "bun",
       "node"
-    ],
-    "paths": {
-      "#*": [
-        "./src/*"
-      ],
-      "#package.json": [
-        "./package.json"
-      ]
-    }
+    ]
   },
   "exclude": [
     "dist",
@@ -48,11 +40,12 @@
   ],
   "include": [
     "./src/**/*",
-    "./scripts/**/*"
+    "./src/*.mjs",
+    "./scripts/**/*",
+    "./scripts/*.mjs"
   ],
   "files": [
     "env.d.ts",
-    "package.json",
-    "tsdown.config.ts"
+    "package.json"
   ]
 }

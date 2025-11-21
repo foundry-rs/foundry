@@ -1,19 +1,36 @@
 use std::str::FromStr;
 
-use crate::Cast;
+use crate::{format_uint_exp, tx::signing_provider};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_primitives::U256;
+use alloy_sol_types::sol;
 use clap::Parser;
 use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
-use foundry_common::fmt::format_uint_exp;
 use foundry_wallets::WalletOpts;
 
 #[doc(hidden)]
 pub use foundry_config::utils::*;
+
+sol! {
+    #[sol(rpc)]
+    interface IERC20 {
+        #[derive(Debug)]
+        function name() external view returns (string);
+        function symbol() external view returns (string);
+        function decimals() external view returns (uint8);
+        function totalSupply() external view returns (uint256);
+        function balanceOf(address owner) external view returns (uint256);
+        function transfer(address to, uint256 amount) external returns (bool);
+        function approve(address spender, uint256 amount) external returns (bool);
+        function allowance(address owner, address spender) external view returns (uint256);
+        function mint(address to, uint256 amount) external;
+        function burn(uint256 amount) external;
+    }
+}
 
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
@@ -51,10 +68,6 @@ pub enum Erc20Subcommand {
         /// The amount to transfer.
         amount: String,
 
-        /// The block height to query at.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
-
         #[command(flatten)]
         rpc: RpcOpts,
 
@@ -75,10 +88,6 @@ pub enum Erc20Subcommand {
 
         /// The amount to approve.
         amount: String,
-
-        /// The block height to query at.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -109,63 +118,229 @@ pub enum Erc20Subcommand {
         #[command(flatten)]
         rpc: RpcOpts,
     },
+
+    /// Query ERC20 token name.
+    #[command(visible_alias = "n")]
+    Name {
+        /// The ERC20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The block height to query at.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Query ERC20 token symbol.
+    #[command(visible_alias = "s")]
+    Symbol {
+        /// The ERC20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The block height to query at.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Query ERC20 token decimals.
+    #[command(visible_alias = "d")]
+    Decimals {
+        /// The ERC20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The block height to query at.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Query ERC20 token total supply.
+    #[command(visible_alias = "ts")]
+    TotalSupply {
+        /// The ERC20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The block height to query at.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Mint ERC20 tokens (if the token supports minting).
+    #[command(visible_alias = "m")]
+    Mint {
+        /// The ERC20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The recipient address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        to: NameOrAddress,
+
+        /// The amount to mint.
+        amount: String,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+
+        #[command(flatten)]
+        wallet: WalletOpts,
+    },
+
+    /// Burn ERC20 tokens.
+    #[command(visible_alias = "bu")]
+    Burn {
+        /// The ERC20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The amount to burn.
+        amount: String,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+
+        #[command(flatten)]
+        wallet: WalletOpts,
+    },
 }
 
 impl Erc20Subcommand {
-    pub async fn run(self) -> eyre::Result<()> {
+    fn rpc(&self) -> &RpcOpts {
         match self {
-            Self::Balance { token, owner, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let owner_addr = owner.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-                let balance =
-                    Cast::new(&provider).erc20_balance(token_addr, owner_addr, block).await?;
-                sh_println!("{}", format_uint_exp(balance))?
-            }
-            Self::Transfer { token, to, amount, block: _, rpc, wallet } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let to_addr = to.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-                let amount_u256 = U256::from_str(&amount)?;
+            Self::Allowance { rpc, .. } => rpc,
+            Self::Approve { rpc, .. } => rpc,
+            Self::Balance { rpc, .. } => rpc,
+            Self::Transfer { rpc, .. } => rpc,
+            Self::Name { rpc, .. } => rpc,
+            Self::Symbol { rpc, .. } => rpc,
+            Self::Decimals { rpc, .. } => rpc,
+            Self::TotalSupply { rpc, .. } => rpc,
+            Self::Mint { rpc, .. } => rpc,
+            Self::Burn { rpc, .. } => rpc,
+        }
+    }
 
-                // Create signer from wallet options if available
-                let signer = wallet.signer().await.ok();
+    pub async fn run(self) -> eyre::Result<()> {
+        let config = self.rpc().load_config()?;
+        let provider = get_provider(&config)?;
 
-                let tx_hash = Cast::new(&provider)
-                    .erc20_transfer(token_addr, to_addr, amount_u256, signer)
+        match self {
+            // Read-only
+            Self::Allowance { token, owner, spender, block, .. } => {
+                let token = token.resolve(&provider).await?;
+                let owner = owner.resolve(&provider).await?;
+                let spender = spender.resolve(&provider).await?;
+
+                let allowance = IERC20::new(token, &provider)
+                    .allowance(owner, spender)
+                    .block(block.unwrap_or_default())
+                    .call()
                     .await?;
-                sh_println!("{}", tx_hash)?
-            }
-            Self::Approve { token, spender, amount, block: _, rpc, wallet } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let spender_addr = spender.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-                let amount_u256 = U256::from_str(&amount)?;
 
-                // Create signer from wallet options if available
-                let signer = wallet.signer().await.ok();
-
-                let tx_hash = Cast::new(&provider)
-                    .erc20_approve(token_addr, spender_addr, amount_u256, signer)
-                    .await?;
-                sh_println!("{}", tx_hash)?
-            }
-            Self::Allowance { token, owner, spender, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let owner_addr = owner.resolve(&provider).await?;
-                let spender_addr = spender.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-
-                let allowance = Cast::new(&provider)
-                    .erc20_allowance(token_addr, owner_addr, spender_addr, block)
-                    .await?;
                 sh_println!("{}", format_uint_exp(allowance))?
             }
-        }
+            Self::Balance { token, owner, block, .. } => {
+                let token = token.resolve(&provider).await?;
+                let owner = owner.resolve(&provider).await?;
+
+                let balance = IERC20::new(token, &provider)
+                    .balanceOf(owner)
+                    .block(block.unwrap_or_default())
+                    .call()
+                    .await?;
+                sh_println!("{}", format_uint_exp(balance))?
+            }
+            Self::Name { token, block, .. } => {
+                let token = token.resolve(&provider).await?;
+
+                let name = IERC20::new(token, &provider)
+                    .name()
+                    .block(block.unwrap_or_default())
+                    .call()
+                    .await?;
+                sh_println!("{}", name)?
+            }
+            Self::Symbol { token, block, .. } => {
+                let token = token.resolve(&provider).await?;
+
+                let symbol = IERC20::new(token, &provider)
+                    .symbol()
+                    .block(block.unwrap_or_default())
+                    .call()
+                    .await?;
+                sh_println!("{}", symbol)?
+            }
+            Self::Decimals { token, block, .. } => {
+                let token = token.resolve(&provider).await?;
+
+                let decimals = IERC20::new(token, &provider)
+                    .decimals()
+                    .block(block.unwrap_or_default())
+                    .call()
+                    .await?;
+                sh_println!("{}", decimals)?
+            }
+            Self::TotalSupply { token, block, .. } => {
+                let token = token.resolve(&provider).await?;
+
+                let total_supply = IERC20::new(token, &provider)
+                    .totalSupply()
+                    .block(block.unwrap_or_default())
+                    .call()
+                    .await?;
+                sh_println!("{}", format_uint_exp(total_supply))?
+            }
+            // State-changing
+            Self::Transfer { token, to, amount, wallet, .. } => {
+                let token = token.resolve(&provider).await?;
+                let to = to.resolve(&provider).await?;
+                let amount = U256::from_str(&amount)?;
+
+                let provider = signing_provider(wallet, &provider).await?;
+                let tx = IERC20::new(token, &provider).transfer(to, amount).send().await?;
+                sh_println!("{}", tx.tx_hash())?
+            }
+            Self::Approve { token, spender, amount, wallet, .. } => {
+                let token = token.resolve(&provider).await?;
+                let spender = spender.resolve(&provider).await?;
+                let amount = U256::from_str(&amount)?;
+
+                let provider = signing_provider(wallet, &provider).await?;
+                let tx = IERC20::new(token, &provider).approve(spender, amount).send().await?;
+                sh_println!("{}", tx.tx_hash())?
+            }
+            Self::Mint { token, to, amount, wallet, .. } => {
+                let token = token.resolve(&provider).await?;
+                let to = to.resolve(&provider).await?;
+                let amount = U256::from_str(&amount)?;
+
+                let provider = signing_provider(wallet, &provider).await?;
+                let tx = IERC20::new(token, &provider).mint(to, amount).send().await?;
+                sh_println!("{}", tx.tx_hash())?
+            }
+            Self::Burn { token, amount, wallet, .. } => {
+                let token = token.resolve(&provider).await?;
+                let amount = U256::from_str(&amount)?;
+
+                let provider = signing_provider(wallet, &provider).await?;
+                let tx = IERC20::new(token, &provider).burn(amount).send().await?;
+                sh_println!("{}", tx.tx_hash())?
+            }
+        };
         Ok(())
     }
 }

@@ -22,6 +22,7 @@ use std::{fs, path::Path, str::FromStr};
 #[macro_use]
 extern crate foundry_test_utils;
 
+mod erc20;
 mod selectors;
 
 casttest!(print_short_version, |_prj, cmd| {
@@ -141,9 +142,17 @@ transactions:        [
 "#]]);
 
     // <https://etherscan.io/block/15007840>
-    cmd.cast_fuse().args(["block", "15007840", "-f", "hash", "--rpc-url", eth_rpc_url.as_str()]);
+    cmd.cast_fuse().args([
+        "block",
+        "15007840",
+        "-f",
+        "hash,timestamp",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ]);
     cmd.assert_success().stdout_eq(str![[r#"
 0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415
+1655904485
 
 "#]]);
 });
@@ -604,6 +613,85 @@ casttest!(wallet_sign_auth, |_prj, cmd| {
 0xf85a01947e5f4552091a69125d5dfcb7b8c2659029395bdf6401a0ad489ee0314497c3f06567f3080a46a63908edc1c7cdf2ac2d609ca911212086a065a6ba951c8748dd8634740fe498efb61770097d99ff5fdcb9a863b62ea899f6
 
 "#]]);
+});
+
+// tests that `cast wallet sign-auth --self-broadcast` uses nonce + 1
+casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
+    use alloy_rlp::Decodable;
+    use alloy_signer_local::PrivateKeySigner;
+
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let signer: PrivateKeySigner = private_key.parse().unwrap();
+    let signer_address = signer.address();
+    let delegate_address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+    // Get the current nonce from the RPC
+    let provider = ProviderBuilder::new().connect_http(endpoint.parse().unwrap());
+    let current_nonce = provider.get_transaction_count(signer_address).await.unwrap();
+
+    // First, get the auth without --self-broadcast (should use current nonce)
+    let output_normal = cmd
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--rpc-url",
+            &endpoint,
+            &delegate_address.to_string(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Then, get the auth with --self-broadcast (should use current nonce + 1)
+    let output_self_broadcast = cmd
+        .cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--rpc-url",
+            &endpoint,
+            "--self-broadcast",
+            &delegate_address.to_string(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // The outputs should be different due to different nonces
+    assert_ne!(
+        output_normal, output_self_broadcast,
+        "self-broadcast should produce different signature due to nonce + 1"
+    );
+
+    // Decode the RLP to verify the nonces
+    let normal_bytes = hex::decode(output_normal.strip_prefix("0x").unwrap()).unwrap();
+    let self_broadcast_bytes =
+        hex::decode(output_self_broadcast.strip_prefix("0x").unwrap()).unwrap();
+
+    let normal_auth =
+        alloy_eips::eip7702::SignedAuthorization::decode(&mut normal_bytes.as_slice()).unwrap();
+    let self_broadcast_auth =
+        alloy_eips::eip7702::SignedAuthorization::decode(&mut self_broadcast_bytes.as_slice())
+            .unwrap();
+
+    assert_eq!(normal_auth.nonce(), current_nonce, "normal auth should have current nonce");
+    assert_eq!(
+        self_broadcast_auth.nonce(),
+        current_nonce + 1,
+        "self-broadcast auth should have current nonce + 1"
+    );
 });
 
 // tests that `cast wallet list` outputs the local accounts
@@ -1311,6 +1399,7 @@ casttest!(to_base, |_prj, cmd| {
 });
 
 // tests that revert reason is only present if transaction has reverted.
+
 casttest!(receipt_revert_reason, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
 
@@ -1322,27 +1411,25 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
-
+    .stdout_eq(format!(r#"
 blockHash            0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
 blockNumber          16239315
-contractAddress      
+contractAddress      {}
 cumulativeGasUsed    10743428
 effectiveGasPrice    10539984136
 from                 0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
 gasUsed              21000
 logs                 []
 logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                 
+root                 {}
 status               1 (success)
 transactionHash      0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
 transactionIndex     116
 type                 0
-blobGasPrice         
-blobGasUsed          
+blobGasPrice         {}
+blobGasUsed          {}
 to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
-
-"#]]);
+"#,"", "", "", ""));
 
     let rpc = next_http_archive_rpc_url();
 
@@ -1355,30 +1442,27 @@ to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
             rpc.as_str(),
         ])
         .assert_success()
-        .stdout_eq(str![[r#"
-
+        .stdout_eq(format!(r#"
 blockHash            0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
 blockNumber          14839405
-contractAddress      
+contractAddress      {}
 cumulativeGasUsed    20273649
 effectiveGasPrice    21491736378
 from                 0x3cF412d970474804623bb4e3a42dE13F9bCa5436
 gasUsed              24952
 logs                 []
 logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                 
+root                 {}
 status               0 (failed)
 transactionHash      0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
 transactionIndex     173
 type                 2
-blobGasPrice         
-blobGasUsed          
+blobGasPrice         {}
+blobGasUsed          {}
 to                   0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
 revertReason         [..]Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
-
-"#]]);
+"#,"","","",""));
 });
-
 // tests that the revert reason is loaded using the correct `from` address.
 casttest!(revert_reason_from, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
@@ -1390,28 +1474,26 @@ casttest!(revert_reason_from, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
-
+    .stdout_eq(format!(r#"
 blockHash            0x32663d7730c9ea8e1de6d99854483e25fcc05bb56c91c0cc82f9f04944fbffc1
 blockNumber          7823353
-contractAddress      
+contractAddress      {}
 cumulativeGasUsed    7500797
 effectiveGasPrice    14296851013
 from                 0x3583fF95f96b356d716881C871aF7Eb55ea34a93
 gasUsed              25815
 logs                 []
 logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                 
+root                 {}
 status               0 (failed)
 transactionHash      0x10ee70cf9f5ced5c515e8d53bfab5ea9f5c72cd61b25fba455c8355ee286c4e4
 transactionIndex     96
 type                 0
-blobGasPrice         
-blobGasUsed          
+blobGasPrice         {}
+blobGasUsed          {}
 to                   0x91b5d4111a4C038153b24e31F75ccdC47123595d
 revertReason         Counter is too large, data: "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000014436f756e74657220697320746f6f206c61726765000000000000000000000000"
-
-"#]]);
+"#, "", "", "", ""));
 });
 
 // tests that `cast --parse-bytes32-address` command is working correctly.
@@ -2492,6 +2574,31 @@ casttest!(send_eip7702, async |_prj, cmd| {
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
 "#]]);
+});
+
+casttest!(send_sync, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    let output = cmd
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--sync",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("transactionHash"));
+    assert!(output.contains("blockNumber"));
+    assert!(output.contains("gasUsed"));
 });
 
 casttest!(hash_message, |_prj, cmd| {
@@ -4030,6 +4137,8 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
         "0x9999999999999999999999999999999999999999",
         "adjustPosition(int128)",
         "-33333",
+        "--gas-limit",
+        "1000000",
         "--rpc-url",
         rpc.as_str(),
     ])
@@ -4202,36 +4311,6 @@ Transaction successfully executed.
 "#]]);
     }
 );
-
-// tests that `cast erc20 balance` command works correctly
-casttest!(erc20_balance_success, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
-    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT on mainnet
-    let owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
-
-    cmd.args(["erc20", "balance", usdt, owner, "--rpc-url", &rpc]).assert_success().stdout_eq(
-        str![[r#"
-0
-
-"#]],
-    );
-});
-
-// tests that `cast erc20 allowance` command works correctly
-casttest!(erc20_allowance_success, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
-    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT on mainnet
-    let owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
-    let spender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil second address
-
-    cmd.args(["erc20", "allowance", usdt, owner, spender, "--rpc-url", &rpc])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0
-
-"#]]);
-});
-
 casttest!(keccak_stdin_bytes, |_prj, cmd| {
     cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
 0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
@@ -4242,105 +4321,6 @@ casttest!(keccak_stdin_bytes, |_prj, cmd| {
 casttest!(keccak_stdin_bytes_with_newline, |_prj, cmd| {
     cmd.args(["keccak"]).stdin("0x12\n").assert_success().stdout_eq(str![[r#"
 0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
-
-"#]]);
-});
-
-// tests that `cast erc20 transfer` and `cast erc20 approve` commands works correctly
-forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-    let rpc = handle.http_endpoint();
-
-    // Deploy TestToken contract using forge
-    foundry_test_utils::util::initialize(prj.root());
-    prj.add_source("TestToken.sol", include_str!("../fixtures/TestToken.sol"));
-    cmd.args([
-        "create",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "src/TestToken.sol:TestToken",
-    ]);
-    cmd.assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
-[TX_HASH]
-
-"#]]);
-
-    let to = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"; // Anvil second address
-    let amount = "100000000000000000000"; // 100 tokens (18 decimals)
-
-    // initial balance
-    cmd.cast_fuse()
-        .args([
-            "erc20",
-            "balance",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            to,
-            "--rpc-url",
-            &rpc,
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0
-
-"#]]);
-    // `cast erc20 transfer` test
-    cmd.cast_fuse()
-        .args([
-            "erc20",
-            "transfer",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            to,
-            amount,
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0x60bfcd46dbda87681f35f82a93c1efa381bb12d3cdd8cee10e80b078a95619e8
-
-"#]]);
-    // new balance
-    cmd.cast_fuse()
-        .args([
-            "erc20",
-            "balance",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            to,
-            "--rpc-url",
-            &rpc,
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-100000000000000000000 [1e20]
-
-"#]]);
-
-    // `cast erc20 approve` test
-    cmd.cast_fuse()
-        .args([
-            "erc20",
-            "approve",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            to,
-            amount,
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0x98712738efeb4030bd58a5bd13d25c650197548b56f38add80e689bfe55f1557
 
 "#]]);
 });

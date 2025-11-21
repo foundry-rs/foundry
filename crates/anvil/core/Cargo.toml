@@ -33,6 +33,7 @@ alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-network.workspace = true
+alloy-evm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true

@@ -1308,8 +1308,15 @@ impl<'ast> State<'_, 'ast> {
                 self.call_with_opts_and_args = cache;
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
+                // the flag is only meant to be used to format the call args
+                let cache = self.call_with_opts_and_args;
+                self.call_with_opts_and_args = false;
+
                 self.print_expr(expr);
                 self.print_named_args(named_args, span.hi());
+
+                // restore cached value
+                self.call_with_opts_and_args = cache;
             }
             ast::ExprKind::Delete(expr) => {
                 self.word("delete ");
@@ -1672,7 +1679,7 @@ impl<'ast> State<'_, 'ast> {
 
             let callee_fits_line = self.space_left() > callee_size + 1;
             let total_fits_line = self.space_left() > expr_size + member_or_args.size() + 2;
-            let no_mixed_comment =
+            let no_cmnt_or_mixed =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
             // If call with options, add an extra box to prioritize breaking the call args
@@ -1682,7 +1689,7 @@ impl<'ast> State<'_, 'ast> {
             }
 
             if !is_call_chain(&child_expr.kind, true)
-                && no_mixed_comment
+                && (no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
                 && callee_fits_line
                 && (member_depth(0, child_expr) < 2
                     // calls with cmnts between the args always break

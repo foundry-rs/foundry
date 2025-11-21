@@ -1,15 +1,11 @@
-use std::{env, error::Error};
+#![expect(clippy::disallowed_macros)]
 
 use chrono::DateTime;
+use std::{error::Error, path::PathBuf};
 use vergen::EmitBuilder;
 
-#[expect(clippy::disallowed_macros)]
 fn main() -> Result<(), Box<dyn Error>> {
-    // Re-run the build script if the build script itself changes or if the
-    // environment variables change.
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=TAG_NAME");
-    println!("cargo:rerun-if-env-changed=PROFILE");
 
     EmitBuilder::builder()
         .build_date()
@@ -18,38 +14,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         .git_sha(false)
         .emit_and_set()?;
 
-    // Set the Git SHA of the latest commit.
-    let sha = env::var("VERGEN_GIT_SHA")?;
+    let sha = env_var("VERGEN_GIT_SHA");
     let sha_short = &sha[..10];
 
-    // Set the version suffix and whether the version is a nightly build.
-    // if not on a tag: <BIN> 0.3.0-dev+ba03de0019.1737036656.debug
-    // if on a tag: <BIN> 0.3.0-stable+ba03de0019.1737036656.release
-    let tag_name = env::var("TAG_NAME")
-        .or_else(|_| env::var("CARGO_TAG_NAME"))
-        .unwrap_or_else(|_| String::from("dev"));
-    let (is_nightly, version_suffix) = if tag_name.contains("nightly") {
-        (true, "-nightly".to_string())
-    } else if let Some((_, rc_number)) = tag_name.split_once("rc") {
-        (false, format!("-rc{rc_number}"))
-    } else {
-        (false, format!("-{tag_name}"))
-    };
+    let tag_name = try_env_var("TAG_NAME").unwrap_or_else(|| String::from("dev"));
+    let is_nightly = tag_name.contains("nightly");
+    let version_suffix = if is_nightly { "nightly" } else { &tag_name };
 
-    // Whether the version is a nightly build.
     if is_nightly {
         println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION=true");
     }
 
-    // Set formatted version strings
-    let pkg_version = env::var("CARGO_PKG_VERSION")?;
+    let pkg_version = env_var("CARGO_PKG_VERSION");
+    let version = format!("{pkg_version}-{version_suffix}");
 
-    // Append the profile to the version string
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let profile = out_dir.rsplit(std::path::MAIN_SEPARATOR).nth(3).unwrap();
+    // `PROFILE` captures only release or debug. Get the actual name from the out directory.
+    let out_dir = PathBuf::from(env_var("OUT_DIR"));
+    let profile = out_dir.components().rev().nth(3).unwrap().as_os_str().to_str().unwrap();
 
-    // Set the build timestamp.
-    let build_timestamp = env::var("VERGEN_BUILD_TIMESTAMP")?;
+    let build_timestamp = env_var("VERGEN_BUILD_TIMESTAMP");
     let build_timestamp_unix = DateTime::parse_from_rfc3339(&build_timestamp)?.timestamp();
 
     // The SemVer compatible version information for Foundry.
@@ -59,16 +42,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // - The build profile.
     // Example: forge 0.3.0-nightly+3cb96bde9b.1737036656.debug
     println!(
-        "cargo:rustc-env=FOUNDRY_SEMVER_VERSION={pkg_version}{version_suffix}+{sha_short}.{build_timestamp_unix}.{profile}"
+        "cargo:rustc-env=FOUNDRY_SEMVER_VERSION={version}+{sha_short}.{build_timestamp_unix}.{profile}"
     );
 
     // The short version information for the Foundry CLI.
     // - The latest version from Cargo.toml
     // - The short SHA of the latest commit.
     // Example: 0.3.0-dev (3cb96bde9b)
-    println!(
-        "cargo:rustc-env=FOUNDRY_SHORT_VERSION={pkg_version}{version_suffix} ({sha_short} {build_timestamp})"
-    );
+    println!("cargo:rustc-env=FOUNDRY_SHORT_VERSION={version} ({sha_short} {build_timestamp})");
 
     // The long version information for the Foundry CLI.
     // - The latest version from Cargo.toml.
@@ -85,12 +66,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Build Timestamp: 2025-01-16T15:04:03.522021223Z (1737039843)
     // Build Profile: debug
     // ```
-    println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_0=Version: {pkg_version}{version_suffix}");
-    println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_1=Commit SHA: {sha}");
-    println!(
-        "cargo:rustc-env=FOUNDRY_LONG_VERSION_2=Build Timestamp: {build_timestamp} ({build_timestamp_unix})"
+    let long_version = format!(
+        "\
+Version: {version}
+Commit SHA: {sha}
+Build Timestamp: {build_timestamp} ({build_timestamp_unix})
+Build Profile: {profile}"
     );
-    println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_3=Build Profile: {profile}");
+    assert_eq!(long_version.lines().count(), 4);
+    for (i, line) in long_version.lines().enumerate() {
+        println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_{i}={line}");
+    }
 
     Ok(())
+}
+
+fn env_var(name: &str) -> String {
+    try_env_var(name).unwrap()
+}
+
+fn try_env_var(name: &str) -> Option<String> {
+    println!("cargo:rerun-if-env-changed={name}");
+    std::env::var(name).ok()
 }

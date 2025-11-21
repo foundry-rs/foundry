@@ -3,8 +3,8 @@ use clap::Parser;
 use eyre::{Context, Result};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
-    opts::BuildOpts,
-    utils::{Git, LoadConfig, cache_local_signatures},
+    opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
+    utils::{Git, LoadConfig, cache_local_signatures},,
 };
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
@@ -177,10 +177,31 @@ impl BuildArgs {
                 })
                 .collect::<Vec<_>>();
 
-            if !input_files.is_empty() {
-                let compiler = output.parser_mut().solc_mut().compiler_mut();
-                linter.lint(&input_files, config.deny, compiler)?;
+            let solar_sources =
+                get_solar_sources_from_compile_output(config, output, Some(&input_files))?;
+            if solar_sources.input.sources.is_empty() {
+                if !input_files.is_empty() {
+                    sh_warn!(
+                        "unable to lint. Solar only supports Solidity versions prior to 0.8.0"
+                    )?;
+                }
+                return Ok(());
             }
+
+            // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
+            // compiler, we should reuse the parser from the project output.
+            let mut compiler = solar::sema::Compiler::new(
+                solar::interface::Session::builder().with_stderr_emitter().build(),
+            );
+
+            // Load the solar-compatible sources to the pcx before linting
+            compiler.enter_mut(|compiler| {
+                let mut pcx = compiler.parse();
+                configure_pcx_from_solc(&mut pcx, &config.project_paths(), &solar_sources, true);
+                pcx.set_resolve_imports(true);
+                pcx.parse();
+            });
+            linter.lint(&input_files, config.deny, &mut compiler)?;
         }
 
         Ok(())
