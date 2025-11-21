@@ -3664,10 +3664,10 @@ impl TransactionValidator for Backend {
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id.to::<u64>() != tx_chain_id {
-                if let Some(legacy) = tx.as_legacy() {
+                if let TypedTransaction::Legacy(tx) = tx.as_ref() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON
-                        && legacy.tx().chain_id.is_none()
+                        && tx.chain_id().is_none()
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
