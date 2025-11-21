@@ -991,3 +991,83 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
         prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
     );
 });
+
+forgetest_init!(continous_run, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+        config.invariant.continuous_run = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function work(uint256 x) public {
+        if (x % 2 != 0 && x < 9000) {
+            cond++;
+        } else {
+            revert();
+        }
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "CounterTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_cond1() public view {
+        require(counter.cond() < 10, "condition 1 met");
+    }
+
+    function invariant_cond2() public view {
+        require(counter.cond() < 15, "condition 2 met");
+    }
+
+    function invariant_cond3() public view {
+        require(counter.cond() < 5, "condition 3 met");
+    }
+
+    function invariant_cond4() public view {
+        require(counter.cond() < 111111, "condition 4 met");
+    }
+
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_cond5() public view {
+        require(counter.cond() < 111111, "condition 5 met");
+    }
+}
+   "#,
+    );
+
+    // Check that running single `invariant_cond3` test continue to run until it breaks all other
+    // invariants.
+    cmd.args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/CounterTest.t.sol:CounterTest
+[FAIL: condition 3 met]
+	[Sequence] (original: 5, shrunk: 5)
+...
+
+invariant_cond1: condition 1 met
+invariant_cond2: condition 2 met
+invariant_cond5: EvmError: Revert
+ invariant_cond3() (runs: 10, calls: 1000, reverts: [..])
+...
+
+"#]]);
+});

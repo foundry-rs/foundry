@@ -37,6 +37,8 @@ pub struct InvariantConfig {
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
+    /// Continue invariant run until all invariants declared in current test suite breaks.
+    pub continuous_run: bool,
 }
 
 impl Default for InvariantConfig {
@@ -55,6 +57,7 @@ impl Default for InvariantConfig {
             show_metrics: true,
             timeout: None,
             show_solidity: false,
+            continuous_run: false,
         }
     }
 }

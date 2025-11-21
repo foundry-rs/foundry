@@ -70,7 +70,7 @@ pub fn replay_run(
     let (invariant_result, invariant_success) = call_invariant_function(
         &executor,
         invariant_contract.address,
-        invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
+        invariant_contract.invariant_fn.abi_encode_input(&[])?.into(),
     )?;
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
     logs.extend(invariant_result.logs);
@@ -87,6 +87,47 @@ pub fn replay_run(
             call_after_invariant_function(&executor, invariant_contract.address)?;
         traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
         logs.extend(after_invariant_result.logs);
+    }
+
+    Ok(counterexample_sequence)
+}
+
+pub fn generate_counterexample(
+    mut executor: Executor,
+    known_contracts: &ContractsByArtifact,
+    mut ided_contracts: ContractsByAddress,
+    inputs: &[BasicTxDetails],
+    show_solidity: bool,
+) -> Result<Vec<BaseCounterExample>> {
+    // We want traces for a failed case.
+    if executor.inspector().tracer.is_none() {
+        executor.set_tracing(TraceMode::Call);
+    }
+
+    let mut counterexample_sequence = vec![];
+
+    // Replay each call from the sequence, collect logs, traces and coverage.
+    for tx in inputs {
+        let call_result = executor.transact_raw(
+            tx.sender,
+            tx.call_details.target,
+            tx.call_details.calldata.clone(),
+            U256::ZERO,
+        )?;
+
+        // Identify newly generated contracts, if they exist.
+        ided_contracts
+            .extend(load_contracts(call_result.traces.iter().map(|a| &a.arena), known_contracts));
+
+        // Create counter example to be used in failed case.
+        counterexample_sequence.push(BaseCounterExample::from_invariant_call(
+            tx.sender,
+            tx.call_details.target,
+            &tx.call_details.calldata,
+            &ided_contracts,
+            call_result.traces,
+            show_solidity,
+        ));
     }
 
     Ok(counterexample_sequence)

@@ -100,6 +100,7 @@ pub(crate) struct CorpusMetrics {
 impl fmt::Display for CorpusMetrics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f)?;
+        writeln!(f, "      Edge coverage metrics:")?;
         writeln!(f, "        - cumulative edges seen: {}", self.cumulative_edges_seen)?;
         writeln!(f, "        - cumulative features seen: {}", self.cumulative_features_seen)?;
         writeln!(f, "        - corpus count: {}", self.corpus_count)?;

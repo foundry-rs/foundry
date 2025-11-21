@@ -22,7 +22,8 @@ use foundry_evm::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            InvariantExecutor, InvariantFuzzError, check_sequence, replay_error, replay_run,
+            InvariantExecutor, InvariantFuzzError, check_sequence, generate_counterexample,
+            replay_error, replay_run,
         },
     },
     fuzz::{
@@ -339,7 +340,9 @@ impl<'a> ContractRunner<'a> {
 
         // Invariant testing requires tracing to figure out what contracts were created.
         // We also want to disable `debug` for setup since we won't be using those traces.
-        let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
+        let invariant_fns: Vec<_> =
+            self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
+        let has_invariants = !invariant_fns.is_empty();
 
         let prev_tracer = self.executor.inspector_mut().tracer.take();
         if prev_tracer.is_some() || has_invariants {
@@ -436,6 +439,7 @@ impl<'a> ContractRunner<'a> {
 
                 let mut res = FunctionRunner::new(&self, &setup).run(
                     func,
+                    invariant_fns.clone(),
                     kind,
                     call_after_invariant,
                     identified_contracts.as_ref(),
@@ -513,10 +517,22 @@ impl<'a> FunctionRunner<'a> {
     fn run(
         mut self,
         func: &Function,
+        invariants: Vec<&Function>,
         kind: TestFunctionKind,
         call_after_invariant: bool,
         identified_contracts: Option<&ContractsByAddress>,
     ) -> TestResult {
+        let fail_on_revert_for = |f: &Function| {
+            if self.inline_config.contains_function(self.cr.name, &f.name)
+                && let Ok(config) = self.cr.inline_config(Some(f))
+            {
+                return config.invariant.fail_on_revert;
+            }
+            self.config.invariant.fail_on_revert
+        };
+        let invariant_fns: Vec<_> =
+            invariants.into_iter().map(|f| (f, fail_on_revert_for(f))).collect();
+
         if let Err(e) = self.apply_function_inline_config(func) {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
@@ -530,6 +546,7 @@ impl<'a> FunctionRunner<'a> {
                 let test_bytecode = &self.cr.contract.bytecode;
                 self.run_invariant_test(
                     func,
+                    invariant_fns,
                     call_after_invariant,
                     identified_contracts.unwrap(),
                     test_bytecode,
@@ -713,6 +730,7 @@ impl<'a> FunctionRunner<'a> {
     fn run_invariant_test(
         mut self,
         func: &Function,
+        invariants: Vec<(&Function, bool)>,
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
         test_bytecode: &Bytes,
@@ -754,9 +772,19 @@ impl<'a> FunctionRunner<'a> {
             identified_contracts,
             &self.cr.mcr.known_contracts,
         );
+
+        // Filter out additional invariants to test if we already have a persisted failure.
         let invariant_contract = InvariantContract {
             address: self.address,
-            invariant_function: func,
+            invariant_fn: func,
+            invariant_fns: invariants
+                .into_iter()
+                .filter(|(invariant_fn, _)| {
+                    *invariant_fn == func
+                        || (invariant_config.continuous_run
+                            && !canonicalized(failure_dir.join(invariant_fn.name.clone())).exists())
+                })
+                .collect(),
             call_after_invariant,
             abi: &self.cr.contract.abi,
         };
@@ -793,7 +821,7 @@ impl<'a> FunctionRunner<'a> {
                 &txes,
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
                 invariant_contract.address,
-                invariant_contract.invariant_function.selector().to_vec().into(),
+                invariant_contract.invariant_fn.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
                 invariant_contract.call_after_invariant,
             ) && !success
@@ -845,7 +873,7 @@ impl<'a> FunctionRunner<'a> {
 
                 self.result.invariant_replay_fail(
                     replayed_entirely,
-                    &invariant_contract.invariant_function.name,
+                    &invariant_contract.invariant_fn.name,
                     call_sequence,
                 );
                 return self.result;
@@ -869,84 +897,118 @@ impl<'a> FunctionRunner<'a> {
         self.result.merge_coverages(invariant_result.line_coverage);
 
         let mut counterexample = None;
-        let success = invariant_result.error.is_none();
-        let reason = invariant_result.error.as_ref().and_then(|err| err.revert_reason());
+        let success = invariant_result.errors.is_empty();
+        let reason = invariant_result
+            .errors
+            .get(&invariant_contract.invariant_fn.name)
+            .and_then(|err| err.revert_reason());
+        let mut other_failures = vec![];
 
-        match invariant_result.error {
-            // If invariants were broken, replay the error to collect logs and traces
-            Some(error) => match error {
-                InvariantFuzzError::BrokenInvariant(case_data)
-                | InvariantFuzzError::Revert(case_data) => {
-                    // Replay error to create counterexample and to collect logs, traces and
-                    // coverage.
-                    match case_data.test_error {
-                        TestError::Abort(_) => {}
-                        TestError::Fail(_, ref calls) => {
-                            match replay_error(
-                                evm.config(),
-                                self.clone_executor(),
-                                calls,
-                                Some(case_data.inner_sequence),
-                                &invariant_contract,
-                                &self.cr.mcr.known_contracts,
-                                identified_contracts.clone(),
-                                &mut self.result.logs,
-                                &mut self.result.traces,
-                                &mut self.result.line_coverage,
-                                &mut self.result.deprecated_cheatcodes,
-                                progress.as_ref(),
-                                &self.tcfg.early_exit,
-                            ) {
-                                Ok(call_sequence) => {
-                                    if !call_sequence.is_empty() {
-                                        // Persist error in invariant failure dir.
-                                        record_invariant_failure(
-                                            failure_dir.as_path(),
-                                            failure_file.as_path(),
-                                            &call_sequence,
-                                            test_bytecode,
-                                        );
-
-                                        let original_seq_len = if let TestError::Fail(_, calls) =
-                                            &case_data.test_error
-                                        {
-                                            calls.len()
-                                        } else {
-                                            call_sequence.len()
-                                        };
-
-                                        counterexample = Some(CounterExample::Sequence(
-                                            original_seq_len,
-                                            call_sequence,
-                                        ))
-                                    }
-                                }
-                                Err(err) => {
-                                    error!(%err, "Failed to replay invariant error");
-                                }
-                            }
-                        }
-                    };
-                }
-                InvariantFuzzError::MaxAssumeRejects(_) => {}
-            },
-
+        if success {
             // If invariants ran successfully, replay the last run to collect logs and
             // traces.
-            _ => {
-                if let Err(err) = replay_run(
-                    &invariant_contract,
+            if let Err(err) = replay_run(
+                &invariant_contract,
+                self.clone_executor(),
+                &self.cr.mcr.known_contracts,
+                identified_contracts.clone(),
+                &mut self.result.logs,
+                &mut self.result.traces,
+                &mut self.result.line_coverage,
+                &mut self.result.deprecated_cheatcodes,
+                &invariant_result.last_run_inputs,
+                show_solidity,
+            ) {
+                error!(%err, "Failed to replay last invariant run");
+            }
+        } else {
+            // check if main invariant was broken and replay error
+            if let Some(error) = invariant_result.errors.get(&invariant_contract.invariant_fn.name)
+                && let InvariantFuzzError::BrokenInvariant(case_data)
+                | InvariantFuzzError::Revert(case_data) = error
+                && let TestError::Fail(_, ref calls) = case_data.test_error
+            {
+                match replay_error(
+                    evm.config(),
                     self.clone_executor(),
+                    calls,
+                    Some(case_data.inner_sequence.clone()),
+                    &invariant_contract,
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
-                    &invariant_result.last_run_inputs,
-                    show_solidity,
+                    progress.as_ref(),
+                    &self.tcfg.early_exit,
                 ) {
-                    error!(%err, "Failed to replay last invariant run");
+                    Ok(call_sequence) => {
+                        if !call_sequence.is_empty() {
+                            // Persist error in invariant failure dir.
+                            record_invariant_failure(
+                                failure_dir.as_path(),
+                                failure_file.as_path(),
+                                &call_sequence,
+                                test_bytecode,
+                            );
+
+                            let original_seq_len =
+                                if let TestError::Fail(_, calls) = &case_data.test_error {
+                                    calls.len()
+                                } else {
+                                    call_sequence.len()
+                                };
+
+                            counterexample =
+                                Some(CounterExample::Sequence(original_seq_len, call_sequence))
+                        }
+                    }
+                    Err(err) => {
+                        error!(%err, "Failed to replay invariant error");
+                    }
+                }
+            }
+
+            for (invariant, _) in invariant_contract.invariant_fns {
+                if invariant == invariant_contract.invariant_fn {
+                    continue;
+                }
+
+                // Generate counterexamples for broken invariant, if there is no failure persisted
+                // already.
+                let persisted_failure = canonicalized(failure_dir.join(invariant.name.clone()));
+                if !persisted_failure.exists()
+                    && let Some(error) = invariant_result.errors.get(&invariant.name)
+                    && let InvariantFuzzError::BrokenInvariant(case_data)
+                    | InvariantFuzzError::Revert(case_data) = error
+                    && let TestError::Fail(_, ref calls) = case_data.test_error
+                {
+                    other_failures.push(format!(
+                        "{}: {}",
+                        invariant.name,
+                        error.revert_reason().unwrap_or_default()
+                    ));
+                    match generate_counterexample(
+                        self.clone_executor(),
+                        &self.cr.mcr.known_contracts,
+                        identified_contracts.clone(),
+                        calls,
+                        show_solidity,
+                    ) {
+                        Ok(call_sequence) => {
+                            // Persist error in invariant failure dir.
+                            record_invariant_failure(
+                                failure_dir.as_path(),
+                                persisted_failure.as_path(),
+                                &call_sequence,
+                                test_bytecode,
+                            );
+                        }
+                        Err(err) => {
+                            error!(%err, "Failed to generate and record invariant counterexample");
+                        }
+                    }
                 }
             }
         }
@@ -955,6 +1017,7 @@ impl<'a> FunctionRunner<'a> {
             invariant_result.gas_report_traces,
             success,
             reason,
+            other_failures,
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
