@@ -1119,6 +1119,16 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["decode-auth"])]
     RecoverAuthority { auth: String },
 
+    /// Validate EIP-7702 authorizations in a transaction and print validity status.
+    #[command(name = "validate-auth", visible_aliases = &["va", "validate-auths"])]
+    ValidateAuth {
+        /// Transaction hash.
+        tx_hash: String,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]
     Selectors {
