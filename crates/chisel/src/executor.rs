@@ -665,7 +665,7 @@ impl Type {
         #[expect(clippy::single_match)]
         match &self {
             Self::Access(inner, access) => {
-                if let Some(ty) = inner.as_ref().clone().try_as_ethabi(None) {
+              if let Some(ty) = (**inner).clone().try_as_ethabi(None) {
                     // Array / bytes members
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
