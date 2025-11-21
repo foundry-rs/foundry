@@ -14,7 +14,7 @@ use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt
 use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256};
 use alloy_rlp::{Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    AccessList, ConversionError, Transaction as RpcTransaction, TransactionReceipt,
+    ConversionError, Transaction as RpcTransaction, TransactionReceipt,
     request::TransactionRequest, trace::otterscan::OtsReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
