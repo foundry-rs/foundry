@@ -463,23 +463,14 @@ impl TypedTransaction {
     pub fn max_cost(&self) -> u128 {
         let mut max_cost = (self.gas_limit() as u128).saturating_mul(self.max_fee_per_gas());
 
-        if self.is_eip4844() {
-            max_cost = max_cost.saturating_add(
-                self.blob_gas()
-                    .map(|g| g as u128)
-                    .unwrap_or(0)
-                    .mul(self.max_fee_per_blob_gas().unwrap_or(0)),
-            )
-        }
+        max_cost = max_cost.saturating_add(
+            self.blob_gas_used()
+                .map(|g| g as u128)
+                .unwrap_or(0)
+                .mul(self.max_fee_per_blob_gas().unwrap_or(0)),
+        );
 
         max_cost
-    }
-
-    pub fn blob_gas(&self) -> Option<u64> {
-        match self {
-            Self::EIP4844(tx) => Some(tx.tx().tx().blob_gas()),
-            _ => None,
-        }
     }
 
     pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
