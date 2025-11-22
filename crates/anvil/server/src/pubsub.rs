@@ -19,7 +19,7 @@ use std::{
 
 /// The general purpose trait for handling RPC requests and subscriptions
 #[async_trait::async_trait]
-pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
+pub trait PubSubRpcHandler: Clone + Send + Sync + 'static {
     /// The request type to expect
     type Request: DeserializeOwned + Send + Sync + fmt::Debug;
     /// The identifier to use for subscriptions
