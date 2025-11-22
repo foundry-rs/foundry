@@ -1,7 +1,7 @@
 use crate::{
     Cast, SimpleCast,
     cmd::erc20::IERC20,
-    opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
+    opts::{Cast as CastArgs, CastSubcommand},
     traces::identifier::SignaturesIdentifier,
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
@@ -64,122 +64,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::HashZero => {
             sh_println!("{:?}", B256::ZERO)?;
         }
-
-        // Conversions & transformations
-        CastSubcommand::FromUtf8 { text } => {
-            let value = stdin::unwrap(text, false)?;
-            sh_println!("{}", SimpleCast::from_utf8(&value))?
-        }
-        CastSubcommand::ToAscii { hexdata } => {
-            let value = stdin::unwrap(hexdata, false)?;
-            sh_println!("{}", SimpleCast::to_ascii(value.trim())?)?
-        }
-        CastSubcommand::ToUtf8 { hexdata } => {
-            let value = stdin::unwrap(hexdata, false)?;
-            sh_println!("{}", SimpleCast::to_utf8(&value)?)?
-        }
-        CastSubcommand::FromFixedPoint { value, decimals } => {
-            let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            sh_println!("{}", SimpleCast::from_fixed_point(&value, &decimals)?)?
-        }
-        CastSubcommand::ToFixedPoint { value, decimals } => {
-            let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            sh_println!("{}", SimpleCast::to_fixed_point(&value, &decimals)?)?
-        }
-        CastSubcommand::ConcatHex { data } => {
-            if data.is_empty() {
-                let s = stdin::read(true)?;
-                sh_println!("{}", SimpleCast::concat_hex(s.split_whitespace()))?
-            } else {
-                sh_println!("{}", SimpleCast::concat_hex(data))?
-            }
-        }
-        CastSubcommand::FromBin => {
-            let hex = stdin::read_bytes(false)?;
-            sh_println!("{}", hex::encode_prefixed(hex))?
-        }
-        CastSubcommand::ToHexdata { input } => {
-            let value = stdin::unwrap_line(input)?;
-            let output = match value {
-                s if s.starts_with('@') => hex::encode(std::env::var(&s[1..])?),
-                s if s.starts_with('/') => hex::encode(fs::read(s)?),
-                s => s.split(':').map(|s| s.trim_start_matches("0x").to_lowercase()).collect(),
-            };
-            sh_println!("0x{output}")?
-        }
-        CastSubcommand::ToCheckSumAddress { address, chain_id } => {
-            let value = stdin::unwrap_line(address)?;
-            sh_println!("{}", value.to_checksum(chain_id))?
-        }
-        CastSubcommand::ToUint256 { value } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_uint256(&value)?)?
-        }
-        CastSubcommand::ToInt256 { value } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_int256(&value)?)?
-        }
-        CastSubcommand::ToUnit { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_unit(&value, &unit)?)?
-        }
-        CastSubcommand::ParseUnits { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::parse_units(&value, unit)?)?;
-        }
-        CastSubcommand::FormatUnits { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::format_units(&value, unit)?)?;
-        }
-        CastSubcommand::FromWei { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_wei(&value, &unit)?)?
-        }
-        CastSubcommand::ToWei { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_wei(&value, &unit)?)?
-        }
-        CastSubcommand::FromRlp { value, as_int } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_rlp(value, as_int)?)?
-        }
-        CastSubcommand::ToRlp { value } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_rlp(&value)?)?
-        }
-        CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "hex")?)?
-        }
-        CastSubcommand::ToDec(ToBaseArgs { value, base_in }) => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "dec")?)?
-        }
-        CastSubcommand::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
-            let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?)?
-        }
-        CastSubcommand::ToBytes32 { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::to_bytes32(&value)?)?
-        }
-        CastSubcommand::Pad { data, right, left: _, len } => {
-            let value = stdin::unwrap_line(data)?;
-            sh_println!("{}", SimpleCast::pad(&value, right, len)?)?
-        }
-        CastSubcommand::FormatBytes32String { string } => {
-            let value = stdin::unwrap_line(string)?;
-            sh_println!("{}", SimpleCast::format_bytes32_string(&value)?)?
-        }
-        CastSubcommand::ParseBytes32String { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::parse_bytes32_string(&value)?)?
-        }
-        CastSubcommand::ParseBytes32Address { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::parse_bytes32_address(&value)?)?
-        }
-
         // ABI encoding & decoding
         CastSubcommand::DecodeAbi { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
@@ -755,6 +639,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
+        }
+        CastSubcommand::Convert { command } => {
+            command.run().await?;
         }
     };
 
