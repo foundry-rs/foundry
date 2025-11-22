@@ -4,16 +4,20 @@ use crate::{
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
 };
-use alloy_consensus::transaction::{Recovered, SignerRecoverable};
+use alloy_consensus::{
+    Transaction, TxEnvelope,
+    transaction::{Recovered, SignerRecoverable},
+};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
+use alloy_network::{AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{utils, utils::LoadConfig};
 use foundry_common::{
     abi::{get_error, get_event},
@@ -26,7 +30,7 @@ use foundry_common::{
     },
     shell, stdin,
 };
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -750,6 +754,147 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::RecoverAuthority { auth } => {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;
             sh_println!("{}", auth.recover_authority()?)?;
+        }
+        CastSubcommand::ValidateAuth { tx_hash, rpc } => {
+            let config = rpc.load_config()?;
+            let provider = utils::get_provider(&config)?;
+
+            let tx_hash = tx_hash.parse::<B256>().wrap_err("invalid tx hash")?;
+            let tx = provider
+                .get_transaction_by_hash(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
+
+            // Get block info for nonce calculation
+            let block_number =
+                tx.block_number.ok_or_else(|| eyre::eyre!("transaction is not yet mined"))?;
+            let tx_index = tx
+                .transaction_index
+                .ok_or_else(|| eyre::eyre!("transaction index not available"))?;
+
+            // Fetch the block to get all transactions up to this one
+            let block = provider
+                .get_block_by_number(block_number.into())
+                .full()
+                .await?
+                .ok_or_else(|| eyre::eyre!("block not found: {}", block_number))?;
+
+            // Build a map of address -> running nonce from txs in this block up to and including
+            // our tx
+            let mut running_nonces: HashMap<Address, u64> = HashMap::new();
+            for block_tx in block.transactions.txns().take((tx_index + 1) as usize) {
+                let from = block_tx.from();
+                let nonce = block_tx.nonce();
+                // Track the next expected nonce (current nonce + 1)
+                running_nonces.insert(from, nonce + 1);
+            }
+
+            let chain_id = provider.get_chain_id().await?;
+
+            // Extract authorization list from EIP-7702 transaction
+            let auth_list = match &*tx.inner.inner {
+                AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(signed_tx)) => {
+                    signed_tx.tx().authorization_list.clone()
+                }
+                _ => {
+                    eyre::bail!("transaction is not an EIP-7702 transaction");
+                }
+            };
+
+            sh_println!("Transaction: {}", tx_hash)?;
+            sh_println!("Block: {} (tx index: {})", block_number, tx_index)?;
+            sh_println!()?;
+
+            if auth_list.is_empty() {
+                sh_println!("Authorization list is empty")?;
+            } else {
+                for (i, auth) in auth_list.iter().enumerate() {
+                    let valid_chain = auth.chain_id == chain_id || auth.chain_id == 0;
+                    sh_println!("Authorization #{}", i)?;
+                    sh_println!("  Decoded:")?;
+                    sh_println!("    Chain ID: {}", auth.chain_id,)?;
+                    sh_println!("    Address: {}", auth.address)?;
+                    sh_println!("    Nonce: {}", auth.nonce)?;
+                    sh_println!("    r: {}", auth.r())?;
+                    sh_println!("    s: {}", auth.s())?;
+                    sh_println!("    v: {}", auth.y_parity())?;
+
+                    match auth.recover_authority() {
+                        Ok(authority) => {
+                            sh_println!("  Recovered Authority: {}", authority)?;
+
+                            sh_println!("  Validation Status:")?;
+                            sh_println!(
+                                "    Chain: {}",
+                                if valid_chain {
+                                    "VALID".to_string()
+                                } else {
+                                    format!("INVALID (expected: 0 or {chain_id})")
+                                }
+                            )?;
+
+                            // Get the expected nonce at time of tx execution
+                            let expected_nonce =
+                                if let Some(&nonce) = running_nonces.get(&authority) {
+                                    nonce
+                                } else {
+                                    // Fetch nonce at block - 1 (state before this block)
+                                    let prev_block = BlockId::number(block_number - 1);
+                                    provider
+                                        .get_transaction_count(authority)
+                                        .block_id(prev_block)
+                                        .await?
+                                };
+
+                            let valid_nonce = auth.nonce == expected_nonce;
+                            if valid_nonce {
+                                sh_println!("    Nonce: VALID")?;
+                            } else {
+                                sh_println!(
+                                    "    Nonce: INVALID (expected: {}, got: {})",
+                                    expected_nonce,
+                                    auth.nonce
+                                )?;
+                            }
+
+                            // If authorization was valid, update running nonce for subsequent auths
+                            if valid_chain && valid_nonce {
+                                running_nonces.insert(authority, expected_nonce + 1);
+                            }
+
+                            // Check if the authority's code was set to the delegated address
+                            let code = provider.get_code_at(authority).await?;
+                            if code.is_empty() {
+                                sh_println!("  Code Status: No delegation (account has no code)")?;
+                            } else if code.len() == 23 && code[0..3] == [0xef, 0x01, 0x00] {
+                                // EIP-7702 delegation designator: 0xef0100 followed by 20-byte
+                                // address
+                                let delegated_to = Address::from_slice(&code[3..23]);
+                                if delegated_to == auth.address {
+                                    sh_println!(
+                                        "  Code Status: ACTIVE (delegated to {})",
+                                        delegated_to
+                                    )?;
+                                } else {
+                                    sh_println!(
+                                        "  Code Status: SUPERSEDED (currently delegated to {})",
+                                        delegated_to
+                                    )?;
+                                }
+                            } else {
+                                sh_println!(
+                                    "  Code Status: Account has contract code (not a delegation)"
+                                )?;
+                            }
+                        }
+                        Err(e) => {
+                            sh_println!("  Authority: UNKNOWN")?;
+                            sh_println!("  Signature: INVALID ({})", e)?;
+                        }
+                    }
+                    sh_println!()?;
+                }
+            }
         }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
