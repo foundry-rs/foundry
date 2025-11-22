@@ -11,6 +11,7 @@ pub mod b2e_payload;
 pub mod bind;
 pub mod call;
 pub mod constructor_args;
+pub mod convert;
 pub mod create2;
 pub mod creation_code;
 pub mod da_estimate;
