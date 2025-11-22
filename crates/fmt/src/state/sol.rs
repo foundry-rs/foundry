@@ -1424,6 +1424,11 @@ impl<'ast> State<'_, 'ast> {
         let prev_chain = self.binary_expr;
         let is_chain = prev_chain.is_some_and(|prev| prev == bin_op.kind.group());
 
+        // Check if we should use multi-line formatting for if conditions
+        let use_multi_line_conditions = self.in_if_condition
+            && matches!(self.config.format_conditions, config::ConditionFormatStyle::Multi)
+            && matches!(bin_op.kind.group(), BinOpGroup::Logical);
+
         // Opening box if starting a new operator chain.
         if !is_chain {
             self.binary_expr = Some(bin_op.kind.group());
@@ -1437,7 +1442,21 @@ impl<'ast> State<'_, 'ast> {
             } else {
                 self.ind
             };
-            self.s.ibox(indent);
+            // Use consistent box for multi-line condition formatting to ensure all breaks happen
+            // together
+            if use_multi_line_conditions {
+                self.s.cbox(indent);
+            } else {
+                self.s.ibox(indent);
+            }
+        }
+
+        // For multi-line condition formatting, break before the operator (except the first one)
+        if use_multi_line_conditions && is_chain {
+            // Break before the operator to start each condition on its own line
+            if !self.is_bol_or_only_ind() {
+                self.hardbreak();
+            }
         }
 
         // Print LHS.
@@ -1469,7 +1488,14 @@ impl<'ast> State<'_, 'ast> {
 
             self.word(bin_op.kind.to_str());
 
-            if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
+            // For multi-line condition formatting, break after logical operators in if conditions
+            if use_multi_line_conditions {
+                // Force a hard break after logical operators in multi-line mode
+                if !self.is_bol_or_only_ind() {
+                    self.hardbreak();
+                }
+                self.s.offset(self.ind);
+            } else if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
                 self.nbsp();
             }
         }
@@ -2301,14 +2327,30 @@ impl<'ast> State<'_, 'ast> {
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>, pos_hi: BytePos) {
         self.print_word(kw);
         self.print_sep_unhandled(Separator::Nbsp);
+
+        // Set flag for if condition formatting
+        let was_in_if_condition = self.in_if_condition;
+        self.in_if_condition = true;
+
+        // Choose ListFormat based on config
+        let list_format =
+            if matches!(self.config.format_conditions, config::ConditionFormatStyle::Multi) {
+                ListFormat::consistent().break_cmnts().break_single(true)
+            } else {
+                ListFormat::compact().break_cmnts().break_single(is_binary_expr(&cond.kind))
+            };
+
         self.print_tuple(
             std::slice::from_ref(cond),
             cond.span.lo(),
             pos_hi,
             Self::print_expr,
             get_span!(),
-            ListFormat::compact().break_cmnts().break_single(is_binary_expr(&cond.kind)),
+            list_format,
         );
+
+        // Reset flag
+        self.in_if_condition = was_in_if_condition;
     }
 
     fn print_emit_or_revert(
