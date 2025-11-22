@@ -104,6 +104,7 @@ forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 futures.workspace = true
 reqwest = { workspace = true, features = ["json"] }
+httpmock = "0.7"
 
 mockall = "0.13"
 globset = "0.4"

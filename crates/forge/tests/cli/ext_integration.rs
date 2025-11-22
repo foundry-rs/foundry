@@ -17,6 +17,10 @@ fn forge_std() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
+    if !cmd_exists("bun") && !cmd_exists("npm") {
+        eprintln!("skipping prb_math: bun/npm not available");
+        return;
+    }
     ExtTester::new("PaulRBerg", "prb-math", "aad73cfc6cdc2c9b660199b5b1e9db391ea48640")
         .install_command(&["bun", "install", "--prefer-offline"])
         // Try npm if bun fails / is not installed.
@@ -28,6 +32,10 @@ fn prb_math() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_proxy() {
+    if !cmd_exists("bun") && !cmd_exists("npm") {
+        eprintln!("skipping prb_proxy: bun/npm not available");
+        return;
+    }
     ExtTester::new("PaulRBerg", "prb-proxy", "e45f5325d4b6003227a6c4bdaefac9453f89de2e")
         .install_command(&["bun", "install", "--prefer-offline"])
         // Try npm if bun fails / is not installed.
@@ -39,6 +47,10 @@ fn prb_proxy() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2_core() {
+    if !cmd_exists("bun") && !cmd_exists("npm") {
+        eprintln!("skipping sablier_v2_core: bun/npm not available");
+        return;
+    }
     let mut tester =
         ExtTester::new("sablier-labs", "v2-core", "d85521f5615f6c19612ff250ee89c57b9afa6aa2")
             // Skip fork tests.
@@ -72,11 +84,29 @@ fn solady() {
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 #[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
+    if !cmd_exists("pnpm") && !cmd_exists("npm") {
+        eprintln!("skipping snekmate: pnpm/npm not available");
+        return;
+    }
+    if !cmd_exists("vyper") {
+        eprintln!("skipping snekmate: vyper not available");
+        return;
+    }
     ExtTester::new("pcaversaccio", "snekmate", "601031d244475b160a00f73053532528bf665cc3")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
         .run();
+}
+
+fn cmd_exists(cmd: &str) -> bool {
+    std::process::Command::new(cmd)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 // <https://github.com/mds1/multicall>

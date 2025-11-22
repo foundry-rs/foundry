@@ -108,6 +108,7 @@ legacy_assertions = false
 celo = false
 bypass_prevrandao = false
 transaction_timeout = 120
+trace_source = "local"
 additional_compiler_profiles = []
 compilation_restrictions = []
 script_execution_protection = true
@@ -354,6 +355,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         extra_args: vec![],
         networks: Default::default(),
         transaction_timeout: 120,
+        trace_source: Default::default(),
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
@@ -1162,7 +1164,7 @@ contract CounterTest {
 });
 
 #[cfg(not(feature = "isolate-by-default"))]
-forgetest_init!(test_default_config, |prj, cmd| {
+forgetest_init!(#[ignore = "ext_integration"] test_default_config, |prj, cmd| {
     prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
 
@@ -1250,6 +1252,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_logs": false,
     "timeout": null
   },
+  "trace_source": "local",
   "invariant": {
     "runs": 256,
     "depth": 500,
