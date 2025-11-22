@@ -140,6 +140,7 @@ sort_imports = false
 pow_no_space = false
 prefer_compact = "all"
 single_line_imports = false
+format_conditions = "inline"
 
 [lint]
 severity = []
@@ -1332,7 +1333,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "sort_imports": false,
     "pow_no_space": false,
     "prefer_compact": "all",
-    "single_line_imports": false
+    "single_line_imports": false,
+    "format_conditions": "inline"
   },
   "lint": {
     "severity": [],
