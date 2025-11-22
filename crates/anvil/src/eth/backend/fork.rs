@@ -18,7 +18,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     trace::{
-        geth::{GethDebugTracingOptions, GethTrace},
+        geth::{GethDebugTracingOptions, GethTrace, TraceResult},
         parity::LocalizedTransactionTrace as Trace,
     },
 };
@@ -405,6 +405,41 @@ impl ClientFork {
         self.provider().debug_code_by_hash(code_hash, block_id).await
     }
 
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, TransportError> {
+        if let Some(traces) = self.storage_read().geth_block_traces.get(&block_hash).cloned() {
+            return Ok(traces);
+        }
+
+        let trace_results = self.provider().debug_trace_block_by_hash(block_hash, opts).await?;
+
+        let mut storage = self.storage_write();
+        storage.geth_block_traces.insert(block_hash, trace_results.clone());
+
+        Ok(trace_results)
+    }
+
+    pub async fn debug_trace_block_by_number(
+        &self,
+        number: u64,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, TransportError> {
+        // Try to get block hash from number first
+        if let Ok(Some(block)) = self.provider().get_block_by_number(number.into()).await {
+            let block_hash = block.header.hash;
+            return self.debug_trace_block_by_hash(block_hash, opts).await;
+        }
+
+        // Fallback: call debug_traceBlockByNumber directly
+        let trace_results =
+            self.provider().debug_trace_block_by_number(number.into(), opts).await?;
+
+        Ok(trace_results)
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, TransportError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces);
@@ -712,6 +747,7 @@ pub struct ForkedStorage {
     pub transaction_traces: FbHashMap<32, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,
     pub geth_transaction_traces: FbHashMap<32, GethTrace>,
+    pub geth_block_traces: FbHashMap<32, Vec<TraceResult>>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<ReceiptResponse>>,
     pub code_at: HashMap<(Address, u64), Bytes>,

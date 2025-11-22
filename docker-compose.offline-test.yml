@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  anvil-offline:
+    build:
+      context: .
+      dockerfile: Dockerfile.offline-test
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8545:8545"
+    volumes:
+      - ./state.json:/state.json:ro
+    command: >
+      --fork-url https://sepolia.base.org
+      --optimism
+      --fork-block-number 20702367
+      --fork-chain-id 84532
+      --host 0.0.0.0
+      --load-state /state.json
+      --offline
+    environment:
+      - RUST_LOG=info
+
+  anvil-no-network:
+    build:
+      context: .
+      dockerfile: Dockerfile.offline-test
+    network_mode: none
+    volumes:
+      - ./state.json:/state.json:ro
+    command: >
+      --fork-url https://invalid.test
+      --optimism
+      --fork-block-number 20702367
+      --fork-chain-id 84532
+      --load-state /state.json
+      --offline
+    profiles:
+      - test
