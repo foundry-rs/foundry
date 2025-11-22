@@ -102,12 +102,12 @@ forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &transfer_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
             anvil_const::PK1,
         ])
-        .stdin("y\n")
         .assert_success();
 
     // Verify balance changes after transfer
@@ -130,12 +130,12 @@ forgetest_async!(erc20_approval_allowance, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &approve_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
             anvil_const::PK1,
         ])
-        .stdin("y\n")
         .assert_success();
 
     // Verify allowance was set
@@ -266,13 +266,13 @@ forgetest_async!(erc20_burn_success, |prj, cmd| {
     assert_eq!(total_supply, initial_supply - burn_amount);
 });
 
-// tests that transfer with stdin confirmation works
-forgetest_async!(erc20_transfer_with_confirmation, |prj, cmd| {
+// tests that transfer with --yes flag skips confirmation prompt
+forgetest_async!(erc20_transfer_with_yes_flag, |prj, cmd| {
     let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
 
     let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
 
-    // Transfer with stdin "y" should succeed
+    // Transfer with --yes flag should succeed without prompting
     let output = cmd
         .cast_fuse()
         .args([
@@ -281,12 +281,12 @@ forgetest_async!(erc20_transfer_with_confirmation, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &transfer_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
             anvil_const::PK1,
         ])
-        .stdin("y\n")
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -300,13 +300,13 @@ forgetest_async!(erc20_transfer_with_confirmation, |prj, cmd| {
     assert_eq!(addr2_balance, transfer_amount);
 });
 
-// tests that approve with stdin confirmation works
-forgetest_async!(erc20_approve_with_confirmation, |prj, cmd| {
+// tests that approve with --yes flag skips confirmation prompt
+forgetest_async!(erc20_approve_with_yes_flag, |prj, cmd| {
     let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
 
     let approve_amount = U256::from(75_000_000_000_000_000_000u128); // 75 tokens
 
-    // Approve with stdin "y" should succeed
+    // Approve with --yes flag should succeed without prompting
     let output = cmd
         .cast_fuse()
         .args([
@@ -315,12 +315,12 @@ forgetest_async!(erc20_approve_with_confirmation, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &approve_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
             anvil_const::PK1,
         ])
-        .stdin("y\n")
         .assert_success()
         .get_output()
         .stdout_lossy();
