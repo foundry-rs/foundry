@@ -26,11 +26,8 @@ pub struct LinterConfig {
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
 
-    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
-    ///
-    /// Default's to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
-    /// or `tokenURI`.
-    pub mixed_case_exceptions: Vec<String>,
+    /// Configuration specific to individual lints.
+    pub lint_specific: LintSpecificConfig,
 }
 
 impl Default for LinterConfig {
@@ -40,7 +37,44 @@ impl Default for LinterConfig {
             severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
+            lint_specific: LintSpecificConfig::default(),
+        }
+    }
+}
+
+/// Contract types that can be exempted from the multi-contract-file lint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContractException {
+    Interface,
+    Library,
+    AbstractContract,
+}
+
+/// Configuration specific to individual lints.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LintSpecificConfig {
+    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    ///
+    /// Defaults to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
+    /// or `tokenURI`.
+    pub mixed_case_exceptions: Vec<String>,
+
+    /// Contract types that are allowed to appear multiple times in the same file.
+    ///
+    /// Valid values: "interface", "library", "abstract_contract"
+    ///
+    /// Defaults to an empty array (all contract types are flagged when multiple exist).
+    /// Note: Regular contracts cannot be exempted and will always be flagged when multiple exist.
+    pub multi_contract_file_exceptions: Vec<ContractException>,
+}
+
+impl Default for LintSpecificConfig {
+    fn default() -> Self {
+        Self {
             mixed_case_exceptions: vec!["ERC".to_string(), "URI".to_string()],
+            multi_contract_file_exceptions: Vec::new(),
         }
     }
 }
