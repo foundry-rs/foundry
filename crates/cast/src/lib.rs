@@ -3,8 +3,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use alloy_consensus::{Header, TxEnvelope};
+use alloy_consensus::{EthereumTxEnvelope, Header, TxEip4844Variant};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
@@ -327,6 +328,34 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         let res = self.provider.send_raw_transaction(&tx).await?;
 
         Ok(res)
+    }
+
+    /// Sends a transaction and waits for receipt synchronously
+    pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
+        let mut receipt: TransactionReceiptWithRevertReason =
+            self.provider.send_transaction_sync(tx).await?.into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, None)
+    }
+
+    /// Helper method to format transaction receipts consistently
+    fn format_receipt(
+        &self,
+        receipt: TransactionReceiptWithRevertReason,
+        field: Option<String>,
+    ) -> Result<String> {
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(&receipt, field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
+        } else if shell::is_json() {
+            // to_value first to sort json object keys
+            serde_json::to_value(&receipt)?.to_string()
+        } else {
+            receipt.pretty()
+        })
     }
 
     /// # Example
@@ -862,15 +891,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         // Allow to fail silently
         let _ = receipt.update_revert_reason(&self.provider).await;
 
-        Ok(if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt, field)
-                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
-        } else if shell::is_json() {
-            // to_value first to sort json object keys
-            serde_json::to_value(&receipt)?.to_string()
-        } else {
-            receipt.pretty()
-        })
+        self.format_receipt(receipt, field)
     }
 
     /// Perform a raw JSON-RPC request
@@ -2316,9 +2337,11 @@ impl SimpleCast {
     /// let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
     /// let tx_envelope = Cast::decode_raw_transaction(&tx)?;
     /// # Ok::<(), eyre::Report>(())
-    pub fn decode_raw_transaction(tx: &str) -> Result<TxEnvelope> {
+    pub fn decode_raw_transaction(
+        tx: &str,
+    ) -> Result<EthereumTxEnvelope<TxEip4844Variant<BlobTransactionSidecarVariant>>> {
         let tx_hex = hex::decode(tx)?;
-        let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
+        let tx = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
     }
 }

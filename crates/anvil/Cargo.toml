@@ -45,6 +45,7 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
 alloy-rpc-types-beacon.workspace = true
+alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",
@@ -89,13 +90,13 @@ async-trait.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-serde_with.workspace = true
 thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
+ethereum_ssz.workspace = true
 
 # cli
 clap = { version = "4", features = [

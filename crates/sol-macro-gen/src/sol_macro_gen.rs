@@ -49,13 +49,12 @@ impl SolMacroGen {
 }
 
 pub struct MultiSolMacroGen {
-    pub artifacts_path: PathBuf,
     pub instances: Vec<SolMacroGen>,
 }
 
 impl MultiSolMacroGen {
-    pub fn new(artifacts_path: &Path, instances: Vec<SolMacroGen>) -> Self {
-        Self { artifacts_path: artifacts_path.to_path_buf(), instances }
+    pub fn new(instances: Vec<SolMacroGen>) -> Self {
+        Self { instances }
     }
 
     pub fn populate_expansion(&mut self, bindings_path: &Path) -> Result<()> {

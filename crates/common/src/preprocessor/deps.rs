@@ -33,40 +33,53 @@ impl PreprocessorDependencies {
     ) -> Self {
         let mut preprocessed_contracts = BTreeMap::new();
         let mut referenced_contracts = HashSet::new();
-        for contract_id in gcx.hir.contract_ids() {
-            let contract = gcx.hir.contract(contract_id);
-            let source = gcx.hir.source(contract.source);
+        let mut current_mocks = HashSet::new();
 
-            let FileName::Real(path) = &source.file.name else {
-                continue;
-            };
-
-            // Collect dependencies only for tests and scripts.
-            if !paths.contains(path) {
-                let path = path.display();
-                trace!("{path} is not test or script");
-                continue;
-            }
-
-            // Do not collect dependencies for mock contracts. Walk through base contracts and
-            // check if they're from src dir.
-            if contract.linearized_bases.iter().any(|base_contract_id| {
-                let base_contract = gcx.hir.contract(*base_contract_id);
-                let FileName::Real(path) = &gcx.hir.source(base_contract.source).file.name else {
-                    return false;
+        // Helper closure for iterating candidate contracts to preprocess (tests and scripts).
+        let candidate_contracts = || {
+            gcx.hir.contract_ids().filter_map(|id| {
+                let contract = gcx.hir.contract(id);
+                let source = gcx.hir.source(contract.source);
+                let FileName::Real(path) = &source.file.name else {
+                    return None;
                 };
-                path.starts_with(src_dir)
+
+                if !paths.contains(path) {
+                    trace!("{} is not test or script", path.display());
+                    return None;
+                }
+
+                Some((id, contract, source, path))
+            })
+        };
+
+        // Collect current mocks.
+        for (_, contract, _, path) in candidate_contracts() {
+            if contract.linearized_bases.iter().any(|base_id| {
+                let base = gcx.hir.contract(*base_id);
+                matches!(
+                    &gcx.hir.source(base.source).file.name,
+                    FileName::Real(base_path) if base_path.starts_with(src_dir)
+                )
             }) {
-                // Record mock contracts to be evicted from preprocessed cache.
-                mocks.insert(root_dir.join(path));
-                let path = path.display();
-                trace!("found mock contract {path}");
-                continue;
-            } else {
-                // Make sure current contract is not in list of mocks (could happen when a contract
-                // which used to be a mock is refactored to a non-mock implementation).
-                mocks.remove(&root_dir.join(path));
+                let mock_path = root_dir.join(path);
+                trace!("found mock contract {}", mock_path.display());
+                current_mocks.insert(mock_path);
             }
+        }
+
+        // Collect dependencies for non-mock test/script contracts.
+        for (contract_id, contract, source, path) in candidate_contracts() {
+            let full_path = root_dir.join(path);
+
+            if current_mocks.contains(&full_path) {
+                trace!("{} is a mock, skipping", path.display());
+                continue;
+            }
+
+            // Make sure current contract is not in list of mocks (could happen when a contract
+            // which used to be a mock is refactored to a non-mock implementation).
+            mocks.remove(&full_path);
 
             let mut deps_collector =
                 BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir);
@@ -76,9 +89,14 @@ impl PreprocessorDependencies {
             if !deps_collector.dependencies.is_empty() {
                 preprocessed_contracts.insert(contract_id, deps_collector.dependencies);
             }
+
             // Record collected referenced contract ids.
             referenced_contracts.extend(deps_collector.referenced_contracts);
         }
+
+        // Add current mocks.
+        mocks.extend(current_mocks);
+
         Self { preprocessed_contracts, referenced_contracts }
     }
 }

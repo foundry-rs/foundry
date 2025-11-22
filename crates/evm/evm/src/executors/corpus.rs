@@ -1,7 +1,7 @@
-use crate::executors::{Executor, RawCallResult};
+use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::Bytes;
 use eyre::eyre;
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_fuzz::{
@@ -225,15 +225,7 @@ impl CorpusManager {
                 let mut executor = executor.clone();
                 for tx in &tx_seq {
                     if can_replay_tx(tx) {
-                        let mut call_result = executor
-                            .call_raw(
-                                tx.sender,
-                                tx.call_details.target,
-                                tx.call_details.calldata.clone(),
-                                U256::ZERO,
-                            )
-                            .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-
+                        let mut call_result = execute_tx(&mut executor, tx)?;
                         let (new_coverage, is_edge) =
                             call_result.merge_edge_coverage(&mut history_map);
                         if new_coverage {
@@ -648,6 +640,8 @@ mod tests {
 
     fn basic_tx() -> BasicTxDetails {
         BasicTxDetails {
+            warp: None,
+            roll: None,
             sender: Address::ZERO,
             call_details: foundry_evm_fuzz::CallDetails {
                 target: Address::ZERO,

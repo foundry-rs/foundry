@@ -1954,7 +1954,10 @@ impl Cheatcodes {
 
     #[cold]
     fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
-        interpreter.gas = Gas::new(interpreter.gas.limit());
+        let mut gas = Gas::new(interpreter.gas.limit());
+        gas.memory_mut().words_num = interpreter.gas.memory().words_num;
+        gas.memory_mut().expansion_cost = interpreter.gas.memory().expansion_cost;
+        interpreter.gas = gas;
         self.gas_metering.reset = false;
     }
 
