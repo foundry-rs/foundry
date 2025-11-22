@@ -3,9 +3,11 @@
 use alloy_chains::NamedChain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{B256, Bytes, address, b256, hex};
+use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
+use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest};
+use alloy_signer::Signer;
+use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
 use foundry_test_utils::{
     rpc::{
@@ -613,6 +615,85 @@ casttest!(wallet_sign_auth, |_prj, cmd| {
 0xf85a01947e5f4552091a69125d5dfcb7b8c2659029395bdf6401a0ad489ee0314497c3f06567f3080a46a63908edc1c7cdf2ac2d609ca911212086a065a6ba951c8748dd8634740fe498efb61770097d99ff5fdcb9a863b62ea899f6
 
 "#]]);
+});
+
+// tests that `cast wallet sign-auth --self-broadcast` uses nonce + 1
+casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
+    use alloy_rlp::Decodable;
+    use alloy_signer_local::PrivateKeySigner;
+
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let signer: PrivateKeySigner = private_key.parse().unwrap();
+    let signer_address = signer.address();
+    let delegate_address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+    // Get the current nonce from the RPC
+    let provider = ProviderBuilder::new().connect_http(endpoint.parse().unwrap());
+    let current_nonce = provider.get_transaction_count(signer_address).await.unwrap();
+
+    // First, get the auth without --self-broadcast (should use current nonce)
+    let output_normal = cmd
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--rpc-url",
+            &endpoint,
+            &delegate_address.to_string(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Then, get the auth with --self-broadcast (should use current nonce + 1)
+    let output_self_broadcast = cmd
+        .cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--rpc-url",
+            &endpoint,
+            "--self-broadcast",
+            &delegate_address.to_string(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // The outputs should be different due to different nonces
+    assert_ne!(
+        output_normal, output_self_broadcast,
+        "self-broadcast should produce different signature due to nonce + 1"
+    );
+
+    // Decode the RLP to verify the nonces
+    let normal_bytes = hex::decode(output_normal.strip_prefix("0x").unwrap()).unwrap();
+    let self_broadcast_bytes =
+        hex::decode(output_self_broadcast.strip_prefix("0x").unwrap()).unwrap();
+
+    let normal_auth =
+        alloy_eips::eip7702::SignedAuthorization::decode(&mut normal_bytes.as_slice()).unwrap();
+    let self_broadcast_auth =
+        alloy_eips::eip7702::SignedAuthorization::decode(&mut self_broadcast_bytes.as_slice())
+            .unwrap();
+
+    assert_eq!(normal_auth.nonce(), current_nonce, "normal auth should have current nonce");
+    assert_eq!(
+        self_broadcast_auth.nonce(),
+        current_nonce + 1,
+        "self-broadcast auth should have current nonce + 1"
+    );
 });
 
 // tests that `cast wallet list` outputs the local accounts
@@ -2497,6 +2578,114 @@ casttest!(send_eip7702, async |_prj, cmd| {
 "#]]);
 });
 
+casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    // Create a pre-signed authorization using a different signer (account index 1)
+    let signer: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+    // Anvil default chain_id is 31337
+    let auth = Authorization {
+        chain_id: U256::from(31337),
+        // Delegate to account index 2
+        address: address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        nonce: 0,
+    };
+    let signature = signer.sign_hash(&auth.signature_hash()).await.unwrap();
+    let signed_auth = auth.into_signed(signature);
+    let encoded_auth = hex::encode_prefixed(alloy_rlp::encode(&signed_auth));
+
+    // Send transaction with multiple --auth flags: one address and one pre-signed authorization
+    let output = cmd
+        .args([
+            "send",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "--auth",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--auth",
+            &encoded_auth,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--gas-limit",
+            "100000",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract transaction hash from JSON output
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let tx_hash = json["transactionHash"].as_str().unwrap();
+
+    // Use cast tx to verify multiple authorizations were included
+    let tx_output = cmd
+        .cast_fuse()
+        .args(["tx", tx_hash, "--rpc-url", &endpoint, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let tx_json: serde_json::Value = serde_json::from_str(&tx_output).unwrap();
+    let auth_list = tx_json["authorizationList"].as_array().unwrap();
+
+    // Verify we have 2 authorizations
+    assert_eq!(auth_list.len(), 2, "Expected 2 authorizations in the transaction");
+});
+
+// Test that multiple address-based authorizations are rejected
+casttest!(send_eip7702_multiple_address_auth_rejected, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--auth",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: Multiple address-based authorizations provided. Only one address can be specified; use pre-signed authorizations (hex-encoded) for multiple authorizations.
+
+"#]]);
+});
+
+casttest!(send_sync, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    let output = cmd
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--sync",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("transactionHash"));
+    assert!(output.contains("blockNumber"));
+    assert!(output.contains("gasUsed"));
+});
+
 casttest!(hash_message, |_prj, cmd| {
     cmd.args(["hash-message", "hello"]).assert_success().stdout_eq(str![[r#"
 0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
@@ -4033,6 +4222,8 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
         "0x9999999999999999999999999999999999999999",
         "adjustPosition(int128)",
         "-33333",
+        "--gas-limit",
+        "1000000",
         "--rpc-url",
         rpc.as_str(),
     ])

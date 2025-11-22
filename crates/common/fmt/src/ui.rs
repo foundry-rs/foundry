@@ -783,6 +783,7 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
 #[expect(missing_docs)]
 pub enum EthValue {
     U64(U64),
+    Address(Address),
     U256(U256),
     U64Array(Vec<U64>),
     U256Array(Vec<U256>),
@@ -800,6 +801,7 @@ impl UIfmt for EthValue {
         match self {
             Self::U64(num) => num.pretty(),
             Self::U256(num) => num.pretty(),
+            Self::Address(addr) => addr.pretty(),
             Self::U64Array(arr) => arr.pretty(),
             Self::U256Array(arr) => arr.pretty(),
             Self::Other(val) => val.to_string().trim_matches('"').to_string(),

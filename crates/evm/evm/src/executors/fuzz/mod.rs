@@ -113,6 +113,8 @@ impl FuzzedExecutor {
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ]
         .prop_map(move |calldata| BasicTxDetails {
+            warp: None,
+            roll: None,
             sender: Default::default(),
             call_details: CallDetails { target: Default::default(), calldata },
         });
@@ -142,7 +144,7 @@ impl FuzzedExecutor {
         'stop: while continue_campaign(test_data.runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
             let input = if let Some(failure) = self.persisted_failure.take()
-                && func.selector() == failure.calldata[..4]
+                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
                 failure.calldata.clone()
             } else {
@@ -238,7 +240,9 @@ impl FuzzedExecutor {
                             if self.config.max_test_rejects > 0
                                 && test_data.rejects >= self.config.max_test_rejects
                             {
-                                test_data.failure = Some(err);
+                                test_data.failure = Some(TestCaseError::reject(
+                                    FuzzError::TooManyRejects(self.config.max_test_rejects),
+                                ));
                                 break 'stop;
                             }
                         }
@@ -319,6 +323,8 @@ impl FuzzedExecutor {
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
+                warp: None,
+                roll: None,
                 sender: self.sender,
                 call_details: CallDetails { target: address, calldata: calldata.clone() },
             }],
@@ -327,9 +333,7 @@ impl FuzzedExecutor {
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::TooManyRejects(
-                self.config.max_test_rejects,
-            )));
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let (breakpoints, deprecated_cheatcodes) =

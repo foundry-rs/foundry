@@ -1,7 +1,5 @@
-use crate::{
-    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
-};
+use std::{cmp::Ordering, sync::Arc, time::Duration};
+
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
@@ -24,9 +22,13 @@ use foundry_common::{
     shell,
 };
 use foundry_config::Config;
-use futures::{StreamExt, future::join_all};
+use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
-use std::{cmp::Ordering, sync::Arc};
+
+use crate::{
+    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
+    sequence::ScriptSequenceKind, verify::BroadcastedState,
+};
 
 pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx: &mut WithOtherFields<TransactionRequest>,
@@ -57,82 +59,124 @@ pub async fn next_nonce(
     Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
 }
 
-pub async fn send_transaction(
-    provider: Arc<RetryProvider>,
-    mut kind: SendTransactionKind<'_>,
-    sequential_broadcast: bool,
-    is_fixed_gas_limit: bool,
-    estimate_via_rpc: bool,
-    estimate_multiplier: u64,
-) -> Result<TxHash> {
-    if let SendTransactionKind::Raw(tx, _) | SendTransactionKind::Unlocked(tx) = &mut kind {
-        if sequential_broadcast {
-            let from = tx.from.expect("no sender");
-
-            let tx_nonce = tx.nonce.expect("no nonce");
-            for attempt in 0..5 {
-                let nonce = provider.get_transaction_count(from).await?;
-                match nonce.cmp(&tx_nonce) {
-                    Ordering::Greater => {
-                        bail!(
-                            "EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider."
-                        )
-                    }
-                    Ordering::Less => {
-                        if attempt == 4 {
-                            bail!(
-                                "After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce})."
-                            )
-                        }
-                        warn!(
-                            "Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second..."
-                        );
-                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                    }
-                    Ordering::Equal => {
-                        // Nonces are equal, we can proceed
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Chains which use `eth_estimateGas` are being sent sequentially and require their
-        // gas to be re-estimated right before broadcasting.
-        if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, &provider, estimate_multiplier).await?;
-        }
-    }
-
-    let pending = match kind {
-        SendTransactionKind::Unlocked(tx) => {
-            debug!("sending transaction from unlocked account {:?}", tx);
-
-            // Submit the transaction
-            provider.send_transaction(tx).await?
-        }
-        SendTransactionKind::Raw(tx, signer) => {
-            debug!("sending transaction: {:?}", tx);
-            let signed = tx.build(signer).await?;
-
-            // Submit the raw transaction
-            provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
-        }
-        SendTransactionKind::Signed(tx) => {
-            debug!("sending transaction: {:?}", tx);
-            provider.send_raw_transaction(tx.encoded_2718().as_ref()).await?
-        }
-    };
-
-    Ok(*pending.tx_hash())
-}
-
-/// How to send a single transaction
+/// Represents how to send a single transaction.
 #[derive(Clone)]
 pub enum SendTransactionKind<'a> {
     Unlocked(WithOtherFields<TransactionRequest>),
     Raw(WithOtherFields<TransactionRequest>, &'a EthereumWallet),
     Signed(TxEnvelope),
+}
+
+impl<'a> SendTransactionKind<'a> {
+    /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
+    ///
+    /// This method performs two key operations:
+    /// 1. Nonce synchronization: Waits for the provider's nonce to catch up to the expected
+    ///    transaction nonce when doing sequential broadcast
+    /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
+    pub async fn prepare(
+        &mut self,
+        provider: &RetryProvider,
+        sequential_broadcast: bool,
+        is_fixed_gas_limit: bool,
+        estimate_via_rpc: bool,
+        estimate_multiplier: u64,
+    ) -> Result<()> {
+        if let Self::Raw(tx, _) | Self::Unlocked(tx) = self {
+            if sequential_broadcast {
+                let from = tx.from.expect("no sender");
+
+                let tx_nonce = tx.nonce.expect("no nonce");
+                for attempt in 0..5 {
+                    let nonce = provider.get_transaction_count(from).await?;
+                    match nonce.cmp(&tx_nonce) {
+                        Ordering::Greater => {
+                            bail!(
+                                "EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider."
+                            )
+                        }
+                        Ordering::Less => {
+                            if attempt == 4 {
+                                bail!(
+                                    "After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce})."
+                                )
+                            }
+                            warn!(
+                                "Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second..."
+                            );
+                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                        }
+                        Ordering::Equal => {
+                            // Nonces are equal, we can proceed.
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Chains which use `eth_estimateGas` are being sent sequentially and require their
+            // gas to be re-estimated right before broadcasting.
+            if !is_fixed_gas_limit && estimate_via_rpc {
+                estimate_gas(tx, provider, estimate_multiplier).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Sends the transaction to the network.
+    ///
+    /// Depending on the transaction kind, this will either:
+    /// - Submit via `eth_sendTransaction` for unlocked accounts
+    /// - Sign and submit via `eth_sendRawTransaction` for raw transactions
+    /// - Submit pre-signed transaction via `eth_sendRawTransaction`
+    pub async fn send(self, provider: Arc<RetryProvider>) -> Result<TxHash> {
+        let pending = match self {
+            Self::Unlocked(tx) => {
+                debug!("sending transaction from unlocked account {:?}", tx);
+
+                // Submit the transaction
+                provider.send_transaction(tx).await?
+            }
+            Self::Raw(tx, signer) => {
+                debug!("sending transaction: {:?}", tx);
+                let signed = tx.build(signer).await?;
+
+                // Submit the raw transaction
+                provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
+            }
+            Self::Signed(tx) => {
+                debug!("sending transaction: {:?}", tx);
+                provider.send_raw_transaction(tx.encoded_2718().as_ref()).await?
+            }
+        };
+
+        Ok(*pending.tx_hash())
+    }
+
+    /// Prepares and sends the transaction in one operation.
+    ///
+    /// This is a convenience method that combines [`prepare`](Self::prepare) and
+    /// [`send`](Self::send) into a single call.
+    pub async fn prepare_and_send(
+        mut self,
+        provider: Arc<RetryProvider>,
+        sequential_broadcast: bool,
+        is_fixed_gas_limit: bool,
+        estimate_via_rpc: bool,
+        estimate_multiplier: u64,
+    ) -> Result<TxHash> {
+        self.prepare(
+            &provider,
+            sequential_broadcast,
+            is_fixed_gas_limit,
+            estimate_via_rpc,
+            estimate_multiplier,
+        )
+        .await?;
+
+        self.send(provider).await
+    }
 }
 
 /// Represents how to send _all_ transactions
@@ -365,30 +409,65 @@ impl BundledState {
                 let mut index = already_broadcasted;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
-                    let mut pending_transactions = vec![];
-
                     seq_progress.inner.write().set_status(&format!(
                         "Sending transactions [{} - {}]",
                         batch_number * batch_size,
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                     ));
-                    for (kind, is_fixed_gas_limit) in batch {
-                        let fut = send_transaction(
-                            provider.clone(),
-                            kind.clone(),
-                            sequential_broadcast,
-                            *is_fixed_gas_limit,
-                            estimate_via_rpc,
-                            self.args.gas_estimate_multiplier,
-                        );
-                        pending_transactions.push(fut);
-                    }
 
-                    if !pending_transactions.is_empty() {
-                        let mut buffer = futures::stream::iter(pending_transactions).buffered(7);
+                    if !batch.is_empty() {
+                        let pending_transactions =
+                            batch.iter().map(|(kind, is_fixed_gas_limit)| {
+                                let provider = provider.clone();
+                                async move {
+                                    let res = kind
+                                        .clone()
+                                        .prepare_and_send(
+                                            provider,
+                                            sequential_broadcast,
+                                            *is_fixed_gas_limit,
+                                            estimate_via_rpc,
+                                            self.args.gas_estimate_multiplier,
+                                        )
+                                        .await;
+                                    (res, kind, 0, None)
+                                }
+                                .boxed()
+                            });
 
-                        while let Some(tx_hash) = buffer.next().await {
-                            let tx_hash = tx_hash.wrap_err("Failed to send transaction")?;
+                        let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
+
+                        'send: while let Some((res, kind, attempt, original_res)) =
+                            buffer.next().await
+                        {
+                            if res.is_err() && attempt <= 3 {
+                                // Try to resubmit the transaction
+                                let provider = provider.clone();
+                                let progress = seq_progress.inner.clone();
+                                buffer.push(Box::pin(async move {
+                                    debug!(err=?res, ?attempt, "retrying transaction ");
+                                    let attempt = attempt + 1;
+                                    progress.write().set_status(&format!(
+                                        "retrying transaction {res:?} (attempt {attempt})"
+                                    ));
+                                    tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
+                                    let r = kind.clone().send(provider).await;
+                                    (r, kind, attempt, original_res.or(Some(res)))
+                                }));
+
+                                continue 'send;
+                            }
+
+                            // Preserve the original error if any
+                            let tx_hash = res.wrap_err_with(|| {
+                                if let Some(original_res) = original_res {
+                                    format!(
+                                        "Failed to send transaction after {attempt} attempts {original_res:?}"
+                                    )
+                                } else {
+                                    "Failed to send transaction".to_string()
+                                }
+                            })?;
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save

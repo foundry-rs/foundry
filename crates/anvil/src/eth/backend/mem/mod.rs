@@ -27,7 +27,6 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
-    inject_custom_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -36,7 +35,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Account, Blob, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEnvelope,
+    Transaction as TransactionTrait, TxEnvelope, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -49,7 +48,7 @@ use alloy_eips::{
     eip7910::SystemContract,
 };
 use alloy_evm::{
-    Database, Evm,
+    Database, Evm, FromRecoveredTx,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
@@ -132,7 +131,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     io::{Read, Write},
-    ops::Not,
+    ops::{Mul, Not},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -286,6 +285,13 @@ impl Backend {
                 genesis.number,
             )
         };
+
+        // Sync EVM block.number with genesis for non-fork mode.
+        // Fork mode syncs in setup_fork_db_config() instead.
+        if fork.read().is_none() {
+            let mut write_env = env.write();
+            write_env.evm_env.block_env.number = U256::from(genesis.number);
+        }
 
         let start_timestamp = if let Some(fork) = fork.read().as_ref() {
             fork.timestamp()
@@ -724,6 +730,11 @@ impl Backend {
         self.env.write().evm_env.cfg_env.chain_id = chain_id;
     }
 
+    /// Returns the genesis data for the Beacon API.
+    pub fn genesis_time(&self) -> u64 {
+        self.genesis.timestamp
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)
@@ -963,7 +974,7 @@ impl Backend {
                     if let Some(hash) = storage.hashes.remove(&n)
                         && let Some(block) = storage.blocks.remove(&hash)
                     {
-                        for tx in block.transactions {
+                        for tx in block.body.transactions {
                             let _ = storage.transactions.remove(&tx.hash());
                         }
                     }
@@ -1180,7 +1191,7 @@ impl Backend {
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
-            inject_custom_precompiles(&mut evm, factory.precompiles());
+            evm.precompiles_mut().extend_precompiles(factory.precompiles());
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1206,7 +1217,10 @@ impl Backend {
         BlockchainError,
     > {
         let mut env = self.next_env();
-        env.tx = tx.pending_transaction.to_revm_tx_env();
+        env.tx = FromRecoveredTx::from_recovered_tx(
+            &tx.pending_transaction.transaction.transaction,
+            *tx.pending_transaction.sender(),
+        );
 
         if env.networks.is_optimism() {
             env.tx.enveloped_tx =
@@ -2116,7 +2130,7 @@ impl Backend {
 
         let storage = self.blockchain.storage.read();
 
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             let Some(tx) = storage.transactions.get(&tx.hash()) else {
                 continue;
             };
@@ -2249,12 +2263,12 @@ impl Backend {
         &self,
         block: &Block,
     ) -> Option<Vec<AnyRpcTransaction>> {
-        let mut transactions = Vec::with_capacity(block.transactions.len());
+        let mut transactions = Vec::with_capacity(block.body.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
-        for hash in block.transactions.iter().map(|tx| tx.hash()) {
+        for hash in block.body.transactions.iter().map(|tx| tx.hash()) {
             let info = storage.transactions.get(&hash)?.info.clone();
-            let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+            let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
             let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
             transactions.push(tx);
@@ -2366,7 +2380,8 @@ impl Backend {
     pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
-        let Block { header, transactions, .. } = block;
+        let header = block.header.clone();
+        let transactions = block.body.transactions;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let Header { number, withdrawals_root, .. } = header;
@@ -2653,7 +2668,7 @@ impl Backend {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
         }
         Some(traces)
@@ -2710,12 +2725,13 @@ impl Backend {
         };
 
         let index = block
+            .body
             .transactions
             .iter()
             .position(|tx| tx.hash() == hash)
             .expect("transaction not found in block");
 
-        let pool_txs: Vec<Arc<PoolTransaction>> = block.transactions[..index]
+        let pool_txs: Vec<Arc<PoolTransaction>> = block.body.transactions[..index]
             .iter()
             .map(|tx| {
                 let pending_tx =
@@ -2767,9 +2783,12 @@ impl Backend {
 
             let _ = executor.execute();
 
-            let target_tx = block.transactions[index].clone();
+            let target_tx = block.body.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-            let mut tx_env = target_tx.to_revm_tx_env();
+            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+                &target_tx.transaction.transaction,
+                *target_tx.sender(),
+            );
             if env.networks.is_optimism() {
                 tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
             }
@@ -3078,7 +3097,7 @@ impl Backend {
         let mut receipts = Vec::new();
         let block = self.get_block(id)?;
 
-        for transaction in block.transactions {
+        for transaction in block.body.transactions {
             let receipt = self.mined_transaction_receipt(transaction.hash())?;
             receipts.push(receipt.inner);
         }
@@ -3093,13 +3112,13 @@ impl Backend {
 
         let index = info.transaction_index as usize;
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
-        let transaction = block.transactions[index].clone();
+        let transaction = block.body.transactions[index].clone();
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas;
         let blob_gas_price =
             alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
-        let blob_gas_used = transaction.blob_gas();
+        let blob_gas_used = transaction.blob_gas_used();
 
         let effective_gas_price = match transaction.transaction {
             TypedTransaction::Legacy(t) => t.tx().gas_price,
@@ -3122,7 +3141,7 @@ impl Backend {
             TypedTransaction::Deposit(_) => 0_u128,
         };
 
-        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
+        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
         // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
@@ -3282,7 +3301,7 @@ impl Backend {
             let storage = self.blockchain.storage.read();
             let block = storage.blocks.get(&block_hash).cloned()?;
             let index: usize = index.into();
-            let tx = block.transactions.get(index)?.clone();
+            let tx = block.body.transactions.get(index)?.clone();
             let info = storage.transactions.get(&tx.hash())?.info.clone();
             (info, block, tx)
         };
@@ -3323,7 +3342,7 @@ impl Backend {
             let block = storage.blocks.get(&block_hash).cloned()?;
             (info, block)
         };
-        let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+        let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(
             Some(info.transaction_hash),
@@ -3353,6 +3372,7 @@ impl Backend {
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         Ok(self.get_block(id).map(|block| {
             block
+                .body
                 .transactions
                 .iter()
                 .filter_map(|tx| tx.as_ref().sidecar())
@@ -3395,7 +3415,7 @@ impl Backend {
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
-            for tx in &block.transactions {
+            for tx in &block.body.transactions {
                 let typed_tx = tx.as_ref();
                 if let Some(sidecar) = typed_tx.sidecar() {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
@@ -3644,10 +3664,10 @@ impl TransactionValidator for Backend {
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id.to::<u64>() != tx_chain_id {
-                if let Some(legacy) = tx.as_legacy() {
+                if let TypedTransaction::Legacy(tx) = tx.as_ref() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON
-                        && legacy.tx().chain_id.is_none()
+                        && tx.chain_id().is_none()
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -3727,8 +3747,8 @@ impl TransactionValidator for Backend {
 
             // EIP-1559 fee validation (London hard fork and later).
             if env.evm_env.cfg_env.spec >= SpecId::LONDON {
-                if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
-                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
+                if tx.max_fee_per_gas() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
+                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}", tx.max_fee_per_gas(), env.evm_env.block_env.basefee);
                     return Err(InvalidTransactionError::FeeCapTooLow);
                 }
 
@@ -3755,7 +3775,13 @@ impl TransactionValidator for Backend {
                 ));
             }
 
-            let max_cost = tx.max_cost();
+            let max_cost =
+                (tx.gas_limit() as u128).saturating_mul(tx.max_fee_per_gas()).saturating_add(
+                    tx.blob_gas_used()
+                        .map(|g| g as u128)
+                        .unwrap_or(0)
+                        .mul(tx.max_fee_per_blob_gas().unwrap_or(0)),
+                );
             let value = tx.value();
             match &tx.transaction {
                 TypedTransaction::Deposit(deposit_tx) => {

@@ -30,7 +30,6 @@ use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
-use shrink::shrink_sequence;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
@@ -323,6 +322,10 @@ impl<'a> InvariantExecutor<'a> {
         }
     }
 
+    pub fn config(self) -> InvariantConfig {
+        self.config
+    }
+
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`.
     pub fn invariant_fuzz(
         &mut self,
@@ -392,16 +395,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Execute call from the randomly generated sequence without committing state.
                 // State is committed only if call is not a magic assume.
-                let mut call_result = current_run
-                    .executor
-                    .call_raw(
-                        tx.sender,
-                        tx.call_details.target,
-                        tx.call_details.calldata.clone(),
-                        U256::ZERO,
-                    )
-                    .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-
+                let mut call_result = execute_tx(&mut current_run.executor, tx)?;
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
                     invariant_test.record_metrics(tx, call_result.reverted, discarded);
@@ -580,7 +574,7 @@ impl<'a> InvariantExecutor<'a> {
             fuzz_state.clone(),
             targeted_senders,
             targeted_contracts.clone(),
-            self.config.dictionary.dictionary_weight,
+            self.config.clone(),
             fuzz_fixtures.clone(),
         )
         .no_shrink();
@@ -1033,4 +1027,30 @@ pub(crate) fn call_invariant_function(
     let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success(address, &mut call_result, false);
     Ok((call_result, success))
+}
+
+/// Calls the invariant selector and returns call result and if succeeded.
+/// Updates the block number and block timestamp if configured.
+pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result<RawCallResult> {
+    // Apply pre-call block adjustments.
+    if let Some(warp) = tx.warp {
+        executor.env_mut().evm_env.block_env.timestamp += warp;
+    }
+    if let Some(roll) = tx.roll {
+        executor.env_mut().evm_env.block_env.number += roll;
+    }
+
+    // Perform the raw call.
+    let mut call_result = executor
+        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), U256::ZERO)
+        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+
+    // Propagate block adjustments to call result which will be committed.
+    if let Some(warp) = tx.warp {
+        call_result.env.evm_env.block_env.timestamp += warp;
+    }
+    if let Some(roll) = tx.roll {
+        call_result.env.evm_env.block_env.number += roll;
+    }
+    Ok(call_result)
 }

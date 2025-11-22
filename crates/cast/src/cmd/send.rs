@@ -1,7 +1,5 @@
-use crate::{
-    Cast,
-    tx::{self, CastTxBuilder},
-};
+use std::{path::PathBuf, str::FromStr, time::Duration};
+
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -15,7 +13,12 @@ use foundry_cli::{
     utils,
     utils::LoadConfig,
 };
-use std::{path::PathBuf, str::FromStr, time::Duration};
+use foundry_wallets::WalletSigner;
+
+use crate::{
+    Cast,
+    tx::{self, CastTxBuilder},
+};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -36,6 +39,11 @@ pub struct SendTxArgs {
     /// Only print the transaction hash and exit immediately.
     #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
+
+    /// Wait for transaction receipt synchronously instead of polling.
+    /// Note: uses `eth_sendTransactionSync` which may not be supported by all clients.
+    #[arg(long, conflicts_with = "async")]
+    sync: bool,
 
     /// The number of confirmations until the receipt is fetched.
     #[arg(long, default_value = "1")]
@@ -97,6 +105,7 @@ impl SendTxArgs {
             to,
             mut sig,
             cast_async,
+            sync,
             mut args,
             tx,
             confirmations,
@@ -117,7 +126,7 @@ impl SendTxArgs {
         {
             // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
             // which require mandatory target
-            if to.is_none() && tx.auth.is_some() {
+            if to.is_none() && !tx.auth.is_empty() {
                 return Err(eyre!(
                     "EIP-7702 transactions can't be CREATE transactions and require a destination address"
                 ));
@@ -158,7 +167,7 @@ impl SendTxArgs {
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
-        if unlocked {
+        if unlocked && !eth.wallet.browser {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
                 let current_chain_id = provider.get_chain_id().await?;
@@ -180,7 +189,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, timeout).await
+            cast_send(provider, tx, cast_async, sync, confirmations, timeout).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -192,14 +201,33 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
-            let (tx, _) = builder.build(&signer).await?;
+            // Browser wallets work differently as they sign and send the transaction in one step.
+            if eth.wallet.browser
+                && let WalletSigner::Browser(ref browser_signer) = signer
+            {
+                let (tx_request, _) = builder.build(from).await?;
+                let tx_hash = browser_signer.send_transaction_via_browser(tx_request.inner).await?;
+
+                if cast_async {
+                    sh_println!("{tx_hash:#x}")?;
+                } else {
+                    let receipt = Cast::new(&provider)
+                        .receipt(format!("{tx_hash:#x}"), None, confirmations, Some(timeout), false)
+                        .await?;
+                    sh_println!("{receipt}")?;
+                }
+
+                return Ok(());
+            }
+
+            let (tx_request, _) = builder.build(&signer).await?;
 
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
                 .connect_provider(&provider);
 
-            cast_send(provider, tx, cast_async, confirmations, timeout).await
+            cast_send(provider, tx_request, cast_async, sync, confirmations, timeout).await
         }
     }
 }
@@ -208,19 +236,27 @@ async fn cast_send<P: Provider<AnyNetwork>>(
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
     cast_async: bool,
+    sync: bool,
     confs: u64,
     timeout: u64,
 ) -> Result<()> {
-    let cast = Cast::new(provider);
-    let pending_tx = cast.send(tx).await?;
-    let tx_hash = pending_tx.inner().tx_hash();
+    let cast = Cast::new(&provider);
 
-    if cast_async {
-        sh_println!("{tx_hash:#x}")?;
-    } else {
-        let receipt =
-            cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+    if sync {
+        // Send transaction and wait for receipt synchronously
+        let receipt = cast.send_sync(tx).await?;
         sh_println!("{receipt}")?;
+    } else {
+        let pending_tx = cast.send(tx).await?;
+        let tx_hash = pending_tx.inner().tx_hash();
+
+        if cast_async {
+            sh_println!("{tx_hash:#x}")?;
+        } else {
+            let receipt =
+                cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+            sh_println!("{receipt}")?;
+        }
     }
 
     Ok(())
