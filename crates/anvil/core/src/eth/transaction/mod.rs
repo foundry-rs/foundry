@@ -582,13 +582,6 @@ impl TypedTransaction {
         }
     }
 
-    pub fn as_legacy(&self) -> Option<&Signed<TxLegacy>> {
-        match self {
-            Self::Legacy(tx) => Some(tx),
-            _ => None,
-        }
-    }
-
     /// Returns the hash of the transaction.
     ///
     /// Note: If this transaction has the Impersonated signature then this returns a modified unique
