@@ -14,7 +14,7 @@ use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt
 use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256};
 use alloy_rlp::{Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    AccessList, ConversionError, Transaction as RpcTransaction, TransactionReceipt,
+    ConversionError, Transaction as RpcTransaction, TransactionReceipt,
     request::TransactionRequest, trace::otterscan::OtsReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
@@ -466,93 +466,10 @@ impl TypedTransaction {
         }
     }
 
-    /// Returns a helper type that contains commonly used values as fields
-    pub fn essentials(&self) -> TransactionEssentials {
+    pub fn as_legacy(&self) -> Option<&Signed<TxLegacy>> {
         match self {
-            Self::Legacy(t) => TransactionEssentials {
-                kind: t.tx().to,
-                input: t.tx().input.clone(),
-                nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
-                gas_price: Some(t.tx().gas_price),
-                max_fee_per_gas: None,
-                max_priority_fee_per_gas: None,
-                max_fee_per_blob_gas: None,
-                blob_versioned_hashes: None,
-                value: t.tx().value,
-                chain_id: t.tx().chain_id,
-                access_list: Default::default(),
-            },
-            Self::EIP2930(t) => TransactionEssentials {
-                kind: t.tx().to,
-                input: t.tx().input.clone(),
-                nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
-                gas_price: Some(t.tx().gas_price),
-                max_fee_per_gas: None,
-                max_priority_fee_per_gas: None,
-                max_fee_per_blob_gas: None,
-                blob_versioned_hashes: None,
-                value: t.tx().value,
-                chain_id: Some(t.tx().chain_id),
-                access_list: t.tx().access_list.clone(),
-            },
-            Self::EIP1559(t) => TransactionEssentials {
-                kind: t.tx().to,
-                input: t.tx().input.clone(),
-                nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
-                gas_price: None,
-                max_fee_per_gas: Some(t.tx().max_fee_per_gas),
-                max_priority_fee_per_gas: Some(t.tx().max_priority_fee_per_gas),
-                max_fee_per_blob_gas: None,
-                blob_versioned_hashes: None,
-                value: t.tx().value,
-                chain_id: Some(t.tx().chain_id),
-                access_list: t.tx().access_list.clone(),
-            },
-            Self::EIP4844(t) => TransactionEssentials {
-                kind: TxKind::Call(t.tx().tx().to),
-                input: t.tx().tx().input.clone(),
-                nonce: t.tx().tx().nonce,
-                gas_limit: t.tx().tx().gas_limit,
-                gas_price: None,
-                max_fee_per_gas: Some(t.tx().tx().max_fee_per_gas),
-                max_priority_fee_per_gas: Some(t.tx().tx().max_priority_fee_per_gas),
-                max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
-                blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
-                value: t.tx().tx().value,
-                chain_id: Some(t.tx().tx().chain_id),
-                access_list: t.tx().tx().access_list.clone(),
-            },
-            Self::EIP7702(t) => TransactionEssentials {
-                kind: TxKind::Call(t.tx().to),
-                input: t.tx().input.clone(),
-                nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
-                gas_price: None,
-                max_fee_per_gas: Some(t.tx().max_fee_per_gas),
-                max_priority_fee_per_gas: Some(t.tx().max_priority_fee_per_gas),
-                max_fee_per_blob_gas: None,
-                blob_versioned_hashes: None,
-                value: t.tx().value,
-                chain_id: Some(t.tx().chain_id),
-                access_list: t.tx().access_list.clone(),
-            },
-            Self::Deposit(t) => TransactionEssentials {
-                kind: t.to,
-                input: t.input.clone(),
-                nonce: 0,
-                gas_limit: t.gas_limit,
-                gas_price: Some(0),
-                max_fee_per_gas: None,
-                max_priority_fee_per_gas: None,
-                max_fee_per_blob_gas: None,
-                blob_versioned_hashes: None,
-                value: t.value,
-                chain_id: t.chain_id(),
-                access_list: Default::default(),
-            },
+            Self::Legacy(tx) => Some(tx),
+            _ => None,
         }
     }
 
@@ -592,22 +509,6 @@ impl TypedTransaction {
             Self::Deposit(tx) => Ok(tx.from),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TransactionEssentials {
-    pub kind: TxKind,
-    pub input: Bytes,
-    pub nonce: u64,
-    pub gas_limit: u64,
-    pub gas_price: Option<u128>,
-    pub max_fee_per_gas: Option<u128>,
-    pub max_priority_fee_per_gas: Option<u128>,
-    pub max_fee_per_blob_gas: Option<u128>,
-    pub blob_versioned_hashes: Option<Vec<B256>>,
-    pub value: U256,
-    pub chain_id: Option<u64>,
-    pub access_list: AccessList,
 }
 
 /// Represents all relevant information of an executed transaction
