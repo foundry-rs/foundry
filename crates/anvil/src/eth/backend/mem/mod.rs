@@ -3120,7 +3120,7 @@ impl Backend {
             alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas_used();
 
-        let effective_gas_price = transaction.effective_gas_price(Some(self.base_fee()));
+        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas);
 
         let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
