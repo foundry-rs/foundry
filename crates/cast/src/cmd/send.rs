@@ -126,7 +126,7 @@ impl SendTxArgs {
         {
             // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
             // which require mandatory target
-            if to.is_none() && tx.auth.is_some() {
+            if to.is_none() && !tx.auth.is_empty() {
                 return Err(eyre!(
                     "EIP-7702 transactions can't be CREATE transactions and require a destination address"
                 ));

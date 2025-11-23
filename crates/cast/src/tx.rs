@@ -142,7 +142,7 @@ pub struct CastTxBuilder<P, S> {
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
-    auth: Option<CliAuthorizationList>,
+    auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
     access_list: Option<Option<AccessList>>,
@@ -158,7 +158,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
-        let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_none());
+        let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
         if let Some(gas_limit) = tx_opts.gas_limit {
             tx.set_gas_limit(gas_limit.to());
@@ -252,7 +252,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
 
         if self.state.to.is_none() && code.is_none() {
             let has_value = self.tx.value.is_some_and(|v| !v.is_zero());
-            let has_auth = self.auth.is_some();
+            let has_auth = !self.auth.is_empty();
             // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
             // without a value.
             if !has_auth || has_value {
@@ -334,14 +334,18 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
         if !unsigned {
             self.resolve_auth(sender, tx_nonce).await?;
-        } else if self.auth.is_some() {
-            let Some(CliAuthorizationList::Signed(signed_auth)) = self.auth.take() else {
-                eyre::bail!(
-                    "SignedAuthorization needs to be provided for generating unsigned 7702 txs"
-                )
-            };
+        } else if !self.auth.is_empty() {
+            let mut signed_auths = Vec::with_capacity(self.auth.len());
+            for auth in std::mem::take(&mut self.auth) {
+                let CliAuthorizationList::Signed(signed_auth) = auth else {
+                    eyre::bail!(
+                        "SignedAuthorization needs to be provided for generating unsigned 7702 txs"
+                    )
+                };
+                signed_auths.push(signed_auth);
+            }
 
-            self.tx.set_authorization_list(vec![signed_auth]);
+            self.tx.set_authorization_list(signed_auths);
         }
 
         if let Some(access_list) = match self.access_list.take() {
@@ -410,29 +414,49 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         }
     }
 
-    /// Parses the passed --auth value and sets the authorization list on the transaction.
+    /// Parses the passed --auth values and sets the authorization list on the transaction.
     async fn resolve_auth(&mut self, sender: SenderKind<'_>, tx_nonce: u64) -> Result<()> {
-        let Some(auth) = self.auth.take() else { return Ok(()) };
+        if self.auth.is_empty() {
+            return Ok(());
+        }
 
-        let auth = match auth {
-            CliAuthorizationList::Address(address) => {
-                let auth = Authorization {
-                    chain_id: U256::from(self.chain.id()),
-                    nonce: tx_nonce + 1,
-                    address,
-                };
+        let auths = std::mem::take(&mut self.auth);
 
-                let Some(signer) = sender.as_signer() else {
-                    eyre::bail!("No signer available to sign authorization");
-                };
-                let signature = signer.sign_hash(&auth.signature_hash()).await?;
+        // Validate that at most one address-based auth is provided (multiple addresses are
+        // almost always unintended).
+        let address_auth_count =
+            auths.iter().filter(|a| matches!(a, CliAuthorizationList::Address(_))).count();
+        if address_auth_count > 1 {
+            eyre::bail!(
+                "Multiple address-based authorizations provided. Only one address can be specified; \
+                use pre-signed authorizations (hex-encoded) for multiple authorizations."
+            );
+        }
 
-                auth.into_signed(signature)
-            }
-            CliAuthorizationList::Signed(auth) => auth,
-        };
+        let mut signed_auths = Vec::with_capacity(auths.len());
 
-        self.tx.set_authorization_list(vec![auth]);
+        for auth in auths {
+            let signed_auth = match auth {
+                CliAuthorizationList::Address(address) => {
+                    let auth = Authorization {
+                        chain_id: U256::from(self.chain.id()),
+                        nonce: tx_nonce + 1,
+                        address,
+                    };
+
+                    let Some(signer) = sender.as_signer() else {
+                        eyre::bail!("No signer available to sign authorization");
+                    };
+                    let signature = signer.sign_hash(&auth.signature_hash()).await?;
+
+                    auth.into_signed(signature)
+                }
+                CliAuthorizationList::Signed(auth) => auth,
+            };
+            signed_auths.push(signed_auth);
+        }
+
+        self.tx.set_authorization_list(signed_auths);
 
         Ok(())
     }

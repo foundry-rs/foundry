@@ -1,8 +1,8 @@
 use crate::executors::{
     EarlyExit, Executor,
-    invariant::{call_after_invariant_function, call_invariant_function},
+    invariant::{call_after_invariant_function, call_invariant_function, execute_tx},
 };
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::constants::MAGIC_ASSUME;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
@@ -118,12 +118,8 @@ pub fn check_sequence(
     // Apply the call sequence.
     for call_index in sequence {
         let tx = &calls[call_index];
-        let call_result = executor.transact_raw(
-            tx.sender,
-            tx.call_details.target,
-            tx.call_details.calldata.clone(),
-            U256::ZERO,
-        )?;
+        let mut call_result = execute_tx(&mut executor, tx)?;
+        executor.commit(&mut call_result);
         // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
         // are replayed with a modified version of test driver (that use new `vm.assume`
         // cheatcodes).
