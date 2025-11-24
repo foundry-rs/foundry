@@ -334,12 +334,7 @@ mod tests {
             None,
             None,
             Some(TRANSFER_SIG.to_string()),
-            vec![
-                String::new(),
-                ADDRESS.to_string(),
-                ADDRESS.to_string(),
-                ADDRESS.to_string(),
-            ],
+            vec![String::new(), ADDRESS.to_string(), ADDRESS.to_string(), ADDRESS.to_string()],
         );
         assert!(result.is_err());
     }
