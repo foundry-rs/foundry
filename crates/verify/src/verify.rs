@@ -16,7 +16,9 @@ use foundry_cli::{
 };
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
-use foundry_config::{Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast};
+use foundry_config::{
+    Chain, Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast,
+};
 use itertools::Itertools;
 use reqwest::Url;
 use semver::BuildMetadata;
@@ -272,7 +274,13 @@ impl VerifyArgs {
         {
             sh_println!("Constructor args: {args}")?
         }
-        self.verifier.verifier.client(self.etherscan.key().as_deref(), self.etherscan.chain, self.verifier.verifier_url.is_some())?.verify(self, context).await.map_err(|err| {
+        let has_custom_url = has_custom_etherscan_url(&context.config, self.etherscan.chain);
+
+        self.verifier.verifier.client(
+            self.etherscan.key().as_deref(),
+            self.etherscan.chain,
+            self.verifier.verifier_url.is_some() || has_custom_url,
+        )?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
@@ -295,11 +303,12 @@ impl VerifyArgs {
     }
 
     /// Returns the configured verification provider
-    pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
+    pub fn verification_provider(&self, config: &Config) -> Result<Box<dyn VerificationProvider>> {
+        let has_custom_url = has_custom_etherscan_url(config, self.etherscan.chain);
         self.verifier.verifier.client(
             self.etherscan.key().as_deref(),
             self.etherscan.chain,
-            self.verifier.verifier_url.is_some(),
+            self.verifier.verifier_url.is_some() || has_custom_url,
         )
     }
 
@@ -468,6 +477,17 @@ impl VerifyArgs {
             }
         })
     }
+}
+
+fn has_custom_etherscan_url(config: &Config, chain: Option<Chain>) -> bool {
+    if let Ok(Some(resolved)) = config.get_etherscan_config_with_chain(chain) {
+        return !resolved.api_url.is_empty();
+    }
+
+    let resolved = config.etherscan.clone().resolved();
+    resolved
+        .iter()
+        .any(|(_, entry)| entry.as_ref().map(|cfg| !cfg.api_url.is_empty()).unwrap_or(false))
 }
 
 /// Check verification status arguments
