@@ -57,24 +57,6 @@ pub use shrink::check_sequence;
 
 sol! {
     interface IInvariantTest {
-        #[derive(Default)]
-        struct FuzzSelector {
-            address addr;
-            bytes4[] selectors;
-        }
-
-        #[derive(Default)]
-        struct FuzzArtifactSelector {
-            string artifact;
-            bytes4[] selectors;
-        }
-
-        #[derive(Default)]
-        struct FuzzInterface {
-            address addr;
-            string[] artifacts;
-        }
-
         function afterInvariant() external;
 
         #[derive(Default)]
@@ -84,7 +66,7 @@ sol! {
         function excludeContracts() public view returns (address[] memory excludedContracts);
 
         #[derive(Default)]
-        function excludeSelectors() public view returns (FuzzSelector[] memory excludedSelectors);
+        function excludeSelectors() public view returns (address[] memory excludedAddresses, bytes4[] memory excludedSelectors);
 
         #[derive(Default)]
         function excludeSenders() public view returns (address[] memory excludedSenders);
@@ -93,19 +75,19 @@ sol! {
         function targetArtifacts() public view returns (string[] memory targetedArtifacts);
 
         #[derive(Default)]
-        function targetArtifactSelectors() public view returns (FuzzArtifactSelector[] memory targetedArtifactSelectors);
+        function targetArtifactSelectors() public view returns (string[] memory targetArtifact, bytes4[] memory targetSelectors);
 
         #[derive(Default)]
         function targetContracts() public view returns (address[] memory targetedContracts);
 
         #[derive(Default)]
-        function targetSelectors() public view returns (FuzzSelector[] memory targetedSelectors);
+        function targetSelectors() public view returns (address[] memory targetedAddresses, bytes4[] memory targetedSelectors);
 
         #[derive(Default)]
         function targetSenders() public view returns (address[] memory targetedSenders);
 
         #[derive(Default)]
-        function targetInterfaces() public view returns (FuzzInterface[] memory targetedInterfaces);
+        function targetInterfaces() public view returns (address[] memory targetedAddresses, string[] memory targetedArtifacts);
     }
 }
 
@@ -658,16 +640,15 @@ impl<'a> InvariantExecutor<'a> {
     ///
     /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
     pub fn select_contract_artifacts(&mut self, invariant_address: Address) -> Result<()> {
-        let targeted_artifact_selectors = self
-            .executor
-            .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
+        let IInvariantTest::targetArtifactSelectorsReturn { targetArtifact, targetSelectors } =
+            self.executor.call_sol_default(
+                invariant_address,
+                &IInvariantTest::targetArtifactSelectorsCall {},
+            );
 
-        // Insert them into the executor `targeted_abi`.
-        for IInvariantTest::FuzzArtifactSelector { artifact, selectors } in
-            targeted_artifact_selectors
-        {
-            let identifier = self.validate_selected_contract(artifact, &selectors)?;
-            self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
+        for (artifact, selector) in targetArtifact.into_iter().zip(targetSelectors.into_iter()) {
+            let identifier = self.validate_selected_contract(artifact, &[selector])?;
+            self.artifact_filters.targeted.entry(identifier).or_default().push(selector);
         }
 
         let targeted_artifacts = self
@@ -816,7 +797,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
-        let interfaces = self
+        let IInvariantTest::targetInterfacesReturn { targetedAddresses, targetedArtifacts } = self
             .executor
             .call_sol_default(invariant_address, &IInvariantTest::targetInterfacesCall {});
 
@@ -827,35 +808,28 @@ impl<'a> InvariantExecutor<'a> {
         // should be equivalent.
         let mut combined = TargetedContracts::new();
 
-        // Loop through each address and its associated artifact identifiers.
-        // We're borrowing here to avoid taking full ownership.
-        for IInvariantTest::FuzzInterface { addr, artifacts } in &interfaces {
-            // Identifiers are specified as an array, so we loop through them.
-            for identifier in artifacts {
-                // Try to find the contract by name or identifier in the project's contracts.
-                if let Some((_, contract_data)) =
-                    self.project_contracts.iter().find(|(artifact, _)| {
-                        &artifact.name == identifier || &artifact.identifier() == identifier
+        for (addr, identifier) in targetedAddresses.into_iter().zip(targetedArtifacts.into_iter()) {
+            // Try to find the contract by name or identifier in the project's contracts.
+            if let Some((_, contract_data)) = self.project_contracts.iter().find(|(artifact, _)| {
+                artifact.name == identifier || artifact.identifier() == identifier
+            }) {
+                let abi = &contract_data.abi;
+                combined
+                    // Check if there's an entry for the given key in the 'combined' map.
+                    .entry(addr)
+                    // If the entry exists, extends its ABI with the function list.
+                    .and_modify(|entry| {
+                        // Extend the ABI's function list with the new functions.
+                        entry.abi.functions.extend(abi.functions.clone());
                     })
-                {
-                    let abi = &contract_data.abi;
-                    combined
-                        // Check if there's an entry for the given key in the 'combined' map.
-                        .entry(*addr)
-                        // If the entry exists, extends its ABI with the function list.
-                        .and_modify(|entry| {
-                            // Extend the ABI's function list with the new functions.
-                            entry.abi.functions.extend(abi.functions.clone());
-                        })
-                        // Otherwise insert it into the map.
-                        .or_insert_with(|| {
-                            let mut contract =
-                                TargetedContract::new(identifier.to_string(), abi.clone());
-                            contract.storage_layout =
-                                contract_data.storage_layout.as_ref().map(Arc::clone);
-                            contract
-                        });
-                }
+                    // Otherwise insert it into the map.
+                    .or_insert_with(|| {
+                        let mut contract =
+                            TargetedContract::new(identifier.to_string(), abi.clone());
+                        contract.storage_layout =
+                            contract_data.storage_layout.as_ref().map(Arc::clone);
+                        contract
+                    });
             }
         }
 
@@ -881,25 +855,26 @@ impl<'a> InvariantExecutor<'a> {
         let mut excluded_test_selectors = vec![];
 
         // Collect contract functions marked as target for fuzzing campaign.
-        let selectors =
+        let IInvariantTest::targetSelectorsReturn { targetedAddresses, targetedSelectors } =
             self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in selectors {
+        for (addr, selector) in targetedAddresses.into_iter().zip(targetedSelectors.into_iter()) {
             if addr == address {
-                target_test_selectors = selectors.clone();
+                target_test_selectors.push(selector);
             }
-            self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
+            self.add_address_with_functions(addr, &[selector], false, targeted_contracts)?;
         }
 
         // Collect contract functions excluded from fuzzing campaign.
-        let excluded_selectors =
+        let IInvariantTest::excludeSelectorsReturn { excludedAddresses, excludedSelectors } =
             self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in excluded_selectors {
+
+        for (addr, selector) in excludedAddresses.into_iter().zip(excludedSelectors.into_iter()) {
             if addr == address {
                 // If fuzz selector address is the test contract, then record selectors to be
                 // later excluded if needed.
-                excluded_test_selectors = selectors.clone();
+                excluded_test_selectors.push(selector);
             }
-            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
+            self.add_address_with_functions(addr, &[selector], true, targeted_contracts)?;
         }
 
         if target_test_selectors.is_empty()
