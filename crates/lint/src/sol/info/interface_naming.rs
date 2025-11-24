@@ -12,6 +12,13 @@ declare_forge_lint!(
     "interface file names should be prefixed with 'I'"
 );
 
+declare_forge_lint!(
+    INTERFACE_NAMING,
+    Severity::Info,
+    "interface-naming",
+    "interface names should be prefixed with 'I'"
+);
+
 impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {
     fn check_full_source_unit(
         &mut self,
@@ -54,6 +61,23 @@ impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {
         // Emit if file contains ONLY interfaces. Emit only on the first interface.
         if let Some(span) = first_interface_span {
             ctx.emit(&INTERFACE_FILE_NAMING, span);
+        }
+    }
+
+    fn check_item_contract(&mut self, ctx: &LintContext, contract: &'ast ast::ItemContract<'ast>) {
+        if !ctx.is_lint_enabled(INTERFACE_NAMING.id()) {
+            return;
+        }
+
+        // Only check interfaces
+        if contract.kind != ast::ContractKind::Interface {
+            return;
+        }
+
+        // Check if interface name starts with 'I'
+        let name = contract.name.as_str();
+        if !name.starts_with('I') {
+            ctx.emit(&INTERFACE_NAMING, contract.name.span);
         }
     }
 }

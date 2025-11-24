@@ -22,7 +22,7 @@ mod multi_contract_file;
 use multi_contract_file::MULTI_CONTRACT_FILE;
 
 mod interface_naming;
-use interface_naming::INTERFACE_FILE_NAMING;
+use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
 
 register_lints!(
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
@@ -33,5 +33,5 @@ register_lints!(
     (NamedStructFields, late, (NAMED_STRUCT_FIELDS)),
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
-    (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING))
+    (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING))
 );
