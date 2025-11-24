@@ -3120,26 +3120,7 @@ impl Backend {
             alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas_used();
 
-        let effective_gas_price = match transaction.transaction {
-            TypedTransaction::Legacy(t) => t.tx().gas_price,
-            TypedTransaction::EIP2930(t) => t.tx().gas_price,
-            TypedTransaction::EIP1559(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().max_priority_fee_per_gas),
-            TypedTransaction::EIP4844(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().tx().max_priority_fee_per_gas),
-            TypedTransaction::EIP7702(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().max_priority_fee_per_gas),
-            TypedTransaction::Deposit(_) => 0_u128,
-        };
+        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas);
 
         let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
