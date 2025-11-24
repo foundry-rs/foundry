@@ -161,6 +161,23 @@ abstract contract AbstractStorage {
     
     function getBalance(address account) public view virtual returns (uint256);
 }
+
+interface Token {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+"#;
+
+const SOLO_INTERFACES: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface ERC20 {
+    function balanceOf(address account) external view returns (uint256);
+}
+
+interface IToken {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
 "#;
 
 forgetest!(can_use_config, |prj, cmd| {
@@ -260,10 +277,11 @@ forgetest!(multi_contract_file_no_exceptions, |prj, cmd| {
     let output = cmd.arg("lint").assert_success();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
 
-    // Should see 8 instances of multi-contract-file lint
-    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 8);
+    // Should see 9 instances of multi-contract-file lint
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 9);
     assert!(stderr.contains("IToken"));
     assert!(stderr.contains("IERC20"));
+    assert!(stderr.contains("Token"));
     assert!(stderr.contains("MathLib"));
     assert!(stderr.contains("StringLib"));
     assert!(stderr.contains("BaseContract"));
@@ -281,6 +299,7 @@ forgetest!(multi_contract_file_interface_exception, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
+            exclude_lints: vec!["interface-naming".into()],
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![ContractException::Interface],
                 ..Default::default()
@@ -292,10 +311,11 @@ forgetest!(multi_contract_file_interface_exception, |prj, cmd| {
     let output = cmd.arg("lint").assert_success();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
 
-    // Should see 6 instances (2 interfaces excluded)
+    // Should see 6 instances (3 interfaces excluded: IToken, IERC20, Token)
     assert_eq!(stderr.matches("note[multi-contract-file]").count(), 6);
     assert!(!stderr.contains("IToken"));
     assert!(!stderr.contains("IERC20"));
+    assert!(!stderr.contains("Token"));
     assert!(stderr.contains("MathLib"));
     assert!(stderr.contains("FirstContract"));
 });
@@ -305,7 +325,7 @@ forgetest!(multi_contract_file_library_exception, |prj, cmd| {
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
-    // With library exception, should flag 6 items
+    // With library exception, should flag 7 items
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
@@ -320,8 +340,8 @@ forgetest!(multi_contract_file_library_exception, |prj, cmd| {
     let output = cmd.arg("lint").assert_success();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
 
-    // Should see 6 instances (2 libraries excluded)
-    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 6);
+    // Should see 7 instances (2 libraries excluded)
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 7);
     assert!(stderr.contains("IToken"));
     assert!(!stderr.contains("MathLib"));
     assert!(!stderr.contains("StringLib"));
@@ -333,7 +353,7 @@ forgetest!(multi_contract_file_abstract_exception, |prj, cmd| {
 
     prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
 
-    // With abstract contract exception, should flag 6 items
+    // With abstract contract exception, should flag 7 items
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
@@ -348,13 +368,13 @@ forgetest!(multi_contract_file_abstract_exception, |prj, cmd| {
     let output = cmd.arg("lint").assert_success();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
 
-    // Should see 6 instances (2 abstract contracts excluded)
-    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 6);
+    // Should see 7 instances (2 abstract contracts excluded)
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 7);
     assert!(stderr.contains("IToken"));
     assert!(stderr.contains("MathLib"));
+    assert!(stderr.contains("FirstContract"));
     assert!(!stderr.contains("BaseContract"));
     assert!(!stderr.contains("AbstractStorage"));
-    assert!(stderr.contains("FirstContract"));
 });
 
 forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
@@ -366,6 +386,7 @@ forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
+            exclude_lints: vec!["interface-naming".into()], // Exclude interface-naming to avoid Token being flagged
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![
                     ContractException::Interface,
@@ -380,9 +401,11 @@ forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
     let output = cmd.arg("lint").assert_success();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
 
-    // Should see 4 instances (2 interfaces + 2 libraries excluded)
+    // Should see 4 instances (3 interfaces + 2 libraries excluded)
     assert_eq!(stderr.matches("note[multi-contract-file]").count(), 4);
     assert!(!stderr.contains("IToken"));
+    assert!(!stderr.contains("IERC20"));
+    assert!(!stderr.contains("Token"));
     assert!(!stderr.contains("MathLib"));
     assert!(stderr.contains("BaseContract"));
     assert!(stderr.contains("FirstContract"));
@@ -478,6 +501,50 @@ multi_contract_file_exceptions = ["interface", "library", "abstract_contract"]
     assert_eq!(stderr.matches("note[multi-contract-file]").count(), 2);
     assert!(stderr.contains("FirstContract"));
     assert!(stderr.contains("SecondContract"));
+});
+
+forgetest!(interface_naming_fails_for_non_prefixed, |prj, cmd| {
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec!["multi-contract-file".into()],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should flag only the interface that doesn't start with 'I': Token
+    assert_eq!(stderr.matches("note[interface-naming]").count(), 1);
+    assert!(stderr.contains("Token"));
+});
+
+forgetest!(interface_file_naming_fails_for_non_prefixed_file, |prj, cmd| {
+    prj.add_source("SoloInterfaces", SOLO_INTERFACES);
+
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec!["multi-contract-file".into()],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // File name "SoloInterfaces" doesn't start with 'I', so interface-file-naming should trigger
+    assert_eq!(stderr.matches("note[interface-file-naming]").count(), 1);
+    // ERC20 is not prefixed with 'I', so interface-naming should trigger
+    assert_eq!(stderr.matches("note[interface-naming]").count(), 1);
+    assert!(stderr.contains("ERC20"));
 });
 
 forgetest!(can_override_config_severity, |prj, cmd| {
