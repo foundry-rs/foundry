@@ -190,12 +190,8 @@ fn test_verify_bytecode_mismatch(
     let output = cmd.forge_fuse().args(args).assert_success().get_output().stderr_lossy();
 
     // Verify that bytecode does NOT match (recompiled with incorrect source)
-    assert!(
-        output.contains(format!("Error: Creation code did not match").as_str()),
-    );
-    assert!(
-        output.contains(format!("Error: Runtime code did not match").as_str()),
-    );
+    assert!(output.contains("Error: Creation code did not match".to_string().as_str()));
+    assert!(output.contains("Error: Runtime code did not match".to_string().as_str()));
 }
 
 forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
