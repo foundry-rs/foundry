@@ -131,7 +131,13 @@ fn build_filter(
 
 /// Creates a [Filter] from the given event signature and arguments.
 fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyre::Error> {
+    let arg_count = args.len();
     let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
+    eyre::ensure!(
+        arg_count <= event.inputs.len(),
+        "too many indexed arguments supplied: got {arg_count}, expected at most {}",
+        event.inputs.len()
+    );
 
     // Match the args to indexed inputs. Enumerate so that the ordering can be restored
     // when merging the inputs with arguments and without arguments
@@ -319,6 +325,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_sig_with_extra_arguments_errors() {
+        let result = build_filter(
+            None,
+            None,
+            None,
+            Some(TRANSFER_SIG.to_string()),
+            vec![
+                String::new(),
+                ADDRESS.to_string(),
+                ADDRESS.to_string(),
+                ADDRESS.to_string(),
+            ],
+        );
+        assert!(result.is_err());
     }
 
     #[test]
