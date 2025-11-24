@@ -1,0 +1,32 @@
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/SoloInterfaces.sol:LL:CC
+   |
+LL | interface ISoloInterfaces {
+   |           ^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/SoloInterfaces.sol:LL:CC
+   |
+LL | interface I2 {
+   |           ^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/SoloInterfaces.sol:LL:CC
+   |
+LL | interface I3 {
+   |           ^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[interface-file-naming]: interface file names should be prefixed with 'I'
+  --> ROOT/testdata/SoloInterfaces.sol:LL:CC
+   |
+LL | interface ISoloInterfaces {
+   |           ^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#interface-file-naming
+
