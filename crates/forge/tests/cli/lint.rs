@@ -386,7 +386,7 @@ forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
-            exclude_lints: vec!["interface-naming".into()], // Exclude interface-naming to avoid Token being flagged
+            exclude_lints: vec!["interface-naming".into()],
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![
                     ContractException::Interface,
