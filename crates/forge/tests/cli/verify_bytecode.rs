@@ -145,13 +145,12 @@ fn test_verify_bytecode_with_ignore(
     }
 }
 
-#[expect(clippy::too_many_arguments)]
+#[inline]
 fn test_verify_bytecode_mismatch(
     prj: TestProject,
     mut cmd: TestCommand,
     addr: &str,
     contract_name: &str,
-    source_code: &str,
     config: Config,
     verifier: &str,
     verifier_url: &str,
@@ -171,6 +170,16 @@ fn test_verify_bytecode_mismatch(
     prj.write_config(config);
     // Build once with correct source (creates cache)
     cmd.forge_fuse().arg("build").assert_success();
+
+    let source_code = r#"
+    contract SystemConfig {
+        uint256 public constant MODIFIED_VALUE = 999;
+    
+        function someFunction() public pure returns (uint256) {
+            return MODIFIED_VALUE;
+        }
+    }
+    "#;
 
     // Now replace with different incorrect source code
     prj.add_source(contract_name, source_code);
@@ -348,22 +357,11 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
 
 // Test that verification fails when source code doesn't match deployed bytecode
 forgetest_async!(can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| {
-    let modified_source = r#"
-contract SystemConfig {
-    uint256 public constant MODIFIED_VALUE = 999;
-
-    function someFunction() public pure returns (uint256) {
-        return MODIFIED_VALUE;
-    }
-}
-"#;
-
     test_verify_bytecode_mismatch(
         prj,
         cmd,
         "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
         "SystemConfig",
-        modified_source,
         Config {
             evm_version: EvmVersion::London,
             optimizer_runs: Some(999999),
