@@ -123,7 +123,7 @@ impl VerifyBundle {
 
                 // Strip artifact profile from contract name when creating contract info.
                 let contract = ContractInfo {
-                    path: Some(artifact.source.to_string_lossy().to_string()),
+                    path: Some(artifact.source.to_string_lossy().into_owned()),
                     name: artifact
                         .name
                         .strip_suffix(&format!(".{}", &artifact.profile))
