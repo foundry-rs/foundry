@@ -494,7 +494,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                             folder_name.to_string_lossy(),
                             e.file_name().to_string_lossy()
                         ),
-                        path: dest.to_string_lossy().to_string(),
+                        path: dest.to_string_lossy().into_owned(),
                     });
                 }
             } else {
@@ -513,8 +513,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                 std::fs::rename(entry.path(), &dest)?;
                 remappings.push(Remapping {
                     context: None,
-                    name: folder_name.to_string_lossy().to_string(),
-                    path: dest.to_string_lossy().to_string(),
+                    name: folder_name.to_string_lossy().into_owned(),
+                    path: dest.to_string_lossy().into_owned(),
                 });
             }
         } else {
@@ -525,8 +525,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
             if folder_name != "src" {
                 remappings.push(Remapping {
                     context: None,
-                    name: folder_name.to_string_lossy().to_string(),
-                    path: dest.to_string_lossy().to_string(),
+                    name: folder_name.to_string_lossy().into_owned(),
+                    path: dest.to_string_lossy().into_owned(),
                 });
             }
         }
@@ -550,7 +550,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
             } else {
                 PathBuf::from(&r.path)
             };
-            r.path = new_path.to_string_lossy().to_string();
+            r.path = new_path.to_string_lossy().into_owned();
         }
         remappings.push(r);
     }
