@@ -356,11 +356,11 @@ impl Provider for DappHardhatDirProvider<'_> {
         let lib = self.0.join("lib");
         if node_modules.exists() {
             if lib.exists() {
-                libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+                libs.push(lib.file_name().unwrap().to_string_lossy().into_owned());
             }
-            libs.push(node_modules.file_name().unwrap().to_string_lossy().to_string());
+            libs.push(node_modules.file_name().unwrap().to_string_lossy().into_owned());
         } else {
-            libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+            libs.push(lib.file_name().unwrap().to_string_lossy().into_owned());
         }
 
         dict.insert("libs".to_string(), libs.into());
