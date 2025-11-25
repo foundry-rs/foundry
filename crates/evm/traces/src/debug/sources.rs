@@ -42,7 +42,7 @@ impl SourceData {
         match language {
             MultiCompilerLanguage::Vyper(_) => {
                 // Vyper contracts have the same name as the file name.
-                if let Some(name) = path.file_stem().map(|s| s.to_string_lossy().to_string()) {
+                if let Some(name) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) {
                     contract_definitions.push((name, 0..source.len()));
                 }
             }
