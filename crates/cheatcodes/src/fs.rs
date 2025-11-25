@@ -514,7 +514,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                 .ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"));
         } else {
             let path_in_artifacts =
-                match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                match (file.map(|f| f.to_string_lossy().into_owned()), contract_name) {
                     (Some(file), Some(contract_name)) => {
                         PathBuf::from(format!("{file}/{contract_name}.json"))
                     }
