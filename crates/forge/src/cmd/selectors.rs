@@ -179,12 +179,12 @@ impl SelectorsSubcommands {
 
                 if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
-                    *contract_path = target_path.to_string_lossy().to_string();
+                    *contract_path = target_path.to_string_lossy().into_owned();
                     compiler = compiler.files([target_path]);
                 }
                 if let Some(contract_path) = &mut second_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
-                    *contract_path = target_path.to_string_lossy().to_string();
+                    *contract_path = target_path.to_string_lossy().into_owned();
                     compiler = compiler.files([target_path]);
                 }
 
