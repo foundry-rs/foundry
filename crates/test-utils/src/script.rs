@@ -81,8 +81,8 @@ impl ScriptTester {
     /// Creates a new instance of a Tester for the `broadcast` test at the given `project_root` by
     /// configuring the `TestCommand` with script
     pub fn new_broadcast(cmd: TestCommand, endpoint: &str, project_root: &Path) -> Self {
-        let target_contract = project_root.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
-
+        let target_contract = project_root.join(BROADCAST_TEST_PATH).to_string_lossy().into_owned();
+        
         // copy the broadcast test
         fs::copy(
             Self::testdata_path().join("default/cheats/Broadcast.t.sol"),
@@ -96,7 +96,7 @@ impl ScriptTester {
     /// Creates a new instance of a Tester for the `broadcast` test at the given `project_root` by
     /// configuring the `TestCommand` with script without an endpoint
     pub fn new_broadcast_without_endpoint(cmd: TestCommand, project_root: &Path) -> Self {
-        let target_contract = project_root.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
+        let target_contract = project_root.join(BROADCAST_TEST_PATH).to_string_lossy().into_owned();
 
         // copy the broadcast test
         let testdata = Self::testdata_path();
