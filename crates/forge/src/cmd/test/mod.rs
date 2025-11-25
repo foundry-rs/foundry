@@ -137,8 +137,8 @@ pub struct TestArgs {
     suppress_successful_traces: bool,
 
     /// Defines the depth of a trace
-    #[arg(long, short)]
-    depth: Option<usize>,
+    #[arg(long)]
+    trace_depth: Option<usize>,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -657,8 +657,8 @@ impl TestArgs {
                     if should_include {
                         decode_trace_arena(arena, &decoder).await;
 
-                        if let Some(depth) = self.depth {
-                            prune_trace_depth(arena, depth);
+                        if let Some(trace_depth) = self.trace_depth {
+                            prune_trace_depth(arena, trace_depth);
                         }
 
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
@@ -1048,8 +1048,8 @@ mod tests {
 
     #[test]
     fn depth_trace() {
-        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--depth", "2"]);
-        assert!(args.depth.is_some());
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--trace-depth", "2"]);
+        assert!(args.trace_depth.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>

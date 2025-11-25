@@ -191,7 +191,7 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
 pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
     for node in arena.nodes_mut() {
         if node.trace.depth >= depth {
-            Vec::clear(&mut node.ordering);
+            node.ordering.clear();
         }
     }
 }
