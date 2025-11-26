@@ -293,9 +293,9 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
             .map(Value::from)
             .ok();
         for (profile, mut dict) in self.0.data()? {
-            if let Some(v) = solc_env.clone() {
+            if let Some(v) = solc_env.as_ref() {
                 // ENV var takes precedence over config file
-                dict.insert("solc".to_string(), v);
+                dict.insert("solc".to_string(), v.clone());
             } else if let Some(v) = dict.remove("solc_version") {
                 // only insert older variant if not already included
                 if !dict.contains_key("solc") {
@@ -356,11 +356,11 @@ impl Provider for DappHardhatDirProvider<'_> {
         let lib = self.0.join("lib");
         if node_modules.exists() {
             if lib.exists() {
-                libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+                libs.push(lib.file_name().unwrap().to_string_lossy().into_owned());
             }
-            libs.push(node_modules.file_name().unwrap().to_string_lossy().to_string());
+            libs.push(node_modules.file_name().unwrap().to_string_lossy().into_owned());
         } else {
-            libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+            libs.push(lib.file_name().unwrap().to_string_lossy().into_owned());
         }
 
         dict.insert("libs".to_string(), libs.into());
