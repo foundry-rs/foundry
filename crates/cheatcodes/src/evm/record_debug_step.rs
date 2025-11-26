@@ -133,7 +133,9 @@ fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&[U256]>) -> Vec<U256> 
     let Some(stack_data) = stack else { return inputs };
 
     let stack_input_size = op.inputs() as usize;
-    for i in 0..stack_input_size {
+    // Ensure we don't try to access more items than available in the stack
+    let actual_size = stack_input_size.min(stack_data.len());
+    for i in 0..actual_size {
         inputs.push(stack_data[stack_data.len() - 1 - i]);
     }
     inputs
