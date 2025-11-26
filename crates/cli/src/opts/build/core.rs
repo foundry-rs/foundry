@@ -174,7 +174,7 @@ impl BuildOpts {
     }
 
     /// Returns the remappings to add to the config
-    #[deprecated(note = "Use ProjectPathsArgs::get_remappings() instead")]
+    #[deprecated(note = "Use ProjectPathOpts::get_remappings() instead")]
     pub fn get_remappings(&self) -> Vec<Remapping> {
         self.project_paths.get_remappings()
     }
