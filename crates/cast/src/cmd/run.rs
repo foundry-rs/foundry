@@ -27,7 +27,7 @@ use foundry_evm::{
     core::env::AsEnvMut,
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode, Traces},
+    traces::{InternalTraceMode, SparsedTraceArena, TraceMode, Traces},
     utils::configure_tx_env,
 };
 use futures::TryFutureExt;
@@ -46,6 +46,10 @@ pub struct RunArgs {
     /// Whether to identify internal functions in traces.
     #[arg(long)]
     decode_internal: bool,
+
+    /// Defines the depth of a trace
+    #[arg(long)]
+    trace_depth: Option<usize>,
 
     /// Print out opcode traces.
     #[arg(long, short)]
@@ -315,6 +319,7 @@ impl RunArgs {
             debug,
             decode_internal,
             disable_labels,
+            self.trace_depth,
         )
         .await?;
 
