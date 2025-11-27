@@ -1451,14 +1451,6 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        // For multi-line condition formatting, break before the operator (except the first one)
-        if use_multi_line_conditions && is_chain {
-            // Break before the operator to start each condition on its own line
-            if !self.is_bol_or_only_ind() {
-                self.hardbreak();
-            }
-        }
-
         // Print LHS.
         self.print_expr(lhs);
 
@@ -1486,16 +1478,18 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
+            if use_multi_line_conditions && is_chain {
+                if !self.is_bol_or_only_ind() && !self.last_token_is_break() {
+                    self.s.break_offset(SIZE_INFINITY as usize, self.ind);
+                }
+            }
+
             self.word(bin_op.kind.to_str());
 
-            // For multi-line condition formatting, break after logical operators in if conditions
-            if use_multi_line_conditions {
-                // Force a hard break after logical operators in multi-line mode
-                if !self.is_bol_or_only_ind() {
-                    self.hardbreak();
-                }
-                self.s.offset(self.ind);
-            } else if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
+            if use_multi_line_conditions
+                || !self.config.pow_no_space
+                || !matches!(bin_op.kind, ast::BinOpKind::Pow)
+            {
                 self.nbsp();
             }
         }
@@ -2332,22 +2326,50 @@ impl<'ast> State<'_, 'ast> {
         let was_in_if_condition = self.in_if_condition;
         self.in_if_condition = true;
 
-        // Choose ListFormat based on config
-        let list_format =
-            if matches!(self.config.format_conditions, config::ConditionFormatStyle::Multi) {
-                ListFormat::consistent().break_cmnts().break_single(true)
-            } else {
-                ListFormat::compact().break_cmnts().break_single(is_binary_expr(&cond.kind))
-            };
+        // For multi-line condition formatting, use a special formatting approach
+        if matches!(self.config.format_conditions, config::ConditionFormatStyle::Multi) {
+            // Print opening parenthesis
+            self.print_word("(");
 
-        self.print_tuple(
-            std::slice::from_ref(cond),
-            cond.span.lo(),
-            pos_hi,
-            Self::print_expr,
-            get_span!(),
-            list_format,
-        );
+            // Open a box with indentation for the condition
+            self.s.cbox(self.ind);
+
+            // Force a break after opening parenthesis
+            self.hardbreak();
+
+            // Print comments before condition
+            self.print_comments(
+                cond.span.lo(),
+                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+            );
+
+            // Print the condition (which will format multi-line for logical operators)
+            self.print_expr(cond);
+
+            // Print trailing comments
+            self.print_trailing_comment(cond.span.hi(), Some(pos_hi));
+
+            self.end();
+
+            if !self.is_bol_or_only_ind() {
+                self.hardbreak();
+            }
+
+            self.print_word(")");
+        } else {
+            // Choose ListFormat based on config for inline formatting
+            let list_format =
+                ListFormat::compact().break_cmnts().break_single(is_binary_expr(&cond.kind));
+
+            self.print_tuple(
+                std::slice::from_ref(cond),
+                cond.span.lo(),
+                pos_hi,
+                Self::print_expr,
+                get_span!(),
+                list_format,
+            );
+        }
 
         // Reset flag
         self.in_if_condition = was_in_if_condition;

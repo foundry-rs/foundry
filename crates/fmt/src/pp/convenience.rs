@@ -31,6 +31,17 @@ impl Printer {
 
     pub fn eof(mut self) -> String {
         self.scan_eof();
+        // Normalize trailing newlines: ensure exactly one \n at the end
+        // This must happen AFTER scan_eof() to catch any newlines added during EOF-flush
+        // If there's no newline at all, add one
+        if !self.out.ends_with('\n') {
+            self.out.push('\n');
+        } else {
+            // If there are multiple newlines, remove extras to leave exactly one
+            while self.out.ends_with("\n\n") {
+                self.out.pop();
+            }
+        }
         self.out
     }
 
