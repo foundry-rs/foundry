@@ -33,12 +33,20 @@ impl Printer {
         self.scan_eof();
         // Normalize trailing newlines: ensure exactly one \n at the end
         // This must happen AFTER scan_eof() to catch any newlines added during EOF-flush
-        // If there's no newline at all, add one
-        if !self.out.ends_with('\n') {
-            self.out.push('\n');
+        let has_content = !self.out.trim().is_empty();
+        if has_content {
+            // If there's no newline at all, add one
+            if !self.out.ends_with('\n') {
+                self.out.push('\n');
+            } else {
+                // If there are multiple newlines, remove extras to leave exactly one
+                while self.out.ends_with("\n\n") {
+                    self.out.pop();
+                }
+            }
         } else {
-            // If there are multiple newlines, remove extras to leave exactly one
-            while self.out.ends_with("\n\n") {
+            // For empty files, remove all trailing newlines
+            while self.out.ends_with('\n') {
                 self.out.pop();
             }
         }
