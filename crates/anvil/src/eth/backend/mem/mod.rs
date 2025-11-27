@@ -17,7 +17,10 @@ use crate::{
                 state::{storage_root, trie_accounts},
                 storage::MinedTransactionReceipt,
             },
-            notifications::{NewBlockNotification, NewBlockNotifications},
+            notifications::{
+                NewBlockNotification, NewBlockNotifications, ReorgedBlockNotification,
+                ReorgedBlockNotifications,
+            },
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
         },
@@ -226,6 +229,8 @@ pub struct Backend {
     genesis: GenesisConfig,
     /// Listeners for new blocks that get notified when a new block was imported.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
+    /// Listeners for reorged blocks that get notified when blocks are removed due to reorg.
+    reorged_block_listeners: Arc<Mutex<Vec<UnboundedSender<ReorgedBlockNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
     active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
@@ -332,6 +337,7 @@ impl Backend {
             time: TimeManager::new(start_timestamp),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
+            reorged_block_listeners: Default::default(),
             fees,
             genesis,
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
@@ -3490,6 +3496,14 @@ impl Backend {
         rx
     }
 
+    /// Returns a reorged block event stream
+    pub fn new_reorged_block_notifications(&self) -> ReorgedBlockNotifications {
+        let (tx, rx) = unbounded();
+        self.reorged_block_listeners.lock().push(tx);
+        trace!(target: "backed", "added new reorged block listener");
+        rx
+    }
+
     /// Notifies all `new_block_listeners` about the new block
     fn notify_on_new_block(&self, header: Header, hash: B256) {
         // cleanup closed notification streams first, if the channel is closed we can remove the
@@ -3499,6 +3513,33 @@ impl Backend {
         let notification = NewBlockNotification { hash, header: Arc::new(header) };
 
         self.new_block_listeners
+            .lock()
+            .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
+    }
+
+    /// Notifies all `reorged_block_listeners` about the reorged block with its data
+    fn notify_on_reorged_block_with_data(
+        &self,
+        header: Header,
+        hash: B256,
+        block: Block,
+        receipts: Vec<TypedReceipt>,
+    ) {
+        // cleanup closed notification streams first, if the channel is closed we can remove the
+        // sender half for the set
+        self.reorged_block_listeners.lock().retain(|tx| !tx.is_closed());
+
+        let notification =
+            ReorgedBlockNotification { hash, header: Arc::new(header), block, receipts };
+
+        let _sent_count = self
+            .reorged_block_listeners
+            .lock()
+            .iter()
+            .filter(|tx| tx.unbounded_send(notification.clone()).is_ok())
+            .count();
+
+        self.reorged_block_listeners
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
@@ -3568,11 +3609,50 @@ impl Backend {
         }
 
         {
-            // Unwind the storage back to the common ancestor
-            self.blockchain
+            // Collect block data and receipts BEFORE unwinding
+            let mut blocks_with_receipts = Vec::new();
+            let current_height = self.blockchain.storage.read().best_number;
+
+            // Collect data for blocks that will be removed
+            for block_num in (common_block.header.number + 1)..=current_height {
+                if let Some(block_hash) =
+                    self.blockchain.storage.read().hashes.get(&block_num).copied()
+                    && let Some(block) =
+                        self.blockchain.storage.read().blocks.get(&block_hash).cloned()
+                {
+                    // Get receipts from transactions
+                    let mut receipts = Vec::new();
+                    for tx_hash in block.transactions.iter().map(|tx| tx.hash()) {
+                        if let Some(mined_tx) =
+                            self.blockchain.storage.read().transactions.get(&tx_hash)
+                        {
+                            receipts.push(mined_tx.receipt.clone());
+                        }
+                    }
+                    if !receipts.is_empty() {
+                        blocks_with_receipts.push((block, receipts));
+                    }
+                }
+            }
+
+            // Unwind the storage back to the common ancestor and get the removed blocks
+            let removed_blocks = self
+                .blockchain
                 .storage
                 .write()
                 .unwind_to(common_block.header.number, common_block.header.hash_slow());
+
+            // Notify about each reorged block with its data
+            for (removed_block, (block_data, receipts)) in
+                removed_blocks.into_iter().zip(blocks_with_receipts.into_iter())
+            {
+                self.notify_on_reorged_block_with_data(
+                    removed_block.header.clone(),
+                    removed_block.header.hash_slow(),
+                    block_data,
+                    receipts,
+                );
+            }
 
             // Set environment back to common block
             let mut env = self.env.write();

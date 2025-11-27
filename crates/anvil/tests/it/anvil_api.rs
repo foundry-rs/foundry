@@ -22,7 +22,7 @@ use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
-
+use futures::StreamExt;
 use revm::primitives::hardfork::SpecId;
 use std::{
     str::FromStr,
@@ -1069,4 +1069,89 @@ async fn test_anvil_reset_fork_to_non_fork() {
     api.mine_one().await;
     let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(new_block.header.number, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_logs_removed_field() {
+    use crate::utils::connect_pubsub;
+    use alloy_rpc_types::Filter;
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+
+    // Deploy SimpleStorage contract that emits events
+    let storage = abi::SimpleStorage::deploy(&provider, "initial value".to_string()).await.unwrap();
+
+    // Emit some events in different blocks by calling setValue
+    let _ = storage
+        .setValue("value1".to_string())
+        .from(accounts[0].address())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.mine_one().await;
+
+    let _ = storage
+        .setValue("value2".to_string())
+        .from(accounts[1].address())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.mine_one().await;
+
+    let _ = storage
+        .setValue("value3".to_string())
+        .from(accounts[2].address())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.mine_one().await;
+
+    // Set up a log subscription for ValueChanged events using connect_pubsub
+    let ws_provider = connect_pubsub(&handle.ws_endpoint()).await;
+    let filter = Filter::new().address(*storage.address());
+    let logs_sub = ws_provider.subscribe_logs(&filter).await.unwrap();
+    let mut sub = logs_sub.into_stream();
+
+    // Perform a reorg to depth 2 (this should remove the last 2 blocks with events)
+    api.anvil_reorg(ReorgOptions { depth: 2, tx_block_pairs: vec![] }).await.unwrap();
+
+    // Wait for logs with removed: true
+    let mut removed_logs = vec![];
+    let mut timeout_count = 0;
+    let max_timeout = 50; // Increased timeout
+
+    while removed_logs.len() < 2 && timeout_count < max_timeout {
+        tokio::select! {
+            Some(log) = sub.next() => {
+                if log.removed {
+                    removed_logs.push(log);
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                timeout_count += 1;
+            }
+        }
+    }
+
+    // Assert that we received logs with removed: true for the reorged blocks
+    assert_eq!(removed_logs.len(), 2, "Should receive 2 logs with removed: true");
+
+    // Verify the logs are for the reorged ValueChanged events
+    for log in &removed_logs {
+        assert!(log.removed, "Log should have removed: true");
+        assert_eq!(log.inner.address, *storage.address());
+        // Verify it's an event log (has topics)
+        assert!(!log.topics().is_empty(), "Log should have topics");
+    }
 }
