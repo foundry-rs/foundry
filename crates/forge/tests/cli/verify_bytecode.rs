@@ -356,8 +356,8 @@ forgetest_async!(can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| {
     let output = cmd.forge_fuse().args(args).assert_success().get_output().stderr_lossy();
 
     // Verify that bytecode does NOT match (recompiled with incorrect source)
-    assert!(output.contains("Error: Creation code did not match".to_string().as_str()));
-    assert!(output.contains("Error: Runtime code did not match".to_string().as_str()));
+    assert!(output.contains("Error: Creation code did not match"));
+    assert!(output.contains("Error: Runtime code did not match"));
 });
 
 // Test predeploy contracts
