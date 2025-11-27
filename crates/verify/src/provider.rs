@@ -81,7 +81,7 @@ impl VerificationContext {
             .find(&self.target_path, &self.target_name)
             .ok_or_eyre("failed to find target artifact when compiling for metadata")?;
 
-        artifact.metadata.clone().ok_or_eyre("target artifact does not have an ABI")
+        artifact.metadata.clone().ok_or_eyre("target artifact does not have metadata")
     }
 
     /// Returns [Vec] containing imports of the target file.
