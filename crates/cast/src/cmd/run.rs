@@ -27,7 +27,7 @@ use foundry_evm::{
     core::env::AsEnvMut,
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
-    traces::{InternalTraceMode, SparsedTraceArena, TraceMode, Traces},
+    traces::{InternalTraceMode, TraceMode, Traces},
     utils::configure_tx_env,
 };
 use futures::TryFutureExt;
