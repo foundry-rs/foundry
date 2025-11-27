@@ -192,50 +192,52 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     pub extends: Option<Extends>,
 
-    /// path of the source contracts dir, like `src` or `contracts`
+    /// Path of the sources directory.
+    ///
+    /// Defaults to `src`.
     pub src: PathBuf,
-    /// path of the test dir
+    /// Path of the tests directory.
     pub test: PathBuf,
-    /// path of the script dir
+    /// Path of the scripts directory.
     pub script: PathBuf,
-    /// path to where artifacts shut be written to
+    /// Path to the artifacts directory.
     pub out: PathBuf,
-    /// all library folders to include, `lib`, `node_modules`
+    /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// `Remappings` to use for this repo
+    /// Remappings to use for this repo
     pub remappings: Vec<RelativeRemapping>,
-    /// Whether to autodetect remappings by scanning the `libs` folders recursively
+    /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
-    /// library addresses to link
+    /// Library addresses to link.
     pub libraries: Vec<String>,
-    /// whether to enable cache
+    /// Whether to enable the build cache.
     pub cache: bool,
-    /// whether to dynamically link tests
-    pub dynamic_test_linking: bool,
-    /// where the cache is stored if enabled
+    /// The path to the cache store.
     pub cache_path: PathBuf,
-    /// where the gas snapshots are stored
+    /// Whether to dynamically link tests.
+    pub dynamic_test_linking: bool,
+    /// Where the gas snapshots are stored.
     pub snapshots: PathBuf,
-    /// whether to check for differences against previously stored gas snapshots
+    /// Whether to check for differences against previously stored gas snapshots.
     pub gas_snapshot_check: bool,
-    /// whether to emit gas snapshots to disk
+    /// Whether to emit gas snapshots to disk.
     pub gas_snapshot_emit: bool,
-    /// where the broadcast logs are stored
+    /// The path to store broadcast logs at.
     pub broadcast: PathBuf,
-    /// additional solc allow paths for `--allow-paths`
+    /// Additional paths passed to `solc --allow-paths`.
     pub allow_paths: Vec<PathBuf>,
-    /// additional solc include paths for `--include-path`
+    /// Additional paths passed to `solc --include-path`.
     pub include_paths: Vec<PathBuf>,
-    /// glob patterns to skip
+    /// Glob patterns for file paths to skip when building and executing contracts.
     pub skip: Vec<GlobMatcher>,
-    /// whether to force a `project.clean()`
+    /// Whether to forcefully clean all project artifacts before running commands.
     pub force: bool,
-    /// evm version to use
+    /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
-    /// list of contracts to report gas of
+    /// List of contracts to generate gas reports for.
     pub gas_reports: Vec<String>,
-    /// list of contracts to ignore for gas reports
+    /// List of contracts to ignore for gas reports.
     pub gas_reports_ignore: Vec<String>,
     /// Whether to include gas reports for tests.
     pub gas_reports_include_tests: bool,
@@ -302,9 +304,9 @@ pub struct Config {
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
-    /// list of solidity error codes to always silence in the compiler output
+    /// List of solidity error codes to always silence in the compiler output.
     pub ignored_error_codes: Vec<SolidityErrorCode>,
-    /// list of file paths to ignore
+    /// List of file paths to ignore.
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
     /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.

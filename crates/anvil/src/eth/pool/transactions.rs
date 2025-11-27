@@ -1,4 +1,5 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use alloy_consensus::{Transaction, Typed2718};
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
     Address, TxHash,
@@ -39,7 +40,7 @@ impl TransactionOrder {
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
-            Self::Fees => TransactionPriority(tx.gas_price()),
+            Self::Fees => TransactionPriority(tx.max_fee_per_gas()),
         }
     }
 }
@@ -94,14 +95,14 @@ impl PoolTransaction {
         *self.pending_transaction.hash()
     }
 
-    /// Returns the gas pric of this transaction
-    pub fn gas_price(&self) -> u128 {
-        self.pending_transaction.transaction.gas_price()
+    /// Returns the max fee per gas of this transaction
+    pub fn max_fee_per_gas(&self) -> u128 {
+        self.pending_transaction.transaction.max_fee_per_gas()
     }
 
     /// Returns the type of the transaction
     pub fn tx_type(&self) -> u8 {
-        self.pending_transaction.transaction.r#type().unwrap_or_default()
+        self.pending_transaction.transaction.ty()
     }
 }
 
@@ -181,7 +182,7 @@ impl PendingTransactions {
             .and_then(|hash| self.waiting_queue.get(hash))
         {
             // check if underpriced
-            if tx.transaction.gas_price() < replace.transaction.gas_price() {
+            if tx.transaction.max_fee_per_gas() < replace.transaction.max_fee_per_gas() {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(Box::new(
                     tx.transaction.as_ref().clone(),
@@ -523,7 +524,9 @@ impl ReadyTransactions {
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
+                    if tx.pending_transaction.transaction.max_fee_per_gas()
+                        <= to_remove.max_fee_per_gas()
+                    {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())));
                     } else {
@@ -721,8 +724,8 @@ impl ReadyTransaction {
         &self.transaction.transaction.provides
     }
 
-    pub fn gas_price(&self) -> u128 {
-        self.transaction.transaction.gas_price()
+    pub fn max_fee_per_gas(&self) -> u128 {
+        self.transaction.transaction.max_fee_per_gas()
     }
 }
 

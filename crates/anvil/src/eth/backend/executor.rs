@@ -14,7 +14,7 @@ use crate::{
     mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
-    Header, Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS,
+    Header, Receipt, ReceiptWithBloom, Transaction, constants::EMPTY_WITHDRAWALS,
     proofs::calculate_receipt_root, transaction::Either,
 };
 use alloy_eips::{
@@ -183,7 +183,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                     continue;
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
-                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
+                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas_used().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
                     continue;
                 }
                 TransactionExecutionOutcome::TransactionGasExhausted(tx) => {
@@ -208,7 +208,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                     .pending_transaction
                     .transaction
                     .transaction
-                    .blob_gas()
+                    .blob_gas_used()
                     .unwrap_or(0);
                 cumulative_blob_gas_used =
                     Some(cumulative_blob_gas_used.unwrap_or(0u64).saturating_add(tx_blob_gas));
@@ -365,7 +365,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
-            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
+            transaction.pending_transaction.transaction.transaction.blob_gas_used().unwrap_or(0),
         );
         if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction));
@@ -468,7 +468,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         self.gas_used = self.gas_used.saturating_add(gas_used);
 
         // Track the total blob gas used for total blob gas per blob checks
-        if let Some(blob_gas) = transaction.pending_transaction.transaction.transaction.blob_gas() {
+        if let Some(blob_gas) =
+            transaction.pending_transaction.transaction.transaction.blob_gas_used()
+        {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas);
         }
 

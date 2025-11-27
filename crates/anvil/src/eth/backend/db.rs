@@ -691,21 +691,20 @@ mod test {
             },
             "transactions": [
                 {
-                    "EIP1559": {
-                        "chainId": "0x7a69",
-                        "nonce": "0x0",
-                        "gas": "0x5209",
-                        "maxFeePerGas": "0x77359401",
-                        "maxPriorityFeePerGas": "0x1",
-                        "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-                        "value": "0x0",
-                        "accessList": [],
-                        "input": "0x",
-                        "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
-                        "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
-                        "yParity": "0x0",
-                        "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
-                    }
+                    "type": "0x2",
+                    "chainId": "0x7a69",
+                    "nonce": "0x0",
+                    "gas": "0x5209",
+                    "maxFeePerGas": "0x77359401",
+                    "maxPriorityFeePerGas": "0x1",
+                    "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                    "value": "0x0",
+                    "accessList": [],
+                    "input": "0x",
+                    "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+                    "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+                    "yParity": "0x0",
+                    "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
                 }
             ],
             "ommers": []
