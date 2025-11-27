@@ -1478,10 +1478,13 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
-            if use_multi_line_conditions && is_chain {
-                if !self.is_bol_or_only_ind() && !self.last_token_is_break() {
-                    self.s.break_offset(SIZE_INFINITY as usize, self.ind);
-                }
+            if use_multi_line_conditions
+                && is_chain
+                && !self.is_bol_or_only_ind()
+                && !self.last_token_is_break()
+            {
+                // Break before operator with double indent (fixed offset, not cumulative)
+                self.s.break_offset(SIZE_INFINITY as usize, self.ind);
             }
 
             self.word(bin_op.kind.to_str());
