@@ -23,7 +23,7 @@ pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
     /// The request type to expect
     type Request: DeserializeOwned + Send + Sync + fmt::Debug;
     /// The identifier to use for subscriptions
-    type SubscriptionId: Hash + PartialEq + Eq + Send + Sync + fmt::Debug;
+    type SubscriptionId: Hash + Eq + Send + Sync + fmt::Debug;
     /// The subscription type this handle may create
     type Subscription: Stream<Item = serde_json::Value> + Send + Sync + Unpin;
 
