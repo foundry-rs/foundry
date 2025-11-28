@@ -220,9 +220,16 @@ pub struct RpcData {
 impl RpcData {
     /// Iterates over script transactions and collects RPC urls.
     fn from_transactions(txs: &BroadcastableTransactions) -> Self {
-        let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
-        let total_rpcs =
-            txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
+        let mut total_rpcs = HashSet::new();
+        let mut missing_rpc = false;
+
+        for tx in txs {
+            if let Some(rpc) = tx.rpc.as_ref() {
+                total_rpcs.insert(rpc.clone());
+            } else {
+                missing_rpc = true;
+            }
+        }
 
         Self { total_rpcs, missing_rpc }
     }
