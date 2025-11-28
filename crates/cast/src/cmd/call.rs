@@ -20,9 +20,8 @@ use foundry_cli::{
 };
 use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::Chain;
 use foundry_config::{
-    Config,
+    Chain, Config,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
