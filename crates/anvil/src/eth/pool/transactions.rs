@@ -5,7 +5,8 @@ use alloy_primitives::{
     Address, TxHash,
     map::{HashMap, HashSet},
 };
-use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
+use anvil_core::eth::transaction::PendingTransaction;
+use foundry_primitives::FoundryTxEnvelope;
 use parking_lot::RwLock;
 use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
 
@@ -37,7 +38,7 @@ pub enum TransactionOrder {
 
 impl TransactionOrder {
     /// Returns the priority of the transactions
-    pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+    pub fn priority(&self, tx: &FoundryTxEnvelope) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
             Self::Fees => TransactionPriority(tx.max_fee_per_gas()),
@@ -121,7 +122,7 @@ impl fmt::Debug for PoolTransaction {
 impl TryFrom<AnyRpcTransaction> for PoolTransaction {
     type Error = eyre::Error;
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let typed_transaction = TypedTransaction::try_from(value)?;
+        let typed_transaction = FoundryTxEnvelope::try_from(value)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {
             pending_transaction,

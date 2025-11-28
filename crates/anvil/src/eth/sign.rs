@@ -5,7 +5,7 @@ use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
-use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
+use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -35,7 +35,7 @@ pub trait Signer: Send + Sync {
     /// signs a transaction request using the given account in request
     fn sign_transaction(
         &self,
-        request: TypedTransactionRequest,
+        request: FoundryTypedTx,
         address: &Address,
     ) -> Result<Signature, BlockchainError>;
 }
@@ -93,47 +93,39 @@ impl Signer for DevSigner {
 
     fn sign_transaction(
         &self,
-        request: TypedTransactionRequest,
+        request: FoundryTypedTx,
         address: &Address,
     ) -> Result<Signature, BlockchainError> {
         let signer = self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
         match request {
-            TypedTransactionRequest::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP7702(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::Deposit(_) => {
+            FoundryTypedTx::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::EIP7702(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
             }
         }
     }
 }
 
-/// converts the `request` into a [`TypedTransactionRequest`] with the given signature
+/// converts the `request` into a [`FoundryTypedTx`] with the given signature
 ///
 /// # Errors
 ///
 /// This will fail if the `signature` contains an erroneous recovery id.
 pub fn build_typed_transaction(
-    request: TypedTransactionRequest,
+    request: FoundryTypedTx,
     signature: Signature,
-) -> Result<TypedTransaction, BlockchainError> {
+) -> Result<FoundryTxEnvelope, BlockchainError> {
     let tx = match request {
-        TypedTransactionRequest::Legacy(tx) => TypedTransaction::Legacy(tx.into_signed(signature)),
-        TypedTransactionRequest::EIP2930(tx) => {
-            TypedTransaction::EIP2930(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP1559(tx) => {
-            TypedTransaction::EIP1559(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP7702(tx) => {
-            TypedTransaction::EIP7702(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP4844(tx) => {
-            TypedTransaction::EIP4844(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::Deposit(tx) => TypedTransaction::Deposit(tx),
+        FoundryTypedTx::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
+        FoundryTypedTx::EIP2930(tx) => FoundryTxEnvelope::EIP2930(tx.into_signed(signature)),
+        FoundryTypedTx::EIP1559(tx) => FoundryTxEnvelope::EIP1559(tx.into_signed(signature)),
+        FoundryTypedTx::EIP7702(tx) => FoundryTxEnvelope::EIP7702(tx.into_signed(signature)),
+        FoundryTypedTx::EIP4844(tx) => FoundryTxEnvelope::EIP4844(tx.into_signed(signature)),
+        FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(tx),
     };
 
     Ok(tx)

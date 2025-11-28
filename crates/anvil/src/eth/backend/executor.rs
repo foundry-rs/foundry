@@ -31,7 +31,7 @@ use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{BlockInfo, create_block},
-    transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    transaction::{PendingTransaction, TransactionInfo, TypedReceipt},
 };
 use foundry_evm::{
     backend::DatabaseError,
@@ -39,6 +39,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
+use foundry_primitives::FoundryTxEnvelope;
 use op_revm::{L1BlockInfo, OpContext, OpTransaction, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
@@ -84,12 +85,12 @@ impl ExecutedTransaction {
         .into();
 
         match self.transaction.pending_transaction.transaction.as_ref() {
-            TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
-            TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
-            TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
-            TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
-            TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(_tx) => {
+            FoundryTxEnvelope::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
+            FoundryTxEnvelope::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
+            FoundryTxEnvelope::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
+            FoundryTxEnvelope::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
+            FoundryTxEnvelope::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
+            FoundryTxEnvelope::Deposit(_tx) => {
                 TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
                     receipt: op_alloy_consensus::OpDepositReceipt {
                         inner: receipt_with_bloom.receipt,
@@ -276,7 +277,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut tx_env: OpTransaction<TxEnv> =
             FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
 
-        if let TypedTransaction::EIP7702(tx_7702) = tx.transaction.as_ref()
+        if let FoundryTxEnvelope::EIP7702(tx_7702) = tx.transaction.as_ref()
             && self.cheats.has_recover_overrides()
         {
             // Override invalid recovered authorizations with signature overrides from cheat manager
