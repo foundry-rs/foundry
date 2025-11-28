@@ -15,11 +15,12 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{EthereumOpts, RpcOpts, TransactionOpts},
+    opts::{ChainValueParser, EthereumOpts, RpcOpts, TransactionOpts},
     utils::{self, TraceResult, parse_ether_value},
 };
 use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::Chain;
 use foundry_config::{
     Config,
     figment::{
@@ -133,6 +134,15 @@ pub struct CallArgs {
 
     #[arg(long)]
     from: Option<Address>,
+
+    #[arg(
+        short,
+        long,
+        alias = "chain-id",
+        env = "CHAIN",
+        value_parser = ChainValueParser::default(),
+    )]
+    pub chain: Option<Chain>,
 
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
