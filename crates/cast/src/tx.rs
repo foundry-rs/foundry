@@ -13,20 +13,46 @@ use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind, Transacti
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
+use clap::Args;
 use eyre::Result;
 use foundry_cli::{
-    opts::{CliAuthorizationList, TransactionOpts},
-    utils::{self, parse_function_args},
+    opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
+    utils::{self, LoadConfig, get_provider_builder, parse_function_args},
 };
-use foundry_common::{
-    fmt::format_tokens,
-    provider::{RetryProvider, RetryProviderWithSigner},
-};
+use foundry_common::{fmt::format_tokens, provider::RetryProviderWithSigner};
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
-use std::fmt::Write;
+use std::{fmt::Write, time::Duration};
+
+#[derive(Debug, Clone, Args)]
+pub struct SendTxOpts {
+    /// Only print the transaction hash and exit immediately.
+    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
+    pub cast_async: bool,
+
+    /// Wait for transaction receipt synchronously instead of polling.
+    /// Note: uses `eth_sendTransactionSync` which may not be supported by all clients.
+    #[arg(long, conflicts_with = "async")]
+    pub sync: bool,
+
+    /// The number of confirmations until the receipt is fetched.
+    #[arg(long, default_value = "1")]
+    pub confirmations: u64,
+
+    /// Timeout for sending the transaction.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
+    /// Polling interval for transaction receipts (in seconds).
+    #[arg(long, alias = "poll-interval", env = "ETH_POLL_INTERVAL")]
+    pub poll_interval: Option<u64>,
+
+    /// Ethereum options
+    #[command(flatten)]
+    pub eth: EthereumOpts,
+}
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
@@ -500,13 +526,15 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 }
 
 /// Creates a provider with wallet for signing transactions locally.
-pub async fn signing_provider(
-    wallet: WalletOpts,
-    provider: &RetryProvider,
+pub(crate) async fn signing_provider(
+    tx_opts: &SendTxOpts,
 ) -> eyre::Result<RetryProviderWithSigner> {
-    let wallet = alloy_network::EthereumWallet::from(wallet.signer().await?);
-    Ok(alloy_provider::ProviderBuilder::default()
-        .with_recommended_fillers()
-        .wallet(wallet)
-        .connect_provider(provider.clone()))
+    let config = tx_opts.eth.load_config()?;
+    let signer = tx_opts.eth.wallet.signer().await?;
+    let wallet = alloy_network::EthereumWallet::from(signer);
+    let provider = get_provider_builder(&config)?.build_with_wallet(wallet)?;
+    if let Some(interval) = tx_opts.poll_interval {
+        provider.client().set_poll_interval(Duration::from_secs(interval))
+    }
+    Ok(provider)
 }

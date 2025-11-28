@@ -83,7 +83,7 @@ impl ExecutedTransaction {
         }
         .into();
 
-        match &self.transaction.pending_transaction.transaction.transaction {
+        match self.transaction.pending_transaction.transaction.as_ref() {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
             TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
@@ -203,13 +203,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                 }
             };
             if is_cancun {
-                let tx_blob_gas = tx
-                    .transaction
-                    .pending_transaction
-                    .transaction
-                    .transaction
-                    .blob_gas_used()
-                    .unwrap_or(0);
+                let tx_blob_gas =
+                    tx.transaction.pending_transaction.transaction.blob_gas_used().unwrap_or(0);
                 cumulative_blob_gas_used =
                     Some(cumulative_blob_gas_used.unwrap_or(0u64).saturating_add(tx_blob_gas));
             }
@@ -279,9 +274,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env: OpTransaction<TxEnv> =
-            FromRecoveredTx::from_recovered_tx(&tx.transaction.transaction, *tx.sender());
+            FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
 
-        if let TypedTransaction::EIP7702(tx_7702) = &tx.transaction.transaction
+        if let TypedTransaction::EIP7702(tx_7702) = tx.transaction.as_ref()
             && self.cheats.has_recover_overrides()
         {
             // Override invalid recovered authorizations with signature overrides from cheat manager
@@ -311,7 +306,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         }
 
         if self.networks.is_optimism() {
-            tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
+            tx_env.enveloped_tx = Some(alloy_rlp::encode(tx.transaction.as_ref()).into());
         }
 
         Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.networks)
@@ -365,7 +360,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
-            transaction.pending_transaction.transaction.transaction.blob_gas_used().unwrap_or(0),
+            transaction.pending_transaction.transaction.blob_gas_used().unwrap_or(0),
         );
         if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction));
@@ -468,9 +463,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         self.gas_used = self.gas_used.saturating_add(gas_used);
 
         // Track the total blob gas used for total blob gas per blob checks
-        if let Some(blob_gas) =
-            transaction.pending_transaction.transaction.transaction.blob_gas_used()
-        {
+        if let Some(blob_gas) = transaction.pending_transaction.transaction.blob_gas_used() {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas);
         }
 
