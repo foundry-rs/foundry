@@ -1187,18 +1187,20 @@ casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
 
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
 casttest!(rlp, |_prj, cmd| {
-    cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.args(["convert", "--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 0xc881aac3c281bb81cc
 
-"#
-    ]]);
+"#]]);
 
     cmd.cast_fuse();
-    cmd.args(["--from-rlp", "0xcbc58455556666c0c0c2c1c0"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["convert", "--from-rlp", "0xcbc58455556666c0c0c2c1c0"]).assert_success().stdout_eq(
+        str![[r#"
 [["0x55556666"],[],[],[[[]]]]
 
-"#]]);
+"#]],
+    );
 });
 
 // test that `cast impl` works correctly for both the implementation slot and the beacon slot
@@ -1389,11 +1391,11 @@ casttest!(to_base, |_prj, cmd| {
         for subcmd in ["--to-base", "--to-hex", "--to-dec"] {
             if subcmd == "--to-base" {
                 for base in ["bin", "oct", "dec", "hex"] {
-                    cmd.cast_fuse().args([subcmd, value, base]);
+                    cmd.cast_fuse().args(["convert", subcmd, value, base]);
                     assert!(!cmd.assert_success().get_output().stdout_lossy().trim().is_empty());
                 }
             } else {
-                cmd.cast_fuse().args([subcmd, value]);
+                cmd.cast_fuse().args(["convert", subcmd, value]);
                 assert!(!cmd.assert_success().get_output().stdout_lossy().trim().is_empty());
             }
         }
@@ -1501,6 +1503,7 @@ revertReason         Counter is too large, data: "0x08c379a000000000000000000000
 // tests that `cast --parse-bytes32-address` command is working correctly.
 casttest!(parse_bytes32_address, |_prj, cmd| {
     cmd.args([
+        "convert",
         "--parse-bytes32-address",
         "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045",
     ])
@@ -2699,20 +2702,22 @@ casttest!(hash_message, |_prj, cmd| {
 });
 
 casttest!(parse_units, |_prj, cmd| {
-    cmd.args(["parse-units", "1.5", "6"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["convert", "parse-units", "1.5", "6"]).assert_success().stdout_eq(str![[r#"
 1500000
 
 "#]]);
 
-    cmd.cast_fuse().args(["pun", "1.23", "18"]).assert_success().stdout_eq(str![[r#"
+    cmd.cast_fuse().args(["convert", "pun", "1.23", "18"]).assert_success().stdout_eq(str![[r#"
 1230000000000000000
 
 "#]]);
 
-    cmd.cast_fuse().args(["--parse-units", "1.23", "3"]).assert_success().stdout_eq(str![[r#"
+    cmd.cast_fuse().args(["convert", "--parse-units", "1.23", "3"]).assert_success().stdout_eq(
+        str![[r#"
 1230
 
-"#]]);
+"#]],
+    );
 });
 
 casttest!(string_decode, |_prj, cmd| {
@@ -2723,19 +2728,19 @@ casttest!(string_decode, |_prj, cmd| {
 });
 
 casttest!(format_units, |_prj, cmd| {
-    cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["convert", "format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
 1
 
 "#]]);
 
-    cmd.cast_fuse().args(["--format-units", "2500000", "6"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.cast_fuse().args(["convert", "--format-units", "2500000", "6"]).assert_success().stdout_eq(
+        str![[r#"
 2.500000
 
-"#
-    ]]);
+"#]],
+    );
 
-    cmd.cast_fuse().args(["fun", "1230", "3"]).assert_success().stdout_eq(str![[r#"
+    cmd.cast_fuse().args(["convert", "fun", "1230", "3"]).assert_success().stdout_eq(str![[r#"
 1.230
 
 "#]]);

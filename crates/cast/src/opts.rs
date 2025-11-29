@@ -867,7 +867,7 @@ pub enum CastSubcommand {
         command: Erc20Subcommand,
     },
     /// Convert operations.
-    #[command(visible_alias = "convert")]
+    #[command(name = "convert")]
     Convert {
         #[command(subcommand)]
         command: ConvertSubCommand,
