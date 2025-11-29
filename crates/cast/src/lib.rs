@@ -19,7 +19,8 @@ use alloy_provider::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, TransactionRequest,
+    state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
 use base::{Base, NumberWithBase, ToBase};
@@ -979,6 +980,119 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             s.join("\n")
         };
         Ok(res)
+    }
+
+    pub async fn filter_logs_chunked(&self, filter: Filter, chunk_size: u64) -> Result<String> {
+        let logs = self.get_logs_chunked(&filter, chunk_size).await?;
+
+        let res = if shell::is_json() {
+            serde_json::to_string(&logs)?
+        } else {
+            let mut s = vec![];
+            for log in logs {
+                let pretty = log
+                    .pretty()
+                    .replacen('\n', "- ", 1) // Remove empty first line
+                    .replace('\n', "\n  "); // Indent
+                s.push(pretty);
+            }
+            s.join("\n")
+        };
+        Ok(res)
+    }
+
+    async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>> {
+        // Try the full range first
+        match self.provider.get_logs(filter).await {
+            Ok(logs) => Ok(logs),
+            Err(e) => {
+                // Any error - try chunking as fallback
+                let (from_block, to_block) = Self::extract_block_range(filter)?;
+
+                if let (Some(from), Some(to)) = (from_block, to_block) {
+                    if from >= to {
+                        return Ok(vec![]);
+                    }
+
+                    let mut all_logs = Vec::new();
+                    let mut current = from;
+
+                    while current < to {
+                        let chunk_end = std::cmp::min(current + chunk_size, to);
+
+                        // Create filter for this chunk
+                        let chunk_filter =
+                            filter.clone().from_block(current).to_block(chunk_end - 1);
+
+                        // Get logs for this chunk, with adaptive sub-chunking if needed
+                        let chunk_logs = match self.provider.get_logs(&chunk_filter).await {
+                            Ok(logs) => logs,
+                            Err(_) => {
+                                // Chunk still too large, try smaller sub-chunks
+                                let mut sub_logs = Vec::new();
+                                let sub_chunk_size = std::cmp::max(1, (chunk_end - current) / 4);
+                                let mut sub_current = current;
+
+                                while sub_current < chunk_end {
+                                    let sub_end =
+                                        std::cmp::min(sub_current + sub_chunk_size, chunk_end);
+                                    let sub_filter = filter
+                                        .clone()
+                                        .from_block(sub_current)
+                                        .to_block(sub_end - 1);
+
+                                    match self.provider.get_logs(&sub_filter).await {
+                                        Ok(logs) => sub_logs.extend(logs),
+                                        Err(_) => {
+                                            // Even sub-chunks fail, try individual blocks
+                                            for single_block in sub_current..sub_end {
+                                                let single_filter = filter
+                                                    .clone()
+                                                    .from_block(single_block)
+                                                    .to_block(single_block);
+                                                if let Ok(logs) =
+                                                    self.provider.get_logs(&single_filter).await
+                                                {
+                                                    sub_logs.extend(logs);
+                                                }
+                                                // If single block fails, just skip it
+                                            }
+                                        }
+                                    }
+                                    sub_current = sub_end;
+                                }
+                                sub_logs
+                            }
+                        };
+                        all_logs.extend(chunk_logs);
+
+                        current = chunk_end;
+                    }
+
+                    Ok(all_logs)
+                } else {
+                    // Can't extract valid block range, re-throw original error
+                    Err(e.into())
+                }
+            }
+        }
+    }
+
+    fn extract_block_range(filter: &Filter) -> Result<(Option<u64>, Option<u64>)> {
+        match &filter.block_option {
+            FilterBlockOption::Range { from_block, to_block } => {
+                let from = from_block.and_then(|b| match b {
+                    BlockNumberOrTag::Number(n) => Some(n),
+                    _ => None,
+                });
+                let to = to_block.and_then(|b| match b {
+                    BlockNumberOrTag::Number(n) => Some(n),
+                    _ => None,
+                });
+                Ok((from, to))
+            }
+            _ => Ok((None, None)),
+        }
     }
 
     /// Converts a block identifier into a block number.

@@ -45,14 +45,27 @@ pub struct LogsArgs {
     #[arg(long)]
     subscribe: bool,
 
+    /// Number of blocks to query in each chunk when the provider has range limits.
+    /// Defaults to 10000 blocks per chunk.
+    #[arg(long, default_value = "10000")]
+    query_size: u64,
+
     #[command(flatten)]
     eth: EthereumOpts,
 }
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, eth } =
-            self;
+        let Self {
+            from_block,
+            to_block,
+            address,
+            sig_or_topic,
+            topics_or_args,
+            subscribe,
+            query_size,
+            eth,
+        } = self;
 
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
@@ -77,7 +90,7 @@ impl LogsArgs {
         let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
-            let logs = cast.filter_logs(filter).await?;
+            let logs = cast.filter_logs_chunked(filter, query_size).await?;
             sh_println!("{logs}")?;
             return Ok(());
         }
