@@ -83,22 +83,6 @@ pub struct RunArgs {
     #[arg(long)]
     evm_version: Option<EvmVersion>,
 
-    /// Sets the number of assumed available compute units per second for this provider
-    ///
-    /// default value: 330
-    ///
-    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    #[arg(long, alias = "cups", value_name = "CUPS")]
-    pub compute_units_per_second: Option<u64>,
-
-    /// Disables rate limiting for this node's provider.
-    ///
-    /// default value: false
-    ///
-    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
-    pub no_rate_limit: bool,
-
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
@@ -128,8 +112,11 @@ impl RunArgs {
         let debug = self.debug;
         let decode_internal = self.decode_internal;
         let disable_labels = self.disable_labels;
-        let compute_units_per_second =
-            if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
+        let compute_units_per_second = if self.rpc.no_rpc_rate_limit {
+            Some(u64::MAX)
+        } else {
+            self.rpc.compute_units_per_second
+        };
 
         let provider = foundry_cli::utils::get_provider_builder(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
