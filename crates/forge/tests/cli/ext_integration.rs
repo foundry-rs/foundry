@@ -6,7 +6,7 @@ use foundry_test_utils::util::ExtTester;
 // <https://github.com/foundry-rs/forge-std>
 #[test]
 fn forge_std() {
-    ExtTester::new("foundry-rs", "forge-std", "a6d71da563bbb8d6eef8fbec3a16c61c603d2764")
+    ExtTester::new("foundry-rs", "forge-std", "b69e66b0ff79924d487d49bf7fb47c9ec326acba")
         // Skip fork tests.
         .args(["--nmc", "Fork"])
         .verbosity(2)
@@ -64,7 +64,7 @@ fn sablier_v2_core() {
 // <https://github.com/Vectorized/solady>
 #[test]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "701406e8126cfed931645727b274df303fbcd94d").run();
+    ExtTester::new("Vectorized", "solady", "fda607f2b8084112cbc0b261c8f6239687b8a15c").run();
 }
 
 // <https://github.com/pcaversaccio/snekmate>

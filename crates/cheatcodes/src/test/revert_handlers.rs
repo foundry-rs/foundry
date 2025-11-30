@@ -240,7 +240,7 @@ pub(crate) fn handle_expect_revert(
                     let decoded_revert = decode_revert(retdata.to_vec());
 
                     // Provide more specific error messages based on what was expected
-                    if let Some(reverter) = expected_revert.reverter.as_ref() {
+                    if let Some(reverter) = expected_revert.reverter {
                         if expected_revert.reason.is_some() {
                             Err(fmt_err!(
                                 "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
