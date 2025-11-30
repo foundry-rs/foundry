@@ -64,7 +64,7 @@ fn sablier_v2_core() {
 // <https://github.com/Vectorized/solady>
 #[test]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "701406e8126cfed931645727b274df303fbcd94d").run();
+    ExtTester::new("Vectorized", "solady", "fda607f2b8084112cbc0b261c8f6239687b8a15c").run();
 }
 
 // <https://github.com/pcaversaccio/snekmate>
