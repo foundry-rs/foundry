@@ -191,9 +191,8 @@ impl Display for AccountStateDiffs {
             for (slot, slot_changes) in &self.state_diff {
                 match &slot_changes.slot_info {
                     Some(slot_info) => {
-                        if slot_info.decoded.is_some() {
+                        if let Some(decoded) = &slot_info.decoded {
                             // Have slot info with decoded values - show decoded values
-                            let decoded = slot_info.decoded.as_ref().unwrap();
                             writeln!(
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
