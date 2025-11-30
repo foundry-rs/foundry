@@ -3,11 +3,12 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
+use alloy_primitives::Address;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{EthereumOpts, TransactionOpts},
+    opts::{EthereumOpts, RpcOpts, TransactionOpts},
     utils::{self, LoadConfig},
 };
 use std::str::FromStr;
@@ -36,20 +37,27 @@ pub struct AccessListArgs {
     #[arg(long, short = 'B')]
     block: Option<BlockId>,
 
+    #[arg(long)]
+    from: Option<Address>,
+
     #[command(flatten)]
     tx: TransactionOpts,
 
     #[command(flatten)]
-    eth: EthereumOpts,
+    rpc: RpcOpts,
 }
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, sig, args, tx, eth, block } = self;
+        let Self { to, sig, args, tx, rpc, from, block } = self;
 
-        let config = eth.load_config()?;
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-        let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
+        let sender = if let Some(from) = from {
+            SenderKind::Address(from)
+        } else {
+            SenderKind::from_wallet_opts(EthereumOpts::default().wallet).await?
+        };
 
         let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
             .await?

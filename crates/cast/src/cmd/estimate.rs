@@ -1,12 +1,12 @@
 use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_ens::NameOrAddress;
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{EthereumOpts, TransactionOpts},
+    opts::{EthereumOpts, RpcOpts, TransactionOpts},
     utils::{self, LoadConfig, parse_ether_value},
 };
 use std::str::FromStr;
@@ -37,6 +37,9 @@ pub struct EstimateArgs {
     #[arg(long)]
     cost: bool,
 
+    #[arg(long)]
+    from: Option<Address>,
+
     #[command(subcommand)]
     command: Option<EstimateSubcommands>,
 
@@ -44,7 +47,7 @@ pub struct EstimateArgs {
     tx: TransactionOpts,
 
     #[command(flatten)]
-    eth: EthereumOpts,
+    rpc: RpcOpts,
 }
 
 #[derive(Debug, Parser)]
@@ -74,11 +77,16 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, mut tx, block, cost, eth, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, cost, from, rpc, command } = self;
 
-        let config = eth.load_config()?;
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-        let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
+
+        let sender = if let Some(from) = from {
+            SenderKind::Address(from)
+        } else {
+            SenderKind::from_wallet_opts(EthereumOpts::default().wallet).await?
+        };
 
         let code = if let Some(EstimateSubcommands::Create {
             code,

@@ -7,7 +7,10 @@ use alloy_primitives::{Address, B256, hex::FromHex};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
+use foundry_cli::{
+    opts::RpcOpts,
+    utils::{self, LoadConfig},
+};
 use itertools::Itertools;
 use std::{io, str::FromStr};
 
@@ -46,15 +49,15 @@ pub struct LogsArgs {
     subscribe: bool,
 
     #[command(flatten)]
-    eth: EthereumOpts,
+    rpc: RpcOpts,
 }
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, eth } =
+        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, rpc } =
             self;
 
-        let config = eth.load_config()?;
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         let cast = Cast::new(&provider);
