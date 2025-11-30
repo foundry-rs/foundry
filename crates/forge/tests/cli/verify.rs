@@ -348,7 +348,7 @@ Error: No verifier URL specified for verifier blockscout
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: No known Etherscan API URL for chain `4202`. To fix this, please:
-1. Specify a `url` 
+1. Specify a `url` when using Etherscan verifier
 2. Verify the chain `4202` is correct
 
 "#]]);
