@@ -11,12 +11,13 @@ use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
+use foundry_primitives::FoundryTxEnvelope;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -569,7 +570,7 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SerializableTransactionType {
-    TypedTransaction(TypedTransaction),
+    TypedTransaction(FoundryTxEnvelope),
     MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
 }
 

@@ -23,6 +23,7 @@ use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, VecDeque},
+    mem,
     sync::Arc,
 };
 
@@ -263,7 +264,7 @@ impl FilledTransactionsState {
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
-    pub async fn bundle(self) -> Result<BundledState> {
+    pub async fn bundle(mut self) -> Result<BundledState> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
@@ -279,7 +280,7 @@ impl FilledTransactionsState {
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
         // [`ScriptSequence`] from all the collected transactions up to this point.
-        let mut txes_iter = self.transactions.clone().into_iter().peekable();
+        let mut txes_iter = mem::take(&mut self.transactions).into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
             let tx_rpc = tx.rpc.to_owned();

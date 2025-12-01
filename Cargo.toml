@@ -21,10 +21,11 @@ members = [
     "crates/evm/traces/",
     "crates/fmt/",
     "crates/forge/",
-    "crates/script-sequence/",
-    "crates/macros/",
-    "crates/test-utils/",
     "crates/lint/",
+    "crates/macros/",
+    "crates/primitives/",
+    "crates/script-sequence/",
+    "crates/test-utils/",
 ]
 resolver = "2"
 
@@ -220,6 +221,7 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
+foundry-primitives = { path = "crates/primitives" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.22.0", default-features = false }

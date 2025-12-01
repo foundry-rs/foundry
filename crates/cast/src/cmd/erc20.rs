@@ -1,6 +1,10 @@
 use std::str::FromStr;
 
-use crate::{format_uint_exp, tx::signing_provider};
+use crate::{
+    cmd::send::cast_send,
+    format_uint_exp,
+    tx::{SendTxOpts, signing_provider},
+};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_primitives::U256;
@@ -10,8 +14,6 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
-use foundry_wallets::WalletOpts;
-
 #[doc(hidden)]
 pub use foundry_config::utils::*;
 
@@ -69,10 +71,7 @@ pub enum Erc20Subcommand {
         amount: String,
 
         #[command(flatten)]
-        rpc: RpcOpts,
-
-        #[command(flatten)]
-        wallet: WalletOpts,
+        send_tx: SendTxOpts,
     },
 
     /// Approve ERC20 token spending.
@@ -90,10 +89,7 @@ pub enum Erc20Subcommand {
         amount: String,
 
         #[command(flatten)]
-        rpc: RpcOpts,
-
-        #[command(flatten)]
-        wallet: WalletOpts,
+        send_tx: SendTxOpts,
     },
 
     /// Query ERC20 token allowance.
@@ -194,10 +190,7 @@ pub enum Erc20Subcommand {
         amount: String,
 
         #[command(flatten)]
-        rpc: RpcOpts,
-
-        #[command(flatten)]
-        wallet: WalletOpts,
+        send_tx: SendTxOpts,
     },
 
     /// Burn ERC20 tokens.
@@ -211,10 +204,7 @@ pub enum Erc20Subcommand {
         amount: String,
 
         #[command(flatten)]
-        rpc: RpcOpts,
-
-        #[command(flatten)]
-        wallet: WalletOpts,
+        send_tx: SendTxOpts,
     },
 }
 
@@ -222,25 +212,25 @@ impl Erc20Subcommand {
     fn rpc(&self) -> &RpcOpts {
         match self {
             Self::Allowance { rpc, .. } => rpc,
-            Self::Approve { rpc, .. } => rpc,
+            Self::Approve { send_tx, .. } => &send_tx.eth.rpc,
             Self::Balance { rpc, .. } => rpc,
-            Self::Transfer { rpc, .. } => rpc,
+            Self::Transfer { send_tx, .. } => &send_tx.eth.rpc,
             Self::Name { rpc, .. } => rpc,
             Self::Symbol { rpc, .. } => rpc,
             Self::Decimals { rpc, .. } => rpc,
             Self::TotalSupply { rpc, .. } => rpc,
-            Self::Mint { rpc, .. } => rpc,
-            Self::Burn { rpc, .. } => rpc,
+            Self::Mint { send_tx, .. } => &send_tx.eth.rpc,
+            Self::Burn { send_tx, .. } => &send_tx.eth.rpc,
         }
     }
 
     pub async fn run(self) -> eyre::Result<()> {
         let config = self.rpc().load_config()?;
-        let provider = get_provider(&config)?;
 
         match self {
             // Read-only
             Self::Allowance { token, owner, spender, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
                 let spender = spender.resolve(&provider).await?;
@@ -254,6 +244,7 @@ impl Erc20Subcommand {
                 sh_println!("{}", format_uint_exp(allowance))?
             }
             Self::Balance { token, owner, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
 
@@ -265,6 +256,7 @@ impl Erc20Subcommand {
                 sh_println!("{}", format_uint_exp(balance))?
             }
             Self::Name { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let name = IERC20::new(token, &provider)
@@ -275,6 +267,7 @@ impl Erc20Subcommand {
                 sh_println!("{}", name)?
             }
             Self::Symbol { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let symbol = IERC20::new(token, &provider)
@@ -285,6 +278,7 @@ impl Erc20Subcommand {
                 sh_println!("{}", symbol)?
             }
             Self::Decimals { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let decimals = IERC20::new(token, &provider)
@@ -295,6 +289,7 @@ impl Erc20Subcommand {
                 sh_println!("{}", decimals)?
             }
             Self::TotalSupply { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let total_supply = IERC20::new(token, &provider)
@@ -305,40 +300,65 @@ impl Erc20Subcommand {
                 sh_println!("{}", format_uint_exp(total_supply))?
             }
             // State-changing
-            Self::Transfer { token, to, amount, wallet, .. } => {
-                let token = token.resolve(&provider).await?;
-                let to = to.resolve(&provider).await?;
-                let amount = U256::from_str(&amount)?;
-
-                let provider = signing_provider(wallet, &provider).await?;
-                let tx = IERC20::new(token, &provider).transfer(to, amount).send().await?;
-                sh_println!("{}", tx.tx_hash())?
+            Self::Transfer { token, to, amount, send_tx, .. } => {
+                let provider = signing_provider(&send_tx).await?;
+                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                    .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                    .into_transaction_request();
+                cast_send(
+                    provider,
+                    tx,
+                    send_tx.cast_async,
+                    send_tx.sync,
+                    send_tx.confirmations,
+                    send_tx.timeout.unwrap_or(config.transaction_timeout),
+                )
+                .await?
             }
-            Self::Approve { token, spender, amount, wallet, .. } => {
-                let token = token.resolve(&provider).await?;
-                let spender = spender.resolve(&provider).await?;
-                let amount = U256::from_str(&amount)?;
-
-                let provider = signing_provider(wallet, &provider).await?;
-                let tx = IERC20::new(token, &provider).approve(spender, amount).send().await?;
-                sh_println!("{}", tx.tx_hash())?
+            Self::Approve { token, spender, amount, send_tx, .. } => {
+                let provider = signing_provider(&send_tx).await?;
+                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                    .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
+                    .into_transaction_request();
+                cast_send(
+                    provider,
+                    tx,
+                    send_tx.cast_async,
+                    send_tx.sync,
+                    send_tx.confirmations,
+                    send_tx.timeout.unwrap_or(config.transaction_timeout),
+                )
+                .await?
             }
-            Self::Mint { token, to, amount, wallet, .. } => {
-                let token = token.resolve(&provider).await?;
-                let to = to.resolve(&provider).await?;
-                let amount = U256::from_str(&amount)?;
-
-                let provider = signing_provider(wallet, &provider).await?;
-                let tx = IERC20::new(token, &provider).mint(to, amount).send().await?;
-                sh_println!("{}", tx.tx_hash())?
+            Self::Mint { token, to, amount, send_tx, .. } => {
+                let provider = signing_provider(&send_tx).await?;
+                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                    .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                    .into_transaction_request();
+                cast_send(
+                    provider,
+                    tx,
+                    send_tx.cast_async,
+                    send_tx.sync,
+                    send_tx.confirmations,
+                    send_tx.timeout.unwrap_or(config.transaction_timeout),
+                )
+                .await?
             }
-            Self::Burn { token, amount, wallet, .. } => {
-                let token = token.resolve(&provider).await?;
-                let amount = U256::from_str(&amount)?;
-
-                let provider = signing_provider(wallet, &provider).await?;
-                let tx = IERC20::new(token, &provider).burn(amount).send().await?;
-                sh_println!("{}", tx.tx_hash())?
+            Self::Burn { token, amount, send_tx, .. } => {
+                let provider = signing_provider(&send_tx).await?;
+                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                    .burn(U256::from_str(&amount)?)
+                    .into_transaction_request();
+                cast_send(
+                    provider,
+                    tx,
+                    send_tx.cast_async,
+                    send_tx.sync,
+                    send_tx.confirmations,
+                    send_tx.timeout.unwrap_or(config.transaction_timeout),
+                )
+                .await?
             }
         };
         Ok(())

@@ -187,6 +187,15 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
     render_trace_arena_inner(arena, false, false)
 }
 
+/// Prunes trace depth if depth is provided as an argument
+pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
+    for node in arena.nodes_mut() {
+        if node.trace.depth >= depth {
+            node.ordering.clear();
+        }
+    }
+}
+
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
 /// and in JSON format.
 pub fn render_trace_arena_inner(
