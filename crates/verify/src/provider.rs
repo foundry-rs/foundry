@@ -190,7 +190,10 @@ impl VerificationProviderType {
             if let Some(chain) = chain
                 && chain.etherscan_urls().is_none()
             {
-                eyre::bail!(EtherscanConfigError::UnknownChain(String::new(), chain))
+                eyre::bail!(EtherscanConfigError::UnknownChain(
+                    "when using Etherscan verifier".to_string(),
+                    chain
+                ))
             }
             if !has_key {
                 eyre::bail!("ETHERSCAN_API_KEY must be set to use Etherscan as a verifier")

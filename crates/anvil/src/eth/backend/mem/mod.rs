@@ -1218,13 +1218,13 @@ impl Backend {
     > {
         let mut env = self.next_env();
         env.tx = FromRecoveredTx::from_recovered_tx(
-            &tx.pending_transaction.transaction.transaction,
+            tx.pending_transaction.transaction.as_ref(),
             *tx.pending_transaction.sender(),
         );
 
         if env.networks.is_optimism() {
             env.tx.enveloped_tx =
-                Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
+                Some(alloy_rlp::encode(tx.pending_transaction.transaction.as_ref()).into());
         }
 
         let db = self.db.read().await;
@@ -2786,11 +2786,11 @@ impl Backend {
             let target_tx = block.body.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
             let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
-                &target_tx.transaction.transaction,
+                target_tx.transaction.as_ref(),
                 *target_tx.sender(),
             );
             if env.networks.is_optimism() {
-                tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
+                tx_env.enveloped_tx = Some(target_tx.transaction.encoded_2718().into());
             }
 
             let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
@@ -3661,8 +3661,7 @@ impl TransactionValidator for Backend {
         }
 
         // Nonce validation
-        let is_deposit_tx =
-            matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
+        let is_deposit_tx = matches!(pending.transaction.as_ref(), TypedTransaction::Deposit(_));
         let nonce = tx.nonce();
         if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
@@ -3670,9 +3669,9 @@ impl TransactionValidator for Backend {
         }
 
         // EIP-4844 structural validation
-        if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
+        if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.is_eip4844() {
             // Heavy (blob validation) checks
-            let blob_tx = match &tx.transaction {
+            let blob_tx = match tx.as_ref() {
                 TypedTransaction::EIP4844(tx) => tx.tx(),
                 _ => unreachable!(),
             };
@@ -3744,8 +3743,8 @@ impl TransactionValidator for Backend {
 
             // EIP-4844 blob fee validation
             if env.evm_env.cfg_env.spec >= SpecId::CANCUN
-                && tx.transaction.is_eip4844()
-                && let Some(max_fee_per_blob_gas) = tx.as_ref().max_fee_per_blob_gas()
+                && tx.is_eip4844()
+                && let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas()
                 && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
                 && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
             {
@@ -3764,7 +3763,7 @@ impl TransactionValidator for Backend {
                         .mul(tx.max_fee_per_blob_gas().unwrap_or(0)),
                 );
             let value = tx.value();
-            match &tx.transaction {
+            match tx.as_ref() {
                 TypedTransaction::Deposit(deposit_tx) => {
                     // Deposit transactions
                     // https://specs.optimism.io/protocol/deposits.html#execution
@@ -3815,7 +3814,7 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
-    if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
+    if let TypedTransaction::Deposit(deposit_tx) = eth_transaction.as_ref() {
         let dep_tx = deposit_tx;
 
         let ser = serde_json::to_value(dep_tx).expect("could not serialize TxDeposit");
