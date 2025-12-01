@@ -507,7 +507,7 @@ impl WalletSubcommands {
                 let addr = wallet.address();
                 sh_println!("{}", addr.to_checksum(None))?;
             }
-            Self::Derive {mnemonic, accounts, insecure} => {
+            Self::Derive { mnemonic, accounts, insecure } => {
                 let format_json = shell::is_json();
                 let mut accounts_json = json!([]);
                 for i in 0..accounts.unwrap_or(1) {
@@ -521,25 +521,21 @@ impl WalletSubcommands {
                     }
                     .signer()
                     .await?;
-                    
+
                     match wallet {
                         WalletSigner::Local(local_wallet) => {
                             let address = local_wallet.address().to_checksum(None);
                             let private_key = hex::encode(local_wallet.credential().to_bytes());
                             if format_json {
                                 if insecure {
-                                    accounts_json.as_array_mut().unwrap().push(
-                                        json!({
-                                            "address": format!("{}", address),
-                                            "private_key": format!("0x{}", private_key),
-                                        })
-                                    );
+                                    accounts_json.as_array_mut().unwrap().push(json!({
+                                        "address": format!("{}", address),
+                                        "private_key": format!("0x{}", private_key),
+                                    }));
                                 } else {
-                                    accounts_json.as_array_mut().unwrap().push(
-                                        json!({
-                                            "address": format!("{}", address)
-                                        })
-                                    );
+                                    accounts_json.as_array_mut().unwrap().push(json!({
+                                        "address": format!("{}", address)
+                                    }));
                                 }
                             } else {
                                 sh_println!("- Account {i}:")?;
