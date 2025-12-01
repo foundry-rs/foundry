@@ -138,14 +138,35 @@ impl ResolvedEtherscanConfigs {
         self,
         chain: Chain,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
+        let mut first_error: Option<EtherscanConfigError> = None;
+        let mut matching_chain_error: Option<EtherscanConfigError> = None;
+
         for (_, config) in self.configs.into_iter() {
             match config {
-                Ok(c) if c.chain == Some(chain) => return Some(Ok(c)),
-                Err(e) => return Some(Err(e)),
-                _ => continue,
+                Ok(c) => {
+                    if c.chain == Some(chain) {
+                        return Some(Ok(c));
+                    }
+                }
+                Err(e) => {
+                    if matching_chain_error.is_none()
+                        && let EtherscanConfigError::UnknownChain(_, c) = &e
+                        && *c == chain
+                    {
+                        matching_chain_error = Some(e);
+                        continue;
+                    }
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
             }
         }
-        None
+
+        if let Some(e) = matching_chain_error {
+            return Some(Err(e));
+        }
+        first_error.map(Err)
     }
 
     /// Returns true if there's a config that couldn't be resolved
