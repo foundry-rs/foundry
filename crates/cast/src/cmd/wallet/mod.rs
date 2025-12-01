@@ -545,9 +545,7 @@ impl WalletSubcommands {
                                 }
                             }
                         }
-                        _ => {
-                            eyre::bail!("Expected local wallet for mnemonic derivation");
-                        }
+                        _ => eyre::bail!("Only local wallets are supported by this command"),
                     }
                 }
 
