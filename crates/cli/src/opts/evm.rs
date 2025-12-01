@@ -177,10 +177,6 @@ impl Provider for EvmArgs {
             dict.insert("no_rpc_rate_limit".to_string(), self.no_rpc_rate_limit.into());
         }
 
-        if let Some(fork_url) = &self.fork_url {
-            dict.insert("eth_rpc_url".to_string(), fork_url.clone().into());
-        }
-
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
