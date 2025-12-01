@@ -87,6 +87,22 @@ pub enum WalletSubcommands {
         wallet: WalletOpts,
     },
 
+    /// Derive accounts from a mnemonic
+    #[command(visible_alias = "d")]
+    Derive {
+        /// The accounts will be derived from the specified mnemonic phrase.
+        #[arg(value_name = "MNEMONIC")]
+        mnemonic: String,
+
+        /// Number of accounts to display.
+        #[arg(long, short, default_value = "1")]
+        accounts: Option<u8>,
+
+        /// Insecure mode: display private keys in the terminal.
+        #[arg(long, default_value = "false")]
+        insecure: bool,
+    },
+
     /// Sign a message or typed data.
     #[command(visible_alias = "s")]
     Sign {
@@ -228,7 +244,7 @@ pub enum WalletSubcommands {
     /// Derives private key from mnemonic
     #[command(name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
     PrivateKey {
-        /// If provided, the private key will be derived from the specified menomonic phrase.
+        /// If provided, the private key will be derived from the specified mnemonic phrase.
         #[arg(value_name = "MNEMONIC")]
         mnemonic_override: Option<String>,
 
@@ -490,6 +506,58 @@ impl WalletSubcommands {
                     .await?;
                 let addr = wallet.address();
                 sh_println!("{}", addr.to_checksum(None))?;
+            }
+            Self::Derive {mnemonic, accounts, insecure} => {
+                let format_json = shell::is_json();
+                let mut accounts_json = json!([]);
+                for i in 0..accounts.unwrap_or(1) {
+                    let wallet = WalletOpts {
+                        raw: RawWalletOpts {
+                            mnemonic: Some(mnemonic.clone()),
+                            mnemonic_index: i as u32,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                    .signer()
+                    .await?;
+                    
+                    match wallet {
+                        WalletSigner::Local(local_wallet) => {
+                            let address = local_wallet.address().to_checksum(None);
+                            let private_key = hex::encode(local_wallet.credential().to_bytes());
+                            if format_json {
+                                if insecure {
+                                    accounts_json.as_array_mut().unwrap().push(
+                                        json!({
+                                            "address": format!("{}", address),
+                                            "private_key": format!("0x{}", private_key),
+                                        })
+                                    );
+                                } else {
+                                    accounts_json.as_array_mut().unwrap().push(
+                                        json!({
+                                            "address": format!("{}", address)
+                                        })
+                                    );
+                                }
+                            } else {
+                                sh_println!("- Account {i}:")?;
+                                sh_println!("Address:     {}", address)?;
+                                if insecure {
+                                    sh_println!("Private key: 0x{}", private_key)?;
+                                }
+                            }
+                        }
+                        _ => {
+                            eyre::bail!("Expected local wallet for mnemonic derivation");
+                        }
+                    }
+                }
+
+                if format_json {
+                    sh_println!("{}", serde_json::to_string_pretty(&accounts_json)?)?;
+                }
             }
             Self::PublicKey { wallet, private_key_override } => {
                 let wallet = private_key_override
