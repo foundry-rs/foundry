@@ -240,21 +240,23 @@ pub(crate) fn handle_expect_revert(
                     let decoded_revert = decode_revert(retdata.to_vec());
 
                     // Provide more specific error messages based on what was expected
-                    if expected_revert.reverter.is_some() && expected_revert.reason.is_some() {
-                        Err(fmt_err!(
-                            "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
-                            stringify(&decoded_revert),
-                            expected_revert.reverted_by.unwrap_or_default(),
-                            stringify(expected_reason.unwrap_or_default()),
-                            expected_revert.reverter.unwrap()
-                        ))
-                    } else if expected_revert.reverter.is_some() {
-                        Err(fmt_err!(
-                            "call reverted with '{}' from {}, but expected 0 reverts from {}",
-                            stringify(&decoded_revert),
-                            expected_revert.reverted_by.unwrap_or_default(),
-                            expected_revert.reverter.unwrap()
-                        ))
+                    if let Some(reverter) = expected_revert.reverter {
+                        if expected_revert.reason.is_some() {
+                            Err(fmt_err!(
+                                "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
+                                stringify(&decoded_revert),
+                                expected_revert.reverted_by.unwrap_or_default(),
+                                stringify(expected_reason.unwrap_or_default()),
+                                reverter
+                            ))
+                        } else {
+                            Err(fmt_err!(
+                                "call reverted with '{}' from {}, but expected 0 reverts from {}",
+                                stringify(&decoded_revert),
+                                expected_revert.reverted_by.unwrap_or_default(),
+                                reverter
+                            ))
+                        }
                     } else {
                         Err(fmt_err!(
                             "call reverted with '{}' when it was expected not to revert",
