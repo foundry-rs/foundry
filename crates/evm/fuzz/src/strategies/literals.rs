@@ -16,18 +16,7 @@ use std::{
 
 #[derive(Clone, Debug, Default)]
 pub struct LiteralsDictionary {
-    inner: Arc<LiteralsDictionaryData>,
-}
-
-#[derive(Debug, Default)]
-struct LiteralsDictionaryData {
-    /// Data required for initialization, captured from `EvmFuzzState::new`.
-    analysis: Option<Analysis>,
-    paths_config: Option<ProjectPathsConfig>,
-    max_values: usize,
-
-    /// Lazy initialized literal maps.
-    maps: OnceLock<LiteralMaps>,
+    maps: Arc<OnceLock<LiteralMaps>>,
 }
 
 impl LiteralsDictionary {
@@ -36,46 +25,38 @@ impl LiteralsDictionary {
         paths_config: Option<ProjectPathsConfig>,
         max_values: usize,
     ) -> Self {
-        let this = Self {
-            inner: Arc::new(LiteralsDictionaryData {
-                analysis,
-                paths_config,
-                max_values,
-                maps: OnceLock::default(),
-            }),
-        };
-        // let _ = this.get();
-        this
+        let maps = Arc::new(OnceLock::<LiteralMaps>::new());
+        if let Some(analysis) = analysis {
+            let maps = maps.clone();
+            rayon::spawn(move || {
+                let _ = maps.get_or_init(|| {
+                    let literals =
+                        LiteralsCollector::process(&analysis, paths_config.as_ref(), max_values);
+                    debug!(
+                        words = literals.words.values().map(|set| set.len()).sum::<usize>(),
+                        strings = literals.strings.len(),
+                        bytes = literals.bytes.len(),
+                        "collected source code literals for fuzz dictionary"
+                    );
+                    literals
+                });
+            });
+        } else {
+            let _ = maps.set(Default::default());
+        }
+        Self { maps }
     }
 
-    /// Returns a reference to the `LiteralMaps`, initializing them on the first call.
+    /// Returns a reference to the `LiteralMaps`.
     pub fn get(&self) -> &LiteralMaps {
-        let inner = &*self.inner;
-        inner.maps.get_or_init(|| {
-            if let Some(analysis) = &inner.analysis {
-                let literals = LiteralsCollector::process(
-                    analysis,
-                    inner.paths_config.as_ref(),
-                    inner.max_values,
-                );
-                debug!(
-                    words = literals.words.values().map(|set| set.len()).sum::<usize>(),
-                    strings = literals.strings.len(),
-                    bytes = literals.bytes.len(),
-                    "collected source code literals for fuzz dictionary"
-                );
-                literals
-            } else {
-                LiteralMaps::default()
-            }
-        })
+        OnceLock::wait(&self.maps)
     }
 
     /// Test-only helper to seed the dictionary with literal values.
     #[cfg(test)]
     pub(crate) fn set(&mut self, map: super::LiteralMaps) {
-        let inner = Arc::get_mut(&mut self.inner).unwrap();
-        let _ = inner.maps.set(map);
+        self.maps = Arc::new(OnceLock::new());
+        self.maps.set(map).unwrap();
     }
 }
 
