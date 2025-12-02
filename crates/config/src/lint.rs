@@ -3,7 +3,10 @@
 use clap::ValueEnum;
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
-use solar::interface::diagnostics::Level;
+use solar::{
+    ast::{self as ast},
+    interface::diagnostics::Level,
+};
 use std::str::FromStr;
 use yansi::Paint;
 
@@ -76,6 +79,21 @@ impl Default for LintSpecificConfig {
             mixed_case_exceptions: vec!["ERC".to_string(), "URI".to_string()],
             multi_contract_file_exceptions: Vec::new(),
         }
+    }
+}
+
+impl LintSpecificConfig {
+    /// Checks if a given contract kind is included in the list of exceptions
+    pub fn is_exempted(&self, contract_kind: &ast::ContractKind) -> bool {
+        let exception_to_check = match contract_kind {
+            ast::ContractKind::Interface => ContractException::Interface,
+            ast::ContractKind::Library => ContractException::Library,
+            ast::ContractKind::AbstractContract => ContractException::AbstractContract,
+            // Regular contracts are always linted
+            ast::ContractKind::Contract => return false,
+        };
+
+        self.multi_contract_file_exceptions.contains(&exception_to_check)
     }
 }
 
