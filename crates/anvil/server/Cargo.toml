@@ -30,7 +30,7 @@ futures.workspace = true
 # ipc
 interprocess = { version = "2", optional = true, features = ["tokio"] }
 bytes = { workspace = true, optional = true }
-tokio-util = { version = "0.7.15", features = ["codec"], optional = true }
+tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 # misc
 serde_json.workspace = true

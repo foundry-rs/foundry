@@ -15,16 +15,12 @@ exclude.workspace = true
 workspace = true
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
 
 [dependencies]
-assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "40731c9", features = [
+assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git", branch = "mateo/update-revm", features = [
     "phoundry",
 ] }
+foundry-fork-db.workspace = true
 #assertion-executor = { path = "../../../credible-sdk/crates/assertion-executor", features = ["phoundry"]}
 
 foundry-cheatcodes-spec.workspace = true

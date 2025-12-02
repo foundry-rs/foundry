@@ -1068,6 +1068,8 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: false,
+                    precompile_call_logs: vec![],
                 }),
             };
         }

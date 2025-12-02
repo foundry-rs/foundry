@@ -1,6 +1,7 @@
 use crate::{inspector::Ecx, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Bytes, FixedBytes, TxKind};
 use alloy_sol_types::{Revert, SolError};
+use foundry_fork_db::DatabaseError;
 use assertion_executor::{
     db::{fork_db::ForkDb, DatabaseCommit, DatabaseRef},
     primitives::{
@@ -11,7 +12,7 @@ use assertion_executor::{
     ExecutorConfig,
 };
 
-use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
+use foundry_evm_core::backend::{DatabaseExt};
 use revm::context_interface::{ContextTr, JournalTr};
 use std::{
     cmp::max,
@@ -86,6 +87,7 @@ impl Cheatcode for assertionCall {
         Ok(Default::default())
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct Assertion {
     pub adopter: Address,
@@ -114,18 +116,18 @@ pub fn execute_assertion(
     let state = ecx.journaled_state.state.clone();
     let chain_id = ecx.cfg.chain_id;
 
-    let nonce = ecx.db().basic(tx_attributes.caller).unwrap_or_default().unwrap_or_default().nonce;
+    let nonce = ecx.db_mut().basic(tx_attributes.caller).unwrap_or_default().unwrap_or_default().nonce;
     // Setup assertion database
-    let db = ThreadSafeDb::new(ecx.db());
+    let db = ThreadSafeDb::new(*ecx.db_mut());
 
     // Prepare assertion store
 
-    let config = ExecutorConfig { spec_id, chain_id, assertion_gas_limit: 300_000 };
+    let config = ExecutorConfig { spec_id: spec_id.into(), chain_id, assertion_gas_limit: 300_000 };
 
     let store = AssertionStore::new_ephemeral().expect("Failed to create assertion store");
 
     let mut assertion_state =
-        AssertionState::new_active(assertion.create_data.clone().into(), &config)
+        AssertionState::new_active(&Bytes::from_iter(assertion.create_data.clone()), &config)
             .expect("Failed to create assertion state");
 
     let mut trigger_types_to_remove = Vec::new();
@@ -277,7 +279,7 @@ fn decode_invalidated_assertion(execution_result: &ExecutionResult) -> Revert {
 mod tests {
     use super::*;
     use assertion_executor::primitives::HaltReason;
-    use revm::context::result::{Output, SuccessReason};
+    use revm::context_interface::result::{Output, SuccessReason};
 
     #[test]
     fn test_decode_revert_error_success() {
