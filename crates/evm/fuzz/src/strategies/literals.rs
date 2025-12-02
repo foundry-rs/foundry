@@ -9,10 +9,18 @@ use solar::{
     ast::{self, Visit},
     interface::source_map::FileName,
 };
-use std::{ops::ControlFlow, sync::OnceLock};
+use std::{
+    ops::ControlFlow,
+    sync::{Arc, OnceLock},
+};
+
+#[derive(Clone, Debug, Default)]
+pub struct LiteralsDictionary {
+    inner: Arc<LiteralsDictionaryData>,
+}
 
 #[derive(Debug, Default)]
-pub struct LiteralsDictionary {
+struct LiteralsDictionaryData {
     /// Data required for initialization, captured from `EvmFuzzState::new`.
     analysis: Option<Analysis>,
     paths_config: Option<ProjectPathsConfig>,
@@ -28,19 +36,29 @@ impl LiteralsDictionary {
         paths_config: Option<ProjectPathsConfig>,
         max_values: usize,
     ) -> Self {
-        Self { analysis, paths_config, max_values, maps: OnceLock::default() }
+        let this = Self {
+            inner: Arc::new(LiteralsDictionaryData {
+                analysis,
+                paths_config,
+                max_values,
+                maps: OnceLock::default(),
+            }),
+        };
+        // let _ = this.get();
+        this
     }
 
     /// Returns a reference to the `LiteralMaps`, initializing them on the first call.
     pub fn get(&self) -> &LiteralMaps {
-        self.maps.get_or_init(|| {
-            if let Some(analysis) = &self.analysis {
+        let inner = &*self.inner;
+        inner.maps.get_or_init(|| {
+            if let Some(analysis) = &inner.analysis {
                 let literals = LiteralsCollector::process(
                     analysis,
-                    self.paths_config.as_ref(),
-                    self.max_values,
+                    inner.paths_config.as_ref(),
+                    inner.max_values,
                 );
-                trace!(
+                debug!(
                     words = literals.words.values().map(|set| set.len()).sum::<usize>(),
                     strings = literals.strings.len(),
                     bytes = literals.bytes.len(),
@@ -53,17 +71,11 @@ impl LiteralsDictionary {
         })
     }
 
-    /// Takes ownership of the dictionary words, leaving an empty map in their place.
-    /// Ensures the map is initialized before taking its contents.
-    pub fn take_words(&mut self) -> HashMap<DynSolType, B256IndexSet> {
-        let _ = self.get();
-        self.maps.get_mut().map(|m| std::mem::take(&mut m.words)).unwrap_or_default()
-    }
-
-    #[cfg(test)]
     /// Test-only helper to seed the dictionary with literal values.
+    #[cfg(test)]
     pub(crate) fn set(&mut self, map: super::LiteralMaps) {
-        let _ = self.maps.set(map);
+        let inner = Arc::get_mut(&mut self.inner).unwrap();
+        let _ = inner.maps.set(map);
     }
 }
 
@@ -102,7 +114,7 @@ impl LiteralsCollector {
                     continue;
                 }
 
-                if let Some(ref ast) = source.ast {
+                if let Some(ast) = &source.ast {
                     let _ = literals_collector.visit_source_unit(ast);
                 }
             }
