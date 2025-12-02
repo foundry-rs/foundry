@@ -1,5 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
+    corpus::WorkerCorpus,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -28,7 +29,6 @@ use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
-use crate::executors::corpus::CorpusManager;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Contains data collected during fuzz test runs.
@@ -122,10 +122,11 @@ impl FuzzedExecutor {
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
 
-        let mut corpus_manager = CorpusManager::new(
+        let mut corpus_manager = WorkerCorpus::new(
+            0, // Id of the Master
             self.config.corpus.clone(),
             strategy.boxed(),
-            &self.executor,
+            Some(&self.executor),
             Some(func),
             None,
         )?;
@@ -285,7 +286,7 @@ impl FuzzedExecutor {
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             line_coverage: test_data.coverage,
             deprecated_cheatcodes: test_data.deprecated_cheatcodes,
-            failed_corpus_replays: corpus_manager.failed_replays(),
+            failed_corpus_replays: corpus_manager.failed_replays,
         };
 
         match test_data.failure {
@@ -326,7 +327,7 @@ impl FuzzedExecutor {
         &mut self,
         address: Address,
         calldata: Bytes,
-        coverage_metrics: &mut CorpusManager,
+        coverage_metrics: &mut WorkerCorpus,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
             .executor
