@@ -213,6 +213,7 @@ impl<'a> ContractRunner<'a> {
             let new_config = Arc::new(self.inline_config(None)?);
             self.tcfg.to_mut().reconfigure_with(new_config);
             let prev_tracer = self.executor.inspector_mut().tracer.take();
+            self.tcfg.configure_executor_env(&mut self.executor);
             self.tcfg.configure_executor(&mut self.executor);
             // Don't set tracer here.
             self.executor.inspector_mut().tracer = prev_tracer;
