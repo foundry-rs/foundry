@@ -539,9 +539,11 @@ impl WalletSubcommands {
                                 }
                             } else {
                                 sh_println!("- Account {i}:")?;
-                                sh_println!("Address:     {}", address)?;
                                 if insecure {
-                                    sh_println!("Private key: 0x{}", private_key)?;
+                                    sh_println!("Address:     {}", address)?;
+                                    sh_println!("Private key: 0x{}\n", private_key)?;
+                                } else {
+                                    sh_println!("Address:     {}\n", address)?;
                                 }
                             }
                         }
