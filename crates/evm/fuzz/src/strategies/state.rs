@@ -140,7 +140,6 @@ impl EvmFuzzState {
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
-#[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
     state_values: B256IndexSet,
@@ -178,9 +177,27 @@ impl fmt::Debug for FuzzDictionary {
     }
 }
 
+impl Default for FuzzDictionary {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
+
 impl FuzzDictionary {
     pub fn new(config: FuzzDictionaryConfig) -> Self {
-        let mut dictionary = Self { config, samples_seeded: false, ..Default::default() };
+        let mut dictionary = Self {
+            config,
+            samples_seeded: false,
+
+            state_values: Default::default(),
+            addresses: Default::default(),
+            db_state_values: Default::default(),
+            db_addresses: Default::default(),
+            sample_values: Default::default(),
+            literal_values: Default::default(),
+            misses: Default::default(),
+            hits: Default::default(),
+        };
         dictionary.prefill();
         dictionary
     }
