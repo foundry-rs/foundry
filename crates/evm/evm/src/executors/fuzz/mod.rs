@@ -26,10 +26,7 @@ use proptest::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json::json;
-use std::{
-    sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -85,11 +82,12 @@ impl FuzzedExecutor {
         tokio_handle: &tokio::runtime::Handle,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
-        let shared_state = Arc::new(SharedFuzzState::new(
+        let shared_state = SharedFuzzState::new(
+            self.build_fuzz_state(deployed_libs),
             self.config.runs,
             self.config.timeout,
             early_exit.clone(),
-        ));
+        );
 
         // Determine number of workers
         let num_workers = self.num_workers();
@@ -103,17 +101,16 @@ impl FuzzedExecutor {
                     worker_id,
                     func,
                     fuzz_fixtures,
-                    deployed_libs,
                     address,
                     rd,
-                    shared_state.clone(),
+                    &shared_state,
                     progress,
                     if worker_id == 0 { persisted_failure.clone() } else { None },
                 )
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(self.aggregate_results(workers, func, shared_state))
+        Ok(self.aggregate_results(workers, func, &shared_state))
     }
 
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
@@ -184,7 +181,7 @@ impl FuzzedExecutor {
         &self,
         mut workers: Vec<FuzzWorker>,
         func: &Function,
-        shared_state: Arc<SharedFuzzState>,
+        shared_state: &SharedFuzzState,
     ) -> FuzzTestResult {
         let mut result = FuzzTestResult::default();
 
@@ -290,19 +287,17 @@ impl FuzzedExecutor {
         worker_id: u32,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
         address: Address,
         rd: &RevertDecoder,
-        shared_state: Arc<SharedFuzzState>,
+        shared_state: &SharedFuzzState,
         progress: Option<&ProgressBar>,
         mut persisted_failure: Option<BaseCounterExample>,
     ) -> Result<FuzzWorker> {
         // Prepare
-        let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &shared_state.state),
         ]
         .prop_map(move |calldata| BasicTxDetails {
             warp: None,
@@ -378,7 +373,7 @@ impl FuzzedExecutor {
             } else {
                 runs_since_sync += 1;
                 if runs_since_sync >= sync_threshold {
-                    let instance = Instant::now();
+                    let timer = Instant::now();
                     corpus.sync(
                         num_workers,
                         &self.executor,
@@ -386,11 +381,11 @@ impl FuzzedExecutor {
                         None,
                         &shared_state.global_corpus_metrics,
                     )?;
-                    trace!("Worker {worker_id} finished corpus sync in {:?}", instance.elapsed());
+                    trace!("Worker {worker_id} finished corpus sync in {:?}", timer.elapsed());
                     runs_since_sync = 0;
                 }
 
-                match corpus.new_input(&mut runner, &state, func) {
+                match corpus.new_input(&mut runner, &shared_state.state, func) {
                     Ok(input) => input,
                     Err(err) => {
                         worker.failure = Some(TestCaseError::fail(format!(
@@ -513,10 +508,11 @@ impl FuzzedExecutor {
 
         // Logs stats
         trace!("worker {worker_id} fuzz stats");
-        state.log_stats();
+        shared_state.state.log_stats();
 
         Ok(worker)
     }
+
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
         let inspector = self.executor.inspector();

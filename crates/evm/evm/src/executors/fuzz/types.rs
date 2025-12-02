@@ -7,7 +7,7 @@ use crate::executors::{EarlyExit, FuzzTestTimer, RawCallResult, corpus::GlobalCo
 use alloy_primitives::{Bytes, Log, map::HashMap};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::FuzzCase;
+use foundry_evm_fuzz::{FuzzCase, strategies::EvmFuzzState};
 use foundry_evm_traces::SparsedTraceArena;
 use proptest::prelude::TestCaseError;
 use revm::interpreter::InstructionResult;
@@ -50,6 +50,7 @@ pub enum FuzzOutcome {
 
 /// Shared state for coordinating parallel fuzz workers
 pub struct SharedFuzzState {
+    pub state: EvmFuzzState,
     /// Total runs across workers
     total_runs: Arc<AtomicU32>,
     /// Found failure
@@ -71,8 +72,14 @@ pub struct SharedFuzzState {
 }
 
 impl SharedFuzzState {
-    pub fn new(max_runs: u32, timeout: Option<u32>, early_exit: EarlyExit) -> Self {
+    pub fn new(
+        state: EvmFuzzState,
+        max_runs: u32,
+        timeout: Option<u32>,
+        early_exit: EarlyExit,
+    ) -> Self {
         Self {
+            state,
             total_runs: Arc::new(AtomicU32::new(0)),
             found_failure: OnceLock::new(),
             max_runs,
