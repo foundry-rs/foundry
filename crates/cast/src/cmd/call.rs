@@ -32,6 +32,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_wallets::WalletOpts;
 use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
@@ -131,8 +132,8 @@ pub struct CallArgs {
     #[command(flatten)]
     rpc: RpcOpts,
 
-    #[arg(long)]
-    from: Option<Address>,
+    #[command(flatten)]
+    wallet: WalletOpts,
 
     #[arg(
         short,
@@ -219,7 +220,6 @@ impl CallArgs {
             mut sig,
             mut args,
             mut tx,
-            from,
             command,
             block,
             trace,
@@ -230,6 +230,7 @@ impl CallArgs {
             data,
             with_local_artifacts,
             disable_labels,
+            wallet,
             ..
         } = self;
 
@@ -238,11 +239,7 @@ impl CallArgs {
         }
 
         let provider = utils::get_provider(&config)?;
-        let sender = if let Some(from) = from {
-            SenderKind::Address(from)
-        } else {
-            SenderKind::from_wallet_opts(EthereumOpts::default().wallet).await?
-        };
+        let sender = SenderKind::from_wallet_opts(wallet).await?;
 
         let from = sender.address();
 

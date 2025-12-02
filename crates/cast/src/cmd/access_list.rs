@@ -11,6 +11,7 @@ use foundry_cli::{
     opts::{EthereumOpts, RpcOpts, TransactionOpts},
     utils::{self, LoadConfig},
 };
+use foundry_wallets::WalletOpts;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
@@ -37,27 +38,23 @@ pub struct AccessListArgs {
     #[arg(long, short = 'B')]
     block: Option<BlockId>,
 
-    #[arg(long)]
-    from: Option<Address>,
-
     #[command(flatten)]
     tx: TransactionOpts,
 
     #[command(flatten)]
     rpc: RpcOpts,
+
+    #[command(flatten)]
+    wallet: WalletOpts,
 }
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, sig, args, tx, rpc, from, block } = self;
+        let Self { to, sig, args, tx, rpc, wallet, block } = self;
 
         let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-        let sender = if let Some(from) = from {
-            SenderKind::Address(from)
-        } else {
-            SenderKind::from_wallet_opts(EthereumOpts::default().wallet).await?
-        };
+        let sender = SenderKind::from_wallet_opts(wallet).await?;
 
         let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
             .await?

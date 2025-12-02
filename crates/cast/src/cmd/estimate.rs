@@ -9,6 +9,7 @@ use foundry_cli::{
     opts::{EthereumOpts, RpcOpts, TransactionOpts},
     utils::{self, LoadConfig, parse_ether_value},
 };
+use foundry_wallets::WalletOpts;
 use std::str::FromStr;
 
 /// CLI arguments for `cast estimate`.
@@ -37,8 +38,8 @@ pub struct EstimateArgs {
     #[arg(long)]
     cost: bool,
 
-    #[arg(long)]
-    from: Option<Address>,
+    #[command(flatten)]
+    wallet: WalletOpts,
 
     #[command(subcommand)]
     command: Option<EstimateSubcommands>,
@@ -77,16 +78,11 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, mut tx, block, cost, from, rpc, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, cost, wallet, rpc, command } = self;
 
         let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-
-        let sender = if let Some(from) = from {
-            SenderKind::Address(from)
-        } else {
-            SenderKind::from_wallet_opts(EthereumOpts::default().wallet).await?
-        };
+        let sender = SenderKind::from_wallet_opts(wallet).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,
