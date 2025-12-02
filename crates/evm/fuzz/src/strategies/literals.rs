@@ -28,7 +28,9 @@ impl LiteralsDictionary {
         let maps = Arc::new(OnceLock::<LiteralMaps>::new());
         if let Some(analysis) = analysis {
             let maps = maps.clone();
-            rayon::spawn(move || {
+            // This can't be a rayon task because it can cause a deadlock, since internally `solar`
+            // also uses rayon.
+            let _ = std::thread::Builder::new().name("literal-collector".into()).spawn(move || {
                 let _ = maps.get_or_init(|| {
                     let literals =
                         LiteralsCollector::process(&analysis, paths_config.as_ref(), max_values);
