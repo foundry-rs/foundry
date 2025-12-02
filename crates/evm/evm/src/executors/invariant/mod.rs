@@ -39,7 +39,6 @@ use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use shrink::shrink_sequence;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,

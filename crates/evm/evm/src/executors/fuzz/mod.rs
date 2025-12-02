@@ -1,15 +1,15 @@
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
+    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor,
     corpus::WorkerCorpus,
+    fuzz::types::{FuzzWorker, SharedFuzzState},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
+use alloy_primitives::{Address, Bytes, U256, keccak256};
 use eyre::Result;
 use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    Breakpoints,
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::{RevertDecoder, SkipReason},
 };
@@ -19,45 +19,23 @@ use foundry_evm_fuzz::{
     FuzzFixtures, FuzzTestResult,
     strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
 };
-use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::{
     strategy::Strategy,
-    test_runner::{TestCaseError, TestRunner},
+    test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner},
 };
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json::json;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
-/// Contains data collected during fuzz test runs.
-#[derive(Default)]
-struct FuzzTestData {
-    // Stores the first fuzz case.
-    first_case: Option<FuzzCase>,
-    // Stored gas usage per fuzz case.
-    gas_by_case: Vec<(u64, u64)>,
-    // Stores the result and calldata of the last failed call, if any.
-    counterexample: (Bytes, RawCallResult),
-    // Stores up to `max_traces_to_collect` traces.
-    traces: Vec<SparsedTraceArena>,
-    // Stores breakpoints for the last fuzz case.
-    breakpoints: Option<Breakpoints>,
-    // Stores coverage information for all fuzz cases.
-    coverage: Option<HitMaps>,
-    // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs
-    // is false)
-    logs: Vec<Log>,
-    // Deprecated cheatcodes mapped to their replacements.
-    deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
-    // Runs performed in fuzz test.
-    runs: u32,
-    // Current assume rejects of the fuzz run.
-    rejects: u32,
-    // Test failure.
-    failure: Option<TestCaseError>,
-}
+/// Corpus syncs across workers every `SYNC_INTERVAL` runs.
+const SYNC_INTERVAL: u32 = 1000;
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
 ///
@@ -106,225 +84,40 @@ impl FuzzedExecutor {
         early_exit: &EarlyExit,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
-        let mut test_data = FuzzTestData::default();
-        let state = self.build_fuzz_state(deployed_libs);
-        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let strategy = proptest::prop_oneof![
-            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
-        ]
-        .prop_map(move |calldata| BasicTxDetails {
-            warp: None,
-            roll: None,
-            sender: Default::default(),
-            call_details: CallDetails { target: Default::default(), calldata },
-        });
-        // We want to collect at least one trace which will be displayed to user.
-        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
+        let shared_state = Arc::new(SharedFuzzState::new(
+            self.config.runs,
+            self.config.timeout,
+            early_exit.clone(),
+        ));
 
-        let mut corpus_manager = WorkerCorpus::new(
-            0, // Id of the Master
-            self.config.corpus.clone(),
-            strategy.boxed(),
-            Some(&self.executor),
-            Some(func),
-            None,
-        )?;
+        // Determine number of workers
+        let num_workers = self.num_workers();
+        // Use single worker for deterministic behavior when replaying persisted failures
+        let persisted_failure = self.persisted_failure.take();
+        let workers = (0..num_workers)
+            .into_par_iter()
+            .map(|worker_id| {
+                self.run_worker(
+                    worker_id,
+                    func,
+                    fuzz_fixtures,
+                    deployed_libs,
+                    address,
+                    rd,
+                    shared_state.clone(),
+                    progress,
+                    if worker_id == 0 { persisted_failure.clone() } else { None },
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        // Start timer for this fuzz test.
-        let timer = FuzzTestTimer::new(self.config.timeout);
-        let mut last_metrics_report = Instant::now();
-        let max_runs = self.config.runs;
-        let continue_campaign = |runs: u32| {
-            if early_exit.should_stop() {
-                return false;
-            }
-
-            if timer.is_enabled() { !timer.is_timed_out() } else { runs < max_runs }
-        };
-
-        'stop: while continue_campaign(test_data.runs) {
-            // If counterexample recorded, replay it first, without incrementing runs.
-            let input = if let Some(failure) = self.persisted_failure.take()
-                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
-            {
-                failure.calldata.clone()
-            } else {
-                // If running with progress, then increment current run.
-                if let Some(progress) = progress {
-                    progress.inc(1);
-                    // Display metrics in progress bar.
-                    if self.config.corpus.collect_edge_coverage() {
-                        progress.set_message(format!("{}", &corpus_manager.metrics));
-                    }
-                } else if self.config.corpus.collect_edge_coverage()
-                    && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
-                {
-                    // Display metrics inline.
-                    let metrics = json!({
-                        "timestamp": SystemTime::now()
-                            .duration_since(UNIX_EPOCH)?
-                            .as_secs(),
-                        "test": func.name,
-                        "metrics": &corpus_manager.metrics,
-                    });
-                    let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
-                    last_metrics_report = Instant::now();
-                };
-
-                test_data.runs += 1;
-
-                match corpus_manager.new_input(&mut self.runner, &state, func) {
-                    Ok(input) => input,
-                    Err(err) => {
-                        test_data.failure = Some(TestCaseError::fail(format!(
-                            "failed to generate fuzzed input: {err}"
-                        )));
-                        break 'stop;
-                    }
-                }
-            };
-
-            match self.single_fuzz(address, input, &mut corpus_manager) {
-                Ok(fuzz_outcome) => match fuzz_outcome {
-                    FuzzOutcome::Case(case) => {
-                        test_data.gas_by_case.push((case.case.gas, case.case.stipend));
-
-                        if test_data.first_case.is_none() {
-                            test_data.first_case.replace(case.case);
-                        }
-
-                        if let Some(call_traces) = case.traces {
-                            if test_data.traces.len() == max_traces_to_collect {
-                                test_data.traces.pop();
-                            }
-                            test_data.traces.push(call_traces);
-                            test_data.breakpoints.replace(case.breakpoints);
-                        }
-
-                        // Always store logs from the last run in test_data.logs for display at
-                        // verbosity >= 2. When show_logs is true,
-                        // accumulate all logs. When false, only keep the last run's logs.
-                        if self.config.show_logs {
-                            test_data.logs.extend(case.logs);
-                        } else {
-                            test_data.logs = case.logs;
-                        }
-
-                        HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
-                        test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
-                    }
-                    FuzzOutcome::CounterExample(CounterExampleOutcome {
-                        exit_reason: status,
-                        counterexample: outcome,
-                        ..
-                    }) => {
-                        let reason = rd.maybe_decode(&outcome.1.result, status);
-                        test_data.logs.extend(outcome.1.logs.clone());
-                        test_data.counterexample = outcome;
-                        test_data.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
-                        break 'stop;
-                    }
-                },
-                Err(err) => {
-                    match err {
-                        TestCaseError::Fail(_) => {
-                            test_data.failure = Some(err);
-                            break 'stop;
-                        }
-                        TestCaseError::Reject(_) => {
-                            // Discard run and apply max rejects if configured. Saturate to handle
-                            // the case of replayed failure, which doesn't count as a run.
-                            test_data.runs = test_data.runs.saturating_sub(1);
-                            test_data.rejects += 1;
-
-                            // Update progress bar to reflect rejected runs.
-                            if let Some(progress) = progress {
-                                progress.set_message(format!("([{}] rejected)", test_data.rejects));
-                                progress.dec(1);
-                            }
-
-                            if self.config.max_test_rejects > 0
-                                && test_data.rejects >= self.config.max_test_rejects
-                            {
-                                test_data.failure = Some(TestCaseError::reject(
-                                    FuzzError::TooManyRejects(self.config.max_test_rejects),
-                                ));
-                                break 'stop;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let (calldata, call) = test_data.counterexample;
-        let mut traces = test_data.traces;
-        let (last_run_traces, last_run_breakpoints) = if test_data.failure.is_none() {
-            (traces.pop(), test_data.breakpoints)
-        } else {
-            (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
-        };
-
-        // test_data.logs already contains the appropriate logs:
-        // - For failed tests: logs from the counterexample
-        // - For successful tests with show_logs=true: all logs from all runs
-        // - For successful tests with show_logs=false: logs from the last run only
-        let result_logs = test_data.logs;
-
-        let mut result = FuzzTestResult {
-            first_case: test_data.first_case.unwrap_or_default(),
-            gas_by_case: test_data.gas_by_case,
-            success: test_data.failure.is_none(),
-            skipped: false,
-            reason: None,
-            counterexample: None,
-            logs: result_logs,
-            labels: call.labels,
-            traces: last_run_traces,
-            breakpoints: last_run_breakpoints,
-            gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
-            line_coverage: test_data.coverage,
-            deprecated_cheatcodes: test_data.deprecated_cheatcodes,
-            failed_corpus_replays: corpus_manager.failed_replays,
-        };
-
-        match test_data.failure {
-            Some(TestCaseError::Fail(reason)) => {
-                let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
-                let args = if let Some(data) = calldata.get(4..) {
-                    func.abi_decode_input(data).unwrap_or_default()
-                } else {
-                    vec![]
-                };
-                result.counterexample = Some(CounterExample::Single(
-                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                ));
-            }
-            Some(TestCaseError::Reject(reason)) => {
-                let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
-            }
-            None => {}
-        }
-
-        if let Some(reason) = &result.reason
-            && let Some(reason) = SkipReason::decode_self(reason)
-        {
-            result.skipped = true;
-            result.reason = reason.0;
-        }
-
-        state.log_stats();
-
-        Ok(result)
+        Ok(self.aggregate_results(workers, func, shared_state))
     }
 
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
-        &mut self,
+        &self,
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
@@ -384,6 +177,344 @@ impl FuzzedExecutor {
         }
     }
 
+    /// Aggregates the results from all workers
+    fn aggregate_results(
+        &self,
+        mut workers: Vec<FuzzWorker>,
+        func: &Function,
+        shared_state: Arc<SharedFuzzState>,
+    ) -> FuzzTestResult {
+        let mut result = FuzzTestResult::default();
+
+        // Extract failed worker first if it exists
+        let failed_worker = shared_state.failed_worked_id().and_then(|id| {
+            workers.iter().position(|w| w.worker_id == id).map(|idx| workers.swap_remove(idx))
+        });
+
+        // Process failure first if exists
+        if let Some(failed_worker) = failed_worker {
+            result.success = false;
+            let (calldata, call) = failed_worker.counterexample;
+            result.labels = call.labels;
+            result.traces = call.traces.clone();
+            result.breakpoints = call.cheatcodes.map(|c| c.breakpoints);
+
+            match failed_worker.failure {
+                Some(TestCaseError::Fail(reason)) => {
+                    let reason = reason.to_string();
+                    result.reason = (!reason.is_empty()).then_some(reason);
+                    let args = if let Some(data) = calldata.get(4..) {
+                        func.abi_decode_input(data).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
+                    result.counterexample = Some(CounterExample::Single(
+                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                    ));
+                }
+                Some(TestCaseError::Reject(reason)) => {
+                    let reason = reason.to_string();
+                    result.reason = (!reason.is_empty()).then_some(reason);
+                }
+                None => {}
+            }
+        } else {
+            result.success = true;
+        }
+
+        // Single pass aggregation for remaining workers
+        let mut first_case_candidate: Option<(u32, FuzzCase)> = None;
+        let mut last_run_worker: Option<&FuzzWorker> = None;
+        let mut last_run_timestamp = 0u128;
+
+        for worker in &workers {
+            // Track first case (compare without cloning)
+            if let Some((run, case)) = &worker.first_case
+                && first_case_candidate.as_ref().is_none_or(|(r, _)| run < r)
+            {
+                first_case_candidate = Some((*run, case.clone()));
+            }
+
+            // Track last run worker (keep reference, no clone)
+            if worker.last_run_timestamp > last_run_timestamp {
+                last_run_timestamp = worker.last_run_timestamp;
+                last_run_worker = Some(worker);
+            }
+
+            // Only retrieve from worker 0 i.e master worker which is responsible for replaying
+            // persisted corpus.
+            if worker.worker_id == 0 {
+                result.failed_corpus_replays = worker.failed_corpus_replays;
+            }
+        }
+
+        // Set first case
+        result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
+
+        // If no failure, set traces and breakpoints from last run
+        if result.success
+            && let Some(last_worker) = last_run_worker
+        {
+            result.traces = last_worker.traces.last().cloned();
+            result.breakpoints = last_worker.breakpoints.clone();
+        }
+
+        for mut worker in workers {
+            result.gas_by_case.append(&mut worker.gas_by_case);
+            result.logs.append(&mut worker.logs);
+            result.gas_report_traces.extend(worker.traces.into_iter().map(|t| t.arena));
+
+            // Merge coverage
+            HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
+
+            result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
+        }
+
+        // Check for skip reason
+        if let Some(reason) = &result.reason
+            && let Some(reason) = SkipReason::decode_self(reason)
+        {
+            result.skipped = true;
+            result.reason = reason.0;
+        }
+
+        result
+    }
+
+    /// Runs a single fuzz worker
+    #[allow(clippy::too_many_arguments)]
+    fn run_worker(
+        &self,
+        worker_id: u32,
+        func: &Function,
+        fuzz_fixtures: &FuzzFixtures,
+        deployed_libs: &[Address],
+        address: Address,
+        rd: &RevertDecoder,
+        shared_state: Arc<SharedFuzzState>,
+        progress: Option<&ProgressBar>,
+        mut persisted_failure: Option<BaseCounterExample>,
+    ) -> Result<FuzzWorker> {
+        // Prepare
+        let state = self.build_fuzz_state(deployed_libs);
+        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
+        let strategy = proptest::prop_oneof![
+            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+        ]
+        .prop_map(move |calldata| BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Default::default(),
+            call_details: CallDetails { target: Default::default(), calldata },
+        });
+
+        let mut corpus = WorkerCorpus::new(
+            worker_id,
+            self.config.corpus.clone(),
+            strategy.boxed(),
+            // Master worker replays the persisted corpus using the executor
+            if worker_id == 0 { Some(&self.executor) } else { None },
+            Some(func),
+            None, // fuzzed_contracts for invariant tests
+        )?;
+
+        let mut worker = FuzzWorker::new(worker_id);
+        let num_workers = self.num_workers();
+        // We want to collect at least one trace which will be displayed to user.
+        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples / num_workers);
+
+        // Calculate worker-specific run limit when not using timer
+        let worker_runs = if self.config.timeout.is_some() {
+            // When using timer, workers run as many as possible
+            u32::MAX
+        } else {
+            // Distribute runs evenly across workers, with worker 0 handling any remainder
+            let base_runs = self.config.runs / num_workers;
+            let remainder = self.config.runs % num_workers;
+            if worker_id == 0 { base_runs + remainder } else { base_runs }
+        };
+
+        let mut runner_config = self.runner.config().clone();
+        // Set the runner cases to worker_runs
+        runner_config.cases = worker_runs;
+
+        let mut runner = if let Some(seed) = self.config.seed {
+            // For deterministic parallel fuzzing, derive a unique seed for each worker
+            let worker_seed = if worker_id == 0 {
+                // Master worker uses the provided seed as is.
+                seed
+            } else {
+                // Derive a worker-specific seed using keccak256(seed || worker_id)
+                let mut seed_data = [0u8; 36]; // 32 bytes for seed + 4 bytes for worker_id
+                seed_data[..32].copy_from_slice(&seed.to_be_bytes::<32>());
+                seed_data[32..36].copy_from_slice(&worker_id.to_be_bytes());
+                U256::from_be_bytes(keccak256(seed_data).0)
+            };
+            trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
+            TestRunner::new_with_rng(runner_config, rng)
+        } else {
+            TestRunner::new(runner_config)
+        };
+
+        // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
+        // time.
+        let sync_offset = worker_id * 100;
+        let mut runs_since_sync = 0;
+        let sync_threshold = SYNC_INTERVAL + sync_offset;
+        let mut last_metrics_report = Instant::now();
+        // Continue while:
+        // 1. Global state allows (not timed out, not at global limit, no failure found)
+        // 2. Worker hasn't reached its specific run limit
+        'stop: while shared_state.should_continue() && worker.runs < worker_runs {
+            // Only the master worker replays the persisted failure, if any.
+            let input = if worker_id == 0
+                && let Some(failure) = persisted_failure.take()
+            {
+                failure.calldata
+            } else {
+                runs_since_sync += 1;
+                if runs_since_sync >= sync_threshold {
+                    let instance = Instant::now();
+                    corpus.sync(
+                        num_workers,
+                        &self.executor,
+                        Some(func),
+                        None,
+                        &shared_state.global_corpus_metrics,
+                    )?;
+                    trace!("Worker {worker_id} finished corpus sync in {:?}", instance.elapsed());
+                    runs_since_sync = 0;
+                }
+
+                match corpus.new_input(&mut runner, &state, func) {
+                    Ok(input) => input,
+                    Err(err) => {
+                        worker.failure = Some(TestCaseError::fail(format!(
+                            "failed to generate fuzzed input in worker {}: {err}",
+                            worker.worker_id
+                        )));
+                        shared_state.try_claim_failure(worker_id);
+                        break 'stop;
+                    }
+                }
+            };
+
+            worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+            match self.single_fuzz(address, input, &mut corpus) {
+                Ok(fuzz_outcome) => match fuzz_outcome {
+                    FuzzOutcome::Case(case) => {
+                        // Only increment runs for successful non-rejected cases
+                        // Check if we should actually count this run
+                        if shared_state.try_increment_runs().is_none() {
+                            // We've exceeded the run limit, stop
+                            break 'stop;
+                        }
+                        worker.runs += 1;
+
+                        if let Some(progress) = progress {
+                            progress.inc(1);
+                            if self.config.corpus.collect_edge_coverage() && worker_id == 0 {
+                                corpus.sync_metrics(&shared_state.global_corpus_metrics);
+                                progress
+                                    .set_message(format!("{}", shared_state.global_corpus_metrics));
+                            }
+                        } else if self.config.corpus.collect_edge_coverage()
+                            && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
+                            && worker_id == 0
+                        {
+                            corpus.sync_metrics(&shared_state.global_corpus_metrics);
+                            // Display metrics inline.
+                            let metrics = json!({
+                                "timestamp": SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)?
+                                    .as_secs(),
+                                "test": func.name,
+                                "metrics": &shared_state.global_corpus_metrics,
+                            });
+                            let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                            last_metrics_report = Instant::now();
+                        }
+
+                        worker.gas_by_case.push((case.case.gas, case.case.stipend));
+
+                        if worker.first_case.is_none() {
+                            let total_runs = shared_state.total_runs();
+                            worker.first_case.replace((total_runs, case.case));
+                        }
+
+                        if let Some(call_traces) = case.traces {
+                            if worker.traces.len() == max_traces_to_collect as usize {
+                                worker.traces.pop();
+                            }
+                            worker.traces.push(call_traces);
+                            worker.breakpoints.replace(case.breakpoints);
+                        }
+
+                        if self.config.show_logs {
+                            worker.logs.extend(case.logs);
+                        }
+
+                        HitMaps::merge_opt(&mut worker.coverage, case.coverage);
+                        worker.deprecated_cheatcodes = case.deprecated_cheatcodes;
+                    }
+                    FuzzOutcome::CounterExample(CounterExampleOutcome {
+                        exit_reason: status,
+                        counterexample: outcome,
+                        ..
+                    }) => {
+                        // Count this as a run since we found a counterexample
+                        // We always count counterexamples regardless of run limit
+                        shared_state.increment_runs();
+                        worker.runs += 1;
+
+                        if let Some(progress) = progress {
+                            progress.inc(1);
+                        }
+                        let reason = rd.maybe_decode(&outcome.1.result, status);
+                        worker.logs.extend(outcome.1.logs.clone());
+                        worker.counterexample = outcome;
+                        worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
+                        shared_state.try_claim_failure(worker_id);
+                        break 'stop;
+                    }
+                },
+                Err(err) => {
+                    match err {
+                        TestCaseError::Fail(_) => {
+                            worker.failure = Some(err);
+                            shared_state.try_claim_failure(worker_id);
+                            break 'stop;
+                        }
+                        TestCaseError::Reject(_) => {
+                            // Apply max rejects only if configured, otherwise silently discard run.
+                            if self.config.max_test_rejects > 0 {
+                                worker.rejects += 1;
+                                shared_state.increment_rejects();
+                                // Fail only total_rejects across workers exceeds the config value
+                                if shared_state.total_rejects() >= self.config.max_test_rejects {
+                                    worker.failure = Some(err);
+                                    shared_state.try_claim_failure(worker_id);
+                                    break 'stop;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if worker_id == 0 {
+            worker.failed_corpus_replays = corpus.failed_replays;
+        }
+
+        // Logs stats
+        trace!("worker {worker_id} fuzz stats");
+        state.log_stats();
+
+        Ok(worker)
+    }
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
         let inspector = self.executor.inspector();
@@ -404,6 +535,22 @@ impl FuzzedExecutor {
                 inspector.analysis.as_ref(),
                 inspector.paths_config(),
             )
+        }
+    }
+
+    /// Determines the number of workers to run
+    ///
+    /// Depends on:
+    /// - Whether we're replaying a persisted failure
+    /// - `--jobs` specified by the user
+    /// - Available threads
+    fn num_workers(&self) -> u32 {
+        if self.persisted_failure.is_some() {
+            1
+        } else if let Some(threads) = self.config.threads {
+            threads as u32
+        } else {
+            rayon::current_num_threads() as u32
         }
     }
 }
