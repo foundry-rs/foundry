@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 // Linking scenario: contract with a library that depends on a library
 
@@ -27,7 +27,7 @@ contract LibraryConsumer {
     }
 }
 
-contract NestedLibraryLinkingTest is DSTest {
+contract NestedLibraryLinkingTest is Test {
     LibraryConsumer consumer;
 
     function setUp() public {

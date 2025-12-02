@@ -37,6 +37,8 @@ pub struct Parser {
     items: Vec<ParseItem>,
     /// Source file.
     source: String,
+    /// Tab width used to format code.
+    tab_width: usize,
 }
 
 /// [Parser] context.
@@ -50,8 +52,8 @@ struct ParserContext {
 
 impl Parser {
     /// Create a new instance of [Parser].
-    pub fn new(comments: Vec<SolangComment>, source: String) -> Self {
-        Self { comments, source, ..Default::default() }
+    pub fn new(comments: Vec<SolangComment>, source: String, tab_width: usize) -> Self {
+        Self { comments, source, tab_width, ..Default::default() }
     }
 
     /// Return the parsed items. Consumes the parser.
@@ -93,7 +95,7 @@ impl Parser {
     /// Create new [ParseItem] with comments and formatted code.
     fn new_item(&mut self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
         let docs = self.parse_docs(loc_start)?;
-        Ok(ParseItem::new(source).with_comments(docs).with_code(&self.source))
+        Ok(ParseItem::new(source).with_comments(docs).with_code(&self.source, self.tab_width))
     }
 
     /// Parse the doc comments from the current start location.
@@ -218,7 +220,7 @@ mod tests {
 
     fn parse_source(src: &str) -> Vec<ParseItem> {
         let (mut source, comments) = parse(src, 0).expect("failed to parse source");
-        let mut doc = Parser::new(comments, src.to_owned());
+        let mut doc = Parser::new(comments, src.to_owned(), 4);
         source.visit(&mut doc).expect("failed to visit source");
         doc.items()
     }

@@ -132,7 +132,7 @@ fn prank(
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
         ensure!(
-            account.info.clone().code.is_some_and(|code| !code.is_empty()),
+            account.info.code.as_ref().is_some_and(|code| !code.is_empty()),
             "cannot `prank` delegate call from an EOA"
         );
     }

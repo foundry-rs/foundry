@@ -1,13 +1,13 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
-use foundry_wallets::{WalletSigner, multi_wallet::MultiWallet};
+use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
     bytecode::Bytecode,
@@ -375,9 +375,12 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
             }
         }
     }
+    let new_origin = new_origin.unwrap_or(ccx.ecx.tx.caller);
+    // Ensure new origin is loaded and touched.
+    let _ = journaled_account(ccx.ecx, new_origin)?;
 
     let broadcast = Broadcast {
-        new_origin: new_origin.unwrap_or(ccx.ecx.tx.caller),
+        new_origin,
         original_caller: ccx.caller,
         original_origin: ccx.ecx.tx.caller,
         depth,

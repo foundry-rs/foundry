@@ -20,8 +20,10 @@ fn lockfile_get(root: &Path, dep_path: &Path) -> Option<DepIdentifier> {
     l.read().unwrap();
     l.get(dep_path).cloned()
 }
+
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear();
 
     // wipe forge-std
@@ -52,6 +54,7 @@ No files changed, compilation skipped
 
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear();
 
     // wipe forge-std
@@ -94,7 +97,7 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let install = |cmd: &mut TestCommand| {
         cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
             str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]],
@@ -110,7 +113,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     let remove = |cmd: &mut TestCommand, target: &str| {
         cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
             r#"
-Removing 'forge-std' in [..], (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag: None)
 
 "#
         ]]);
@@ -164,7 +167,7 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let install = |cmd: &mut TestCommand| {
         cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
             str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std tag=[..]"#]],
         );
 
@@ -388,14 +391,13 @@ forgetest!(
         let package_mod = git_mod.join("forge-5980-test");
 
         // install main dependency
-        cmd.forge_fuse()
-            .args(["install", "evalir/forge-5980-test"])
-            .assert_success()
-            .stdout_eq(str![[r#"
-Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5980-test"), tag: None)
+        cmd.forge_fuse().args(["install", "evalir/forge-5980-test"]).assert_success().stdout_eq(
+            str![[r#"
+Installing forge-5980-test in [..] (url: https://github.com/evalir/forge-5980-test, tag: None)
     Installed forge-5980-test
 
-"#]]);
+"#]],
+        );
 
         // assert paths exist
         assert!(package.exists());

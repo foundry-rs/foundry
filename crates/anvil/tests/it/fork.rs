@@ -23,11 +23,10 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
-use revm::precompile::{Precompile, PrecompileId, PrecompileOutput, PrecompileResult};
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
     thread::sleep,
@@ -1221,7 +1220,7 @@ async fn test_arbitrum_fork_dev_balance() {
 // <https://github.com/foundry-rs/foundry/issues/9152>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_arb_fork_mining() {
-    let fork_block_number = 266137031u64;
+    let fork_block_number = 394274860u64;
     let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
     let (api, _handle) = spawn(
         fork_config()
@@ -1621,7 +1620,7 @@ async fn test_fork_get_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_get_account_info() {
-    let (_api, handle) = spawn(fork_config()).await;
+    let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let info = provider
@@ -1635,6 +1634,39 @@ async fn test_fork_get_account_info() {
         AccountInfo {
             balance: U256::from(14353753764795095694u64),
             nonce: 6689,
+            code: Default::default(),
+        }
+    );
+
+    // Check account info at block number, see https://github.com/foundry-rs/foundry/issues/12072
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        // predates fork
+        .number(BLOCK_NUMBER)
+        .await
+        .unwrap();
+    assert_eq!(
+        info,
+        AccountInfo {
+            balance: U256::from(14352720829244098514u64),
+            nonce: 6690,
+            code: Default::default(),
+        }
+    );
+
+    // Mine and check account info at new block number, see https://github.com/foundry-rs/foundry/issues/12148
+    api.evm_mine(None).await.unwrap();
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        // predates fork
+        .number(BLOCK_NUMBER + 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        info,
+        AccountInfo {
+            balance: U256::from(14352720829244098514u64),
+            nonce: 6690,
             code: Default::default(),
         }
     );
@@ -1711,7 +1743,9 @@ async fn test_config_with_cancun_hardfork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_config_with_prague_hardfork_with_celo() {
     let (api, _handle) = spawn(
-        NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into())).with_celo(true),
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_networks(NetworkConfigs::with_celo()),
     )
     .await;
 
@@ -1832,22 +1866,23 @@ async fn test_config_with_osaka_hardfork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_config_with_osaka_hardfork_with_precompile_factory() {
-    fn custom_echo_precompile(input: &[u8], _gas_limit: u64) -> PrecompileResult {
-        Ok(PrecompileOutput { bytes: Bytes::copy_from_slice(input), gas_used: 0, reverted: false })
-    }
-
     #[derive(Debug)]
     struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
-        fn precompiles(&self) -> Vec<(Precompile, u64)> {
+        fn precompiles(&self) -> Vec<(Address, alloy_evm::precompiles::DynPrecompile)> {
             vec![(
-                Precompile::from((
-                    PrecompileId::Custom(Cow::Borrowed("custom_echo")),
-                    address!("0x0000000000000000000000000000000000000071"),
-                    custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
-                )),
-                1000,
+                address!("0x0000000000000000000000000000000000000071"),
+                alloy_evm::precompiles::DynPrecompile::from(
+                    |input: alloy_evm::precompiles::PrecompileInput<'_>| {
+                        Ok(revm::precompile::PrecompileOutput {
+                            bytes: Bytes::copy_from_slice(input.data),
+                            gas_used: 0,
+                            gas_refunded: 0,
+                            reverted: false,
+                        })
+                    },
+                ),
             )]
         }
     }

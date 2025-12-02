@@ -1,7 +1,8 @@
 use crate::{Error, Result};
+use alloy_dyn_abi::{DynSolValue, ErrorExt};
 use alloy_primitives::{Address, Bytes, address, hex};
 use alloy_sol_types::{SolError, SolValue};
-use foundry_common::ContractsByArtifact;
+use foundry_common::{ContractsByArtifact, abi::get_error};
 use foundry_evm_core::decode::RevertDecoder;
 use revm::interpreter::{InstructionResult, return_ok};
 use spec::Vm;
@@ -96,24 +97,34 @@ fn handle_revert(
     if actual_revert == expected_reason
         || (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
     {
-        Ok(())
-    } else {
-        let (actual, expected) = if let Some(contracts) = known_contracts {
-            let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
-            (
-                &decoder.decode(actual_revert.as_slice(), Some(status)),
-                &decoder.decode(expected_reason, Some(status)),
-            )
-        } else {
-            (&stringify(&actual_revert), &stringify(expected_reason))
-        };
-
-        if expected == actual {
-            return Ok(());
-        }
-
-        Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
+        return Ok(());
     }
+
+    // If expected reason is `Error(string)` then decode and compare with actual revert.
+    // See <https://github.com/foundry-rs/foundry/issues/12511>
+    if let Ok(e) = get_error("Error(string)")
+        && let Ok(dec) = e.decode_error(expected_reason)
+        && let Some(DynSolValue::String(revert_str)) = dec.body.first()
+        && revert_str.as_str() == String::from_utf8_lossy(&actual_revert)
+    {
+        return Ok(());
+    }
+
+    let (actual, expected) = if let Some(contracts) = known_contracts {
+        let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
+        (
+            &decoder.decode(actual_revert.as_slice(), Some(status)),
+            &decoder.decode(expected_reason, Some(status)),
+        )
+    } else {
+        (&stringify(&actual_revert), &stringify(expected_reason))
+    };
+
+    if expected == actual {
+        return Ok(());
+    }
+
+    Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
 }
 
 pub(crate) fn handle_assume_no_revert(
@@ -199,7 +210,7 @@ pub(crate) fn handle_expect_revert(
             }
 
             // Reason check
-            let expected_reason = expected_revert.reason.as_deref();
+            let expected_reason = expected_revert.reason();
             if let Some(expected_reason) = expected_reason {
                 let mut actual_revert: Vec<u8> = retdata.to_vec();
                 actual_revert = decode_revert(actual_revert);
@@ -212,12 +223,12 @@ pub(crate) fn handle_expect_revert(
             match (reason_match, reverter_match) {
                 (Some(true), Some(true)) => Err(fmt_err!(
                     "expected 0 reverts with reason: {}, from address: {}, but got one",
-                    &stringify(expected_reason.unwrap_or_default()),
+                    stringify(expected_reason.unwrap_or_default()),
                     expected_revert.reverter.unwrap()
                 )),
                 (Some(true), None) => Err(fmt_err!(
                     "expected 0 reverts with reason: {}, but got one",
-                    &stringify(expected_reason.unwrap_or_default())
+                    stringify(expected_reason.unwrap_or_default())
                 )),
                 (None, Some(true)) => Err(fmt_err!(
                     "expected 0 reverts from address: {}, but got one",
@@ -229,25 +240,27 @@ pub(crate) fn handle_expect_revert(
                     let decoded_revert = decode_revert(retdata.to_vec());
 
                     // Provide more specific error messages based on what was expected
-                    if expected_revert.reverter.is_some() && expected_revert.reason.is_some() {
-                        Err(fmt_err!(
-                            "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
-                            &stringify(&decoded_revert),
-                            expected_revert.reverted_by.unwrap_or_default(),
-                            &stringify(expected_reason.unwrap_or_default()),
-                            expected_revert.reverter.unwrap()
-                        ))
-                    } else if expected_revert.reverter.is_some() {
-                        Err(fmt_err!(
-                            "call reverted with '{}' from {}, but expected 0 reverts from {}",
-                            &stringify(&decoded_revert),
-                            expected_revert.reverted_by.unwrap_or_default(),
-                            expected_revert.reverter.unwrap()
-                        ))
+                    if let Some(reverter) = expected_revert.reverter {
+                        if expected_revert.reason.is_some() {
+                            Err(fmt_err!(
+                                "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
+                                stringify(&decoded_revert),
+                                expected_revert.reverted_by.unwrap_or_default(),
+                                stringify(expected_reason.unwrap_or_default()),
+                                reverter
+                            ))
+                        } else {
+                            Err(fmt_err!(
+                                "call reverted with '{}' from {}, but expected 0 reverts from {}",
+                                stringify(&decoded_revert),
+                                expected_revert.reverted_by.unwrap_or_default(),
+                                reverter
+                            ))
+                        }
                     } else {
                         Err(fmt_err!(
                             "call reverted with '{}' when it was expected not to revert",
-                            &stringify(&decoded_revert)
+                            stringify(&decoded_revert)
                         ))
                     }
                 }

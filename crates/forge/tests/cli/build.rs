@@ -3,6 +3,7 @@ use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear();
 
     cmd.args(["build", "--names", "--skip", "tests", "scripts"]).assert_success().stdout_eq(str![
@@ -158,6 +159,7 @@ No files changed, compilation skipped
 
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -168,6 +170,7 @@ Compiler run successful!
 
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27)));
     });
@@ -211,6 +214,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 
 // tests build output --sizes handles multiple contracts with the same name
 forgetest_init!(build_sizes_multiple_contracts, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_source(
         "Foo",
         r"
@@ -277,6 +281,7 @@ contract Counter {
 
 // tests build output --sizes --json handles multiple contracts with the same name
 forgetest_init!(build_sizes_multiple_contracts_json, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_source(
         "Foo",
         r"
@@ -406,4 +411,50 @@ with remappings:
 [SOLC_VERSION] [ELAPSED]
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/12458>
+// <https://github.com/foundry-rs/foundry/issues/12496>
+forgetest!(build_with_invalid_natspec, |prj, cmd| {
+    prj.add_source(
+        "ContractWithInvalidNatspec.sol",
+        r#"
+contract ContractA {
+    /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
+}
+
+/// Some editors highlight `@note` or `@todo`
+/// @note foo bar
+
+/// @title ContractB
+contract ContractB {
+    /**
+    some example code in a comment:
+    import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+    */
+}
+   "#,
+    );
+
+    cmd.args(["build", "src/ContractWithInvalidNatspec.sol"]).assert_success().stderr_eq(str![[
+        r#"
+warning: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
+ [FILE]:5:5
+  |
+5 |     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+...
+
+warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
+ [FILE]:9:1
+  |
+9 | /// @note foo bar
+  | ^^^^^^^^^^^^^^^^^
+  |
+...
+
+
+"#
+    ]]);
 });

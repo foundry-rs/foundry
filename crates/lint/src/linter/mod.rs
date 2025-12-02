@@ -10,7 +10,9 @@ use foundry_config::{DenyLevel, lint::Severity};
 use solar::{
     interface::{
         Session, Span,
-        diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
+        diagnostics::{
+            Applicability, DiagBuilder, DiagId, DiagMsg, MultiSpan, Style, SuggestionStyle,
+        },
     },
     sema::Compiler,
 };
@@ -103,32 +105,18 @@ impl<'s, 'c> LintContext<'s, 'c> {
         diag.emit();
     }
 
-    /// Emit a diagnostic with a code fix proposal.
+    /// Emit a diagnostic with a code suggestion.
     ///
-    /// For Diff snippets, if no span is provided, it will use the lint's span.
-    /// If unable to get code from the span, it will fall back to a Block snippet.
-    pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
+    /// If no span is provided for [`SuggestionKind::Fix`], it will use the lint's span.
+    pub fn emit_with_suggestion<L: Lint>(
+        &self,
+        lint: &'static L,
+        span: Span,
+        suggestion: Suggestion,
+    ) {
         if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
-
-        // Convert the snippet to ensure we have the appropriate type
-        let snippet = match snippet {
-            Snippet::Diff { desc, span: diff_span, add, trim_code } => {
-                // Use the provided span or fall back to the lint span
-                let target_span = diff_span.unwrap_or(span);
-
-                // Check if we can get the original code
-                if self.span_to_snippet(target_span).is_some() {
-                    Snippet::Diff { desc, span: Some(target_span), add, trim_code }
-                } else {
-                    // Fall back to Block if we can't get the original code
-                    Snippet::Block { desc, code: add }
-                }
-            }
-            // Block snippets remain unchanged
-            block => block,
-        };
 
         let desc = if self.with_description { lint.description() } else { "" };
         let mut diag: DiagBuilder<'_, ()> = self
@@ -138,13 +126,29 @@ impl<'s, 'c> LintContext<'s, 'c> {
             .code(DiagId::new_str(lint.id()))
             .span(MultiSpan::from_span(span));
 
+        diag = match suggestion.kind {
+            SuggestionKind::Fix { span: fix_span, applicability, style } => diag
+                .span_suggestion_with_style(
+                    fix_span.unwrap_or(span),
+                    suggestion.desc.unwrap_or_default(),
+                    suggestion.content,
+                    applicability,
+                    style,
+                ),
+            SuggestionKind::Example => {
+                if let Some(note) = suggestion.to_note() {
+                    diag.note(note.iter().map(|l| l.0.as_str()).collect::<String>())
+                } else {
+                    diag
+                }
+            }
+        };
+
         // Avoid ANSI characters when using a JSON emitter
         if self.with_json_emitter {
-            diag = diag
-                .note(snippet.to_note(self).iter().map(|l| l.0.as_str()).collect::<String>())
-                .help(lint.help());
+            diag = diag.help(lint.help());
         } else {
-            diag = diag.highlighted_note(snippet.to_note(self)).help(hyperlink(lint.help()));
+            diag = diag.help(hyperlink(lint.help()));
         }
 
         diag.emit();
@@ -174,90 +178,98 @@ impl<'s, 'c> LintContext<'s, 'c> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Snippet {
+pub enum SuggestionKind {
     /// A standalone block of code. Used for showing examples without suggesting a fix.
-    Block {
-        /// An optional description displayed above the code block.
-        desc: Option<&'static str>,
-        /// The source code to display. Multi-line strings should include newlines.
-        code: String,
-    },
+    ///
+    /// Multi-line strings should include newlines.
+    Example,
 
     /// A proposed code change, displayed as a diff. Used to suggest replacements, showing the code
     /// to be removed (from `span`) and the code to be added (from `add`).
-    Diff {
-        /// An optional description displayed above the diff.
-        desc: Option<&'static str>,
+    Fix {
         /// The `Span` of the source code to be removed. Note that, if uninformed,
         /// `fn emit_with_fix()` falls back to the lint span.
         span: Option<Span>,
-        /// The fix.
-        add: String,
-        /// If `true`, the leading whitespaces of the first line will be trimmed from the whole
-        /// code block. Applies to both, the added and removed code. This is useful for
-        /// aligning the indentation of multi-line replacements.
-        trim_code: bool,
+        /// The applicability of the suggested fix.
+        applicability: Applicability,
+        /// The style of the suggested fix.
+        style: SuggestionStyle,
     },
 }
 
-impl Snippet {
-    pub fn to_note(self, ctx: &LintContext) -> Vec<(DiagMsg, Style)> {
-        let mut output = if let Some(desc) = self.desc() {
+// An emittable diagnostic suggestion.
+//
+// Depending on its [`SuggestionKind`] will be emitted as a simple note (examples), or a fix
+// suggestion.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Suggestion {
+    /// An optional description displayed above the code block.
+    desc: Option<&'static str>,
+    /// The actual suggestion.
+    content: String,
+    /// The suggestion type and its specific data.
+    kind: SuggestionKind,
+}
+
+impl Suggestion {
+    /// Creates a new [`SuggestionKind::Example`] suggestion.
+    pub fn example(content: String) -> Self {
+        Self { desc: None, content, kind: SuggestionKind::Example }
+    }
+
+    /// Creates a new [`SuggestionKind::Fix`] suggestion.
+    ///
+    /// When possible, will attempt to inline the suggestion.
+    pub fn fix(content: String, applicability: Applicability) -> Self {
+        Self {
+            desc: None,
+            content,
+            kind: SuggestionKind::Fix {
+                span: None,
+                applicability,
+                style: SuggestionStyle::ShowCode,
+            },
+        }
+    }
+
+    /// Sets the description for the suggestion.
+    pub fn with_desc(mut self, desc: &'static str) -> Self {
+        self.desc = Some(desc);
+        self
+    }
+
+    /// Sets the span for a [`SuggestionKind::Fix`] suggestion.
+    pub fn with_span(mut self, span: Span) -> Self {
+        if let SuggestionKind::Fix { span: ref mut s, .. } = self.kind {
+            *s = Some(span);
+        }
+        self
+    }
+
+    /// Sets the style for a [`SuggestionKind::Fix`] suggestion.
+    pub fn with_style(mut self, style: SuggestionStyle) -> Self {
+        if let SuggestionKind::Fix { style: ref mut s, .. } = self.kind {
+            *s = style;
+        }
+        self
+    }
+
+    fn to_note(&self) -> Option<Vec<(DiagMsg, Style)>> {
+        if let SuggestionKind::Fix { .. } = &self.kind {
+            return None;
+        };
+
+        let mut output = if let Some(desc) = self.desc {
             vec![(DiagMsg::from(desc), Style::NoStyle), (DiagMsg::from("\n\n"), Style::NoStyle)]
         } else {
             vec![(DiagMsg::from(" \n"), Style::NoStyle)]
         };
 
-        match self {
-            Self::Diff { span, add, trim_code: trim, .. } => {
-                // Get the original code from the span if provided and normalize its indentation
-                if let Some(span) = span
-                    && let Some(rmv) = ctx.span_to_snippet(span)
-                {
-                    let ind = ctx.get_span_indentation(span);
-                    let diag_msg = |line: &str, prefix: &str, style: Style| {
-                        let content = if trim { Self::trim_start_limited(line, ind) } else { line };
-                        (DiagMsg::from(format!("{prefix}{content}\n")), style)
-                    };
-                    output.extend(rmv.lines().map(|line| diag_msg(line, "- ", Style::Removal)));
-                    output.extend(add.lines().map(|line| diag_msg(line, "+ ", Style::Addition)));
-                } else {
-                    // Should never happen, but fall back to `Self::Block` behavior.
-                    output.extend(
-                        add.lines()
-                            .map(|line| (DiagMsg::from(format!("{line}\n")), Style::NoStyle)),
-                    );
-                }
-            }
-            Self::Block { code, .. } => {
-                output.extend(
-                    code.lines().map(|line| (DiagMsg::from(format!("{line}\n")), Style::NoStyle)),
-                );
-            }
-        }
+        output.extend(
+            self.content.lines().map(|line| (DiagMsg::from(format!("{line}\n")), Style::NoStyle)),
+        );
         output.push((DiagMsg::from("\n"), Style::NoStyle));
-        output
-    }
-
-    pub fn desc(&self) -> Option<&'static str> {
-        match self {
-            Self::Diff { desc, .. } => *desc,
-            Self::Block { desc, .. } => *desc,
-        }
-    }
-
-    /// Removes up to `max_chars` whitespaces from the start of the string.
-    fn trim_start_limited(s: &str, max_chars: usize) -> &str {
-        let (mut chars, mut byte_offset) = (0, 0);
-        for c in s.chars() {
-            if chars >= max_chars || !c.is_whitespace() {
-                break;
-            }
-            chars += 1;
-            byte_offset += c.len_utf8();
-        }
-
-        &s[byte_offset..]
+        Some(output)
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast,
+    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor,
     corpus::WorkerCorpus,
     fuzz::types::{FuzzWorker, SharedFuzzState},
 };
@@ -33,6 +33,7 @@ use std::{
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
+
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
 const SYNC_INTERVAL: u32 = 1000;
 
@@ -80,13 +81,13 @@ impl FuzzedExecutor {
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
-        fail_fast: &FailFast,
+        early_exit: &EarlyExit,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
         let shared_state = Arc::new(SharedFuzzState::new(
             self.config.runs,
             self.config.timeout,
-            fail_fast.clone(),
+            early_exit.clone(),
         ));
 
         // Determine number of workers
@@ -128,6 +129,8 @@ impl FuzzedExecutor {
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
+                warp: None,
+                roll: None,
                 sender: self.sender,
                 call_details: CallDetails { target: address, calldata: calldata.clone() },
             }],
@@ -136,9 +139,7 @@ impl FuzzedExecutor {
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::TooManyRejects(
-                self.config.max_test_rejects,
-            )));
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let (breakpoints, deprecated_cheatcodes) =
@@ -301,7 +302,9 @@ impl FuzzedExecutor {
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ]
-        .prop_map(|calldata| BasicTxDetails {
+        .prop_map(move |calldata| BasicTxDetails {
+            warp: None,
+            roll: None,
             sender: Default::default(),
             call_details: CallDetails { target: Default::default(), calldata },
         });
@@ -318,6 +321,7 @@ impl FuzzedExecutor {
 
         let mut worker = FuzzWorker::new(worker_id);
         let num_workers = self.num_workers();
+        // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples / num_workers);
 
         // Calculate worker-specific run limit when not using timer
@@ -513,13 +517,23 @@ impl FuzzedExecutor {
     }
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
+        let inspector = self.executor.inspector();
+
         if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(fork_db, self.config.dictionary, deployed_libs)
+            EvmFuzzState::new(
+                fork_db,
+                self.config.dictionary,
+                deployed_libs,
+                inspector.analysis.as_ref(),
+                inspector.paths_config(),
+            )
         } else {
             EvmFuzzState::new(
                 self.executor.backend().mem_db(),
                 self.config.dictionary,
                 deployed_libs,
+                inspector.analysis.as_ref(),
+                inspector.paths_config(),
             )
         }
     }

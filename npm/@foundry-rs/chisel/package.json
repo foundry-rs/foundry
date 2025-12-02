@@ -1,0 +1,42 @@
+{
+  "name": "@foundry-rs/chisel",
+  "version": "0.0.0",
+  "type": "module",
+  "homepage": "https://getfoundry.sh/chisel",
+  "description": "Chisel is a fast, utilitarian, and verbose Solidity REPL",
+  "bin": {
+    "chisel": "./bin.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "postinstall": "TARGET_TOOL=chisel node ./dist/postinstall.mjs"
+  },
+  "optionalDependencies": {
+    "@foundry-rs/chisel-darwin-arm64": "0.0.0",
+    "@foundry-rs/chisel-darwin-amd64": "0.0.0",
+    "@foundry-rs/chisel-linux-arm64": "0.0.0",
+    "@foundry-rs/chisel-linux-amd64": "0.0.0",
+    "@foundry-rs/chisel-win32-amd64": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "foundry",
+    "testing",
+    "ethereum",
+    "solidity",
+    "blockchain",
+    "smart-contracts"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "directory": "npm",
+    "url": "https://github.com/foundry-rs/foundry"
+  }
+}

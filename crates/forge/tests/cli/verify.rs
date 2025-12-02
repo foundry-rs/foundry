@@ -314,18 +314,22 @@ forgetest!(can_verify_random_contract_sepolia_default_sourcify, |prj, cmd| {
 // Tests that verify properly validates verifier arguments.
 // <https://github.com/foundry-rs/foundry/issues/11430>
 forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
+    prj.initialize_default_contracts();
+    // Build the project to create the cache.
+    cmd.forge_fuse().arg("build").assert_success();
     // No verifier URL.
-    cmd.args([
-        "verify-contract",
-        "--rpc-url",
-        "https://rpc.sepolia-api.lisk.com",
-        "--verifier",
-        "blockscout",
-        "0x19b248616E4964f43F611b5871CE1250f360E9d3",
-        "src/Counter.sol:Counter",
-    ])
-    .assert_failure()
-    .stderr_eq(str![[r#"
+    cmd.forge_fuse()
+        .args([
+            "verify-contract",
+            "--rpc-url",
+            "https://rpc.sepolia-api.lisk.com",
+            "--verifier",
+            "blockscout",
+            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "src/Counter.sol:Counter",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
 Error: No verifier URL specified for verifier blockscout
 
 "#]]);
@@ -344,7 +348,7 @@ Error: No verifier URL specified for verifier blockscout
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: No known Etherscan API URL for chain `4202`. To fix this, please:
-1. Specify a `url` 
+1. Specify a `url` when using Etherscan verifier
 2. Verify the chain `4202` is correct
 
 "#]]);

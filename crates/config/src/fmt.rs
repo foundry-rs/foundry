@@ -29,6 +29,8 @@ pub struct FormatterConfig {
     pub override_spacing: bool,
     /// Wrap comments on `line_length` reached
     pub wrap_comments: bool,
+    /// Style of doc comments
+    pub docs_style: DocCommentStyle,
     /// Globs to ignore
     pub ignore: Vec<String>,
     /// Add new line at start and end of contract declarations
@@ -37,8 +39,11 @@ pub struct FormatterConfig {
     pub sort_imports: bool,
     /// Whether to suppress spaces around the power operator (`**`).
     pub pow_no_space: bool,
-    /// Whether to compact call args in a single line when possible
-    pub call_compact_args: bool,
+    /// Style that determines if a broken list, should keep its elements together on their own
+    /// line, before breaking individually.
+    pub prefer_compact: PreferCompact,
+    /// Keep single imports on a single line even if they exceed line length.
+    pub single_line_imports: bool,
 }
 
 /// Style of integer types.
@@ -101,6 +106,19 @@ pub enum HexUnderscore {
     Bytes,
 }
 
+/// Style of doc comments
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocCommentStyle {
+    /// Preserve the source code style
+    #[default]
+    Preserve,
+    /// Use single-line style (`///`)
+    Line,
+    /// Use block style (`/** .. */`)
+    Block,
+}
+
 /// Style of string quotes
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -142,8 +160,9 @@ pub enum SingleLineBlockStyle {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
-    /// Write function parameters multiline first.
-    ParamsFirst,
+    /// Always write function parameters multiline.
+    #[serde(alias = "params_first")] // alias for backwards compatibility
+    ParamsAlways,
     /// Write function parameters multiline first when there is more than one param.
     ParamsFirstMulti,
     /// Write function attributes multiline first.
@@ -162,11 +181,45 @@ impl MultilineFuncHeaderStyle {
     }
 
     pub fn params_first(&self) -> bool {
-        matches!(self, Self::ParamsFirst | Self::ParamsFirstMulti)
+        matches!(self, Self::ParamsAlways | Self::ParamsFirstMulti)
     }
 
     pub fn attrib_first(&self) -> bool {
         matches!(self, Self::AttributesFirst)
+    }
+}
+
+/// Style that determines if a broken list, should keep its elements together on their own line,
+/// before breaking individually.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreferCompact {
+    /// All elements are preferred consistent.
+    None,
+    /// Calls are preferred compact. Events and errors break consistently.
+    Calls,
+    /// Events are preferred compact. Calls and errors break consistently.
+    Events,
+    /// Errors are preferred compact. Calls and events break consistently.
+    Errors,
+    /// Events and errors are preferred compact. Calls break consistently.
+    EventsErrors,
+    /// All elements are preferred compact.
+    #[default]
+    All,
+}
+
+impl PreferCompact {
+    pub fn calls(&self) -> bool {
+        matches!(self, Self::All | Self::Calls)
+    }
+
+    pub fn events(&self) -> bool {
+        matches!(self, Self::All | Self::Events | Self::EventsErrors)
+    }
+
+    pub fn errors(&self) -> bool {
+        matches!(self, Self::All | Self::Errors | Self::EventsErrors)
     }
 }
 
@@ -198,7 +251,9 @@ impl Default for FormatterConfig {
             contract_new_lines: false,
             sort_imports: false,
             pow_no_space: false,
-            call_compact_args: true,
+            prefer_compact: PreferCompact::default(),
+            docs_style: DocCommentStyle::default(),
+            single_line_imports: false,
         }
     }
 }

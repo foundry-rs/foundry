@@ -7,7 +7,9 @@ use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
 };
-use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
+use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
+use foundry_common::compile::Analysis;
+use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     ContextExt, Env, InspectorExt,
     backend::{DatabaseExt, JournaledState},
@@ -38,6 +40,8 @@ use std::{
 #[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct InspectorStackBuilder {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities.
+    pub analysis: Option<Analysis>,
     /// The block environment.
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -79,6 +83,13 @@ impl InspectorStackBuilder {
     #[inline]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the solar compiler instance that grants syntactic and semantic analysis capabilities
+    #[inline]
+    pub fn set_analysis(mut self, analysis: Analysis) -> Self {
+        self.analysis = Some(analysis);
+        self
     }
 
     /// Set the block environment.
@@ -178,6 +189,7 @@ impl InspectorStackBuilder {
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
+            analysis,
             block,
             gas_price,
             cheatcodes,
@@ -197,6 +209,11 @@ impl InspectorStackBuilder {
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
+            // Set analysis capabilities if they are provided
+            if let Some(analysis) = analysis {
+                stack.set_analysis(analysis.clone());
+                cheatcodes.set_analysis(CheatcodeAnalysis::new(analysis));
+            }
             // Set wallets if they are provided
             if let Some(wallets) = wallets {
                 cheatcodes.set_wallets(wallets);
@@ -294,11 +311,20 @@ pub struct InspectorStack {
     pub inner: InspectorStackInner,
 }
 
+impl InspectorStack {
+    pub fn paths_config(&self) -> Option<&ProjectPathsConfig> {
+        self.cheatcodes.as_ref().map(|c| &c.config.paths)
+    }
+}
+
 /// All used inpectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackInner {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities.
+    pub analysis: Option<Analysis>,
+
     // Inspectors.
     // These are boxed to reduce the size of the struct and slightly improve performance of the
     // `if let Some` checks.
@@ -372,6 +398,12 @@ impl InspectorStack {
             }
             format!("[{}]", enabled.join(", "))
         });
+    }
+
+    /// Set the solar compiler instance.
+    #[inline]
+    pub fn set_analysis(&mut self, analysis: Analysis) {
+        self.analysis = Some(analysis);
     }
 
     /// Set variables from an environment for the relevant inspectors.
@@ -877,7 +909,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     }
 
     #[allow(clippy::redundant_clone)]
-    fn log(
+    fn log_full(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
@@ -885,7 +917,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     ) {
         call_inspectors!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log(interpreter, ecx, log.clone()),
+            |inspector| inspector.log_full(interpreter, ecx, log.clone()),
         );
     }
 
@@ -930,6 +962,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                     call.input.bytes(ecx).get(..4).and_then(|selector| mocks.get(selector))
                 }) {
                     call.bytecode_address = *target;
+                    call.known_bytecode = None;
                 }
             }
 
@@ -954,6 +987,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                     return Some(CallOutcome {
                         result,
                         memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: true,
+                        precompile_call_logs: vec![],
                     });
                 }
                 // Mark accounts and storage cold before STATICCALLs
@@ -1061,6 +1096,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
+
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        call_inspectors!([&mut self.printer], |inspector| Inspector::<
+            EthEvmContext<&mut dyn DatabaseExt>,
+        >::selfdestruct(
+            inspector, contract, target, value,
+        ));
+    }
 }
 
 impl InspectorExt for InspectorStackRefMut<'_> {
@@ -1152,13 +1195,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
         self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(
+    fn log_full(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
         log: Log,
     ) {
-        self.as_mut().log(interpreter, ecx, log)
+        self.as_mut().log_full(interpreter, ecx, log)
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {

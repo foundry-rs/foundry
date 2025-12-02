@@ -86,18 +86,24 @@ pub struct FuzzDictionaryConfig {
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
     #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
     pub max_fuzz_dictionary_values: usize,
+    /// How many literal values to seed from the AST, at most.
+    ///
+    /// This value is independent from the max amount of addresses and values.
+    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
+    pub max_fuzz_dictionary_literals: usize,
 }
 
 impl Default for FuzzDictionaryConfig {
     fn default() -> Self {
+        const MB: usize = 1024 * 1024;
+
         Self {
             dictionary_weight: 40,
             include_storage: true,
             include_push_bytes: true,
-            // limit this to 300MB
-            max_fuzz_dictionary_addresses: (300 * 1024 * 1024) / 20,
-            // limit this to 200MB
-            max_fuzz_dictionary_values: (200 * 1024 * 1024) / 32,
+            max_fuzz_dictionary_addresses: 300 * MB / 20,
+            max_fuzz_dictionary_values: 300 * MB / 32,
+            max_fuzz_dictionary_literals: 200 * MB / 32,
         }
     }
 }

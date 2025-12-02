@@ -48,6 +48,10 @@ import { ContractWithLints } from "./ContractWithLints.sol";
 
 import { _PascalCaseInfo } from "./ContractWithLints.sol";
 import "./ContractWithLints.sol";
+
+contract Dummy {
+    bool foo;
+}
 "#;
 
 const COUNTER_A: &str = r#"
@@ -109,7 +113,6 @@ contract CounterTest {
 "#;
 
 forgetest!(can_use_config, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -137,7 +140,6 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 });
 
 forgetest!(can_use_config_ignore, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
 
@@ -156,7 +158,7 @@ note[mixed-case-function]: function names should use mixedCase
  [FILE]:9:14
   |
 9 |     function functionMIXEDCaseInfo() public {}
-  |              ^^^^^^^^^^^^^^^^^^^^^
+  |              ^^^^^^^^^^^^^^^^^^^^^ help: consider using: `functionMixedCaseInfo`
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -177,7 +179,6 @@ note[mixed-case-function]: function names should use mixedCase
 });
 
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
 
@@ -195,7 +196,6 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
 });
 
 forgetest!(can_override_config_severity, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -214,7 +214,7 @@ note[mixed-case-function]: function names should use mixedCase
  [FILE]:9:14
   |
 9 |     function functionMIXEDCaseInfo() public {}
-  |              ^^^^^^^^^^^^^^^^^^^^^
+  |              ^^^^^^^^^^^^^^^^^^^^^ help: consider using: `functionMixedCaseInfo`
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -223,7 +223,6 @@ note[mixed-case-function]: function names should use mixedCase
 });
 
 forgetest!(can_override_config_path, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -251,7 +250,6 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 });
 
 forgetest!(can_override_config_lint, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -281,7 +279,6 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 });
 
 forgetest!(build_runs_linter_by_default, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show only medium severity lints
@@ -345,7 +342,6 @@ Warning (2018): Function state mutability can be restricted to pure
 });
 
 forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
@@ -364,7 +360,6 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
 });
 
 forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
@@ -393,7 +388,6 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
 });
 
 forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints but disable lint_on_build
@@ -447,12 +441,10 @@ Warning (2018): Function state mutability can be restricted to pure
 });
 
 forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     cmd.arg("lint").assert_success();
 
-    prj.wipe_contracts();
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     prj.add_source("ContractWithLints", CONTRACT);
     cmd.arg("lint").assert_success();
@@ -460,7 +452,6 @@ forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/11080>
 forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
@@ -478,7 +469,6 @@ note[unused-import]: unused imports should be removed
 
 // <https://github.com/foundry-rs/foundry/issues/11234>
 forgetest!(can_lint_only_built_files, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("CounterAWithLints", COUNTER_A);
     prj.add_source("CounterBWithLints", COUNTER_B);
 
@@ -497,7 +487,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:20
   |
 6 |     uint256 public CounterB_Fail_Lint;
-  |                    ^^^^^^^^^^^^^^^^^^
+  |                    ^^^^^^^^^^^^^^^^^^ help: consider using: `counterBFailLint`
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
@@ -507,7 +497,6 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 
 // <https://github.com/foundry-rs/foundry/issues/11392>
 forgetest!(can_lint_param_constants, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("Counter", COUNTER_WITH_CONST);
     prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST);
 
@@ -521,7 +510,6 @@ Compiler run successful!
 
 // <https://github.com/foundry-rs/foundry/issues/11460>
 forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source(
         "UnwrappedModifierTest",
         r#"
@@ -556,60 +544,119 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     cmd.arg("lint").arg("--json").assert_json_stderr(true,
         str![[r#"
 {
-  "$message_type": "diagnostic",
-  "message": "wrap modifier logic to reduce code size",
-  "code": {
+    "$message_type": "diagnostic",
+    "message": "wrap modifier logic to reduce code size",
+    "code": {
     "code": "unwrapped-modifier-logic",
     "explanation": null
-  },
-  "level": "note",
-  "spans": [
+    },
+    "level": "note",
+    "spans": [
     {
-      "file_name": "src/UnwrappedModifierTest.sol",
-      "byte_start": 183,
-      "byte_end": 192,
-      "line_start": 8,
-      "line_end": 8,
-      "column_start": 22,
-      "column_end": 31,
-      "is_primary": true,
-      "text": [
+        "file_name": "src/UnwrappedModifierTest.sol",
+        "byte_start": 174,
+        "byte_end": 355,
+        "line_start": 8,
+        "line_end": 12,
+        "column_start": 13,
+        "column_end": 14,
+        "is_primary": true,
+        "text": [
         {
-          "text": "            modifier onlyOwner() {",
-          "highlight_start": 22,
-          "highlight_end": 31
+            "text": "            modifier onlyOwner() {",
+            "highlight_start": 13,
+            "highlight_end": 35
+        },
+        {
+            "text": "                require(isOwner[msg.sender], \"Not owner\");",
+            "highlight_start": 1,
+            "highlight_end": 59
+        },
+        {
+            "text": "                require(msg.sender != address(0), \"Zero address\");",
+            "highlight_start": 1,
+            "highlight_end": 67
+        },
+        {
+            "text": "                _;",
+            "highlight_start": 1,
+            "highlight_end": 19
+        },
+        {
+            "text": "            }",
+            "highlight_start": 1,
+            "highlight_end": 14
         }
-      ],
-      "label": null,
-      "suggested_replacement": null
+        ],
+        "label": null,
+        "suggested_replacement": null
     }
-  ],
-  "children": [
+    ],
+    "children": [
     {
-      "message": "wrap modifier logic to reduce code size\n\n- modifier onlyOwner() {\n-     require(isOwner[msg.sender], \"Not owner\");\n-     require(msg.sender != address(0), \"Zero address\");\n-     _;\n- }\n+ modifier onlyOwner() {\n+     _onlyOwner();\n+     _;\n+ }\n+ \n+ function _onlyOwner() internal {\n+     require(isOwner[msg.sender], \"Not owner\");\n+     require(msg.sender != address(0), \"Zero address\");\n+ }\n\n",
-      "code": null,
-      "level": "note",
-      "spans": [],
-      "children": [],
-      "rendered": null
+        "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
+        "code": null,
+        "level": "help",
+        "spans": [],
+        "children": [],
+        "rendered": null
     },
     {
-      "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
-      "code": null,
-      "level": "help",
-      "spans": [],
-      "children": [],
-      "rendered": null
+        "message": "wrap modifier logic to reduce code size",
+        "code": null,
+        "level": "help",
+        "spans": [
+        {
+            "file_name": "src/UnwrappedModifierTest.sol",
+            "byte_start": 174,
+            "byte_end": 355,
+            "line_start": 8,
+            "line_end": 12,
+            "column_start": 13,
+            "column_end": 14,
+            "is_primary": true,
+            "text": [
+            {
+                "text": "            modifier onlyOwner() {",
+                "highlight_start": 13,
+                "highlight_end": 35
+            },
+            {
+                "text": "                require(isOwner[msg.sender], \"Not owner\");",
+                "highlight_start": 1,
+                "highlight_end": 59
+            },
+            {
+                "text": "                require(msg.sender != address(0), \"Zero address\");",
+                "highlight_start": 1,
+                "highlight_end": 67
+            },
+            {
+                "text": "                _;",
+                "highlight_start": 1,
+                "highlight_end": 19
+            },
+            {
+                "text": "            }",
+                "highlight_start": 1,
+                "highlight_end": 14
+            }
+            ],
+            "label": null,
+            "suggested_replacement": "modifier onlyOwner() {\n                _onlyOwner();\n                _;\n            }\n\n            function _onlyOwner() internal {\n                require(isOwner[msg.sender], \"Not owner\");\n                require(msg.sender != address(0), \"Zero address\");\n            }"
+        }
+        ],
+        "children": [],
+        "rendered": null
     }
-  ],
-  "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n  |                      ^^^^^^^^^\n          \n"
+    ],
+    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\n  --> src/UnwrappedModifierTest.sol:8:13\n   |\n 8 | /             modifier onlyOwner() {\n 9 | |                 require(isOwner[msg.sender], \"Not owner\");\n10 | |                 require(msg.sender != address(0), \"Zero address\");\n11 | |                 _;\n12 | |             }\n   | |_____________^\n   |\nhelp: wrap modifier logic to reduce code size\n   |\n 8 ~             modifier onlyOwner() {\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   |\n   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n"
 }
 "#]],
 );
 });
 
 forgetest!(can_fail_on_lints, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // -- LINT ALL SEVERITIES [OUTPUT: WARN + NOTE] ----------------------------
@@ -735,3 +782,42 @@ fn ensure_no_privileged_lint_id() {
         assert_ne!(lint.id(), "all", "lint-id 'all' is reserved. Please use a different id");
     }
 }
+
+forgetest!(skips_linting_for_old_solidity_versions, |prj, cmd| {
+    const OLD_CONTRACT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.7.0;
+
+contract OldContract {
+    uint256 VARIABLE_MIXED_CASE_INFO;
+
+    function FUNCTION_MIXED_CASE_INFO() public {}
+}
+"#;
+
+    // Add a contract with Solidity 0.7.x which has lint issues
+    prj.add_source("OldContract", OLD_CONTRACT);
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    // Run forge build - should SUCCEED without linting
+    cmd.arg("build").assert_success().stderr_eq(str![[
+        r#"Warning: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+
+"#
+    ]]);
+
+    // Run forge lint - should FAIL
+    cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[
+        r#"Error: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+
+"#
+    ]]);
+});

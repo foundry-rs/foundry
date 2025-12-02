@@ -1,6 +1,6 @@
 use crate::EnvMut;
 use alloy_chains::Chain;
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
+use foundry_evm_networks::NetworkConfigs;
 use revm::primitives::{
     eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
     hardfork::SpecId,
@@ -30,6 +31,7 @@ pub fn cold_path() {
 pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     env: EnvMut<'_>,
     block: &N::BlockResponse,
+    configs: NetworkConfigs,
 ) {
     use NamedChain::*;
 
@@ -55,12 +57,6 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 env.block.prevrandao = Some(env.block.difficulty.into());
                 return;
             }
-            Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk | RskTestnet | Gnosis | Chiado => {
-                if env.block.prevrandao.is_none() {
-                    // <https://github.com/foundry-rs/foundry/issues/4232>
-                    env.block.prevrandao = Some(B256::random());
-                }
-            }
             c if c.is_arbitrum() => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
@@ -78,23 +74,46 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
         }
     }
 
+    if configs.bypass_prevrandao(env.cfg.chain_id) && env.block.prevrandao.is_none() {
+        // <https://github.com/foundry-rs/foundry/issues/4232>
+        env.block.prevrandao = Some(B256::random());
+    }
+
     // if difficulty is `0` we assume it's past merge
     if block.header().difficulty().is_zero() {
         env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
     }
 }
 
-/// Derive the blob base fee update fraction based on the chain and timestamp by checking the
-/// hardfork.
-pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u64 {
+/// Derives the active [`BlobParams`] based on the given timestamp.
+///
+/// This falls back to regular ethereum blob params if no hardforks for the given chain id are
+/// detected.
+pub fn get_blob_params(chain_id: ChainId, timestamp: u64) -> BlobParams {
     let hardfork = EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
         .unwrap_or_default();
 
-    if hardfork >= EthereumHardfork::Prague {
-        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-    } else {
-        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+    match hardfork {
+        EthereumHardfork::Prague => BlobParams::prague(),
+        EthereumHardfork::Osaka => BlobParams::osaka(),
+        EthereumHardfork::Bpo1 => BlobParams::bpo1(),
+        EthereumHardfork::Bpo2 => BlobParams::bpo2(),
+
+        // future hardforks/unknown settings: update once decided
+        EthereumHardfork::Bpo3 => BlobParams::bpo2(),
+        EthereumHardfork::Bpo4 => BlobParams::bpo2(),
+        EthereumHardfork::Bpo5 => BlobParams::bpo2(),
+        EthereumHardfork::Amsterdam => BlobParams::bpo2(),
+
+        // fallback
+        _ => BlobParams::cancun(),
     }
+}
+
+/// Derive the blob base fee update fraction based on the chain and timestamp by checking the
+/// hardfork.
+pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u64 {
+    get_blob_params(chain_id, timestamp).update_fraction as u64
 }
 
 /// Returns the blob base fee update fraction based on the spec id.
@@ -122,7 +141,12 @@ pub fn get_function<'a>(
 pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
     let from = tx.from();
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
-        configure_tx_req_env(env, &tx.clone().into(), Some(from)).expect("cannot fail");
+        configure_tx_req_env(
+            env,
+            &TransactionRequest::from_transaction_with_sender(tx.clone(), from),
+            Some(from),
+        )
+        .expect("cannot fail");
     }
 }
 
@@ -161,8 +185,11 @@ pub fn configure_tx_req_env(
     env.tx.kind = to.unwrap_or(TxKind::Create);
     // If the transaction is impersonated, we need to set the caller to the from
     // address Ref: https://github.com/foundry-rs/foundry/issues/9541
-    env.tx.caller =
-        impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
+    env.tx.caller = if let Some(caller) = impersonated_from {
+        caller
+    } else {
+        from.ok_or_else(|| eyre::eyre!("missing `from` field"))?
+    };
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
     env.tx.nonce = nonce.unwrap_or_default();
     env.tx.value = value.unwrap_or_default();

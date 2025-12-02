@@ -8,7 +8,6 @@ use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
-use tracing::debug;
 use yansi::Paint;
 
 /// Run the `chisel` command line interface.
@@ -51,6 +50,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         evm_opts,
         backend: None,
         calldata: None,
+        ir_minimum: args.ir_minimum,
     })?;
 
     // Execute prelude Solidity source files

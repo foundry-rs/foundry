@@ -33,40 +33,53 @@ impl PreprocessorDependencies {
     ) -> Self {
         let mut preprocessed_contracts = BTreeMap::new();
         let mut referenced_contracts = HashSet::new();
-        for contract_id in gcx.hir.contract_ids() {
-            let contract = gcx.hir.contract(contract_id);
-            let source = gcx.hir.source(contract.source);
+        let mut current_mocks = HashSet::new();
 
-            let FileName::Real(path) = &source.file.name else {
-                continue;
-            };
-
-            // Collect dependencies only for tests and scripts.
-            if !paths.contains(path) {
-                let path = path.display();
-                trace!("{path} is not test or script");
-                continue;
-            }
-
-            // Do not collect dependencies for mock contracts. Walk through base contracts and
-            // check if they're from src dir.
-            if contract.linearized_bases.iter().any(|base_contract_id| {
-                let base_contract = gcx.hir.contract(*base_contract_id);
-                let FileName::Real(path) = &gcx.hir.source(base_contract.source).file.name else {
-                    return false;
+        // Helper closure for iterating candidate contracts to preprocess (tests and scripts).
+        let candidate_contracts = || {
+            gcx.hir.contract_ids().filter_map(|id| {
+                let contract = gcx.hir.contract(id);
+                let source = gcx.hir.source(contract.source);
+                let FileName::Real(path) = &source.file.name else {
+                    return None;
                 };
-                path.starts_with(src_dir)
+
+                if !paths.contains(path) {
+                    trace!("{} is not test or script", path.display());
+                    return None;
+                }
+
+                Some((id, contract, source, path))
+            })
+        };
+
+        // Collect current mocks.
+        for (_, contract, _, path) in candidate_contracts() {
+            if contract.linearized_bases.iter().any(|base_id| {
+                let base = gcx.hir.contract(*base_id);
+                matches!(
+                    &gcx.hir.source(base.source).file.name,
+                    FileName::Real(base_path) if base_path.starts_with(src_dir)
+                )
             }) {
-                // Record mock contracts to be evicted from preprocessed cache.
-                mocks.insert(root_dir.join(path));
-                let path = path.display();
-                trace!("found mock contract {path}");
-                continue;
-            } else {
-                // Make sure current contract is not in list of mocks (could happen when a contract
-                // which used to be a mock is refactored to a non-mock implementation).
-                mocks.remove(&root_dir.join(path));
+                let mock_path = root_dir.join(path);
+                trace!("found mock contract {}", mock_path.display());
+                current_mocks.insert(mock_path);
             }
+        }
+
+        // Collect dependencies for non-mock test/script contracts.
+        for (contract_id, contract, source, path) in candidate_contracts() {
+            let full_path = root_dir.join(path);
+
+            if current_mocks.contains(&full_path) {
+                trace!("{} is a mock, skipping", path.display());
+                continue;
+            }
+
+            // Make sure current contract is not in list of mocks (could happen when a contract
+            // which used to be a mock is refactored to a non-mock implementation).
+            mocks.remove(&full_path);
 
             let mut deps_collector =
                 BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir);
@@ -76,9 +89,14 @@ impl PreprocessorDependencies {
             if !deps_collector.dependencies.is_empty() {
                 preprocessed_contracts.insert(contract_id, deps_collector.dependencies);
             }
+
             // Record collected referenced contract ids.
             referenced_contracts.extend(deps_collector.referenced_contracts);
         }
+
+        // Add current mocks.
+        mocks.extend(current_mocks);
+
         Self { preprocessed_contracts, referenced_contracts }
     }
 }
@@ -100,8 +118,8 @@ enum BytecodeDependencyKind {
         value: Option<String>,
         /// `salt` (if any) used when creating contract.
         salt: Option<String>,
-        /// Whether it's a try contract creation statement.
-        try_stmt: bool,
+        /// Whether it's a try contract creation statement, with custom return.
+        try_stmt: Option<bool>,
     },
 }
 
@@ -173,7 +191,6 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                     call_expr,
                     call_args,
                     named_args,
-                    false,
                 ) {
                     self.collect_dependency(dependency);
                 }
@@ -199,17 +216,30 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(stmt_try) = stmt.kind
             && let ExprKind::Call(call_expr, call_args, named_args) = &stmt_try.expr.kind
-            && let Some(dependency) = handle_call_expr(
+            && let Some(mut dependency) = handle_call_expr(
                 self.src,
                 self.gcx.sess.source_map(),
                 &stmt_try.expr,
                 call_expr,
                 call_args,
                 named_args,
-                true,
             )
         {
+            let has_custom_return = if let Some(clause) = stmt_try.clauses.first()
+                && clause.args.len() == 1
+                && let Some(ret_var) = clause.args.first()
+                && let TypeKind::Custom(_) = self.hir().variable(*ret_var).ty.kind
+            {
+                true
+            } else {
+                false
+            };
+
+            if let BytecodeDependencyKind::New { try_stmt, .. } = &mut dependency.kind {
+                *try_stmt = Some(has_custom_return);
+            }
             self.collect_dependency(dependency);
+
             for clause in stmt_try.clauses {
                 for &var in clause.args {
                     self.visit_nested_var(var)?;
@@ -232,7 +262,6 @@ fn handle_call_expr(
     call_expr: &Expr<'_>,
     call_args: &CallArgs<'_>,
     named_args: &Option<&[NamedArg<'_>]>,
-    try_stmt: bool,
 ) -> Option<BytecodeDependency> {
     if let ExprKind::New(ty_new) = &call_expr.kind
         && let TypeKind::Custom(item_id) = ty_new.kind
@@ -258,7 +287,7 @@ fn handle_call_expr(
                 call_args_offset,
                 value: named_arg(src, named_args, "value", source_map),
                 salt: named_arg(src, named_args, "salt", source_map),
-                try_stmt,
+                try_stmt: None,
             },
             loc: span_to_range(source_map, call_expr.span),
             referenced_contract: contract_id,
@@ -284,6 +313,17 @@ fn named_arg(
 
 /// Goes over all test/script files and replaces bytecode dependencies with cheatcode
 /// invocations.
+///
+/// Special handling of try/catch statements with custom returns, where the try statement becomes
+/// ```solidity
+/// try this.addressToCounter() returns (Counter c)
+/// ```
+/// and helper to cast address is appended
+/// ```solidity
+/// function addressToCounter(address addr) returns (Counter) {
+///     return Counter(addr);
+/// }
+/// ```
 pub(crate) fn remove_bytecode_dependencies(
     gcx: Gcx<'_>,
     deps: &PreprocessorDependencies,
@@ -303,6 +343,7 @@ pub(crate) fn remove_bytecode_dependencies(
         let vm_interface_name = format!("VmContractHelper{}", contract_id.get());
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
+        let mut try_catch_helpers: HashSet<&str> = HashSet::default();
 
         for dep in deps {
             let Some(ContractData { artifact, constructor_data, .. }) =
@@ -328,8 +369,14 @@ pub(crate) fn remove_bytecode_dependencies(
                     salt,
                     try_stmt,
                 } => {
-                    let (mut update, closing_seq) = if *try_stmt {
-                        (String::new(), "})")
+                    let (mut update, closing_seq) = if let Some(has_ret) = try_stmt {
+                        if *has_ret {
+                            // try this.addressToCounter1() returns (Counter c)
+                            try_catch_helpers.insert(name);
+                            (format!("this.addressTo{name}{id}(", id = contract_id.get()), "}))")
+                        } else {
+                            (String::new(), "})")
+                        }
                     } else {
                         (format!("{name}(payable("), "})))")
                     };
@@ -369,6 +416,30 @@ pub(crate) fn remove_bytecode_dependencies(
                 }
             };
         }
+
+        // Add try catch statements after last function of the test contract.
+        if !try_catch_helpers.is_empty()
+            && let Some(last_fn_id) = contract.functions().last()
+        {
+            let last_fn_range =
+                span_to_range(gcx.sess.source_map(), gcx.hir.function(last_fn_id).span);
+            let to_address_fns = try_catch_helpers
+                .iter()
+                .map(|ty| {
+                    format!(
+                        r#"
+                            function addressTo{ty}{id}(address addr) public pure returns ({ty}) {{
+                                return {ty}(addr);
+                            }}
+                        "#,
+                        id = contract_id.get()
+                    )
+                })
+                .collect::<String>();
+
+            updates.insert((last_fn_range.end, last_fn_range.end, to_address_fns));
+        }
+
         let helper_imports = used_helpers.into_iter().map(|id| {
             let id = id.get();
             format!(

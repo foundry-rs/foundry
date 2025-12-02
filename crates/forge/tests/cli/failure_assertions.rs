@@ -19,15 +19,23 @@ forgetest!(test_fail_deprecation, |prj, cmd| {
     "#,
     );
 
-    cmd.forge_fuse().args(["test", "--mc", "DeprecationTestFail"]).assert_failure().stdout_eq(
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.forge_fuse()
+        .args(["test", "--mc", "DeprecationTestFail"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: `testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert] Found 2 instances: testFail_deprecated, testFail_deprecated2 ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#,
-    );
+Failing tests:
+Encountered 2 failing tests in src/DeprecationTestFail.t.sol:DeprecationTestFail
+[FAIL: `testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert] testFail_deprecated() ([GAS])
+[FAIL: `testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert] testFail_deprecated2() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]]);
 });
 
 forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
@@ -191,6 +199,7 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
     prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests);
 
     cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...
@@ -233,6 +242,9 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
+    prj.update_config(|config| {
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+    });
 
     let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
     let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
@@ -418,7 +430,7 @@ forgetest!(multiple_setups, |prj, cmd| {
     prj.add_source(
         "MultipleSetupsTest.t.sol",
         r#"
-    
+
 import "./test.sol";
 
 contract MultipleSetup is DSTest {

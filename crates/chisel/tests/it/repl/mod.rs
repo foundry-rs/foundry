@@ -223,3 +223,32 @@ repl_test!(test_full_word_hex_formatting, |repl| {
         "Hex (full word): 0x0a6b316b47a0cd26c1b582ae3dcffbd175283c221c3cb3d1c614e3e47f62a700",
     );
 });
+
+// Test that uint is printed properly with any size.
+repl_test!(test_uint_formatting, |repl| {
+    for size in (8..=256).step_by(8) {
+        repl.sendln(&format!("type(uint{size}).max"));
+        repl.expect(&format!("Hex: 0x{}", "f".repeat(size / 4)));
+
+        repl.sendln(&format!("uint{size}(2)"));
+        repl.expect("Hex: 0x2");
+    }
+});
+
+// Test that int is printed properly with any size.
+repl_test!(test_int_formatting, |repl| {
+    for size in (8..=256).step_by(8) {
+        let size_minus_1: usize = size / 4 - 1;
+        repl.sendln(&format!("type(int{size}).max"));
+        repl.expect(&format!("Hex: 0x7{}", "f".repeat(size_minus_1)));
+
+        repl.sendln(&format!("int{size}(2)"));
+        repl.expect("Hex: 0x2");
+
+        repl.sendln(&format!("type(int{size}).min"));
+        repl.expect(&format!("Hex: 0x8{}", "0".repeat(size_minus_1)));
+
+        repl.sendln(&format!("int{size}(-2)"));
+        repl.expect(&format!("Hex: 0x{}e", "f".repeat(size_minus_1)));
+    }
+});

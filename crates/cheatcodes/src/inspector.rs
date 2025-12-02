@@ -4,7 +4,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        DealRecord, GasRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess, journaled_account,
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -37,7 +37,7 @@ use foundry_common::{
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, InspectorExt,
+    Breakpoints, ContextExt, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -46,7 +46,7 @@ use foundry_evm_core::{
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
-use foundry_wallets::multi_wallet::MultiWallet;
+use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
@@ -61,7 +61,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
-    state::EvmStorageSlot,
+    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
@@ -75,6 +75,9 @@ use std::{
 };
 
 mod utils;
+
+pub mod analysis;
+pub use analysis::CheatcodeAnalysis;
 
 pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
 
@@ -95,7 +98,7 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.inner.ctx.journaled_state.depth += 1;
+            evm.journaled_state.depth += 1;
 
             let frame = FrameInput::Create(Box::new(inputs));
 
@@ -104,7 +107,7 @@ pub trait CheatcodesExecutor {
                 FrameResult::Create(create) => create,
             };
 
-            evm.inner.ctx.journaled_state.depth -= 1;
+            evm.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -152,11 +155,12 @@ where
 
     let res = f(&mut evm)?;
 
-    ccx.ecx.journaled_state.inner = evm.inner.ctx.journaled_state.inner;
-    ccx.ecx.block = evm.inner.ctx.block;
-    ccx.ecx.tx = evm.inner.ctx.tx;
-    ccx.ecx.cfg = evm.inner.ctx.cfg;
-    ccx.ecx.error = evm.inner.ctx.error;
+    let ctx = evm.into_context();
+    ccx.ecx.journaled_state.inner = ctx.journaled_state.inner;
+    ccx.ecx.block = ctx.block;
+    ccx.ecx.tx = ctx.tx;
+    ccx.ecx.cfg = ctx.cfg;
+    ccx.ecx.error = ctx.error;
 
     Ok(res)
 }
@@ -312,8 +316,11 @@ impl ArbitraryStorage {
     /// - update account's storage with given value.
     pub fn save(&mut self, ecx: Ecx, address: Address, slot: U256, data: U256) {
         self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
-        if let Ok(mut account) = ecx.journaled_state.load_account(address) {
-            account.storage.insert(slot, EvmStorageSlot::new(data, 0));
+        let (db, journal, _) = ecx.as_db_env_and_journal();
+        if journal.load_account(db, address).is_ok() {
+            journal
+                .sstore(db, address, slot, data, false)
+                .expect("could not set arbitrary storage value");
         }
     }
 
@@ -330,15 +337,19 @@ impl ArbitraryStorage {
             None => {
                 storage_cache.insert(slot, new_value);
                 // Update source storage with new value.
-                if let Ok(mut source_account) = ecx.journaled_state.load_account(*source) {
-                    source_account.storage.insert(slot, EvmStorageSlot::new(new_value, 0));
+                let (db, journal, _) = ecx.as_db_env_and_journal();
+                if journal.load_account(db, *source).is_ok() {
+                    journal
+                        .sstore(db, *source, slot, new_value, false)
+                        .expect("could not copy arbitrary storage value");
                 }
                 new_value
             }
         };
         // Update target storage with new value.
-        if let Ok(mut target_account) = ecx.journaled_state.load_account(target) {
-            target_account.storage.insert(slot, EvmStorageSlot::new(value, 0));
+        let (db, journal, _) = ecx.as_db_env_and_journal();
+        if journal.load_account(db, target).is_ok() {
+            journal.sstore(db, target, slot, value, false).expect("could not set storage");
         }
         value
     }
@@ -366,6 +377,9 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
 pub struct Cheatcodes {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
+    pub analysis: Option<CheatcodeAnalysis>,
+
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -498,11 +512,10 @@ pub struct Cheatcodes {
     pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
     signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
-    /// Used to determine whether the broadcasted call has non-fixed gas limit.
-    /// Holds values for (seen opcode GAS, seen opcode CALL) pair.
-    /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
-    /// has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
-    pub dynamic_gas_limit_sequence: Option<(bool, bool)>,
+    /// Used to determine whether the broadcasted call has dynamic gas limit.
+    pub dynamic_gas_limit: bool,
+    // Custom execution evm version.
+    pub execution_evm_version: Option<SpecId>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -518,6 +531,7 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         Self {
+            analysis: None,
             fs_commit: true,
             labels: config.labels.clone(),
             config,
@@ -558,8 +572,14 @@ impl Cheatcodes {
             deprecated: Default::default(),
             wallets: Default::default(),
             signatures_identifier: Default::default(),
-            dynamic_gas_limit_sequence: Default::default(),
+            dynamic_gas_limit: Default::default(),
+            execution_evm_version: None,
         }
+    }
+
+    /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
+    pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
+        self.analysis = Some(analysis);
     }
 
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
@@ -683,6 +703,11 @@ impl Cheatcodes {
         call: &mut CallInputs,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Option<CallOutcome> {
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            ecx.cfg.spec = spec_id;
+        }
+
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journaled_state.depth();
 
@@ -701,6 +726,8 @@ impl Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
                     });
                 }
             };
@@ -719,6 +746,8 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: true,
+                    precompile_call_logs: vec![],
                 }),
                 Err(err) => Some(CallOutcome {
                     result: InterpreterResult {
@@ -727,6 +756,8 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: false,
+                    precompile_call_logs: vec![],
                 }),
             };
         }
@@ -790,6 +821,8 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: true,
+                    precompile_call_logs: vec![],
                 });
             }
         }
@@ -813,6 +846,8 @@ impl Cheatcodes {
 
                 // At the target depth we set `msg.sender`
                 if curr_depth == prank.depth {
+                    // Ensure new caller is loaded and touched
+                    let _ = journaled_account(ecx, prank.new_caller);
                     call.caller = prank.new_caller;
                     prank_applied = true;
                 }
@@ -835,6 +870,11 @@ impl Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
+            // Additional check as transfers in forge scripts seem to be estimated at 2300
+            // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
+            let is_fixed_gas_limit = call.gas_limit >= 21_000 && !self.dynamic_gas_limit;
+            self.dynamic_gas_limit = false;
+
             // We only apply a broadcast *to a specific depth*.
             //
             // We do this because any subsequent contract calls *must* exist on chain and
@@ -851,7 +891,8 @@ impl Cheatcodes {
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
                 if !call.is_static {
-                    if let Err(err) = ecx.journaled_state.load_account(broadcast.new_origin) {
+                    let (db, journal, _) = ecx.as_db_env_and_journal();
+                    if let Err(err) = journal.load_account(db, broadcast.new_origin) {
                         return Some(CallOutcome {
                             result: InterpreterResult {
                                 result: InstructionResult::Revert,
@@ -859,21 +900,12 @@ impl Cheatcodes {
                                 gas,
                             },
                             memory_offset: call.return_memory_offset.clone(),
+                            was_precompile_called: false,
+                            precompile_call_logs: vec![],
                         });
                     }
 
-                    let (gas_seen, call_seen) =
-                        self.dynamic_gas_limit_sequence.take().unwrap_or_default();
-                    // Transaction has fixed gas limit if no GAS opcode seen before CALL opcode.
-                    let mut is_fixed_gas_limit = !(gas_seen && call_seen);
-                    // Additional check as transfers in forge scripts seem to be estimated at 2300
-                    // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
-                    if call.gas_limit < 21_000 {
-                        is_fixed_gas_limit = false;
-                    }
                     let input = TransactionInput::new(call.input.bytes(ecx));
-                    // Ensure account is touched.
-                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -902,6 +934,8 @@ impl Cheatcodes {
                                     gas,
                                 },
                                 memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
                             });
                         }
                         tx_req.set_blob_sidecar(blob_sidecar);
@@ -943,6 +977,8 @@ impl Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
                     });
                 }
             }
@@ -955,7 +991,9 @@ impl Cheatcodes {
             let initialized;
             let old_balance;
             let old_nonce;
-            if let Ok(acc) = ecx.journaled_state.load_account(call.target_address) {
+
+            let (db, journal, _) = ecx.as_db_env_and_journal();
+            if let Ok(acc) = journal.load_account(db, call.target_address) {
                 initialized = acc.info.exists();
                 old_balance = acc.info.balance;
                 old_nonce = acc.info.nonce;
@@ -964,12 +1002,14 @@ impl Cheatcodes {
                 old_balance = U256::ZERO;
                 old_nonce = 0;
             }
+
             let kind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
                 CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
                 CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
                 CallScheme::StaticCall => crate::Vm::AccountAccessKind::StaticCall,
             };
+
             // Record this call by pushing it to a new pending vector; all subsequent calls at
             // that depth will be pushed to the same vector. When the call ends, the
             // RecordedAccountAccess (and all subsequent RecordedAccountAccesses) will be
@@ -1067,6 +1107,11 @@ impl Cheatcodes {
             None => false,
         }
     }
+
+    /// Returns struct definitions from the analysis, if available.
+    pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
+        self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
+    }
 }
 
 impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
@@ -1095,7 +1140,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         self.pc = interpreter.bytecode.pc();
 
         if self.broadcast.is_some() {
-            self.record_gas_limit_opcode(interpreter);
+            self.set_gas_limit_type(interpreter);
         }
 
         // `pauseGasMetering`: pause / resume interpreter gas.
@@ -1138,10 +1183,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
-        if self.broadcast.is_some() {
-            self.set_gas_limit_type(interpreter);
-        }
-
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1156,7 +1197,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
+    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, &log, interpreter);
         }
@@ -1295,7 +1336,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         Ok((_, retdata)) => {
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
-                                self.expected_revert = Some(expected_revert.clone());
+                                self.expected_revert = Some(expected_revert);
                             }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
@@ -1335,7 +1376,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
             if ecx.journaled_state.depth() > 0
-                && let Some(last_recorded_depth) = &mut recorded_account_diffs_stack.pop()
+                && let Some(mut last_recorded_depth) = recorded_account_diffs_stack.pop()
             {
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
@@ -1354,9 +1395,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     // changes. Depending on the depth the cheat was
                     // called at, there may not be any pending
                     // calls to update if execution has percolated up to a higher depth.
-                    let curr_depth = ecx.journaled_state.depth();
+                    let (db, journal, _) = ecx.as_db_env_and_journal();
+                    let curr_depth = journal.depth;
                     if call_access.depth == curr_depth as u64
-                        && let Ok(acc) = ecx.journaled_state.load_account(call.target_address)
+                        && let Ok(acc) = journal.load_account(db, call.target_address)
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.info.balance;
@@ -1367,9 +1409,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     // vector if higher depths were not recorded. This
                     // preserves ordering of accesses.
                     if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.append(last_recorded_depth);
+                        last.extend(last_recorded_depth);
                     } else {
-                        recorded_account_diffs_stack.push(last_recorded_depth.clone());
+                        recorded_account_diffs_stack.push(last_recorded_depth);
                     }
                 }
             }
@@ -1579,6 +1621,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn create(&mut self, ecx: Ecx, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            ecx.cfg.spec = spec_id;
+        }
+
         let gas = Gas::new(input.gas_limit());
         // Check if we should intercept this create
         if self.intercept_next_create_call {
@@ -1606,6 +1653,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // At the target depth we set `msg.sender`
             if curr_depth == prank.depth {
+                // Ensure new caller is loaded and touched
+                let _ = journaled_account(ecx, prank.new_caller);
                 input.set_caller(prank.new_caller);
                 prank_applied = true;
             }
@@ -1630,7 +1679,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
         {
-            if let Err(err) = ecx.journaled_state.load_account(broadcast.new_origin) {
+            let (db, journal, _) = ecx.as_db_env_and_journal();
+            if let Err(err) = journal.load_account(db, broadcast.new_origin) {
                 return Some(CreateOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
@@ -1648,9 +1698,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 broadcast.deploy_from_code = false;
 
                 input.set_caller(broadcast.new_origin);
-
-                // Ensure account is touched.
-                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1790,8 +1837,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                             create_access.kind as u8,
                             crate::Vm::AccountAccessKind::Create as u8
                         );
+                        let (db, journal, _) = ecx.as_db_env_and_journal();
                         if let Some(address) = outcome.address
-                            && let Ok(created_acc) = ecx.journaled_state.load_account(address)
+                            && let Ok(created_acc) = journal.load_account(db, address)
                         {
                             create_access.newBalance = created_acc.info.balance;
                             create_access.newNonce = created_acc.info.nonce;
@@ -1813,9 +1861,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
 
         // Match the create against expected_creates
+        let (db, journal, _) = ecx.as_db_env_and_journal();
         if !self.expected_creates.is_empty()
             && let (Some(address), Some(call)) = (outcome.address, call)
-            && let Ok(created_acc) = ecx.journaled_state.load_account(address)
+            && let Ok(created_acc) = journal.load_account(db, address)
         {
             let bytecode = created_acc.info.code.clone().unwrap_or_default().original_bytes();
             if let Some((index, _)) =
@@ -1905,7 +1954,10 @@ impl Cheatcodes {
 
     #[cold]
     fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
-        interpreter.gas = Gas::new(interpreter.gas.limit());
+        let mut gas = Gas::new(interpreter.gas.limit());
+        gas.memory_mut().words_num = interpreter.gas.memory().words_num;
+        gas.memory_mut().expansion_cost = interpreter.gas.memory().expansion_cost;
+        interpreter.gas = gas;
         self.gas_metering.reset = false;
     }
 
@@ -1995,9 +2047,9 @@ impl Cheatcodes {
                 // get previous balance, nonce and initialized status of the target account
                 let target = try_or_return!(interpreter.stack.peek(0));
                 let target = Address::from_word(B256::from(target));
-                let (initialized, old_balance, old_nonce) = ecx
-                    .journaled_state
-                    .load_account(target)
+                let (db, journal, _) = ecx.as_db_env_and_journal();
+                let (initialized, old_balance, old_nonce) = journal
+                    .load_account(db, target)
                     .map(|account| {
                         (account.info.exists(), account.info.balance, account.info.nonce)
                     })
@@ -2046,7 +2098,8 @@ impl Cheatcodes {
                 // it's not set (zero value)
                 let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
-                if ecx.journaled_state.load_account(address).is_ok()
+                let (db, journal, _) = ecx.as_db_env_and_journal();
+                if journal.load_account(db, address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
                     present_value = previous.data;
@@ -2075,7 +2128,8 @@ impl Cheatcodes {
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
                 let mut previous_value = U256::ZERO;
-                if ecx.journaled_state.load_account(address).is_ok()
+                let (db, journal, _) = ecx.as_db_env_and_journal();
+                if journal.load_account(db, address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
                     previous_value = previous.data;
@@ -2111,7 +2165,8 @@ impl Cheatcodes {
                 let initialized;
                 let balance;
                 let nonce;
-                if let Ok(acc) = ecx.journaled_state.load_account(address) {
+                let (db, journal, _) = ecx.as_db_env_and_journal();
+                if let Ok(acc) = journal.load_account(db, address) {
                     initialized = acc.info.exists();
                     balance = acc.info.balance;
                     nonce = acc.info.nonce;
@@ -2331,37 +2386,17 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn record_gas_limit_opcode(&mut self, interpreter: &mut Interpreter) {
-        match interpreter.bytecode.opcode() {
-            // If current opcode is CREATE2 then set non-fixed gas limit.
-            op::CREATE2 => self.dynamic_gas_limit_sequence = Some((true, true)),
-            op::GAS => {
-                if self.dynamic_gas_limit_sequence.is_none() {
-                    // If current opcode is GAS then mark as seen.
-                    self.dynamic_gas_limit_sequence = Some((true, false));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    #[cold]
     fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
-        // Early exit in case we already determined is non-fixed gas limit.
-        if matches!(self.dynamic_gas_limit_sequence, Some((true, true))) {
-            return;
+        match interpreter.bytecode.opcode() {
+            op::CREATE2 => self.dynamic_gas_limit = true,
+            op::CALL => {
+                // If first element of the stack is close to current remaining gas then assume
+                // dynamic gas limit.
+                self.dynamic_gas_limit =
+                    try_or_return!(interpreter.stack.peek(0)) >= interpreter.gas.remaining() - 100
+            }
+            _ => self.dynamic_gas_limit = false,
         }
-
-        // Record CALL opcode if GAS opcode was seen.
-        if matches!(self.dynamic_gas_limit_sequence, Some((true, false)))
-            && interpreter.bytecode.opcode() == op::CALL
-        {
-            self.dynamic_gas_limit_sequence = Some((true, true));
-            return;
-        }
-
-        // Reset dynamic gas limit sequence if GAS opcode was not followed by a CALL opcode.
-        self.dynamic_gas_limit_sequence = None;
     }
 }
 

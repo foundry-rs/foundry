@@ -33,7 +33,6 @@ use std::{
     process::Command,
 };
 use tempfile::Builder;
-use tracing::debug;
 use yansi::Paint;
 
 /// Prompt arrow character.
@@ -168,7 +167,7 @@ impl ChiselDispatcher {
             )?)
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_etherscan(
+        let mut identifier = TraceIdentifiers::new().with_external(
             &session_config.foundry_config,
             session_config.evm_opts.get_remote_chain_id().await,
         )?;
@@ -202,7 +201,7 @@ impl ChiselDispatcher {
     }
 
     async fn execute_and_replace(&mut self, mut new_source: SessionSource) -> Result<()> {
-        let (_, mut res) = new_source.execute().await?;
+        let mut res = new_source.execute().await?;
         let failed = !res.success;
         if new_source.config.traces || failed {
             if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await {
@@ -397,7 +396,7 @@ impl ChiselDispatcher {
     }
 
     pub(crate) async fn show_mem_dump(&mut self) -> Result<()> {
-        let (_, res) = self.source_mut().execute().await?;
+        let res = self.source_mut().execute().await?;
         let Some((_, mem)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };
@@ -412,7 +411,7 @@ impl ChiselDispatcher {
     }
 
     pub(crate) async fn show_stack_dump(&mut self) -> Result<()> {
-        let (_, res) = self.source_mut().execute().await?;
+        let res = self.source_mut().execute().await?;
         let Some((stack, _)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };

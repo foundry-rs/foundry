@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Counter {
     uint256 public number;
@@ -21,9 +20,7 @@ contract Counter {
     }
 }
 
-contract Issue10552Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue10552Test is Test {
     Counter public counter;
     uint256 mainnetId;
     uint256 opId;

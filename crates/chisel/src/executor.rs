@@ -17,20 +17,12 @@ use foundry_evm::{
 };
 use solang_parser::pt;
 use std::ops::ControlFlow;
-use tracing::debug;
 use yansi::Paint;
 
 /// Executor implementation for [SessionSource]
 impl SessionSource {
     /// Runs the source with the [ChiselRunner]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a tuple containing the [Address] of the deployed REPL contract as well as
-    /// the [ChiselResult].
-    ///
-    /// Returns an error if compilation fails.
-    pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
+    pub async fn execute(&mut self) -> Result<ChiselResult> {
         // Recompile the project and ensure no errors occurred.
         let output = self.build()?;
 
@@ -38,6 +30,7 @@ impl SessionSource {
             let contract = output
                 .repl_contract()
                 .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
+            trace!(?contract, "REPL contract");
             let bytecode = contract
                 .get_bytecode_bytes()
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
@@ -76,11 +69,11 @@ impl SessionSource {
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
         let (mut res, err) = match source.execute().await {
-            Ok((_, res)) => (res, None),
+            Ok(res) => (res, None),
             Err(err) => {
                 debug!(?err, %input, "execution failed");
                 match source_without_inspector.execute().await {
-                    Ok((_, res)) => (res, Some(err)),
+                    Ok(res) => (res, Some(err)),
                     Err(_) => {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
@@ -159,11 +152,17 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = stack.last().unwrap().to::<usize>();
-        let mem_offset = &memory[offset..offset + 32];
-        let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
-        offset += 32;
-        let data = &memory[offset..offset + len];
+        let data = (|| -> Option<_> {
+            let mut offset: usize = stack.last()?.try_into().ok()?;
+            debug!("inspect memory @ {offset}: {}", hex::encode(memory));
+            let mem_offset = memory.get(offset..offset + 32)?;
+            let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
+            offset += 32;
+            memory.get(offset..offset + len)
+        })();
+        let Some(data) = data else {
+            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory")
+        };
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if should_continue(contract_expr) {
             ControlFlow::Continue(())
@@ -204,7 +203,7 @@ impl SessionSource {
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
         let env = self.config.evm_opts.evm_env().await?;
 
-        let backend = match self.config.backend.take() {
+        let backend = match self.config.backend.clone() {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
@@ -256,10 +255,8 @@ fn format_token(token: DynSolValue) -> String {
                 format!(
                     "0x{}",
                     format!("{i:x}")
-                        .char_indices()
-                        .skip(64 - bit_len / 4)
-                        .take(bit_len / 4)
-                        .map(|(_, c)| c)
+                        .chars()
+                        .skip(if i.is_negative() { 64 - bit_len / 4 } else { 0 })
                         .collect::<String>()
                 )
                 .cyan(),
@@ -271,16 +268,7 @@ fn format_token(token: DynSolValue) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
                 format!("uint{bit_len}").red(),
-                format!(
-                    "0x{}",
-                    format!("{i:x}")
-                        .char_indices()
-                        .skip(64 - bit_len / 4)
-                        .take(bit_len / 4)
-                        .map(|(_, c)| c)
-                        .collect::<String>()
-                )
-                .cyan(),
+                format!("0x{i:x}").cyan(),
                 hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )
@@ -422,22 +410,22 @@ enum Type {
     Builtin(DynSolType),
 
     /// (type)
-    Array(Box<Type>),
+    Array(Box<Self>),
 
     /// (type, length)
-    FixedArray(Box<Type>, usize),
+    FixedArray(Box<Self>, usize),
 
     /// (type, index)
-    ArrayIndex(Box<Type>, Option<usize>),
+    ArrayIndex(Box<Self>, Option<usize>),
 
     /// (types)
-    Tuple(Vec<Option<Type>>),
+    Tuple(Vec<Option<Self>>),
 
     /// (name, params, returns)
-    Function(Box<Type>, Vec<Option<Type>>, Vec<Option<Type>>),
+    Function(Box<Self>, Vec<Option<Self>>, Vec<Option<Self>>),
 
     /// (lhs, rhs)
-    Access(Box<Type>, String),
+    Access(Box<Self>, String),
 
     /// (types)
     Custom(Vec<String>),

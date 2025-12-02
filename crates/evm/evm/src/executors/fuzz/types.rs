@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
-use crate::executors::{FailFast, FuzzTestTimer, RawCallResult, corpus::GlobalCorpusMetrics};
+use crate::executors::{EarlyExit, FuzzTestTimer, RawCallResult, corpus::GlobalCorpusMetrics};
 use alloy_primitives::{Bytes, Log, map::HashMap};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_coverage::HitMaps;
@@ -65,20 +65,20 @@ pub struct SharedFuzzState {
     /// Fuzz timer
     timer: FuzzTestTimer,
     /// Fail Fast coordinator
-    fail_fast: FailFast,
+    early_exit: EarlyExit,
     /// Global corpus metrics
     pub(crate) global_corpus_metrics: GlobalCorpusMetrics,
 }
 
 impl SharedFuzzState {
-    pub fn new(max_runs: u32, timeout: Option<u32>, fail_fast: FailFast) -> Self {
+    pub fn new(max_runs: u32, timeout: Option<u32>, early_exit: EarlyExit) -> Self {
         Self {
             total_runs: Arc::new(AtomicU32::new(0)),
             found_failure: OnceLock::new(),
             max_runs,
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
-            fail_fast,
+            early_exit,
             global_corpus_metrics: GlobalCorpusMetrics::default(),
         }
     }
@@ -111,7 +111,7 @@ impl SharedFuzzState {
 
     pub fn should_continue(&self) -> bool {
         // Check fail-fast
-        if self.fail_fast.should_stop() {
+        if self.early_exit.should_stop() {
             return false;
         }
 
@@ -134,8 +134,8 @@ impl SharedFuzzState {
 
         let claimed = self.found_failure.set(worker_id).is_ok();
         if claimed {
-            // Record failure in FailFast as well
-            self.fail_fast.record_fail();
+            // Record failure in EarlyExit as well
+            self.early_exit.record_exit();
         }
 
         claimed

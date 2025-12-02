@@ -218,7 +218,15 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     }
                 });
 
-                self.push_item_kind(CoverageItemKind::Function { name: name.into() }, item.span);
+                // Exclude function from coverage report if it is virtual without implementation.
+                let exclude_func = func.header.virtual_() && !func.is_implemented();
+                if !exclude_func {
+                    self.push_item_kind(
+                        CoverageItemKind::Function { name: name.into() },
+                        item.span,
+                    );
+                }
+
                 self.walk_item(item)?;
             }
             _ => {}

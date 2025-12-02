@@ -80,7 +80,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        self.print_remaining_comments();
+        self.print_remaining_comments(is_first);
     }
 
     /// Prints a hardbreak if the item needs an isolated line break.
@@ -215,9 +215,19 @@ impl<'ast> State<'_, 'ast> {
             }
 
             ast::ImportItems::Aliases(aliases) => {
-                self.s.cbox(self.ind);
-                self.word("{");
-                self.braces_break();
+                // Check if we should keep single imports on one line
+                let use_single_line = self.config.single_line_imports && aliases.len() == 1;
+
+                if use_single_line {
+                    self.word("{");
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                } else {
+                    self.s.cbox(self.ind);
+                    self.word("{");
+                    self.braces_break();
+                }
 
                 if self.config.sort_imports {
                     let mut sorted: Vec<_> = aliases.iter().collect();
@@ -227,10 +237,17 @@ impl<'ast> State<'_, 'ast> {
                     self.print_commasep_aliases(aliases.iter());
                 };
 
-                self.braces_break();
-                self.s.offset(-self.ind);
-                self.word("}");
-                self.end();
+                if use_single_line {
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                    self.word("}");
+                } else {
+                    self.braces_break();
+                    self.s.offset(-self.ind);
+                    self.word("}");
+                    self.end();
+                }
                 self.word(" from ");
                 self.print_ast_str_lit(path);
             }
@@ -288,6 +305,14 @@ impl<'ast> State<'_, 'ast> {
         self.print_ident(name);
         self.nbsp();
 
+        if let Some(layout) = layout
+            && !self.handle_span(layout.span, false)
+        {
+            self.word("layout at ");
+            self.print_expr(layout.slot);
+            self.print_sep(Separator::Space);
+        }
+
         if let Some(first) = bases.first().map(|base| base.span())
             && let Some(last) = bases.last().map(|base| base.span())
             && self.inline_config.is_disabled(first.to(last))
@@ -296,26 +321,30 @@ impl<'ast> State<'_, 'ast> {
         } else if !bases.is_empty() {
             self.word("is");
             self.space();
-            for (pos, base) in bases.iter().delimited() {
+            let last = bases.len() - 1;
+            for (i, base) in bases.iter().enumerate() {
                 if !self.handle_span(base.span(), false) {
                     self.print_modifier_call(base, false);
-                    if !pos.is_last {
+                    if i != last {
                         self.word(",");
-                        self.space();
+                        if self
+                            .print_comments(
+                                bases[i + 1].span().lo(),
+                                CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+                            )
+                            .is_none()
+                        {
+                            self.space();
+                        }
                     }
                 }
             }
-            self.space();
+            if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+                self.space();
+            }
             self.s.offset(-self.ind);
         }
         self.end();
-        if let Some(layout) = layout
-            && !self.handle_span(layout.span, false)
-        {
-            self.word("layout at ");
-            self.print_expr(layout.slot);
-            self.print_sep(Separator::Space);
-        }
 
         self.print_word("{");
         self.end();
@@ -460,9 +489,14 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(-self.ind);
         let header_style = self.config.multiline_func_header;
         let params_format = match header_style {
-            MultilineFuncHeaderStyle::ParamsFirst => ListFormat::always_break(),
+            MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
+            MultilineFuncHeaderStyle::All
+                if header.parameters.len() > 1 && !self.can_header_be_inlined(func) =>
+            {
+                ListFormat::always_break()
+            }
             MultilineFuncHeaderStyle::AllParams
-                if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
+                if !header.parameters.is_empty() && !self.can_header_be_inlined(func) =>
             {
                 ListFormat::always_break()
             }
@@ -516,7 +550,7 @@ impl<'ast> State<'_, 'ast> {
 
         let attrib_box = self.config.multiline_func_header.params_first()
             || (self.config.multiline_func_header.attrib_first()
-                && !self.can_header_params_be_inlined(header));
+                && !self.can_header_params_be_inlined(func));
         if attrib_box {
             self.s.cbox(0);
         }
@@ -548,7 +582,6 @@ impl<'ast> State<'_, 'ast> {
         if !skip_returns
             && let Some(ret) = returns
             && !ret.is_empty()
-            && let Some(ret) = returns
         {
             if !self.handle_span(self.cursor.span(ret.span.lo()), false) {
                 if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
@@ -708,7 +741,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.errors() {
+                ListFormat::compact()
+            } else {
+                ListFormat::consistent()
+            },
+        );
         self.word(";");
     }
 
@@ -716,7 +757,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact().break_cmnts());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.events() {
+                ListFormat::compact().break_cmnts()
+            } else {
+                ListFormat::consistent().break_cmnts()
+            },
+        );
         if *anonymous {
             self.word(" anonymous");
         }
@@ -726,6 +775,164 @@ impl<'ast> State<'_, 'ast> {
     fn print_var_def(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
         self.print_var(var, true);
         self.word(";");
+    }
+
+    /// Prints the RHS of an assignment or variable initializer.
+    fn print_assign_rhs(
+        &mut self,
+        rhs: &'ast ast::Expr<'ast>,
+        lhs_size: usize,
+        space_left: usize,
+        ty: Option<&ast::TypeKind<'ast>>,
+        cache: bool,
+    ) {
+        // Check if the total expression overflows but the RHS would fit alone on a new line.
+        // This helps keep the RHS together on a single line when possible.
+        let rhs_size = self.estimate_size(rhs.span);
+        let overflows = lhs_size + rhs_size >= space_left;
+        let fits_alone = rhs_size + self.config.tab_width < space_left;
+        let fits_alone_no_cmnts =
+            fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
+        let force_break = overflows && fits_alone_no_cmnts;
+
+        // Set up precall size tracking
+        if lhs_size <= space_left {
+            self.neverbreak();
+            self.call_stack.add_precall(lhs_size + 1);
+        } else {
+            self.call_stack.add_precall(space_left + self.config.tab_width);
+        }
+
+        // Handle comments before the RHS expression
+        if let Some(cmnt) = self.peek_comment_before(rhs.span.lo())
+            && self.inline_config.is_disabled(cmnt.span)
+        {
+            self.print_sep(Separator::Nbsp);
+        }
+        if self
+            .print_comments(
+                rhs.span.lo(),
+                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+            )
+            .is_some_and(|cmnt| cmnt.is_trailing())
+        {
+            self.break_offset_if_not_bol(SIZE_INFINITY as usize, self.ind, false);
+        }
+
+        // Match on expression kind to determine formatting strategy
+        match &rhs.kind {
+            ast::ExprKind::Lit(lit, ..) if lit.is_str_concatenation() => {
+                // String concatenations stay on the same line with nbsp
+                self.print_sep(Separator::Nbsp);
+                self.neverbreak();
+                self.s.ibox(self.ind);
+                self.print_expr(rhs);
+                self.end();
+            }
+            ast::ExprKind::Lit(..) if ty.is_none() && !fits_alone => {
+                // Long string in assign expr goes on its own line
+                self.print_sep(Separator::Space);
+                self.s.offset(self.ind);
+                self.print_expr(rhs);
+            }
+            ast::ExprKind::Binary(lhs, op, _) => {
+                let print_inline = |this: &mut Self| {
+                    this.print_sep(Separator::Nbsp);
+                    this.neverbreak();
+                    this.print_expr(rhs);
+                };
+                let print_with_break = |this: &mut Self, force_break: bool| {
+                    if !this.is_bol_or_only_ind() {
+                        if force_break {
+                            this.print_sep(Separator::Hardbreak);
+                        } else {
+                            this.print_sep(Separator::Space);
+                        }
+                    }
+                    this.s.offset(this.ind);
+                    this.s.ibox(this.ind);
+                    this.print_expr(rhs);
+                    this.end();
+                };
+
+                // Binary expressions: check if we need to break and indent
+                if force_break {
+                    print_with_break(self, true);
+                } else if self.estimate_lhs_size(rhs, op) + lhs_size > space_left {
+                    if has_complex_successor(&rhs.kind, true)
+                        && get_callee_head_size(lhs) + lhs_size <= space_left
+                    {
+                        // Keep complex exprs (where callee fits) inline, as they will have breaks
+                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                            self.s.ibox(-self.ind);
+                            print_inline(self);
+                            self.end();
+                        } else {
+                            print_inline(self);
+                        }
+                    } else {
+                        print_with_break(self, false);
+                    }
+                }
+                // Otherwise, if expr fits, ensure no breaks
+                else {
+                    print_inline(self);
+                }
+            }
+            _ => {
+                // General case: handle calls, complex successors, and other expressions
+                let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &rhs.kind {
+                    let callee_size = get_callee_head_size(call_expr);
+                    callee_size + lhs_size > space_left
+                        && callee_size + self.config.tab_width < space_left
+                } else {
+                    false
+                };
+
+                if (lhs_size + 1 >= space_left && !is_call_chain(&rhs.kind, false))
+                    || callee_doesnt_fit
+                {
+                    self.s.ibox(self.ind);
+                } else {
+                    self.s.ibox(0);
+                };
+
+                if has_complex_successor(&rhs.kind, true)
+                    && !matches!(&rhs.kind, ast::ExprKind::Member(..))
+                {
+                    // delegate breakpoints to `self.commasep(..)` for complex successors
+                    if !self.is_bol_or_only_ind() {
+                        let needs_offset = !callee_doesnt_fit
+                            && rhs_size + lhs_size + 1 >= space_left
+                            && fits_alone_no_cmnts;
+                        let separator = if callee_doesnt_fit || needs_offset {
+                            Separator::Space
+                        } else {
+                            Separator::Nbsp
+                        };
+                        self.print_sep(separator);
+                        if needs_offset {
+                            self.s.offset(self.ind);
+                        }
+                    }
+                } else {
+                    if !self.is_bol_or_only_ind() {
+                        self.print_sep_unhandled(Separator::Space);
+                    }
+                    // apply type-dependent indentation if type info is available
+                    if let Some(ty) = ty
+                        && matches!(ty, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..))
+                    {
+                        self.s.offset(self.ind);
+                    }
+                }
+                self.print_expr(rhs);
+                self.end();
+            }
+        }
+
+        self.var_init = cache;
+        self.call_stack.reset_precall();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>, is_var_def: bool) {
@@ -800,94 +1007,8 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
             self.end();
-            if pre_init_size <= init_space_left {
-                self.neverbreak();
-                pre_init_size += 1;
-                self.call_stack.add_precall(pre_init_size);
-            } else {
-                self.call_stack.add_precall(init_space_left + self.config.tab_width);
-            }
 
-            if let Some(cmnt) = self.peek_comment_before(init.span.lo())
-                && self.inline_config.is_disabled(cmnt.span)
-            {
-                self.print_sep(Separator::Nbsp);
-            }
-            if self
-                .print_comments(
-                    init.span.lo(),
-                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
-                )
-                .is_some_and(|cmnt| cmnt.is_trailing())
-            {
-                self.break_offset_if_not_bol(SIZE_INFINITY as usize, self.ind, false);
-            }
-
-            if let ast::ExprKind::Lit(lit, ..) = &init.kind
-                && lit.is_str_concatenation()
-            {
-                self.print_sep(Separator::Nbsp);
-                self.neverbreak();
-                self.s.ibox(self.ind);
-                self.print_expr(init);
-                self.end();
-            } else if is_binary_expr(&init.kind) {
-                if !self.is_bol_or_only_ind() {
-                    self.print_sep_unhandled(Separator::Space);
-                }
-                if matches!(ty.kind, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..)) {
-                    self.s.offset(self.ind);
-                }
-                self.print_expr(init);
-            } else {
-                let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &init.kind {
-                    let callee_size = get_callee_head_size(call_expr);
-                    callee_size + pre_init_size > init_space_left
-                        && callee_size + self.config.tab_width < init_space_left
-                } else {
-                    false
-                };
-
-                if (pre_init_size + 1 >= init_space_left && !is_call_chain(&init.kind, false))
-                    || callee_doesnt_fit
-                {
-                    self.s.ibox(self.ind);
-                } else {
-                    self.s.ibox(0);
-                };
-
-                if has_complex_successor(&init.kind, true)
-                    && !matches!(&init.kind, ast::ExprKind::Member(..))
-                {
-                    // delegate breakpoints to `self.commasep(..)`
-                    if !self.is_bol_or_only_ind() {
-                        let init_size = self.estimate_size(init.span);
-                        if callee_doesnt_fit {
-                            self.print_sep(Separator::Space);
-                        } else if init_size + pre_init_size + 1 >= init_space_left
-                            && init_size + self.config.tab_width < init_space_left
-                            && !self.has_comment_between(init.span.lo(), init.span.hi())
-                        {
-                            self.print_sep(Separator::Space);
-                            self.s.offset(self.ind);
-                        } else {
-                            self.print_sep(Separator::Nbsp);
-                        }
-                    }
-                } else {
-                    if !self.is_bol_or_only_ind() {
-                        self.print_sep_unhandled(Separator::Space);
-                    }
-                    if matches!(ty.kind, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..))
-                    {
-                        self.s.offset(self.ind);
-                    }
-                }
-                self.print_expr(init);
-                self.end();
-            }
-            self.var_init = cache;
-            self.call_stack.reset_precall();
+            self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
             self.end();
         }
@@ -937,6 +1058,10 @@ impl<'ast> State<'_, 'ast> {
     /// Prints a raw AST string literal, which is unescaped.
     fn print_ast_str_lit(&mut self, strlit: &'ast ast::StrLit) {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
+    }
+
+    fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
+        self.print_lit_inner(lit, false);
     }
 
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
@@ -1159,26 +1284,39 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Assign(lhs, None, rhs) => self.print_assign_expr(lhs, rhs),
             ast::ExprKind::Assign(lhs, Some(op), rhs) => self.print_bin_expr(lhs, op, rhs, true),
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
-            ast::ExprKind::Call(call_expr, call_args) => self.print_member_or_call_chain(
-                call_expr,
-                MemberOrCallArgs::CallArgs(
-                    self.estimate_size(call_args.span),
-                    self.has_comments_between_elements(call_args.span, call_args.exprs()),
-                ),
-                |s| {
-                    s.print_call_args(
-                        call_args,
-                        ListFormat::compact()
-                            .break_cmnts()
-                            .break_single(true)
-                            .without_ind(s.return_bin_expr),
-                        get_callee_head_size(call_expr),
-                    );
-                },
-            ),
+            ast::ExprKind::Call(call_expr, call_args) => {
+                let cache = self.call_with_opts_and_args;
+                self.call_with_opts_and_args = is_call_with_opts_and_args(&expr.kind);
+                self.print_member_or_call_chain(
+                    call_expr,
+                    MemberOrCallArgs::CallArgs(
+                        self.estimate_size(call_args.span),
+                        self.has_comments_between_elements(call_args.span, call_args.exprs()),
+                    ),
+                    |s| {
+                        s.print_call_args(
+                            call_args,
+                            ListFormat::compact()
+                                .break_cmnts()
+                                .break_single(true)
+                                .without_ind(s.return_bin_expr)
+                                .with_delimiters(!s.call_with_opts_and_args),
+                            get_callee_head_size(call_expr),
+                        );
+                    },
+                );
+                self.call_with_opts_and_args = cache;
+            }
             ast::ExprKind::CallOptions(expr, named_args) => {
+                // the flag is only meant to be used to format the call args
+                let cache = self.call_with_opts_and_args;
+                self.call_with_opts_and_args = false;
+
                 self.print_expr(expr);
                 self.print_named_args(named_args, span.hi());
+
+                // restore cached value
+                self.call_with_opts_and_args = cache;
             }
             ast::ExprKind::Delete(expr) => {
                 self.word("delete ");
@@ -1199,11 +1337,10 @@ impl<'ast> State<'_, 'ast> {
                     MemberOrCallArgs::Member(self.estimate_size(ident.span)),
                     |s| {
                         s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        if !matches!(
-                            member_expr.kind,
-                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)
-                        ) {
-                            s.zerobreak();
+                        match member_expr.kind {
+                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
+                            ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            _ => s.zerobreak(),
                         }
                         s.word(".");
                         s.print_ident(ident);
@@ -1266,55 +1403,14 @@ impl<'ast> State<'_, 'ast> {
 
     /// Prints a simple assignment expression of the form `lhs = rhs`.
     fn print_assign_expr(&mut self, lhs: &'ast ast::Expr<'ast>, rhs: &'ast ast::Expr<'ast>) {
-        let prev_var_init = self.var_init;
+        let cache = self.var_init;
         self.var_init = true;
 
-        // Estimate layout constraints
         let space_left = self.space_left();
         let lhs_size = self.estimate_size(lhs.span);
-        let rhs_size = self.estimate_size(rhs.span);
-
-        let total_size = lhs_size + rhs_size + 4; // 'lhs' + ' = ' + 'rhs' + ';'
-        let overflows = total_size >= space_left;
-        let fits_alone = rhs_size + self.config.tab_width < space_left;
-
-        self.call_stack.add_precall(lhs_size);
-
-        let is_simple_rhs = matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
-
-        if (overflows && fits_alone) || is_simple_rhs {
-            self.s.ibox(self.ind)
-        } else {
-            self.s.ibox(0)
-        }
-
-        // Print LHS and '='
         self.print_expr(lhs);
         self.word(" =");
-
-        // Handle RHS printing strategy
-        match &rhs.kind {
-            ast::ExprKind::Lit(lit, ..) if lit.is_str_concatenation() => {
-                self.print_sep(Separator::Nbsp);
-                self.neverbreak();
-                self.s.ibox(self.ind);
-                self.print_expr(rhs);
-                self.end();
-            }
-            _ if overflows && (fits_alone || is_simple_rhs) => {
-                self.print_sep(Separator::Space);
-                self.print_expr(rhs);
-            }
-            _ => {
-                self.print_sep(Separator::Nbsp);
-                self.neverbreak();
-                self.print_expr(rhs);
-            }
-        }
-
-        self.end();
-        self.var_init = prev_var_init;
-        self.call_stack.reset_precall();
+        self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
     }
 
     /// Prints a binary operator expression. Handles operator chains and formatting.
@@ -1408,10 +1504,16 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
 
         let mut skip_break = false;
-
+        let mut zerobreak = |this: &mut Self| {
+            if this.skip_index_break {
+                skip_break = true;
+            } else {
+                this.zerobreak();
+            }
+        };
         match kind {
             ast::IndexKind::Index(Some(inner_expr)) => {
-                self.zerobreak();
+                zerobreak(self);
                 self.print_expr(inner_expr);
             }
             ast::IndexKind::Index(None) => {}
@@ -1421,11 +1523,11 @@ impl<'ast> State<'_, 'ast> {
                         .print_comments(start_expr.span.lo(), CommentConfig::skip_ws())
                         .is_none_or(|s| s.is_mixed())
                     {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_expr(start_expr);
                 } else {
-                    self.zerobreak();
+                    zerobreak(self);
                 }
 
                 self.word(":");
@@ -1433,7 +1535,7 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(end_expr) = end {
                     self.s.ibox(self.ind);
                     if start.is_some() {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_comments(
                         end_expr.span.lo(),
@@ -1494,34 +1596,35 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
         self.s.ibox(0);
 
-        let mut print_ternary_expr =
-            |span_lo, prefix: Option<&'static str>, expr: &'ast ast::Expr<'ast>| {
-                match prefix {
-                    Some(prefix) => {
-                        if self.peek_comment_before(span_lo).is_some() {
-                            self.space();
-                        }
-                        self.print_comments(span_lo, CommentConfig::skip_ws());
-                        self.end();
-                        if !self.is_bol_or_only_ind() {
-                            self.space();
-                        }
-                        self.s.ibox(0);
-                        self.word(prefix);
+        let print_sub_expr = |this: &mut Self, span_lo, prefix, expr: &'ast ast::Expr<'ast>| {
+            match prefix {
+                Some(prefix) => {
+                    if this.peek_comment_before(span_lo).is_some() {
+                        this.space();
                     }
-                    None => {
-                        self.print_comments(expr.span.lo(), CommentConfig::skip_ws());
+                    this.print_comments(span_lo, CommentConfig::skip_ws());
+                    this.end();
+                    if !this.is_bol_or_only_ind() {
+                        this.space();
                     }
-                };
-                self.print_expr(expr);
+                    this.s.ibox(0);
+                    this.word(prefix);
+                }
+                None => {
+                    this.print_comments(expr.span.lo(), CommentConfig::skip_ws());
+                }
             };
+            this.print_expr(expr);
+        };
 
         // conditional expression
-        print_ternary_expr(then.span.lo(), None, cond);
+        self.s.ibox(-self.ind);
+        print_sub_expr(self, then.span.lo(), None, cond);
+        self.end();
         // then expression
-        print_ternary_expr(then.span.lo(), Some("? "), then);
+        print_sub_expr(self, then.span.lo(), Some("? "), then);
         // else expression
-        print_ternary_expr(els.span.lo(), Some(": "), els);
+        print_sub_expr(self, els.span.lo(), Some(": "), els);
 
         self.end();
         self.neverbreak();
@@ -1562,6 +1665,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
+        let (mut extra_box, skip_cache) = (false, self.skip_index_break);
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         if !parent_is_chain {
             // Estimate sizes of callee and optional member
@@ -1575,17 +1679,24 @@ impl<'ast> State<'_, 'ast> {
 
             let callee_fits_line = self.space_left() > callee_size + 1;
             let total_fits_line = self.space_left() > expr_size + member_or_args.size() + 2;
-            let no_mixed_comment =
+            let no_cmnt_or_mixed =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
+            // If call with options, add an extra box to prioritize breaking the call args
+            if self.call_with_opts_and_args {
+                self.cbox(0);
+                extra_box = true;
+            }
+
             if !is_call_chain(&child_expr.kind, true)
-                && no_mixed_comment
+                && (no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
                 && callee_fits_line
                 && (member_depth(0, child_expr) < 2
                     // calls with cmnts between the args always break
                     || (total_fits_line && !member_or_args.has_comments()))
             {
-                self.s.ibox(0);
+                self.skip_index_break = true;
+                self.cbox(0);
             } else {
                 self.s.ibox(self.ind);
             }
@@ -1593,6 +1704,11 @@ impl<'ast> State<'_, 'ast> {
 
         // Recursively print the child/prefix expression.
         self.print_expr(child_expr);
+
+        // If an extra box was opened, close it
+        if extra_box {
+            self.end();
+        }
 
         // Call the closure to print the suffix for the current link, with the calculated position.
         print_suffix(self);
@@ -1603,6 +1719,11 @@ impl<'ast> State<'_, 'ast> {
                 self.call_stack.pop();
             }
             self.end();
+        }
+
+        // Restore cache
+        if self.skip_index_break {
+            self.skip_index_break = skip_cache;
         }
     }
 
@@ -1644,12 +1765,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let cache = self.named_call_expr;
-        if !cache {
-            self.named_call_expr = true;
-        };
-
-        let list_format = match (self.config.bracket_spacing, self.config.call_compact_args) {
+        let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
             (true, true) => ListFormat::compact().with_space(),
@@ -1658,37 +1774,40 @@ impl<'ast> State<'_, 'ast> {
 
         self.word("{");
         // Use the start position of the first argument's name for comment processing.
-        let list_lo = args.first().map_or(pos_hi, |arg| arg.name.span.lo());
-
-        self.commasep(
-            args,
-            list_lo,
-            pos_hi,
-            // Closure to print a single named argument (`name: value`)
-            |s, arg| {
-                s.cbox(0);
-                s.print_ident(&arg.name);
-                s.word(":");
-                if s.same_source_line(arg.name.span.hi(), arg.value.span.hi())
-                    || !s.print_trailing_comment(arg.name.span.hi(), None)
-                {
-                    s.nbsp();
-                }
-                s.print_comments(
-                    arg.value.span.lo(),
-                    CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
-                );
-                s.print_expr(arg.value);
-                s.end();
-            },
-            |arg| arg.name.span.until(arg.value.span),
-            list_format.break_cmnts().break_single(true).without_ind(self.call_stack.is_chain()),
-        );
-        self.word("}");
-
-        if !cache {
-            self.named_call_expr = false;
+        if let Some(first_arg) = args.first() {
+            let list_lo = first_arg.name.span.lo();
+            self.commasep(
+                args,
+                list_lo,
+                pos_hi,
+                // Closure to print a single named argument (`name: value`)
+                |s, arg| {
+                    s.cbox(0);
+                    s.print_ident(&arg.name);
+                    s.word(":");
+                    if s.same_source_line(arg.name.span.hi(), arg.value.span.hi())
+                        || !s.print_trailing_comment(arg.name.span.hi(), None)
+                    {
+                        s.nbsp();
+                    }
+                    s.print_comments(
+                        arg.value.span.lo(),
+                        CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
+                    );
+                    s.print_expr(arg.value);
+                    s.end();
+                },
+                |arg| arg.name.span.until(arg.value.span),
+                list_format
+                    .break_cmnts()
+                    .break_single(true)
+                    .without_ind(self.call_stack.is_chain())
+                    .with_delimiters(!self.call_with_opts_and_args),
+            );
+        } else if self.config.bracket_spacing {
+            self.nbsp();
         }
+        self.word("}");
     }
 
     /* --- Statements --- */
@@ -1784,7 +1903,7 @@ impl<'ast> State<'_, 'ast> {
         _ = self.handle_span(self.cursor.span(span.lo()), false);
         if !self.handle_span(span.until(block.span), false) {
             self.cursor.advance_to(span.lo(), true);
-            self.print_word("assembly ");
+            self.print_word("assembly "); // 9 chars
             if let Some(dialect) = dialect {
                 self.print_ast_str_lit(dialect);
                 self.print_sep(Separator::Nbsp);
@@ -1801,7 +1920,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_sep(Separator::Nbsp);
             }
         }
-        self.print_yul_block(block, block.span, false);
+        self.print_yul_block(block, block.span, false, 9);
     }
 
     /// Prints a multiple-variable declaration with a single initializer expression,
@@ -1823,7 +1942,7 @@ impl<'ast> State<'_, 'ast> {
             |this, var| match var {
                 SpannedOption::Some(var) => this.print_var(var, true),
                 SpannedOption::None(span) => {
-                    this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
+                    this.print_comments(span.hi(), CommentConfig::skip_ws().mixed_no_break_post());
                 }
             },
             |var| match var {
@@ -2042,6 +2161,7 @@ impl<'ast> State<'_, 'ast> {
         if let Some((first, other)) = clauses.split_first() {
             // Print the 'try' clause
             let ast::TryCatchClause { args, block, span: try_span, .. } = first;
+            self.cbox(0);
             self.ibox(0);
             self.print_word("try ");
             self.print_comments(expr.span.lo(), CommentConfig::skip_ws());
@@ -2058,12 +2178,22 @@ impl<'ast> State<'_, 'ast> {
 
             if !args.is_empty() {
                 self.print_word("returns ");
-                self.print_parameter_list(
+                self.print_word("(");
+                self.zerobreak();
+                self.end();
+                let span = args.span.with_hi(block.span.lo());
+                self.commasep(
                     args,
-                    args.span.with_hi(block.span.lo()),
-                    ListFormat::compact(),
+                    span.lo(),
+                    span.hi(),
+                    |fmt, var| fmt.print_var(var, false),
+                    get_span!(),
+                    ListFormat::compact().with_delimiters(false),
                 );
+                self.print_word(")");
                 self.nbsp();
+            } else {
+                self.end();
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
@@ -2129,7 +2259,9 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_word("{");
                 self.end();
-                self.print_trailing_comment_no_break(catch_span.lo(), None);
+                if !block.is_empty() {
+                    self.print_trailing_comment_no_break(catch_span.lo(), None);
+                }
                 self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
                 if self.cursor.enabled || self.cursor.pos < try_span.hi() {
                     self.print_word("}");
@@ -2196,16 +2328,15 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         };
         self.s.cbox(0);
+        self.emit_or_revert = path.segments().len() > 1;
         self.print_path(path, false);
-        self.print_call_args(
-            args,
-            if args.len() == 1 {
-                ListFormat::compact().break_cmnts()
-            } else {
-                ListFormat::compact().break_cmnts().no_delimiters()
-            },
-            path.to_string().len(),
-        );
+        let format = if self.config.prefer_compact.calls() {
+            ListFormat::compact()
+        } else {
+            ListFormat::consistent()
+        };
+        self.print_call_args(args, format.break_cmnts(), path.to_string().len());
+        self.emit_or_revert = false;
         self.end();
     }
 
@@ -2428,33 +2559,58 @@ impl<'ast> State<'_, 'ast> {
         els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
     }
 
-    fn can_header_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+    fn can_header_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {
+        self.estimate_header_size(func) <= self.space_left()
+    }
+
+    fn can_header_params_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {
+        self.estimate_header_params_size(func) <= self.space_left()
+    }
+
+    fn estimate_header_size(&mut self, func: &ast::ItemFunction<'_>) -> usize {
+        let ast::ItemFunction { kind: _, ref header, ref body, body_span: _ } = *func;
+
         // ' ' + visibility
         let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
         // ' ' + state mutability
         let mutability = header.state_mutability.map_or(0, |sm| self.estimate_size(sm.span) + 1);
         // ' ' + modifier + (' ' + modifier)
-        let modifiers =
-            header.modifiers.iter().fold(0, |len, m| len + self.estimate_size(m.span())) + 1;
+        let m = header.modifiers.iter().fold(0, |len, m| len + self.estimate_size(m.span()));
+        let modifiers = if m != 0 { m + 1 } else { 0 };
         // ' ' + override
         let override_ = header.override_.as_ref().map_or(0, |o| self.estimate_size(o.span) + 1);
+        // ' ' + virtual
+        let virtual_ = if header.virtual_.is_none() { 0 } else { 8 };
         // ' returns(' + var + (', ' + var) + ')'
         let returns = header.returns.as_ref().map_or(0, |ret| {
             ret.vars
                 .iter()
-                .fold(0, |len, p| if len != 0 { len + 2 } else { 8 } + self.estimate_size(p.span))
+                .fold(0, |len, p| if len != 0 { len + 2 } else { 10 } + self.estimate_size(p.span))
         });
+        // ' {' or ';'
+        let end = if body.is_some() { 2 } else { 1 };
 
-        self.estimate_header_params_size(header)
+        self.estimate_header_params_size(func)
             + visibility
             + mutability
             + modifiers
             + override_
+            + virtual_
             + returns
-            <= self.space_left()
+            + end
     }
 
-    fn estimate_header_params_size(&mut self, header: &ast::FunctionHeader<'_>) -> usize {
+    fn estimate_header_params_size(&mut self, func: &ast::ItemFunction<'_>) -> usize {
+        let ast::ItemFunction { kind, ref header, body: _, body_span: _ } = *func;
+
+        let kw = match kind {
+            ast::FunctionKind::Constructor => 11, // 'constructor'
+            ast::FunctionKind::Function => 9,     // 'function '
+            ast::FunctionKind::Modifier => 9,     // 'modifier '
+            ast::FunctionKind::Fallback => 8,     // 'fallback'
+            ast::FunctionKind::Receive => 7,      // 'receive'
+        };
+
         // '(' + param + (', ' + param) + ')'
         let params = header
             .parameters
@@ -2462,12 +2618,16 @@ impl<'ast> State<'_, 'ast> {
             .iter()
             .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
 
-        // 'function ' + name + ' ' + params
-        9 + header.name.map_or(0, |name| self.estimate_size(name.span) + 1) + params
+        kw + header.name.map_or(0, |name| self.estimate_size(name.span)) + std::cmp::max(2, params)
     }
 
-    fn can_header_params_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
-        self.estimate_header_params_size(header) <= self.space_left()
+    fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
+        match &expr.kind {
+            ast::ExprKind::Binary(lhs, op, _) if op.kind.group() == parent_op.kind.group() => {
+                self.estimate_lhs_size(lhs, op)
+            }
+            _ => self.estimate_size(expr.span),
+        }
     }
 
     fn has_comments_between_elements<I>(&self, limits: Span, elements: I) -> bool
@@ -2715,6 +2875,7 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
         }
         ast::ExprKind::Unary(_, expr) => has_complex_successor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
+        ast::ExprKind::Tuple(..) => false,
         _ => true,
     }
 }
@@ -2728,6 +2889,14 @@ fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
         is_call_chain(&child.kind, false)
     } else {
         !must_have_child && is_call(expr_kind)
+    }
+}
+
+fn is_call_with_opts_and_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+    if let ast::ExprKind::Call(call_expr, call_args) = expr_kind {
+        matches!(call_expr.kind, ast::ExprKind::CallOptions(..)) && !call_args.is_empty()
+    } else {
+        false
     }
 }
 
@@ -2780,6 +2949,16 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Type(ast::Type { kind: ast::TypeKind::Elementary(ty), .. }) => {
             ty.to_abi_str().len()
         }
+        ast::ExprKind::Index(base, idx) => {
+            let idx_len = match idx {
+                ast::IndexKind::Index(expr) => expr.as_ref().map_or(0, |e| get_callee_head_size(e)),
+                ast::IndexKind::Range(e1, e2) => {
+                    1 + e1.as_ref().map_or(0, |e| get_callee_head_size(e))
+                        + e2.as_ref().map_or(0, |e| get_callee_head_size(e))
+                }
+            };
+            get_callee_head_size(base) + 2 + idx_len
+        }
         ast::ExprKind::Member(base, member_ident) => {
             match &base.kind {
                 ast::ExprKind::Ident(..) | ast::ExprKind::Type(..) => {
@@ -2795,8 +2974,123 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
                 _ => member_ident.as_str().len(),
             }
         }
+        ast::ExprKind::Binary(lhs, _, _) => get_callee_head_size(lhs),
 
         // If the callee is not an identifier or member access, it has no "head"
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FormatterConfig, InlineConfig};
+    use foundry_common::comments::Comments;
+    use solar::{
+        interface::{Session, source_map::FileName},
+        sema::Compiler,
+    };
+    use std::sync::Arc;
+
+    /// This helper extracts function headers from the AST and passes them to the test function.
+    fn parse_and_test<F>(source: &str, test_fn: F)
+    where
+        F: FnOnce(&mut State<'_, '_>, &ast::ItemFunction<'_>) + Send,
+    {
+        let session = Session::builder().with_buffer_emitter(Default::default()).build();
+        let mut compiler = Compiler::new(session);
+
+        compiler
+            .enter_mut(|c| -> solar::interface::Result<()> {
+                let mut pcx = c.parse();
+                pcx.set_resolve_imports(false);
+
+                // Create a source file using stdin as the filename
+                let file = c
+                    .sess()
+                    .source_map()
+                    .new_source_file(FileName::Stdin, source)
+                    .map_err(|e| c.sess().dcx.err(e.to_string()).emit())?;
+
+                pcx.add_file(file.clone());
+                pcx.parse();
+                c.dcx().has_errors()?;
+
+                // Get AST from parsed source and setup the formatter
+                let gcx = c.gcx();
+                let (_, source_obj) = gcx.get_ast_source(&file.name).expect("Failed to get AST");
+                let ast = source_obj.ast.as_ref().expect("No AST found");
+                let comments =
+                    Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
+                let config = Arc::new(FormatterConfig::default());
+                let inline_config = InlineConfig::default();
+                let mut state = State::new(gcx.sess.source_map(), config, inline_config, comments);
+
+                // Extract the first function header (either top-level or inside a contract)
+                let func = ast
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.kind {
+                        ast::ItemKind::Function(func) => Some(func),
+                        ast::ItemKind::Contract(contract) => {
+                            contract.body.iter().find_map(|contract_item| {
+                                match &contract_item.kind {
+                                    ast::ItemKind::Function(func) => Some(func),
+                                    _ => None,
+                                }
+                            })
+                        }
+                        _ => None,
+                    })
+                    .expect("No function found in source");
+
+                // Run the closure
+                test_fn(&mut state, func);
+
+                Ok(())
+            })
+            .expect("Test failed");
+    }
+
+    #[test]
+    fn test_estimate_header_sizes() {
+        let test_cases = [
+            ("function foo();", 14, 15),
+            ("function foo() {}", 14, 16),
+            ("function foo() public {}", 14, 23),
+            ("function foo(uint256 a) public {}", 23, 32),
+            ("function foo(uint256 a, address b, bool c) public {}", 42, 51),
+            ("function foo() public pure {}", 14, 28),
+            ("function foo() public virtual {}", 14, 31),
+            ("function foo() public override {}", 14, 32),
+            ("function foo() public onlyOwner {}", 14, 33),
+            ("function foo() public returns(uint256) {}", 14, 40),
+            ("function foo() public returns(uint256, address) {}", 14, 49),
+            ("function foo(uint256 a) public virtual override returns(uint256) {}", 23, 66),
+            ("function foo() external payable {}", 14, 33),
+            // other function types
+            ("contract C { constructor() {} }", 13, 15),
+            ("contract C { constructor(uint256 a) {} }", 22, 24),
+            ("contract C { modifier onlyOwner() {} }", 20, 22),
+            ("contract C { modifier onlyRole(bytes32 role) {} }", 31, 33),
+            ("contract C { fallback() external payable {} }", 10, 29),
+            ("contract C { receive() external payable {} }", 9, 28),
+        ];
+
+        for (source, expected_params, expected_header) in &test_cases {
+            parse_and_test(source, |state, func| {
+                let params_size = state.estimate_header_params_size(func);
+                assert_eq!(
+                    params_size, *expected_params,
+                    "Failed params size: expected {expected_params}, got {params_size} for source: {source}",
+                );
+
+                let header_size = state.estimate_header_size(func);
+                assert_eq!(
+                    header_size, *expected_header,
+                    "Failed header size: expected {expected_header}, got {header_size} for source: {source}",
+                );
+            });
+        }
     }
 }

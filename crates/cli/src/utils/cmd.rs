@@ -13,7 +13,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{
         CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
-        render_trace_arena_inner,
+        prune_trace_depth, render_trace_arena_inner,
     },
 };
 use std::{
@@ -22,10 +22,10 @@ use std::{
 };
 use yansi::Paint;
 
-/// Given a `Project`'s output, removes the matching ABI, Bytecode and
-/// Runtime Bytecode of the given contract.
+/// Given a `Project`'s output, finds the contract by path and name and returns its
+/// ABI, creation bytecode, and `ArtifactId`.
 #[track_caller]
-pub fn remove_contract(
+pub fn find_contract_artifacts(
     output: ProjectCompileOutput,
     path: &Path,
     name: &str,
@@ -169,6 +169,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::KaruraTestnet
                     | NamedChain::Mantle
                     | NamedChain::MantleSepolia
+                    | NamedChain::Monad
+                    | NamedChain::MonadTestnet
                     | NamedChain::Moonbase
                     | NamedChain::Moonbeam
                     | NamedChain::MoonbeamDev
@@ -327,6 +329,7 @@ pub async fn print_traces(
     decoder: &CallTraceDecoder,
     verbose: bool,
     state_changes: bool,
+    trace_depth: Option<usize>,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
@@ -336,6 +339,11 @@ pub async fn print_traces(
 
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await;
+
+        if let Some(trace_depth) = trace_depth {
+            prune_trace_depth(arena, trace_depth);
+        }
+
         sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 

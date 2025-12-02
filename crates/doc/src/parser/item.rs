@@ -1,4 +1,4 @@
-use crate::{Comments, solang_ext::SafeUnwrap};
+use crate::{Comments, helpers::function_signature, solang_ext::SafeUnwrap};
 use solang_parser::pt::{
     ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
     FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
@@ -13,7 +13,7 @@ pub struct ParseItem {
     /// Item comments.
     pub comments: Comments,
     /// Children items.
-    pub children: Vec<ParseItem>,
+    pub children: Vec<Self>,
     /// Formatted code string.
     pub code: String,
 }
@@ -80,8 +80,23 @@ impl ParseItem {
     /// Set the source code of this [ParseItem].
     ///
     /// The parameter should be the full source file where this parse item originated from.
-    pub fn with_code(mut self, source: &str) -> Self {
-        self.code = source[self.source.range()].to_string();
+    pub fn with_code(mut self, source: &str, tab_width: usize) -> Self {
+        let mut code = source[self.source.range()].to_string();
+
+        // Special function case, add `;` at the end of definition.
+        if let ParseSource::Function(_) | ParseSource::Error(_) | ParseSource::Event(_) =
+            self.source
+        {
+            code.push(';');
+        }
+
+        // Remove extra indent from source lines.
+        let prefix = &" ".repeat(tab_width);
+        self.code = code
+            .lines()
+            .map(|line| line.strip_prefix(prefix).unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
         self
     }
 
@@ -157,6 +172,14 @@ impl ParseSource {
         }
     }
 
+    /// Get the signature of the source (for functions, includes parameter types)
+    pub fn signature(&self) -> String {
+        match self {
+            Self::Function(func) => function_signature(func),
+            _ => self.ident(),
+        }
+    }
+
     /// Get the range of this item in the source file.
     pub fn range(&self) -> Range<usize> {
         match self {
@@ -166,7 +189,7 @@ impl ParseSource {
             Self::Error(error) => error.loc,
             Self::Struct(structure) => structure.loc,
             Self::Enum(enumerable) => enumerable.loc,
-            Self::Function(func) => func.loc,
+            Self::Function(func) => func.loc_prototype,
             Self::Type(ty) => ty.loc,
         }
         .range()

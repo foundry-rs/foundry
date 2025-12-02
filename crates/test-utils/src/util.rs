@@ -1,4 +1,4 @@
-use crate::init_tracing;
+use crate::{init_tracing, rpc::rpc_endpoints};
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
     ArtifactOutput, ConfigurableArtifacts, PathStyle, Project, ProjectCompileOutput,
@@ -153,7 +153,7 @@ impl ExtTester {
         // Export vyper and forge in test command - workaround for snekmate venom tests.
         if let Some(vyper) = &prj.inner.project().compiler.vyper {
             let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
-            let forge_bin = prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+            let forge_bin = prj.forge_path();
             let forge_dir = forge_bin.parent().expect("forge path should have a parent");
 
             let existing_path = std::env::var_os("PATH").unwrap_or_default();
@@ -218,12 +218,6 @@ impl ExtTester {
 
     /// Runs the test.
     pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
         let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
         // Run installation command.
@@ -290,7 +284,7 @@ pub fn initialize(target: &Path) {
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
             test_debug!("- initializing template dir in {}", prj.root().display());
 
-            cmd.args(["init", "--force"]).assert_success();
+            cmd.args(["init", "--force", "--empty"]).assert_success();
             prj.write_config(Config {
                 solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
                 ..Default::default()
@@ -579,7 +573,7 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         init_tracing();
         let this = env::current_exe().unwrap();
-        let exe_root = this.parent().expect("executable's directory").to_path_buf();
+        let exe_root = canonicalize(this.parent().expect("executable's directory"));
         Self { exe_root, inner: Arc::new(project) }
     }
 
@@ -624,6 +618,11 @@ impl TestProject {
         let _ = fs::remove_dir_all(self.artifacts());
     }
 
+    /// Removes the entire cache directory (including fuzz, invariant, and test-failures caches).
+    pub fn clear_cache_dir(&self) {
+        let _ = fs::remove_dir_all(self.root().join("cache"));
+    }
+
     /// Updates the project's config with the given function.
     pub fn update_config(&self, f: impl FnOnce(&mut Config)) {
         self._update_config(Box::new(f));
@@ -648,6 +647,13 @@ impl TestProject {
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
     }
 
+    /// Writes [`rpc_endpoints`] to the project's config.
+    pub fn add_rpc_endpoints(&self) {
+        self.update_config(|config| {
+            config.rpc_endpoints = rpc_endpoints();
+        });
+    }
+
     /// Adds a source file to the project.
     pub fn add_source(&self, name: &str, contents: &str) -> PathBuf {
         self.inner.add_source(name, Self::add_source_prelude(contents)).unwrap()
@@ -663,14 +669,29 @@ impl TestProject {
         self.inner.add_script(name, Self::add_source_prelude(contents)).unwrap()
     }
 
+    /// Adds a script file to the project. Prefer using `add_script` instead.
+    pub fn add_raw_script(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_script(name, contents).unwrap()
+    }
+
     /// Adds a test file to the project.
     pub fn add_test(&self, name: &str, contents: &str) -> PathBuf {
         self.inner.add_test(name, Self::add_source_prelude(contents)).unwrap()
     }
 
+    /// Adds a test file to the project. Prefer using `add_test` instead.
+    pub fn add_raw_test(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_test(name, contents).unwrap()
+    }
+
     /// Adds a library file to the project.
     pub fn add_lib(&self, name: &str, contents: &str) -> PathBuf {
         self.inner.add_lib(name, Self::add_source_prelude(contents)).unwrap()
+    }
+
+    /// Adds a library file to the project. Prefer using `add_lib` instead.
+    pub fn add_raw_lib(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_lib(name, contents).unwrap()
     }
 
     fn add_source_prelude(s: &str) -> String {
@@ -746,19 +767,26 @@ impl TestProject {
 
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
-        self.add_source("test.sol", s)
+        self.add_source("test.sol", include_str!("../../../testdata/utils/DSTest.sol"))
+    }
+
+    /// Adds custom test utils under the "test/utils" directory.
+    pub fn insert_utils(&self) {
+        self.add_test("utils/DSTest.sol", include_str!("../../../testdata/utils/DSTest.sol"));
+        self.add_test("utils/Test.sol", include_str!("../../../testdata/utils/Test.sol"));
+        self.add_test("utils/Vm.sol", include_str!("../../../testdata/utils/Vm.sol"));
+        self.add_test("utils/console.sol", include_str!("../../../testdata/utils/console.sol"));
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/default/logs/console.sol");
+        let s = include_str!("../../../testdata/utils/console.sol");
         self.add_source("console.sol", s)
     }
 
     /// Adds `Vm.sol` as a source under "Vm.sol"
     pub fn insert_vm(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/cheats/Vm.sol");
+        let s = include_str!("../../../testdata/utils/Vm.sol");
         self.add_source("Vm.sol", s)
     }
 
@@ -811,19 +839,20 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let forge = self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        let forge = forge.canonicalize().unwrap_or_else(|_| forge.clone());
-        let mut cmd = Command::new(forge);
+        let mut cmd = Command::new(self.forge_path());
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
+    fn forge_path(&self) -> PathBuf {
+        canonicalize(self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)))
+    }
+
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        let cast = cast.canonicalize().unwrap_or_else(|_| cast.clone());
+        let cast = canonicalize(self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX)));
         let mut cmd = Command::new(cast);
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
@@ -859,6 +888,26 @@ impl TestProject {
         rm_create(&self.paths().sources);
         rm_create(&self.paths().tests);
         rm_create(&self.paths().scripts);
+    }
+
+    /// Initializes the default contracts (Counter.sol, Counter.t.sol, Counter.s.sol).
+    ///
+    /// This is useful for tests that need the default contracts created by `forge init`.
+    /// Most tests should not need this method, as the default behavior is to create an empty
+    /// project.
+    pub fn initialize_default_contracts(&self) {
+        self.add_raw_source(
+            "Counter.sol",
+            include_str!("../../forge/assets/solidity/CounterTemplate.sol"),
+        );
+        self.add_raw_test(
+            "Counter.t.sol",
+            include_str!("../../forge/assets/solidity/CounterTemplate.t.sol"),
+        );
+        self.add_raw_script(
+            "Counter.s.sol",
+            include_str!("../../forge/assets/solidity/CounterTemplate.s.sol"),
+        );
     }
 }
 
@@ -1044,12 +1093,24 @@ impl TestCommand {
 
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
     #[track_caller]
-    pub fn assert(&mut self) -> OutputAssert {
+    pub fn assert_with(&mut self, f: &[RegexRedaction]) -> OutputAssert {
         let assert = OutputAssert::new(self.execute());
         if self.redact_output {
-            return assert.with_assert(test_assert());
+            let mut redactions = test_redactions();
+            insert_redactions(f, &mut redactions);
+            return assert.with_assert(
+                snapbox::Assert::new()
+                    .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
+                    .redact_with(redactions),
+            );
         }
         assert
+    }
+
+    /// Runs the command, returning a [`snapbox`] object to assert the command output.
+    #[track_caller]
+    pub fn assert(&mut self) -> OutputAssert {
+        self.assert_with(&[])
     }
 
     /// Runs the command and asserts that it resulted in success.
@@ -1139,20 +1200,17 @@ impl TestCommand {
         if let Some(bytes) = self.stdin.take() {
             child.stdin.take().unwrap().write_all(&bytes)?;
         }
-        child.wait_with_output()
+        let output = child.wait_with_output()?;
+        test_debug!("exited with {}", output.status);
+        test_trace!("\n--- stdout ---\n{}\n--- /stdout ---", output.stdout_lossy());
+        test_trace!("\n--- stderr ---\n{}\n--- /stderr ---", output.stderr_lossy());
+        Ok(output)
     }
-}
-
-fn test_assert() -> snapbox::Assert {
-    snapbox::Assert::new()
-        .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
-        .redact_with(test_redactions())
 }
 
 fn test_redactions() -> snapbox::Redactions {
     static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
-        let mut r = snapbox::Redactions::new();
-        let redactions = [
+        make_redactions(&[
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
@@ -1175,27 +1233,51 @@ fn test_redactions() -> snapbox::Redactions {
                 "[ESTIMATED_AMOUNT_REQUIRED]",
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
-        ];
-        for (placeholder, re) in redactions {
-            r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
-        }
-        r
+        ])
     });
     REDACTIONS.clone()
+}
+
+/// A tuple of a placeholder and a regex replacement string.
+type RegexRedaction = (&'static str, &'static str);
+
+/// Creates a [`snapbox`] redactions object from a list of regex redactions.
+fn make_redactions(redactions: &[RegexRedaction]) -> snapbox::Redactions {
+    let mut r = snapbox::Redactions::new();
+    insert_redactions(redactions, &mut r);
+    r
+}
+
+fn insert_redactions(redactions: &[RegexRedaction], r: &mut snapbox::Redactions) {
+    for &(placeholder, re) in redactions {
+        r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
+    }
 }
 
 /// Extension trait for [`Output`].
 pub trait OutputExt {
     /// Returns the stdout as lossy string
     fn stdout_lossy(&self) -> String;
+
+    /// Returns the stderr as lossy string
+    fn stderr_lossy(&self) -> String;
 }
 
 impl OutputExt for Output {
     fn stdout_lossy(&self) -> String {
         lossy_string(&self.stdout)
     }
+
+    fn stderr_lossy(&self) -> String {
+        lossy_string(&self.stderr)
+    }
 }
 
 pub fn lossy_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
+}
+
+fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
+    foundry_common::fs::canonicalize_path(path.as_ref())
+        .unwrap_or_else(|_| path.as_ref().to_path_buf())
 }

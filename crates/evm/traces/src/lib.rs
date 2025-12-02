@@ -187,6 +187,15 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
     render_trace_arena_inner(arena, false, false)
 }
 
+/// Prunes trace depth if depth is provided as an argument
+pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
+    for node in arena.nodes_mut() {
+        if node.trace.depth >= depth {
+            node.ordering.clear();
+        }
+    }
+}
+
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
 /// and in JSON format.
 pub fn render_trace_arena_inner(
@@ -358,9 +367,13 @@ impl TraceMode {
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
-        // Enable step recording for backtraces when verbosity >= 3
-        // We need to ensure we're recording JUMP AND JUMPDEST steps:
-        if verbosity >= 3 { std::cmp::max(self, Self::Steps) } else { self }
+        match verbosity {
+            0..3 => self,
+            3..=4 => std::cmp::max(self, Self::Call),
+            // Enable step recording for backtraces when verbosity is 5 or higher.
+            // We need to ensure we're recording JUMP AND JUMPDEST steps.
+            _ => std::cmp::min(self, Self::Steps),
+        }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
