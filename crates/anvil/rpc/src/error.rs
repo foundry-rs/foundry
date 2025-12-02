@@ -42,25 +42,25 @@ impl RpcError {
     /// Creates a new `InvalidParams` error.
     pub fn invalid_params<M>(message: M) -> Self
     where
-        M: Into<String>,
+        M: Into<Cow<'static, str>>,
     {
-        Self { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
+        Self { code: ErrorCode::InvalidParams, message: message.into(), data: None }
     }
 
     /// Creates a new `InternalError` error with a message.
     pub fn internal_error_with<M>(message: M) -> Self
     where
-        M: Into<String>,
+        M: Into<Cow<'static, str>>,
     {
-        Self { code: ErrorCode::InternalError, message: message.into().into(), data: None }
+        Self { code: ErrorCode::InternalError, message: message.into(), data: None }
     }
 
     /// Creates a new RPC error for when a transaction was rejected.
     pub fn transaction_rejected<M>(message: M) -> Self
     where
-        M: Into<String>,
+        M: Into<Cow<'static, str>>,
     {
-        Self { code: ErrorCode::TransactionRejected, message: message.into().into(), data: None }
+        Self { code: ErrorCode::TransactionRejected, message: message.into(), data: None }
     }
 }
 
