@@ -152,11 +152,17 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = stack.last().unwrap().to::<usize>();
-        let mem_offset = &memory[offset..offset + 32];
-        let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
-        offset += 32;
-        let data = &memory[offset..offset + len];
+        let data = (|| -> Option<_> {
+            let mut offset: usize = stack.last()?.try_into().ok()?;
+            debug!("inspect memory @ {offset}: {}", hex::encode(memory));
+            let mem_offset = memory.get(offset..offset + 32)?;
+            let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
+            offset += 32;
+            memory.get(offset..offset + len)
+        })();
+        let Some(data) = data else {
+            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory")
+        };
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if should_continue(contract_expr) {
             ControlFlow::Continue(())
@@ -249,10 +255,8 @@ fn format_token(token: DynSolValue) -> String {
                 format!(
                     "0x{}",
                     format!("{i:x}")
-                        .char_indices()
-                        .skip(64 - bit_len / 4)
-                        .take(bit_len / 4)
-                        .map(|(_, c)| c)
+                        .chars()
+                        .skip(if i.is_negative() { 64 - bit_len / 4 } else { 0 })
                         .collect::<String>()
                 )
                 .cyan(),
@@ -264,16 +268,7 @@ fn format_token(token: DynSolValue) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
                 format!("uint{bit_len}").red(),
-                format!(
-                    "0x{}",
-                    format!("{i:x}")
-                        .char_indices()
-                        .skip(64 - bit_len / 4)
-                        .take(bit_len / 4)
-                        .map(|(_, c)| c)
-                        .collect::<String>()
-                )
-                .cyan(),
+                format!("0x{i:x}").cyan(),
                 hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )

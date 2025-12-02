@@ -102,7 +102,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_assume, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -185,7 +184,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 // https://github.com/foundry-rs/foundry/issues/5868
 forgetest!(invariant_calldata_dictionary, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_utils();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(1));
@@ -314,7 +312,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_custom_error, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = true;
@@ -384,7 +381,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_excluded_senders, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = true;
@@ -439,7 +435,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 forgetest_init!(invariant_fixtures, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
@@ -555,7 +550,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_breaks_without_fixtures, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(1));
         config.invariant.runs = 1;
@@ -721,7 +715,6 @@ forgetest_init!(
     #[cfg_attr(windows, ignore = "for some reason there's different rng")]
     invariant_inner_contract,
     |prj, cmd| {
-        prj.wipe_contracts();
         prj.update_config(|config| {
             config.invariant.depth = 10;
         });
@@ -999,7 +992,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_roll_fork, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_rpc_endpoints();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
@@ -1078,7 +1070,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_scrape_values, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.fuzz.seed = Some(U256::from(100u32));
@@ -1178,7 +1169,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_sequence_no_reverts, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 15;
         config.invariant.fail_on_revert = false;
@@ -1234,12 +1224,11 @@ forgetest_init!(
     #[cfg_attr(windows, ignore = "for some reason there's different rng")]
     invariant_shrink_big_sequence,
     |prj, cmd| {
-        prj.wipe_contracts();
         prj.update_config(|config| {
             config.fuzz.seed = Some(U256::from(119u32));
             config.invariant.runs = 1;
             config.invariant.depth = 1000;
-            config.invariant.shrink_run_limit = 365;
+            config.invariant.shrink_run_limit = 425;
         });
 
         prj.add_test(
@@ -1294,7 +1283,6 @@ Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
 );
 
 forgetest_init!(invariant_shrink_fail_on_revert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.fail_on_revert = true;
@@ -1340,7 +1328,6 @@ Ran 1 test for test/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest
 });
 
 forgetest_init!(invariant_shrink_with_assert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
         config.invariant.runs = 1;
@@ -1399,7 +1386,6 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 });
 
 forgetest_init!(invariant_test1, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
     });
@@ -1477,6 +1463,155 @@ Encountered 2 failing tests in test/InvariantTest1.t.sol:InvariantTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]]);
+});
+
+forgetest_init!(invariant_warp_and_roll, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.max_time_delay = Some(604800);
+        config.invariant.max_block_delay = Some(60480);
+        config.invariant.shrink_run_limit = 0;
+    });
+
+    prj.add_test(
+        "InvariantWarpAndRoll.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+
+contract InvariantWarpAndRoll {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_warp() public view {
+        require(block.number < 200000, "max block");
+    }
+
+    /// forge-config: default.invariant.show_solidity = true
+    function invariant_roll() public view {
+        require(block.timestamp < 500000, "max timestamp");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
+[FAIL: max block]
+	[Sequence] (original: 6, shrunk: 6)
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=218105 roll=17834 calldata=setNumber(uint256) args=[24752675372815722001736610830 [2.475e28]]
+ invariant_warp() (runs: 0, calls: 0, reverts: 0)
+...
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_roll"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
+[FAIL: max timestamp]
+	[Sequence] (original: 5, shrunk: 5)
+		vm.warp(block.timestamp + 6280);
+		vm.roll(block.number + 21461);
+		vm.prank([..]);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(200000);
+		vm.warp(block.timestamp + 92060);
+		vm.roll(block.number + 51816);
+		vm.prank([..]);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(0);
+		vm.warp(block.timestamp + 198040);
+		vm.roll(block.number + 60259);
+		vm.prank([..]);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+		vm.warp(block.timestamp + 20609);
+		vm.roll(block.number + 27086);
+		vm.prank([..]);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(26717227324157985679793128079000084308648530834088529513797156275625002);
+		vm.warp(block.timestamp + 409368);
+		vm.roll(block.number + 24864);
+		vm.prank([..]);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+ invariant_roll() (runs: 0, calls: 0, reverts: 0)
+...
+
+"#]]);
+
+    // Test that time and block advance in target contract as well.
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test(
+        "HandlerWarpAndRoll.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public number;
+    function setNumber(uint256 newNumber) public {
+        require(block.number < 200000, "max block");
+        number = newNumber;
+    }
+
+    function increment() public {
+        require(block.timestamp < 500000, "max timestamp");
+        number++;
+    }
+}
+
+contract HandlerWarpAndRoll {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_handler() public view {
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_handler"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
+[FAIL: max timestamp]
+	[Sequence] (original: 7, shrunk: 7)
+		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
+		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
+		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
+		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
+		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
+		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=218105 roll=17834 calldata=setNumber(uint256) args=[24752675372815722001736610830 [2.475e28]]
+		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=579093 roll=23244 calldata=increment() args=[]
+...
 
 "#]]);
 });

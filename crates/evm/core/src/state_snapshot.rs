@@ -60,9 +60,8 @@ impl<T> StateSnapshots<T> {
     /// Inserts the new state snapshot at the given `id`.
     ///
     ///  Does not auto-increment the next `id`.
-    pub fn insert_at(&mut self, state_snapshot: T, id: U256) -> U256 {
+    pub fn insert_at(&mut self, state_snapshot: T, id: U256) {
         self.state_snapshots.insert(id, state_snapshot);
-        id
     }
 }
 

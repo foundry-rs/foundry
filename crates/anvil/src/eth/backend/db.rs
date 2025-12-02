@@ -6,17 +6,18 @@ use std::{
     path::Path,
 };
 
-use alloy_consensus::Header;
+use alloy_consensus::{BlockBody, Header};
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
+use foundry_primitives::FoundryTxEnvelope;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -514,7 +515,7 @@ impl SerializableState {
     }
 
     /// This is used as the clap `value_parser` implementation
-    #[allow(dead_code)]
+    #[cfg(feature = "cmd")]
     pub(crate) fn parse(path: &str) -> Result<Self, String> {
         Self::load(path).map_err(|err| err.to_string())
     }
@@ -569,7 +570,7 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SerializableTransactionType {
-    TypedTransaction(TypedTransaction),
+    TypedTransaction(FoundryTxEnvelope),
     MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
 }
 
@@ -584,19 +585,18 @@ impl From<Block> for SerializableBlock {
     fn from(block: Block) -> Self {
         Self {
             header: block.header,
-            transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().collect(),
+            transactions: block.body.transactions.into_iter().map(Into::into).collect(),
+            ommers: block.body.ommers.into_iter().collect(),
         }
     }
 }
 
 impl From<SerializableBlock> for Block {
     fn from(block: SerializableBlock) -> Self {
-        Self {
-            header: block.header,
-            transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().collect(),
-        }
+        let transactions = block.transactions.into_iter().map(Into::into).collect();
+        let ommers = block.ommers;
+        let body = BlockBody { transactions, ommers, withdrawals: None };
+        Self::new(block.header, body)
     }
 }
 
@@ -692,21 +692,20 @@ mod test {
             },
             "transactions": [
                 {
-                    "EIP1559": {
-                        "chainId": "0x7a69",
-                        "nonce": "0x0",
-                        "gas": "0x5209",
-                        "maxFeePerGas": "0x77359401",
-                        "maxPriorityFeePerGas": "0x1",
-                        "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-                        "value": "0x0",
-                        "accessList": [],
-                        "input": "0x",
-                        "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
-                        "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
-                        "yParity": "0x0",
-                        "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
-                    }
+                    "type": "0x2",
+                    "chainId": "0x7a69",
+                    "nonce": "0x0",
+                    "gas": "0x5209",
+                    "maxFeePerGas": "0x77359401",
+                    "maxPriorityFeePerGas": "0x1",
+                    "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                    "value": "0x0",
+                    "accessList": [],
+                    "input": "0x",
+                    "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+                    "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+                    "yParity": "0x0",
+                    "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
                 }
             ],
             "ommers": []

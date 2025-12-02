@@ -25,6 +25,7 @@ impl ChiselSession {
         let project = foundry_test_utils::TestProject::new(name, PathStyle::Dapptools);
         if init {
             foundry_test_utils::util::initialize(project.root());
+            project.initialize_default_contracts();
         }
 
         let bin = env!("CARGO_BIN_EXE_chisel");

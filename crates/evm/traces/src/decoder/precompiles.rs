@@ -62,7 +62,7 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTra
 
     for &precompile in PRECOMPILES {
         if trace.address == precompile.address() {
-            let signature = precompile.signature();
+            let signature = precompile.signature(&trace.data);
 
             let args = precompile
                 .decode_call(&trace.data)
@@ -90,7 +90,7 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTra
 
 pub(super) trait Precompile {
     fn address(&self) -> Address;
-    fn signature(&self) -> &'static str;
+    fn signature(&self, data: &[u8]) -> &'static str;
 
     fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
         Ok(vec![hex::encode_prefixed(data)])
@@ -123,7 +123,7 @@ impl Precompile for Ecrecover {
         EC_RECOVER
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         ecrecoverCall::SIGNATURE
     }
 
@@ -144,7 +144,7 @@ impl Precompile for Sha256 {
         SHA_256
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         sha256Call::SIGNATURE
     }
 
@@ -160,7 +160,7 @@ impl Precompile for Ripemd160 {
         RIPEMD_160
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         ripemdCall::SIGNATURE
     }
 
@@ -176,7 +176,7 @@ impl Precompile for Identity {
         IDENTITY
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         identityCall::SIGNATURE
     }
 }
@@ -187,7 +187,7 @@ impl Precompile for ModExp {
         MOD_EXP
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         modexpCall::SIGNATURE
     }
 
@@ -216,7 +216,7 @@ impl Precompile for EcAdd {
         EC_ADD
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         ecaddCall::SIGNATURE
     }
 
@@ -237,7 +237,7 @@ impl Precompile for Ecmul {
         EC_MUL
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         ecmulCall::SIGNATURE
     }
 
@@ -258,7 +258,7 @@ impl Precompile for Ecpairing {
         EC_PAIRING
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         ecpairingCall::SIGNATURE
     }
 
@@ -288,7 +288,7 @@ impl Precompile for Blake2f {
         BLAKE_2F
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         blake2fCall::SIGNATURE
     }
 
@@ -321,7 +321,7 @@ impl Precompile for PointEvaluation {
         POINT_EVALUATION
     }
 
-    fn signature(&self) -> &'static str {
+    fn signature(&self, _: &[u8]) -> &'static str {
         pointEvaluationCall::SIGNATURE
     }
 

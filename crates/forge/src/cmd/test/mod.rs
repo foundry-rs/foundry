@@ -41,7 +41,7 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::{
     opts::EvmOpts,
-    traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers},
+    traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
 use regex::Regex;
 use std::{
@@ -135,6 +135,10 @@ pub struct TestArgs {
     /// Suppress successful test traces and show only traces for failures.
     #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Display options")]
     suppress_successful_traces: bool,
+
+    /// Defines the depth of a trace
+    #[arg(long)]
+    trace_depth: Option<usize>,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -509,7 +513,8 @@ impl TestArgs {
             return Ok(TestOutcome::new(Some(runner), results, self.allow_failure));
         }
 
-        let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
+        let remote_chain =
+            if runner.fork.is_some() { runner.env.tx.chain_id.map(Into::into) } else { None };
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();
@@ -529,7 +534,7 @@ impl TestArgs {
         // Avoid using external identifiers for gas report as we decode more traces and this will be
         // expensive.
         if !self.gas_report {
-            identifier = identifier.with_external(&config, remote_chain_id)?;
+            identifier = identifier.with_external(&config, remote_chain)?;
         }
 
         // Build the trace decoder.
@@ -651,6 +656,11 @@ impl TestArgs {
 
                     if should_include {
                         decode_trace_arena(arena, &decoder).await;
+
+                        if let Some(trace_depth) = self.trace_depth {
+                            prune_trace_depth(arena, trace_depth);
+                        }
+
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }
@@ -1034,6 +1044,12 @@ mod tests {
     fn fuzz_seed() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
+    }
+
+    #[test]
+    fn depth_trace() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--trace-depth", "2"]);
+        assert!(args.trace_depth.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>

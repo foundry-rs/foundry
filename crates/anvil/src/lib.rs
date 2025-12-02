@@ -4,6 +4,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::{
+    error::{NodeError, NodeResult},
     eth::{
         EthApi,
         backend::{info::StorageInfo, mem},
@@ -14,7 +15,6 @@ use crate::{
     },
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
-    server::error::{NodeError, NodeResult},
     service::NodeService,
     shutdown::Signal,
     tasks::TaskManager,
@@ -51,11 +51,12 @@ pub use config::{
 
 mod hardfork;
 pub use alloy_hardforks::EthereumHardfork;
+mod error;
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
 mod evm;
-pub use evm::{PrecompileFactory, inject_custom_precompiles};
+pub use evm::PrecompileFactory;
 
 /// support for polling filters
 pub mod filter;

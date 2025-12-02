@@ -52,7 +52,7 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/rpc",
-        "reth-ethereum-full.ithaca.xyz/rpc",
+        // "reth-ethereum-full.ithaca.xyz/rpc",
     ],
 );
 shuffled_list!(
@@ -67,7 +67,7 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/ws",
-        "reth-ethereum-full.ithaca.xyz/ws",
+        // "reth-ethereum-full.ithaca.xyz/ws",
     ],
 );
 
@@ -192,7 +192,6 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         if !rpc_url.is_empty() {
             return rpc_url;
         }
-        return "https://arbitrum-one-rpc.publicnode.com".to_string();
     }
 
     let reth_works = true;

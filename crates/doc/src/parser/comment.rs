@@ -121,16 +121,18 @@ impl Comments {
     ref_fn!(pub fn contains_tag(&self, tag: &Comment) -> bool);
     ref_fn!(pub fn find_inheritdoc_base(&self) -> Option<&'_ str>);
 
-    /// Attempt to lookup
+    /// Attempts to lookup inherited comments and merge them with the current collection.
     ///
-    /// Merges two comments collections by inserting [CommentTag] from the second collection
-    /// into the first unless they are present.
+    /// Looks up comments in `inheritdocs` using the key `{base}.{ident}` where `base` is
+    /// extracted from an `@inheritdoc` tag. Merges the found comments by inserting
+    /// [CommentTag] from the inherited collection into the current one unless they are
+    /// already present.
     pub fn merge_inheritdoc(
         &self,
         ident: &str,
         inheritdocs: Option<HashMap<String, Self>>,
     ) -> Self {
-        let mut result = Self(Vec::from_iter(self.iter().cloned()));
+        let mut result = self.clone();
 
         if let (Some(inheritdocs), Some(base)) = (inheritdocs, self.find_inheritdoc_base()) {
             let key = format!("{base}.{ident}");

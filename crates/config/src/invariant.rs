@@ -37,6 +37,10 @@ pub struct InvariantConfig {
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
+    /// Maximum time (in seconds) between generated txs.
+    pub max_time_delay: Option<u32>,
+    /// Maximum number of blocks elapsed between generated txs.
+    pub max_block_delay: Option<u32>,
 }
 
 impl Default for InvariantConfig {
@@ -55,6 +59,8 @@ impl Default for InvariantConfig {
             show_metrics: true,
             timeout: None,
             show_solidity: false,
+            max_time_delay: None,
+            max_block_delay: None,
         }
     }
 }

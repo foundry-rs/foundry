@@ -3,10 +3,10 @@
   "indentWidth": 2,
   "useTabs": false,
   "excludes": [
+    "!dprint.json",
     "!npm/**/*.{json,md,toml}",
     "!npm/**/*.{js,cjs,mjs,d.ts,d.cts,d.mts,ts,tsx,jsx}",
     "**/_",
-    "dprint.json",
     "**/abi",
     "**/build",
     "**/target",
@@ -25,8 +25,8 @@
   ],
   "plugins": [
     "https://plugins.dprint.dev/toml-0.7.0.wasm",
-    "https://plugins.dprint.dev/json-0.20.0.wasm",
-    "https://plugins.dprint.dev/markdown-0.19.0.wasm",
+    "https://plugins.dprint.dev/json-0.21.0.wasm",
+    "https://plugins.dprint.dev/markdown-0.20.0.wasm",
     "https://plugins.dprint.dev/dockerfile-0.3.3.wasm",
     "https://plugins.dprint.dev/typescript-0.95.11.wasm",
     "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.5.1.wasm"

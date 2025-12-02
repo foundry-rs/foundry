@@ -58,8 +58,6 @@ contract FuzzerDictTest is Test {
 
 // tests that inline max-test-rejects config is properly applied
 forgetest_init!(test_inline_max_test_rejects, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "Contract.t.sol",
         r#"
@@ -84,8 +82,6 @@ contract InlineMaxRejectsTest is Test {
 // Tests that test timeout config is properly applied.
 // If test doesn't timeout after one second, then test will fail with `rejected too many inputs`.
 forgetest_init!(test_fuzz_timeout, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "Contract.t.sol",
         r#"
@@ -116,7 +112,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 forgetest_init!(test_fuzz_fail_on_revert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.fail_on_revert = false;
         config.fuzz.seed = Some(U256::from(100u32));
@@ -340,7 +335,6 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 });
 
 forgetest_init!(fuzz_basic, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "Fuzz.t.sol",
         r#"
@@ -399,7 +393,6 @@ forgetest_init!(
     #[ignore]
     fuzz_collection,
     |prj, cmd| {
-        prj.wipe_contracts();
         prj.update_config(|config| {
             config.invariant.depth = 100;
             config.invariant.runs = 1000;
@@ -477,8 +470,6 @@ contract SampleContractTest is Test {
 );
 
 forgetest_init!(fuzz_failure_persist, |prj, cmd| {
-    prj.wipe_contracts();
-
     let persist_dir = prj.cache().parent().unwrap().join("persist");
     assert!(!persist_dir.exists());
     prj.update_config(|config| {
@@ -555,7 +546,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521
 // random values (instead edge cases) are generated if no fixtures defined
 forgetest_init!(fuzz_int, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "FuzzInt.t.sol",
         r#"
@@ -636,7 +626,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 9 failed, 0 skipped (10 total tests)
 });
 
 forgetest_init!(fuzz_positive, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "FuzzPositive.t.sol",
         r#"
@@ -674,7 +663,6 @@ Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 // https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521
 // random values (instead edge cases) are generated if no fixtures defined
 forgetest_init!(fuzz_uint, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
     });
@@ -741,8 +729,6 @@ Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
 });
 
 forgetest_init!(should_fuzz_literals, |prj, cmd| {
-    prj.wipe_contracts();
-
     // Add a source with magic (literal) values
     prj.add_source(
         "Magic.sol",
