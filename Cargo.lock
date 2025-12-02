@@ -4540,7 +4540,6 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "thiserror 2.0.17",
- "tokio",
  "toml 0.9.8",
  "tracing",
  "walkdir",
@@ -4870,6 +4869,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "tokio",
  "tracing",
  "uuid 1.18.1",
 ]

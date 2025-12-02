@@ -223,13 +223,6 @@ impl SignaturesIdentifier {
         self.identify_events([identifier]).await.pop().unwrap()
     }
 
-    /// Synchronously identifies an `Event` using only cached data.
-    pub fn identify_event_sync(&self, identifier: B256) -> Option<Event> {
-        let cache = self.0.cache.blocking_read();
-        let selector = SelectorKind::Event(identifier);
-        cache.get(&selector).unwrap_or_default().and_then(|sig| get_event(&sig).ok())
-    }
-
     /// Identifies `Error`s.
     pub async fn identify_errors(
         &self,

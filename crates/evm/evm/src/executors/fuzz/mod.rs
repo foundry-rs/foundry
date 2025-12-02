@@ -82,6 +82,7 @@ impl FuzzedExecutor {
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
+        tokio_handle: &tokio::runtime::Handle,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
         let shared_state = Arc::new(SharedFuzzState::new(
@@ -97,6 +98,7 @@ impl FuzzedExecutor {
         let workers = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
+                let _guard = tokio_handle.enter();
                 self.run_worker(
                     worker_id,
                     func,
