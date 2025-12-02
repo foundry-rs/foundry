@@ -15,7 +15,7 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{ChainValueParser, EthereumOpts, RpcOpts, TransactionOpts},
+    opts::{ChainValueParser, RpcOpts, TransactionOpts},
     utils::{self, TraceResult, parse_ether_value},
 };
 use foundry_common::shell;

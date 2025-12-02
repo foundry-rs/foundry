@@ -3,12 +3,11 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::Address;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{EthereumOpts, RpcOpts, TransactionOpts},
+    opts::{RpcOpts, TransactionOpts},
     utils::{self, LoadConfig},
 };
 use foundry_wallets::WalletOpts;
