@@ -317,7 +317,8 @@ impl Cheatcode for serializeJsonType_0Call {
         let Self { typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
-        let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs())?;
+        let value =
+            foundry_common::fmt::serialize_value_as_json(value, state.struct_defs(), false)?;
         Ok(value.to_string().abi_encode())
     }
 }
@@ -654,7 +655,7 @@ fn serialize_json(
     value_key: &str,
     value: DynSolValue,
 ) -> Result {
-    let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs())?;
+    let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs(), false)?;
     let map = state.serialized_jsons.entry(object_key.into()).or_default();
     map.insert(value_key.into(), value);
     let stringified = serde_json::to_string(map).unwrap();
@@ -884,7 +885,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn test_json_roundtrip_guessed(v in guessable_types()) {
-            let json = serialize_value_as_json(v.clone(), None).unwrap();
+            let json = serialize_value_as_json(v.clone(), None, false).unwrap();
             let value = json_value_to_token(&json, None).unwrap();
 
             // do additional abi_encode -> abi_decode to avoid zero signed integers getting decoded as unsigned and causing assert_eq to fail.
@@ -894,14 +895,14 @@ mod tests {
 
         #[test]
         fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
-            let json = serialize_value_as_json(v.clone(), None).unwrap();
+            let json = serialize_value_as_json(v.clone(), None, false).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
             assert_eq!(value, v);
         }
 
         #[test]
         fn test_json_roundtrip_with_struct_defs((struct_defs, v) in custom_struct_strategy()) {
-            let json = serialize_value_as_json(v.clone(), Some(&struct_defs)).unwrap();
+            let json = serialize_value_as_json(v.clone(), Some(&struct_defs), false).unwrap();
             let sol_type = v.as_type().unwrap();
             let parsed_value = parse_json_as(&json, &sol_type).unwrap();
             assert_eq!(parsed_value, v);
@@ -1060,7 +1061,8 @@ mod tests {
         };
 
         // Serialize the value to JSON and verify that the order is preserved.
-        let json_value = serialize_value_as_json(item_struct, Some(&struct_defs.into())).unwrap();
+        let json_value =
+            serialize_value_as_json(item_struct, Some(&struct_defs.into()), false).unwrap();
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(json_string, r#"{"name":"Test Item","id":123,"active":true}"#);
     }
@@ -1092,9 +1094,12 @@ mod tests {
         };
 
         // Serialize it. The resulting JSON should respect the struct definition order.
-        let json_value =
-            serialize_value_as_json(original_wallet.clone(), Some(&struct_defs.clone().into()))
-                .unwrap();
+        let json_value = serialize_value_as_json(
+            original_wallet.clone(),
+            Some(&struct_defs.clone().into()),
+            false,
+        )
+        .unwrap();
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(
             json_string,
