@@ -218,7 +218,8 @@ impl WorkerCorpus {
         let mut failed_replays = 0;
 
         if id == 0 && config.corpus_dir.is_some() {
-            // Master worker loads the initial corpus if it exists
+            // Master worker loads the initial corpus, if it exists. Then, [distribute]s it to
+            // workers.
             let corpus_dir = config.corpus_dir.as_ref().unwrap();
 
             let can_replay_tx = |tx: &BasicTxDetails| -> bool {
@@ -685,7 +686,7 @@ impl WorkerCorpus {
 
     // Sync Methods
 
-    /// Exports the new corpus entries to the master workers (id = 0) sync dir.
+    /// Exports the new corpus entries to the master worker's (id = 0) sync dir.
     #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     fn export(&self) -> eyre::Result<()> {
         // Early return if no new entries or corpus dir not configured
@@ -723,6 +724,7 @@ impl WorkerCorpus {
                 let file_path = corpus_dir.join(&file_name);
                 let sync_path = master_sync_dir.join(&file_name);
 
+                // TODO(dani): can we symlink and copy later instead?
                 let Ok(_) = foundry_common::fs::copy(file_path, sync_path) else {
                     debug!(target: "corpus", "failed to export corpus {}", entry.uuid);
                     continue;
@@ -941,27 +943,16 @@ impl WorkerCorpus {
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> eyre::Result<()> {
-        if self.id == 0 {
-            // Master worker
-            self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
-
-            self.distribute(num_workers)?;
-
-            self.new_entry_indices.clear();
-
-            trace!(target: "corpus", "master synced");
-
-            return Ok(());
+        let is_master = self.id == 0;
+        if !is_master {
+            self.export()?;
         }
-
-        self.export()?;
-
         self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
-
+        if is_master {
+            self.distribute(num_workers)?;
+        }
         self.new_entry_indices.clear();
-
         trace!(target: "corpus", "synced");
-
         Ok(())
     }
 }
