@@ -928,7 +928,8 @@ casttest!(wallet_derive_mnemonic, |_prj, cmd| {
 "#]]);
 });
 
-// tests that `cast wallet derive` with insecure flag outputs the addresses and private keys of the accounts derived from the mnemonic
+// tests that `cast wallet derive` with insecure flag outputs the addresses and private keys of the
+// accounts derived from the mnemonic
 casttest!(wallet_derive_mnemonic_insecure, |_prj, cmd| {
     cmd.args([
         "wallet",
@@ -956,7 +957,8 @@ casttest!(wallet_derive_mnemonic_insecure, |_prj, cmd| {
 "#]]);
 });
 
-// tests that `cast wallet derive` with json flag outputs the addresses of the accounts derived from the mnemonic in JSON format
+// tests that `cast wallet derive` with json flag outputs the addresses of the accounts derived from
+// the mnemonic in JSON format
 casttest!(wallet_derive_mnemonic_json, |_prj, cmd| {
     cmd.args([
         "wallet",
@@ -983,7 +985,8 @@ casttest!(wallet_derive_mnemonic_json, |_prj, cmd| {
 "#]]);
 });
 
-// tests that `cast wallet derive` with insecure and json flag outputs the addresses and private keys of the accounts derived from the mnemonic in JSON format
+// tests that `cast wallet derive` with insecure and json flag outputs the addresses and private
+// keys of the accounts derived from the mnemonic in JSON format
 casttest!(wallet_derive_mnemonic_insecure_json, |_prj, cmd| {
     cmd.args([
         "wallet",
