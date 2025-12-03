@@ -14,9 +14,15 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LiteralsDictionary {
     maps: Arc<OnceLock<LiteralMaps>>,
+}
+
+impl Default for LiteralsDictionary {
+    fn default() -> Self {
+        Self::new(None, None, usize::MAX)
+    }
 }
 
 impl LiteralsDictionary {
@@ -44,14 +50,14 @@ impl LiteralsDictionary {
                 });
             });
         } else {
-            let _ = maps.set(Default::default());
+            maps.set(Default::default()).unwrap();
         }
         Self { maps }
     }
 
     /// Returns a reference to the `LiteralMaps`.
     pub fn get(&self) -> &LiteralMaps {
-        OnceLock::wait(&self.maps)
+        self.maps.wait()
     }
 
     /// Test-only helper to seed the dictionary with literal values.

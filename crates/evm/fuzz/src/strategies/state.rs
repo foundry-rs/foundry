@@ -44,11 +44,12 @@ pub struct EvmFuzzState {
 impl EvmFuzzState {
     #[cfg(test)]
     pub(crate) fn test() -> Self {
-        Self {
-            inner: Default::default(),
-            deployed_libs: Default::default(),
-            mapping_slots: Default::default(),
-        }
+        Self::new(
+            &[],
+            &CacheDB::<revm::database::EmptyDB>::default(),
+            FuzzDictionaryConfig::default(),
+            None,
+        )
     }
 
     pub fn new<DB: DatabaseRef>(
