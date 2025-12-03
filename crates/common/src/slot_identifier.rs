@@ -334,7 +334,8 @@ where
     use serde::ser::SerializeMap;
 
     if let Some(keys) = keys {
-        let mut map = serializer.serialize_map(Some(1))?;
+        let len = if keys.is_empty() { 0 } else { 1 };
+        let mut map = serializer.serialize_map(Some(len))?;
         if keys.len() == 1 {
             map.serialize_entry("key", &keys[0])?;
         } else if keys.len() > 1 {
