@@ -253,11 +253,11 @@ impl WorkerCorpus {
         let mut metrics = CorpusMetrics::default();
         let mut failed_replays = 0;
 
-        if id == 0 && config.corpus_dir.is_some() {
+        if id == 0
+            && let Some(corpus_dir) = &config.corpus_dir
+        {
             // Master worker loads the initial corpus, if it exists. Then, [distribute]s it to
             // workers.
-            let corpus_dir = config.corpus_dir.as_ref().unwrap();
-
             let can_replay_tx = |tx: &BasicTxDetails| -> bool {
                 fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
                     || fuzzed_function.is_some_and(|function| {
