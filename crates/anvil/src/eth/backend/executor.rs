@@ -31,7 +31,7 @@ use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{BlockInfo, create_block},
-    transaction::{PendingTransaction, TransactionInfo, TypedReceipt},
+    transaction::{PendingTransaction, TransactionInfo},
 };
 use foundry_evm::{
     backend::DatabaseError,
@@ -39,7 +39,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use op_revm::{L1BlockInfo, OpContext, OpTransaction, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
@@ -71,7 +71,7 @@ pub struct ExecutedTransaction {
 
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
-    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> TypedReceipt {
+    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> FoundryReceiptEnvelope {
         let logs = self.logs.clone();
         *cumulative_gas_used = cumulative_gas_used.saturating_add(self.gas_used);
 
@@ -85,13 +85,13 @@ impl ExecutedTransaction {
         .into();
 
         match self.transaction.pending_transaction.transaction.as_ref() {
-            FoundryTxEnvelope::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
-            FoundryTxEnvelope::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
-            FoundryTxEnvelope::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
-            FoundryTxEnvelope::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
-            FoundryTxEnvelope::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
+            FoundryTxEnvelope::Legacy(_) => FoundryReceiptEnvelope::Legacy(receipt_with_bloom),
+            FoundryTxEnvelope::Eip2930(_) => FoundryReceiptEnvelope::Eip2930(receipt_with_bloom),
+            FoundryTxEnvelope::Eip1559(_) => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
+            FoundryTxEnvelope::Eip4844(_) => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
+            FoundryTxEnvelope::Eip7702(_) => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
             FoundryTxEnvelope::Deposit(_tx) => {
-                TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+                FoundryReceiptEnvelope::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
                     receipt: op_alloy_consensus::OpDepositReceipt {
                         inner: receipt_with_bloom.receipt,
                         deposit_nonce: Some(0),
@@ -277,7 +277,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut tx_env: OpTransaction<TxEnv> =
             FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
 
-        if let FoundryTxEnvelope::EIP7702(tx_7702) = tx.transaction.as_ref()
+        if let FoundryTxEnvelope::Eip7702(tx_7702) = tx.transaction.as_ref()
             && self.cheats.has_recover_overrides()
         {
             // Override invalid recovered authorizations with signature overrides from cheat manager
