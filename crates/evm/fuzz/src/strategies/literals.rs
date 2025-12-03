@@ -9,17 +9,20 @@ use solar::{
     ast::{self, Visit},
     interface::source_map::FileName,
 };
-use std::{ops::ControlFlow, sync::OnceLock};
+use std::{
+    ops::ControlFlow,
+    sync::{Arc, OnceLock},
+};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LiteralsDictionary {
-    /// Data required for initialization, captured from `EvmFuzzState::new`.
-    analysis: Option<Analysis>,
-    paths_config: Option<ProjectPathsConfig>,
-    max_values: usize,
+    maps: Arc<OnceLock<LiteralMaps>>,
+}
 
-    /// Lazy initialized literal maps.
-    maps: OnceLock<LiteralMaps>,
+impl Default for LiteralsDictionary {
+    fn default() -> Self {
+        Self::new(None, None, usize::MAX)
+    }
 }
 
 impl LiteralsDictionary {
@@ -28,42 +31,42 @@ impl LiteralsDictionary {
         paths_config: Option<ProjectPathsConfig>,
         max_values: usize,
     ) -> Self {
-        Self { analysis, paths_config, max_values, maps: OnceLock::default() }
+        let maps = Arc::new(OnceLock::<LiteralMaps>::new());
+        if let Some(analysis) = analysis
+            && max_values > 0
+        {
+            let maps = maps.clone();
+            // This can't be done in a rayon task (including inside of `get`) because it can cause a
+            // deadlock, since internally `solar` also uses rayon.
+            let _ = std::thread::Builder::new().name("literal-collector".into()).spawn(move || {
+                let _ = maps.get_or_init(|| {
+                    let literals =
+                        LiteralsCollector::process(&analysis, paths_config.as_ref(), max_values);
+                    debug!(
+                        words = literals.words.values().map(|set| set.len()).sum::<usize>(),
+                        strings = literals.strings.len(),
+                        bytes = literals.bytes.len(),
+                        "collected source code literals for fuzz dictionary"
+                    );
+                    literals
+                });
+            });
+        } else {
+            maps.set(Default::default()).unwrap();
+        }
+        Self { maps }
     }
 
-    /// Returns a reference to the `LiteralMaps`, initializing them on the first call.
+    /// Returns a reference to the `LiteralMaps`.
     pub fn get(&self) -> &LiteralMaps {
-        self.maps.get_or_init(|| {
-            if let Some(analysis) = &self.analysis {
-                let literals = LiteralsCollector::process(
-                    analysis,
-                    self.paths_config.as_ref(),
-                    self.max_values,
-                );
-                trace!(
-                    words = literals.words.values().map(|set| set.len()).sum::<usize>(),
-                    strings = literals.strings.len(),
-                    bytes = literals.bytes.len(),
-                    "collected source code literals for fuzz dictionary"
-                );
-                literals
-            } else {
-                LiteralMaps::default()
-            }
-        })
+        self.maps.wait()
     }
 
-    /// Takes ownership of the dictionary words, leaving an empty map in their place.
-    /// Ensures the map is initialized before taking its contents.
-    pub fn take_words(&mut self) -> HashMap<DynSolType, B256IndexSet> {
-        let _ = self.get();
-        self.maps.get_mut().map(|m| std::mem::take(&mut m.words)).unwrap_or_default()
-    }
-
-    #[cfg(test)]
     /// Test-only helper to seed the dictionary with literal values.
+    #[cfg(test)]
     pub(crate) fn set(&mut self, map: super::LiteralMaps) {
-        let _ = self.maps.set(map);
+        self.maps = Arc::new(OnceLock::new());
+        self.maps.set(map).unwrap();
     }
 }
 
@@ -102,8 +105,10 @@ impl LiteralsCollector {
                     continue;
                 }
 
-                if let Some(ref ast) = source.ast {
-                    let _ = literals_collector.visit_source_unit(ast);
+                if let Some(ast) = &source.ast
+                    && literals_collector.visit_source_unit(ast).is_break()
+                {
+                    break;
                 }
             }
 
