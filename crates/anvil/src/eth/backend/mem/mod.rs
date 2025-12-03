@@ -75,6 +75,7 @@ use alloy_rpc_types::{
         geth::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
+            TraceResult,
         },
         parity::LocalizedTransactionTrace,
     },
@@ -143,6 +144,7 @@ pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod inspector;
+pub mod offline_fork_db;
 pub mod state;
 pub mod storage;
 
@@ -418,6 +420,7 @@ impl Backend {
 
                 // The forking Database backend can handle concurrent requests, we can fetch all dev
                 // accounts concurrently by spawning the job to a new task
+                // In offline mode, OfflineForkedDatabase will return defaults without RPC calls
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
                     let info = db.basic_ref(address)?.unwrap_or_default();
@@ -482,6 +485,11 @@ impl Backend {
     /// Returns the configured fork, if any
     pub fn get_fork(&self) -> Option<ClientFork> {
         self.fork.read().clone()
+    }
+
+    /// Returns whether the node is in offline mode
+    pub async fn is_offline(&self) -> bool {
+        self.node_config.read().await.offline
     }
 
     /// Returns the database
@@ -2221,6 +2229,15 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
+            let is_offline = self.node_config.read().await.offline;
+            if is_offline {
+                // In offline mode, only return blocks from local storage
+                // Check if the block exists in our loaded state
+                if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
+                    return Ok(Some(self.convert_block(block)));
+                }
+                return Ok(None);
+            }
             return Ok(fork.block_by_hash(hash).await?);
         }
 
@@ -2237,6 +2254,17 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
+            let is_offline = self.node_config.read().await.offline;
+            if is_offline {
+                // In offline mode, check local storage for the block
+                if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
+                    let transactions = self.mined_transactions_in_block(&block).unwrap_or_default();
+                    let mut rpc_block = self.convert_block(block);
+                    rpc_block.transactions = BlockTransactions::Full(transactions);
+                    return Ok(Some(rpc_block));
+                }
+                return Ok(None);
+            }
             return Ok(fork.block_by_hash_full(hash).await?);
         }
 
@@ -2288,6 +2316,20 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
+                let is_offline = self.node_config.read().await.offline;
+                if is_offline {
+                    // In offline mode, check local storage for the block
+                    if let Some(hash) =
+                        self.blockchain.hash(BlockId::Number(BlockNumber::Number(number)))
+                    {
+                        if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
+                            let mut rpc_block = self.convert_block(block);
+                            rpc_block.transactions.convert_to_hashes();
+                            return Ok(Some(rpc_block));
+                        }
+                    }
+                    return Ok(None);
+                }
                 return Ok(fork.block_by_number(number).await?);
             }
         }
@@ -2307,6 +2349,22 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
+                let is_offline = self.node_config.read().await.offline;
+                if is_offline {
+                    // In offline mode, check local storage for the block
+                    if let Some(hash) =
+                        self.blockchain.hash(BlockId::Number(BlockNumber::Number(number)))
+                    {
+                        if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
+                            let transactions =
+                                self.mined_transactions_in_block(&block).unwrap_or_default();
+                            let mut rpc_block = self.convert_block(block);
+                            rpc_block.transactions = BlockTransactions::Full(transactions);
+                            return Ok(Some(rpc_block));
+                        }
+                    }
+                    return Ok(None);
+                }
                 return Ok(fork.block_by_number_full(number).await?);
             }
         }
@@ -2490,8 +2548,10 @@ impl Backend {
             None => None,
         };
         let block_number = self.convert_block_number(block_number);
+        let current_block = self.env.read().evm_env.block_env.number.saturating_to::<u64>();
+        let is_offline = self.node_config.read().await.offline;
 
-        if block_number < self.env.read().evm_env.block_env.number.saturating_to() {
+        if block_number < current_block {
             if let Some((block_hash, block)) = self
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
@@ -2499,11 +2559,11 @@ impl Backend {
             {
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return Ok(get_block_env(state_db, block_number, block, f));
+                    return Ok(get_block_env(state_db, block_number, block, is_offline, f));
                 } else {
                     let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
                     if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                        return Ok(get_block_env(state, block_number, block, f));
+                        return Ok(get_block_env(state, block_number, block, is_offline, f));
                     }
                 }
             }
@@ -2988,6 +3048,94 @@ impl Backend {
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
+    }
+
+    /// Returns geth-style traces for all transactions in a block by hash
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        // Get block by hash
+        if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
+            // Get all transactions in the block
+            let mut traces = Vec::new();
+            for tx in &block.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        // Block not in local storage - try fork
+        if let Some(fork) = self.get_fork() {
+            let is_offline = self.node_config.read().await.offline;
+            if is_offline {
+                // In offline mode, block not found
+                return Err(BlockchainError::BlockNotFound);
+            }
+            // In online mode, forward to RPC
+            return Ok(fork.debug_trace_block_by_hash(block_hash, opts).await?);
+        }
+
+        // No fork and block not found
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    /// Returns geth-style traces for all transactions in a block by number
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let number = self.convert_block_number(Some(block_number));
+
+        // Get block by number
+        if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
+            // Get all transactions in the block
+            let mut traces = Vec::new();
+            for tx in &block.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        // Block not in local storage - try fork
+        if let Some(fork) = self.get_fork() {
+            if fork.predates_fork_inclusive(number) {
+                let is_offline = self.node_config.read().await.offline;
+                if is_offline {
+                    // In offline mode, block not found
+                    return Err(BlockchainError::BlockNotFound);
+                }
+                // In online mode, forward to RPC
+                return Ok(fork.debug_trace_block_by_number(number, opts).await?);
+            }
+        }
+
+        // No fork and block not found
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Returns the traces for the given block
@@ -3588,7 +3736,13 @@ impl Backend {
     }
 }
 
-fn get_block_env<F, T>(state: &StateDb, block_number: u64, block: AnyRpcBlock, f: F) -> T
+fn get_block_env<F, T>(
+    state: &StateDb,
+    block_number: u64,
+    block: AnyRpcBlock,
+    is_offline: bool,
+    f: F,
+) -> T
 where
     F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
 {
@@ -3602,7 +3756,15 @@ where
         gas_limit: block.header.gas_limit,
         ..Default::default()
     };
-    f(Box::new(state), block)
+
+    // In offline mode, wrap state to prevent RPC calls for missing data
+    if is_offline {
+        use crate::eth::backend::db::OfflineStateDb;
+        let offline_wrapper = OfflineStateDb::new_ref(state);
+        f(Box::new(offline_wrapper), block)
+    } else {
+        f(Box::new(state), block)
+    }
 }
 
 /// Get max nonce from transaction pool by address.

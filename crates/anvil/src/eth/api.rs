@@ -59,7 +59,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
@@ -350,6 +350,12 @@ impl EthApi {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
+                self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
+            }
+            EthRequest::DebugTraceBlockByNumber(block_number, opts) => {
+                self.debug_trace_block_by_number(block_number, opts).await.to_rpc_result()
+            }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
@@ -737,12 +743,18 @@ impl EthApi {
         node_info!("eth_getBalance");
         let block_request = self.block_request(block_number).await?;
 
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(fork.get_balance(address, number).await?);
+        // In offline mode, always use backend (never call fork RPC)
+        if self.backend.is_offline().await {
+            return self.backend.get_balance(address, Some(block_request)).await;
+        }
+
+        // Online mode: check if the number predates the fork
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_balance(address, number).await?);
+                }
+            }
         }
 
         self.backend.get_balance(address, Some(block_request)).await
@@ -759,12 +771,18 @@ impl EthApi {
         node_info!("eth_getAccount");
         let block_request = self.block_request(block_number).await?;
 
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(fork.get_account(address, number).await?);
+        // In offline mode, always use backend (never call fork RPC)
+        if self.backend.is_offline().await {
+            return self.backend.get_account_at_block(address, Some(block_request)).await;
+        }
+
+        // Online mode: check if the number predates the fork
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_account(address, number).await?);
+                }
+            }
         }
 
         self.backend.get_account_at_block(address, Some(block_request)).await
@@ -829,14 +847,20 @@ impl EthApi {
         node_info!("eth_getStorageAt");
         let block_request = self.block_request(block_number).await?;
 
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(B256::from(
-                fork.storage_at(address, index, Some(BlockNumber::Number(number))).await?,
-            ));
+        // In offline mode, always use backend (never call fork RPC)
+        if self.backend.is_offline().await {
+            return self.backend.storage_at(address, index, Some(block_request)).await;
+        }
+
+        // Online mode: check if the number predates the fork
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(B256::from(
+                        fork.storage_at(address, index, Some(BlockNumber::Number(number))).await?,
+                    ));
+                }
+            }
         }
 
         self.backend.storage_at(address, index, Some(block_request)).await
@@ -961,12 +985,19 @@ impl EthApi {
     pub async fn get_code(&self, address: Address, block_number: Option<BlockId>) -> Result<Bytes> {
         node_info!("eth_getCode");
         let block_request = self.block_request(block_number).await?;
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(fork.get_code(address, number).await?);
+
+        // In offline mode, always use backend (never call fork RPC)
+        if self.backend.is_offline().await {
+            return self.backend.get_code(address, Some(block_request)).await;
+        }
+
+        // Online mode: check if the number predates the fork
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_code(address, number).await?);
+                }
+            }
         }
         self.backend.get_code(address, Some(block_request)).await
     }
@@ -984,7 +1015,12 @@ impl EthApi {
         node_info!("eth_getProof");
         let block_request = self.block_request(block_number).await?;
 
-        // If we're in forking mode, or still on the forked block (no blocks mined yet) then we can
+        // In offline mode, always use backend (never call fork RPC)
+        if self.backend.is_offline().await {
+            return self.backend.prove_account_at(address, keys, Some(block_request)).await;
+        }
+
+        // Online mode: If we're in forking mode, or still on the forked block (no blocks mined yet) then we can
         // delegate the call.
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
@@ -1226,17 +1262,24 @@ impl EthApi {
     ) -> Result<Bytes> {
         node_info!("eth_call");
         let block_request = self.block_request(block_number).await?;
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            if overrides.has_state() || overrides.has_block() {
-                return Err(BlockchainError::EvmOverrideError(
-                    "not available on past forked blocks".to_string(),
-                ));
+
+        // In offline mode, always use backend (never call fork RPC)
+        let is_offline = self.backend.is_offline().await;
+
+        // Check if the number predates the fork, if in fork mode
+        if !is_offline {
+            if let BlockRequest::Number(number) = block_request {
+                if let Some(fork) = self.get_fork() {
+                    if fork.predates_fork(number) {
+                        if overrides.has_state() || overrides.has_block() {
+                            return Err(BlockchainError::EvmOverrideError(
+                                "not available on past forked blocks".to_string(),
+                            ));
+                        }
+                        return Ok(fork.call(&request, Some(number.into())).await?);
+                    }
+                }
             }
-            return Ok(fork.call(&request, Some(number.into())).await?);
         }
 
         let fees = FeeDetails::new(
@@ -1265,12 +1308,20 @@ impl EthApi {
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
         node_info!("eth_simulateV1");
         let block_request = self.block_request(block_number).await?;
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
+
+        // In offline mode, always use backend (never call fork RPC)
+        if self.backend.is_offline().await {
+            // Offline simulate not fully supported, use backend
+            return self.backend.simulate(request, Some(block_request)).await;
+        }
+
+        // Online mode: check if the number predates the fork
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
+                }
+            }
         }
 
         // this can be blocking for a bit, especially in forking mode
@@ -1304,12 +1355,17 @@ impl EthApi {
     ) -> Result<AccessListResult> {
         node_info!("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(fork.create_access_list(&request, Some(number.into())).await?);
+
+        // In offline mode, always use backend (never call fork RPC)
+        if !self.backend.is_offline().await {
+            // Online mode: check if the number predates the fork
+            if let BlockRequest::Number(number) = block_request {
+                if let Some(fork) = self.get_fork() {
+                    if fork.predates_fork(number) {
+                        return Ok(fork.create_access_list(&request, Some(number.into())).await?);
+                    }
+                }
+            }
         }
 
         self.backend
@@ -2026,6 +2082,30 @@ impl EthApi {
     pub async fn debug_db_get(&self, key: String) -> Result<Option<Bytes>> {
         node_info!("debug_dbGet");
         self.backend.debug_db_get(key).await
+    }
+
+    /// Returns traces for all transactions in a block for geth's tracing endpoint
+    ///
+    /// Handler for RPC call: `debug_traceBlockByHash`
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByHash");
+        self.backend.debug_trace_block_by_hash(block_hash, opts).await
+    }
+
+    /// Returns traces for all transactions in a block for geth's tracing endpoint
+    ///
+    /// Handler for RPC call: `debug_traceBlockByNumber`
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByNumber");
+        self.backend.debug_trace_block_by_number(block_number, opts).await
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint
@@ -3111,17 +3191,24 @@ impl EthApi {
         overrides: EvmOverrides,
     ) -> Result<u128> {
         let block_request = self.block_request(block_number).await?;
-        // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            if overrides.has_state() || overrides.has_block() {
-                return Err(BlockchainError::EvmOverrideError(
-                    "not available on past forked blocks".to_string(),
-                ));
+
+        // In offline mode, always use backend (never call fork RPC)
+        let is_offline = self.backend.is_offline().await;
+
+        // Check if the number predates the fork, if in fork mode
+        if !is_offline {
+            if let BlockRequest::Number(number) = block_request {
+                if let Some(fork) = self.get_fork() {
+                    if fork.predates_fork(number) {
+                        if overrides.has_state() || overrides.has_block() {
+                            return Err(BlockchainError::EvmOverrideError(
+                                "not available on past forked blocks".to_string(),
+                            ));
+                        }
+                        return Ok(fork.estimate_gas(&request, Some(number.into())).await?);
+                    }
+                }
             }
-            return Ok(fork.estimate_gas(&request, Some(number.into())).await?);
         }
 
         // this can be blocking for a bit, especially in forking mode
@@ -3527,11 +3614,18 @@ impl EthApi {
     ) -> Result<u64> {
         let block_request = self.block_request(block_number).await?;
 
-        if let BlockRequest::Number(number) = block_request
-            && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
-        {
-            return Ok(fork.get_nonce(address, number).await?);
+        // In offline mode, always use backend (never call fork RPC)
+        if self.backend.is_offline().await {
+            return self.backend.get_nonce(address, block_request).await;
+        }
+
+        // Online mode: check if the number predates the fork
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_nonce(address, number).await?);
+                }
+            }
         }
 
         self.backend.get_nonce(address, block_request).await

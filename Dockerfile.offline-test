@@ -1,0 +1,46 @@
+FROM rust:latest as builder
+
+WORKDIR /foundry
+COPY . .
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build anvil
+RUN cargo build --release -p anvil
+
+FROM ubuntu:24.04
+
+# Install iptables for network blocking
+RUN apt-get update && apt-get install -y iptables iproute2 && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /foundry/target/release/anvil /usr/local/bin/anvil
+
+# Script to block outbound internet but allow local connections
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+# Block all outbound traffic except to localhost and private networks\n\
+iptables -A OUTPUT -o lo -j ACCEPT\n\
+iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT\n\
+iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT\n\
+iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT\n\
+iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT\n\
+iptables -A OUTPUT -j REJECT --reject-with icmp-net-unreachable\n\
+\n\
+echo "==========================================="\n\
+echo "Internet access BLOCKED - Offline mode test"\n\
+echo "==========================================="\n\
+echo ""\n\
+\n\
+# Run anvil\n\
+exec anvil "$@"\n\
+' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+EXPOSE 8545
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["--help"]
