@@ -144,7 +144,9 @@ fn fix_toml_non_strict_profiles(
         .iter()
         .map(|(k, _)| k.to_string())
         .filter(|k| {
-            !(k == Config::PROFILE_SECTION || Config::STANDALONE_SECTIONS.contains(&k.as_str()))
+            !(k == Config::PROFILE_SECTION
+                || k == Config::EXTERNAL_SECTION
+                || Config::STANDALONE_SECTIONS.contains(&k.as_str()))
         })
         .collect::<Vec<_>>();
 
