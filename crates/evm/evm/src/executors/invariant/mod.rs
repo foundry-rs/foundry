@@ -334,7 +334,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
+        fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
@@ -344,7 +344,7 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         let (mut invariant_test, mut corpus_manager) =
-            self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
+            self.prepare_test(&invariant_contract, fuzz_fixtures, fuzz_state)?;
 
         // Start timer for this invariant test.
         let mut runs = 0;
@@ -555,22 +555,12 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
+        fuzz_state: EvmFuzzState,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
             self.select_contracts_and_senders(invariant_contract.address)?;
-
-        // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let inspector = self.executor.inspector();
-        let fuzz_state = EvmFuzzState::new(
-            self.executor.backend().mem_db(),
-            self.config.dictionary,
-            deployed_libs,
-            inspector.analysis.as_ref(),
-            inspector.paths_config(),
-        );
 
         // Creates the invariant strategy.
         let strategy = invariant_strat(

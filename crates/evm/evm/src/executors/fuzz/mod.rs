@@ -74,7 +74,7 @@ impl FuzzedExecutor {
         &mut self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
+        state: EvmFuzzState,
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
@@ -82,12 +82,8 @@ impl FuzzedExecutor {
         tokio_handle: &tokio::runtime::Handle,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
-        let shared_state = SharedFuzzState::new(
-            self.build_fuzz_state(deployed_libs),
-            self.config.runs,
-            self.config.timeout,
-            early_exit.clone(),
-        );
+        let shared_state =
+            SharedFuzzState::new(state, self.config.runs, self.config.timeout, early_exit.clone());
 
         // Determine number of workers
         let num_workers = self.num_workers();
@@ -511,29 +507,6 @@ impl FuzzedExecutor {
         shared_state.state.log_stats();
 
         Ok(worker)
-    }
-
-    /// Stores fuzz state for use with [fuzz_calldata_from_state]
-    pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
-        let inspector = self.executor.inspector();
-
-        if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(
-                fork_db,
-                self.config.dictionary,
-                deployed_libs,
-                inspector.analysis.as_ref(),
-                inspector.paths_config(),
-            )
-        } else {
-            EvmFuzzState::new(
-                self.executor.backend().mem_db(),
-                self.config.dictionary,
-                deployed_libs,
-                inspector.analysis.as_ref(),
-                inspector.paths_config(),
-            )
-        }
     }
 
     /// Determines the number of workers to run
