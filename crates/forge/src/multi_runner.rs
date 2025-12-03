@@ -586,7 +586,7 @@ impl MultiContractRunnerBuilder {
         let fuzz_literals = LiteralsDictionary::new(
             Some(analysis.clone()),
             Some(self.config.project_paths()),
-            usize::max(
+            usize::min(
                 self.config.fuzz.dictionary.max_fuzz_dictionary_literals,
                 self.config.invariant.dictionary.max_fuzz_dictionary_literals,
             ),
