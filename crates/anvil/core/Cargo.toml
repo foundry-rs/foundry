@@ -15,13 +15,13 @@ workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-evm.workspace = true
+foundry-primitives.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
     "c-kzg",
 ] }
-op-revm.workspace = true
 
 alloy-primitives = { workspace = true, features = ["serde", "rlp"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace"] }
@@ -33,7 +33,6 @@ alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-network.workspace = true
-alloy-evm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
