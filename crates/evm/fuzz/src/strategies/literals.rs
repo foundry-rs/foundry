@@ -32,10 +32,12 @@ impl LiteralsDictionary {
         max_values: usize,
     ) -> Self {
         let maps = Arc::new(OnceLock::<LiteralMaps>::new());
-        if let Some(analysis) = analysis {
+        if let Some(analysis) = analysis
+            && max_values > 0
+        {
             let maps = maps.clone();
-            // This can't be a rayon task because it can cause a deadlock, since internally `solar`
-            // also uses rayon.
+            // This can't be done in a rayon task (including inside of `get`) because it can cause a
+            // deadlock, since internally `solar` also uses rayon.
             let _ = std::thread::Builder::new().name("literal-collector".into()).spawn(move || {
                 let _ = maps.get_or_init(|| {
                     let literals =
