@@ -99,12 +99,13 @@ impl FuzzedExecutor {
         &mut self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
-        ref state: EvmFuzzState,
+        state: EvmFuzzState,
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
     ) -> Result<FuzzTestResult> {
+        let state = &state;
         // Stores the fuzz test execution data.
         let mut test_data = FuzzTestData::default();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
