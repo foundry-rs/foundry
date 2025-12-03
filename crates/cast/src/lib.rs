@@ -1028,79 +1028,49 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     {
         let (from_block, to_block) = Self::extract_block_range(filter)?;
         let (Some(from), Some(to)) = (from_block, to_block) else {
-            return Err(eyre::eyre!("Cannot extract valid block range from filter"));
+            return self.provider.get_logs(filter).await.map_err(Into::into);
         };
 
         if from >= to {
             return Ok(vec![]);
         }
 
-        let total_blocks = to - from;
+        // Create chunk ranges using iterator
+        let chunk_ranges: Vec<(u64, u64)> = (from..to)
+            .step_by(chunk_size as usize)
+            .map(|chunk_start| (chunk_start, (chunk_start + chunk_size).min(to)))
+            .collect();
 
-        // Use very high concurrency for tiny chunks, moderate for small chunks
-        let max_concurrency = if chunk_size <= 10 {
-            std::cmp::min(200, total_blocks as usize) // Up to 200 concurrent requests for tiny chunks
-        } else if chunk_size <= 100 {
-            std::cmp::min(50, total_blocks as usize) // Up to 50 concurrent requests for small chunks  
-        } else {
-            std::cmp::min(10, ((total_blocks / chunk_size).max(1)) as usize) // Fewer for larger chunks
-        };
+        // Process chunks with controlled concurrency using buffered stream
+        let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
+            .map(|(start_block, chunk_end)| {
+                let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end - 1);
+                let provider = self.provider.clone();
 
-        // Create all chunk futures upfront
-        let mut chunk_futures = Vec::new();
-        let mut current_block = from;
-
-        while current_block < to {
-            let chunk_end = std::cmp::min(current_block + chunk_size, to);
-            let chunk_filter = filter.clone().from_block(current_block).to_block(chunk_end - 1);
-
-            let provider = self.provider.clone();
-            let start_block = current_block;
-
-            let future = async move {
-                // Try direct chunk request with simplified fallback
-                match provider.get_logs(&chunk_filter).await {
-                    Ok(logs) => (start_block, logs),
-                    Err(_) => {
-                        // Simple fallback: try individual blocks in this chunk
-                        let mut fallback_logs = Vec::new();
-                        for single_block in start_block..chunk_end {
-                            let single_filter = chunk_filter
-                                .clone()
-                                .from_block(single_block)
-                                .to_block(single_block);
-                            if let Ok(logs) = provider.get_logs(&single_filter).await {
-                                fallback_logs.extend(logs);
+                async move {
+                    // Try direct chunk request with simplified fallback
+                    match provider.get_logs(&chunk_filter).await {
+                        Ok(logs) => (start_block, logs),
+                        Err(_) => {
+                            // Simple fallback: try individual blocks in this chunk
+                            let mut fallback_logs = Vec::new();
+                            for single_block in start_block..chunk_end {
+                                let single_filter = chunk_filter
+                                    .clone()
+                                    .from_block(single_block)
+                                    .to_block(single_block);
+                                if let Ok(logs) = provider.get_logs(&single_filter).await {
+                                    fallback_logs.extend(logs);
+                                }
                             }
+                            (start_block, fallback_logs)
                         }
-                        (start_block, fallback_logs)
                     }
                 }
-            };
-
-            chunk_futures.push(future);
-            current_block = chunk_end;
-        }
-
-        // Process all chunks with high concurrency
-        let mut all_results = Vec::new();
-        let mut batch_futures = Vec::new();
-
-        for future in chunk_futures {
-            batch_futures.push(future);
-
-            if batch_futures.len() == max_concurrency {
-                let batch_results = futures::future::join_all(batch_futures).await;
-                all_results.extend(batch_results);
-                batch_futures = Vec::new();
-            }
-        }
-
-        // Process any remaining futures
-        if !batch_futures.is_empty() {
-            let batch_results = futures::future::join_all(batch_futures).await;
-            all_results.extend(batch_results);
-        }
+            })
+            .buffered(5) // Limit to 5 concurrent requests to avoid rate limits
+            .collect()
+            .await;
 
         // Sort once at the end by block number and flatten
         all_results.sort_by_key(|(block_num, _)| *block_num);
