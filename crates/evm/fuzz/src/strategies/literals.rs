@@ -105,8 +105,10 @@ impl LiteralsCollector {
                     continue;
                 }
 
-                if let Some(ast) = &source.ast {
-                    let _ = literals_collector.visit_source_unit(ast);
+                if let Some(ast) = &source.ast
+                    && literals_collector.visit_source_unit(ast).is_break()
+                {
+                    break;
                 }
             }
 
