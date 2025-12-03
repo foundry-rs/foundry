@@ -968,6 +968,10 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         Self::format_logs(logs)
     }
 
+    /// Retrieves logs using chunked requests to handle large block ranges.
+    ///
+    /// Automatically divides large block ranges into smaller chunks to avoid provider limits
+    /// and processes them with controlled concurrency to prevent rate limiting.
     pub async fn filter_logs_chunked(&self, filter: Filter, chunk_size: u64) -> Result<String> {
         let logs = self.get_logs_chunked(&filter, chunk_size).await?;
         Self::format_logs(logs)
@@ -1005,6 +1009,10 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         Ok((extract_number(*from_block), extract_number(*to_block)))
     }
 
+    /// Retrieves logs with automatic chunking fallback.
+    ///
+    /// First tries to fetch logs for the entire range. If that fails,
+    /// falls back to concurrent chunked requests with rate limiting.
     async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
@@ -1018,6 +1026,10 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         self.get_logs_chunked_concurrent(filter, chunk_size).await
     }
 
+    /// Retrieves logs using concurrent chunked requests with rate limiting.
+    ///
+    /// Divides the block range into chunks and processes them with a maximum of
+    /// 5 concurrent requests. Falls back to single-block queries if chunks fail.
     async fn get_logs_chunked_concurrent(
         &self,
         filter: &Filter,
