@@ -176,6 +176,7 @@ impl<'ast> State<'_, 'ast> {
         let mut s = format!("{prefix}{quote}{s}{quote}");
 
         // If the output is not a single token then revert to the original quote.
+        #[allow(unstable_name_collisions)]
         if Cursor::new(&s).exactly_one().is_err() {
             let other_quote = if quote == '\"' { '\'' } else { '\"' };
             {

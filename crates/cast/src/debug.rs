@@ -24,6 +24,7 @@ pub(crate) async fn handle_traces(
     debug: bool,
     decode_internal: bool,
     disable_label: bool,
+    trace_depth: Option<usize>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         let _ = sh_println!("Compiling project to generate artifacts");
@@ -86,7 +87,14 @@ pub(crate) async fn handle_traces(
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 4).await?;
+    print_traces(
+        &mut result,
+        &decoder,
+        shell::verbosity() > 0,
+        shell::verbosity() > 4,
+        trace_depth,
+    )
+    .await?;
 
     Ok(())
 }

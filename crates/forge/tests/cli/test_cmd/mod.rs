@@ -1126,8 +1126,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-// tests that `forge test` with config `show_logs: false` for fuzz tests will not display
-// `console.log` info
+// tests that `forge test` with config `show_logs: false` for fuzz tests will
+// still display `console.log` from the last run at verbosity >= 2 (issue #11039)
 forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     // run fuzz test 3 times
     prj.update_config(|config| {
@@ -1149,6 +1149,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     }
      "#,
     );
+    // At verbosity >= 2, logs from the last run should be shown even when show_logs is false
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1156,6 +1157,9 @@ Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -1163,8 +1167,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-// tests that `forge test` with inline config `show_logs = false` for fuzz tests will not
-// display `console.log` info
+// tests that `forge test` with inline config `show_logs = false` for fuzz tests will
+// still display `console.log` from the last run at verbosity >= 2 (issue #11039)
 forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     // run fuzz test 3 times
     prj.update_config(|config| {
@@ -1186,6 +1190,7 @@ contract ContractFuzz is Test {
 }
      "#,
     );
+    // At verbosity >= 2, logs from the last run should be shown even when show_logs is false
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1193,6 +1198,9 @@ Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -1743,6 +1751,15 @@ contract ATest is DSTest {
         b = new B();
         b = new B();
         vm.resetGasMetering();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/12474
+    function testMemoryOnReset(uint8[1] memory x) public {
+        uint8[1] memory z;
+        z[0] = x[0];
+        assertEq(z[0], x[0]);
+        vm.resetGasMetering();
+        assertEq(x[0], z[0]);
     }
 }
      "#,

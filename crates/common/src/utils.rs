@@ -82,8 +82,8 @@ pub fn strip_bytecode_placeholders(bytecode: &BytecodeObject) -> Option<Bytes> {
     match &bytecode {
         BytecodeObject::Bytecode(bytes) => Some(bytes.clone()),
         BytecodeObject::Unlinked(s) => {
-            // Replace all __$xxx$__ placeholders with 32 zero bytes
-            let s = (*BYTECODE_PLACEHOLDER_RE).replace_all(s, "00".repeat(40));
+            // Replace all __$xxx$__ placeholders with 20 zero bytes (40 hex chars)
+            let s = (*BYTECODE_PLACEHOLDER_RE).replace_all(s, "00".repeat(20));
             let bytes = hex::decode(s.as_bytes());
             Some(bytes.ok()?.into())
         }

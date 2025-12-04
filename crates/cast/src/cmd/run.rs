@@ -47,6 +47,10 @@ pub struct RunArgs {
     #[arg(long)]
     decode_internal: bool,
 
+    /// Defines the depth of a trace
+    #[arg(long)]
+    trace_depth: Option<usize>,
+
     /// Print out opcode traces.
     #[arg(long, short)]
     trace_printer: bool,
@@ -315,6 +319,7 @@ impl RunArgs {
             debug,
             decode_internal,
             disable_labels,
+            self.trace_depth,
         )
         .await?;
 

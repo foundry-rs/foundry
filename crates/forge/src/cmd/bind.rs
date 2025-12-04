@@ -206,7 +206,7 @@ impl BindArgs {
             })
             .collect::<Vec<_>>();
 
-        let multi = MultiSolMacroGen::new(artifacts, instances);
+        let multi = MultiSolMacroGen::new(instances);
         eyre::ensure!(!multi.instances.is_empty(), "No contract artifacts found");
         Ok(multi)
     }

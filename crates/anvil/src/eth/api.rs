@@ -41,8 +41,8 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionResponse,
-    eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionBuilder4844,
+    TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, Signature, TxHash, TxKind, U64, U256,
@@ -64,6 +64,7 @@ use alloy_rpc_types::{
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
+use alloy_rpc_types_eth::FillTransaction;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
@@ -72,7 +73,7 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{
-            PendingTransaction, ReceiptResponse, TypedTransaction, TypedTransactionRequest,
+            MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
             transaction_request_to_typed,
         },
         wallet::WalletCapabilities,
@@ -82,6 +83,7 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
 use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
@@ -279,6 +281,9 @@ impl EthApi {
                 .estimate_gas(call, block, EvmOverrides::new(state_override, block_overrides))
                 .await
                 .to_rpc_result(),
+            EthRequest::EthFillTransaction(request) => {
+                self.fill_transaction(request).await.to_rpc_result()
+            }
             EthRequest::EthGetRawTransactionByHash(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
@@ -531,13 +536,9 @@ impl EthApi {
         response
     }
 
-    fn sign_request(
-        &self,
-        from: &Address,
-        request: TypedTransactionRequest,
-    ) -> Result<TypedTransaction> {
+    fn sign_request(&self, from: &Address, request: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
         match request {
-            TypedTransactionRequest::Deposit(_) => {
+            FoundryTypedTx::Deposit(_) => {
                 let nil_signature = Signature::from_scalars_and_parity(
                     B256::with_last_byte(1),
                     B256::with_last_byte(1),
@@ -1174,7 +1175,7 @@ impl EthApi {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
-        let transaction = TypedTransaction::decode_2718(&mut data)
+        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
@@ -1359,6 +1360,81 @@ impl EthApi {
         )
         .await
         .map(U256::from)
+    }
+
+    /// Fills a transaction request with default values for missing fields.
+    ///
+    /// This method populates missing transaction fields like nonce, gas limit,
+    /// chain ID, and fee parameters with appropriate defaults.
+    ///
+    /// Handler for ETH RPC call: `eth_fillTransaction`
+    pub async fn fill_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+    ) -> Result<FillTransaction<AnyRpcTransaction>> {
+        node_info!("eth_fillTransaction");
+
+        let from = match request.as_ref().from() {
+            Some(from) => from,
+            None => self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)?,
+        };
+
+        let nonce = if let Some(nonce) = request.as_ref().nonce() {
+            nonce
+        } else {
+            self.request_nonce(&request, from).await?.0
+        };
+
+        if request.as_ref().has_eip4844_fields()
+            && request.as_ref().max_fee_per_blob_gas().is_none()
+        {
+            // Use the next block's blob base fee for better accuracy
+            let blob_fee = self.backend.fees().get_next_block_blob_base_fee_per_gas();
+            request.as_mut().set_max_fee_per_blob_gas(blob_fee);
+        }
+
+        if request.as_ref().blob_sidecar().is_some()
+            && request.as_ref().blob_versioned_hashes.is_none()
+        {
+            request.as_mut().populate_blob_hashes();
+        }
+
+        if request.as_ref().gas_limit().is_none() {
+            let estimated_gas = self
+                .estimate_gas(request.clone(), Some(BlockId::latest()), EvmOverrides::default())
+                .await?;
+            request.as_mut().set_gas_limit(estimated_gas.to());
+        }
+
+        if request.as_ref().gas_price().is_none() {
+            let tip = if let Some(tip) = request.as_ref().max_priority_fee_per_gas() {
+                tip
+            } else {
+                let tip = self.lowest_suggestion_tip();
+                request.as_mut().set_max_priority_fee_per_gas(tip);
+                tip
+            };
+            if request.as_ref().max_fee_per_gas().is_none() {
+                request.as_mut().set_max_fee_per_gas(self.gas_price() + tip);
+            }
+        }
+
+        let typed_tx = self.build_typed_tx_request(request, nonce)?;
+        let tx = build_typed_transaction(
+            typed_tx,
+            Signature::new(Default::default(), Default::default(), false),
+        )?;
+
+        let raw = tx.encoded_2718().to_vec().into();
+
+        let mut tx =
+            transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
+
+        // Set the correct `from` address (overrides the recovered zero address from dummy
+        // signature)
+        tx.0.inner.inner = Recovered::new_unchecked(tx.0.inner.inner.into_inner(), from);
+
+        Ok(FillTransaction { raw, tx })
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`
@@ -2539,7 +2615,7 @@ impl EthApi {
                 let pending = match tx_data {
                     TransactionData::Raw(bytes) => {
                         let mut data = bytes.as_ref();
-                        let decoded = TypedTransaction::decode_2718(&mut data)
+                        let decoded = FoundryTxEnvelope::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
                         PendingTransaction::new(decoded)?
                     }
@@ -2877,7 +2953,7 @@ impl EthApi {
         fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
             let tx = &tx.pending_transaction.transaction;
             let to = tx.to();
-            let gas_price = tx.gas_price();
+            let gas_price = tx.max_fee_per_gas();
             let value = tx.value();
             let gas = tx.gas_limit();
             TxpoolInspectSummary { to, value, gas, gas_price }
@@ -3205,7 +3281,7 @@ impl EthApi {
     }
 
     /// Returns the priority of the transaction based on the current `TransactionOrder`
-    fn transaction_priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+    fn transaction_priority(&self, tx: &FoundryTxEnvelope) -> TransactionPriority {
         self.transaction_order.read().priority(tx)
     }
 
@@ -3324,7 +3400,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         nonce: u64,
-    ) -> Result<TypedTransactionRequest> {
+    ) -> Result<FoundryTypedTx> {
         let chain_id = request.chain_id.unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
         let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
@@ -3334,44 +3410,44 @@ impl EthApi {
         let from = request.from;
 
         let request = match transaction_request_to_typed(request) {
-            Some(TypedTransactionRequest::Legacy(mut m)) => {
+            Some(FoundryTypedTx::Legacy(mut m)) => {
                 m.nonce = nonce;
                 m.chain_id = Some(chain_id);
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
                     m.gas_price = self.gas_price();
                 }
-                TypedTransactionRequest::Legacy(m)
+                FoundryTypedTx::Legacy(m)
             }
-            Some(TypedTransactionRequest::EIP2930(mut m)) => {
+            Some(FoundryTypedTx::EIP2930(mut m)) => {
                 m.nonce = nonce;
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
                     m.gas_price = self.gas_price();
                 }
-                TypedTransactionRequest::EIP2930(m)
+                FoundryTypedTx::EIP2930(m)
             }
-            Some(TypedTransactionRequest::EIP1559(mut m)) => {
+            Some(FoundryTypedTx::EIP1559(mut m)) => {
                 m.nonce = nonce;
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
                     m.max_fee_per_gas = self.gas_price();
                 }
-                TypedTransactionRequest::EIP1559(m)
+                FoundryTypedTx::EIP1559(m)
             }
-            Some(TypedTransactionRequest::EIP7702(mut m)) => {
+            Some(FoundryTypedTx::EIP7702(mut m)) => {
                 m.nonce = nonce;
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
                     m.max_fee_per_gas = self.gas_price();
                 }
-                TypedTransactionRequest::EIP7702(m)
+                FoundryTypedTx::EIP7702(m)
             }
-            Some(TypedTransactionRequest::EIP4844(m)) => {
-                TypedTransactionRequest::EIP4844(match m {
+            Some(FoundryTypedTx::EIP4844(m)) => {
+                FoundryTypedTx::EIP4844(match m {
                     // We only accept the TxEip4844 variant which has the sidecar.
                     TxEip4844Variant::TxEip4844WithSidecar(mut m) => {
                         m.tx.nonce = nonce;
@@ -3407,9 +3483,9 @@ impl EthApi {
                     }
                 })
             }
-            Some(TypedTransactionRequest::Deposit(mut m)) => {
+            Some(FoundryTypedTx::Deposit(mut m)) => {
                 m.gas_limit = gas_limit;
-                TypedTransactionRequest::Deposit(m)
+                FoundryTypedTx::Deposit(m)
             }
             None => return Err(BlockchainError::FailedToDecodeTransaction),
         };
@@ -3422,20 +3498,20 @@ impl EthApi {
     }
 
     /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
-    fn impersonated_signature(&self, request: &TypedTransactionRequest) -> Signature {
+    fn impersonated_signature(&self, request: &FoundryTypedTx) -> Signature {
         match request {
             // Only the legacy transaction type requires v to be in {27, 28}, thus
             // requiring the use of Parity::NonEip155
-            TypedTransactionRequest::Legacy(_) => Signature::from_scalars_and_parity(
+            FoundryTypedTx::Legacy(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
                 false,
             ),
-            TypedTransactionRequest::EIP2930(_)
-            | TypedTransactionRequest::EIP1559(_)
-            | TypedTransactionRequest::EIP7702(_)
-            | TypedTransactionRequest::EIP4844(_)
-            | TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
+            FoundryTypedTx::EIP2930(_)
+            | FoundryTypedTx::EIP1559(_)
+            | FoundryTypedTx::EIP7702(_)
+            | FoundryTypedTx::EIP4844(_)
+            | FoundryTypedTx::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
                 false,
@@ -3502,14 +3578,14 @@ impl EthApi {
     }
 
     /// additional validation against hardfork
-    fn ensure_typed_transaction_supported(&self, tx: &TypedTransaction) -> Result<()> {
+    fn ensure_typed_transaction_supported(&self, tx: &FoundryTxEnvelope) -> Result<()> {
         match &tx {
-            TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
-            TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
-            TypedTransaction::EIP4844(_) => self.backend.ensure_eip4844_active(),
-            TypedTransaction::EIP7702(_) => self.backend.ensure_eip7702_active(),
-            TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
-            TypedTransaction::Legacy(_) => Ok(()),
+            FoundryTxEnvelope::EIP2930(_) => self.backend.ensure_eip2930_active(),
+            FoundryTxEnvelope::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            FoundryTxEnvelope::EIP4844(_) => self.backend.ensure_eip4844_active(),
+            FoundryTxEnvelope::EIP7702(_) => self.backend.ensure_eip7702_active(),
+            FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
+            FoundryTxEnvelope::Legacy(_) => Ok(()),
         }
     }
 }
@@ -3544,24 +3620,24 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
     match transaction_request_to_typed(request.clone()) {
         Some(request) => match request {
-            TypedTransactionRequest::Legacy(req) => match req.to {
+            FoundryTypedTx::Legacy(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::EIP1559(req) => match req.to {
+            FoundryTypedTx::EIP1559(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::EIP7702(req) => {
+            FoundryTypedTx::EIP7702(req) => {
                 MIN_TRANSACTION_GAS
                     + req.authorization_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
             }
-            TypedTransactionRequest::EIP2930(req) => match req.to {
+            FoundryTypedTx::EIP2930(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::EIP4844(_) => MIN_TRANSACTION_GAS,
-            TypedTransactionRequest::Deposit(req) => match req.to {
+            FoundryTypedTx::EIP4844(_) => MIN_TRANSACTION_GAS,
+            FoundryTypedTx::Deposit(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },

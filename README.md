@@ -351,7 +351,6 @@ shall be dual licensed as above, without any additional terms or conditions.
 [solady]: https://github.com/Vectorized/solady
 [openzeppelin]: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/release-v5.1
 [morpho-blue]: https://github.com/morpho-org/morpho-blue
-[foundry-compilers]: https://github.com/foundry-rs/compilers
 [solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing

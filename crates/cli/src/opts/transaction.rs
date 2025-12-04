@@ -88,7 +88,7 @@ pub struct TransactionOpts {
     ///
     /// Can be either a hex-encoded signed authorization or an address.
     #[arg(long, conflicts_with_all = &["legacy", "blob"])]
-    pub auth: Option<CliAuthorizationList>,
+    pub auth: Vec<CliAuthorizationList>,
 
     /// EIP-2930 access list.
     ///
