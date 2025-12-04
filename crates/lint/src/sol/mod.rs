@@ -111,7 +111,12 @@ impl<'a> SolidityLinter<'a> {
     }
 
     fn include_lint(&self, lint: SolLint) -> bool {
-        self.severity.as_ref().is_none_or(|sev| sev.contains(&lint.severity()))
+        let excluded_severity: Vec<Severity> = vec![Severity::Gas];
+        let severity_check = match &self.severity {
+            None => !excluded_severity.contains(&lint.severity()),
+            Some(sev) => sev.contains(&lint.severity()),
+        };
+        severity_check
             && self.lints_included.as_ref().is_none_or(|incl| incl.contains(&lint))
             && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
     }

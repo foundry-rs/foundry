@@ -103,11 +103,7 @@ impl LintArgs {
             .with_description(true)
             .with_lints(include)
             .without_lints(exclude)
-            .with_severity(if severity.is_empty() {
-                Some(vec![Severity::Low])
-            } else {
-                Some(severity)
-            })
+            .with_severity(if severity.is_empty() { None } else { Some(severity) })
             .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
 
         let output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
