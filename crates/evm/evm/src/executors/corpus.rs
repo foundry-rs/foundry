@@ -52,7 +52,6 @@ enum MutationType {
     Abi,
 }
 
-// TODO(dani): UUID v6 for timestamp
 /// Holds Corpus information.
 #[derive(Clone, Serialize)]
 struct CorpusEntry {
@@ -76,7 +75,19 @@ struct CorpusEntry {
 impl CorpusEntry {
     /// New corpus from given call sequence and corpus path to read uuid.
     pub fn new(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> eyre::Result<Self> {
-        let uuid = if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        Self::_new(tx_seq, Some(path))
+    }
+
+    /// New corpus with given call sequence and new uuid.
+    pub fn from_tx_seq(tx_seq: &[BasicTxDetails]) -> Self {
+        Self::_new(tx_seq.into(), None).expect("infallible")
+    }
+
+    fn _new(tx_seq: Vec<BasicTxDetails>, path: Option<PathBuf>) -> eyre::Result<Self> {
+        let uuid = if let Some(path) = path
+            && let Some(stem) = path.file_stem()
+            && let Some(stem) = stem.to_str()
+        {
             Uuid::try_from(stem.strip_suffix(JSON_EXTENSION).unwrap_or(stem).to_string())?
         } else {
             Uuid::new_v4()
@@ -89,18 +100,6 @@ impl CorpusEntry {
             is_favored: false,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         })
-    }
-
-    /// New corpus with given call sequence and new uuid.
-    pub fn from_tx_seq(tx_seq: &[BasicTxDetails]) -> Self {
-        Self {
-            uuid: Uuid::new_v4(),
-            total_mutations: 0,
-            new_finds_produced: 0,
-            tx_seq: tx_seq.into(),
-            is_favored: false,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-        }
     }
 }
 
