@@ -30,7 +30,7 @@ pub enum FoundryReceiptEnvelope<T = Log> {
 }
 
 impl FoundryReceiptEnvelope<Log> {
-    /// Creates a new [`OpReceiptEnvelope`] from the given parts.
+    /// Creates a new [`FoundryReceiptEnvelope`] from the given parts.
     pub fn from_parts<'a>(
         status: bool,
         cumulative_gas_used: u64,
