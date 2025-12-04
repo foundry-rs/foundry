@@ -18,7 +18,7 @@ use proptest::{
 use serde::Serialize;
 use std::{
     fmt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -52,6 +52,7 @@ enum MutationType {
     Abi,
 }
 
+// TODO(dani): UUID v6 for timestamp
 /// Holds Corpus information.
 #[derive(Clone, Serialize)]
 struct CorpusEntry {
@@ -106,31 +107,29 @@ impl CorpusEntry {
 #[derive(Serialize, Default)]
 pub(crate) struct GlobalCorpusMetrics {
     // Number of edges seen during the invariant run
-    cumulative_edges_seen: Arc<AtomicUsize>,
+    cumulative_edges_seen: AtomicUsize,
     // Number of features (new hitcount bin of previously hit edge) seen during the invariant run
-    cumulative_features_seen: Arc<AtomicUsize>,
+    cumulative_features_seen: AtomicUsize,
     // Number of corpus entries
-    corpus_count: Arc<AtomicUsize>,
+    corpus_count: AtomicUsize,
     // Number of corpus entries that are favored
-    favored_items: Arc<AtomicUsize>,
+    favored_items: AtomicUsize,
 }
 
 impl fmt::Display for GlobalCorpusMetrics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f)?;
-        writeln!(
-            f,
-            "        - cumulative edges seen: {}",
-            self.cumulative_edges_seen.load(Ordering::Relaxed)
-        )?;
-        writeln!(
-            f,
-            "        - cumulative features seen: {}",
-            self.cumulative_features_seen.load(Ordering::Relaxed)
-        )?;
-        writeln!(f, "        - corpus count: {}", self.corpus_count.load(Ordering::Relaxed))?;
-        write!(f, "        - favored items: {}", self.favored_items.load(Ordering::Relaxed))?;
-        Ok(())
+        self.load().fmt(f)
+    }
+}
+
+impl GlobalCorpusMetrics {
+    fn load(&self) -> CorpusMetrics {
+        CorpusMetrics {
+            cumulative_edges_seen: self.cumulative_edges_seen.load(Ordering::Relaxed),
+            cumulative_features_seen: self.cumulative_features_seen.load(Ordering::Relaxed),
+            corpus_count: self.corpus_count.load(Ordering::Relaxed),
+            favored_items: self.favored_items.load(Ordering::Relaxed),
+        }
     }
 }
 
@@ -256,8 +255,8 @@ impl WorkerCorpus {
         if id == 0
             && let Some(corpus_dir) = &config.corpus_dir
         {
-            // Master worker loads the initial corpus, if it exists. Then, [distribute]s it to
-            // workers.
+            // Master worker loads the initial corpus, if it exists.
+            // Then, [distribute]s it to workers.
             let can_replay_tx = |tx: &BasicTxDetails| -> bool {
                 fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
                     || fuzzed_function.is_some_and(|function| {
@@ -269,67 +268,51 @@ impl WorkerCorpus {
             };
 
             let executor = executor.expect("Executor required for master worker");
-            'corpus_replay: for entry in std::fs::read_dir(corpus_dir)? {
-                let path = entry?.path();
-                if path.is_file()
-                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
-                    && name.contains(METADATA_SUFFIX)
-                {
-                    // Ignore metadata files
+            'corpus_replay: for entry in read_corpus_dir(corpus_dir) {
+                if entry.is_metadata() {
                     continue;
                 }
-
-                let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
-                    Some("gz") => {
-                        foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path)
-                    }
-                    _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
-                };
-
-                let Ok(tx_seq) = read_corpus_result else {
-                    trace!(target: "corpus", "failed to load corpus from {}", path.display());
+                let tx_seq = entry.read_tx_seq()?;
+                if tx_seq.is_empty() {
                     continue;
-                };
+                }
+                // Warm up history map from loaded sequences.
+                let mut executor = executor.clone();
+                for tx in &tx_seq {
+                    if can_replay_tx(tx) {
+                        let mut call_result = execute_tx(&mut executor, tx)?;
+                        let (new_coverage, is_edge) =
+                            call_result.merge_edge_coverage(&mut history_map);
+                        if new_coverage {
+                            metrics.update_seen(is_edge);
+                        }
 
-                if !tx_seq.is_empty() {
-                    // Warm up history map from loaded sequences.
-                    let mut executor = executor.clone();
-                    for tx in &tx_seq {
-                        if can_replay_tx(tx) {
-                            let mut call_result = execute_tx(&mut executor, tx)?;
-                            let (new_coverage, is_edge) =
-                                call_result.merge_edge_coverage(&mut history_map);
-                            if new_coverage {
-                                metrics.update_seen(is_edge);
-                            }
+                        // Commit only when running invariant / stateful tests.
+                        if fuzzed_contracts.is_some() {
+                            executor.commit(&mut call_result);
+                        }
+                    } else {
+                        failed_replays += 1;
 
-                            // Commit only when running invariant / stateful tests.
-                            if fuzzed_contracts.is_some() {
-                                executor.commit(&mut call_result);
-                            }
-                        } else {
-                            failed_replays += 1;
-
-                            // If the only input for fuzzed function cannot be replied, then move to
-                            // next one without adding it in memory.
-                            if fuzzed_function.is_some() {
-                                continue 'corpus_replay;
-                            }
+                        // If the only input for fuzzed function cannot be replied, then move to
+                        // next one without adding it in memory.
+                        if fuzzed_function.is_some() {
+                            continue 'corpus_replay;
                         }
                     }
-
-                    metrics.corpus_count += 1;
-
-                    trace!(
-                        target: "corpus",
-                        "load sequence with len {} from corpus file {}",
-                        tx_seq.len(),
-                        path.display()
-                    );
-
-                    // Populate in memory corpus with the sequence from corpus file.
-                    in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
                 }
+
+                metrics.corpus_count += 1;
+
+                trace!(
+                    target: "corpus",
+                    "load sequence with len {} from corpus file {}",
+                    tx_seq.len(),
+                    entry.path.display()
+                );
+
+                // Populate in memory corpus with the sequence from corpus file.
+                in_memory_corpus.push(CorpusEntry::new(tx_seq, entry.path)?);
             }
         }
 
@@ -655,7 +638,7 @@ impl WorkerCorpus {
                 self.worker_dir
                     .clone()
                     .unwrap()
-                    .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
+                    .join(format!("{uuid}-{eviction_time}.{METADATA_SUFFIX}"))
                     .as_path(),
                 &corpus,
             )?;
@@ -751,11 +734,12 @@ impl WorkerCorpus {
 
         for &index in &self.new_entry_indices {
             if let Some(entry) = self.in_memory_corpus.get(index) {
-                let ext = self
-                    .config
-                    .corpus_gzip
-                    .then_some(format!("{JSON_EXTENSION}.gz"))
-                    .unwrap_or(JSON_EXTENSION.to_string());
+                // TODO(dani): with_added_extension
+                let ext = if self.config.corpus_gzip {
+                    &format!("{JSON_EXTENSION}.gz")
+                } else {
+                    JSON_EXTENSION
+                };
                 let file_name = format!("{}-{}{ext}", entry.uuid, entry.timestamp);
                 let file_path = corpus_dir.join(&file_name);
                 let sync_path = master_sync_dir.join(&file_name);
@@ -788,31 +772,15 @@ impl WorkerCorpus {
         }
 
         let mut imports = vec![];
-        for entry in std::fs::read_dir(sync_dir)? {
-            let Ok(entry) = entry else {
-                continue;
-            };
-
-            // Get the uuid and timestamp from the filename
-            let timestamp = if let Some(name) = entry.file_name().to_str()
-                && let Ok((_, timestamp)) = parse_corpus_filename(name)
-            {
-                timestamp
-            } else {
-                continue;
-            };
-
-            if timestamp <= self.last_sync_timestamp {
+        for entry in read_corpus_dir(&sync_dir) {
+            debug_assert!(
+                !entry.is_metadata(),
+                "there should be no metadata in sync dir {sync_dir:?}",
+            );
+            if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
-
-            let corpus = if self.config.corpus_gzip {
-                foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&entry.path())?
-            } else {
-                foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&entry.path())?
-            };
-
-            imports.push(corpus);
+            imports.push(entry.read_tx_seq()?);
         }
 
         Ok(imports)
@@ -924,6 +892,7 @@ impl WorkerCorpus {
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
+        let master_corpus = read_corpus_dir(&master_corpus_dir).collect::<Vec<_>>();
 
         for target_worker in 1..num_workers {
             let target_dir = self
@@ -938,29 +907,23 @@ impl WorkerCorpus {
                 foundry_common::fs::create_dir_all(&target_dir)?;
             }
 
-            for entry in std::fs::read_dir(&master_corpus_dir)? {
-                let Ok(entry) = entry else {
+            for entry in &master_corpus {
+                if entry.is_metadata() {
                     continue;
-                };
+                }
+                let name = entry.name();
+                let sync_path = target_dir.join(name);
+                if entry.timestamp <= self.last_sync_timestamp {
+                    continue;
+                }
 
-                let path = entry.path();
-                if path.is_file()
-                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
-                    && !name.contains(METADATA_SUFFIX)
-                {
-                    let sync_path = target_dir.join(name);
-
-                    let Ok((_, timestamp)) = parse_corpus_filename(name) else {
+                match foundry_common::fs::copy(&entry.path, &sync_path) {
+                    Ok(_) => {
+                        trace!(target: "corpus", %name, ?target_dir, "distributed corpus");
+                    }
+                    Err(err) => {
+                        trace!(target: "corpus", %name, %err, "failed to distribute corpus");
                         continue;
-                    };
-
-                    if timestamp > self.last_sync_timestamp {
-                        let Ok(_) = foundry_common::fs::copy(&path, &sync_path) else {
-                            debug!(target: "corpus", "failed to distribute corpus {} to {target_dir:?}", name);
-                            continue;
-                        };
-
-                        trace!(target: "corpus", "distributed corpus {} to {target_dir:?}", name);
                     }
                 }
             }
@@ -1047,9 +1010,73 @@ impl WorkerCorpus {
     }
 }
 
+fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
+    let dir = match std::fs::read_dir(path) {
+        Ok(dir) => dir,
+        Err(err) => {
+            trace!(%err, ?path, "failed to read corpus directory");
+            return vec![].into_iter();
+        }
+    };
+    dir.filter_map(|res| match res {
+        Ok(entry) => {
+            let path = entry.path();
+            if !path.is_file() {
+                return None;
+            }
+            let name = if path.is_file()
+                && let Some(name) = path.file_name()
+                && let Some(name) = name.to_str()
+            {
+                name
+            } else {
+                return None;
+            };
+
+            if let Ok((uuid, timestamp)) = parse_corpus_filename(name) {
+                Some(CorpusDirEntry { path, uuid, timestamp })
+            } else {
+                trace!(target: "corpus", ?path, "failed to parse corpus filename");
+                None
+            }
+        }
+        Err(err) => {
+            trace!(%err, "failed to read corpus directory entry");
+            None
+        }
+    })
+    .collect::<Vec<_>>()
+    .into_iter()
+}
+
+struct CorpusDirEntry {
+    path: PathBuf,
+    uuid: Uuid,
+    timestamp: u64,
+}
+
+impl CorpusDirEntry {
+    fn name(&self) -> &str {
+        self.path.file_name().unwrap().to_str().unwrap()
+    }
+
+    fn is_metadata(&self) -> bool {
+        self.name().contains(METADATA_SUFFIX)
+    }
+
+    fn read_tx_seq(&self) -> foundry_common::fs::Result<Vec<BasicTxDetails>> {
+        let path = &self.path;
+        if path.extension() == Some("gz".as_ref()) {
+            foundry_common::fs::read_json_gzip_file(path)
+        } else {
+            foundry_common::fs::read_json_file(path)
+        }
+    }
+}
+
 /// Parses the corpus filename and returns the uuid and timestamp associated with it.
 fn parse_corpus_filename(name: &str) -> eyre::Result<(Uuid, u64)> {
-    let name = name.trim_end_matches(".gz").trim_end_matches(JSON_EXTENSION);
+    let name = name.trim_end_matches(".gz").trim_end_matches(".json").trim_end_matches(".metadata");
 
     let parts = name.rsplitn(2, "-").collect::<Vec<_>>();
     let uuid = Uuid::parse_str(parts[0])?;
