@@ -1,17 +1,16 @@
-//! Contains the code to launch an Ethereum RPC server.
+//! This module provides the infrastructure to launch an Ethereum JSON-RPC server
+//! (via HTTP, WebSocket, and IPC) and Beacon Node REST API.
 
 use crate::{EthApi, IpcTask};
 use anvil_server::{ServerConfig, ipc::IpcEndpoint};
-use axum::{Router, routing::get};
+use axum::Router;
 use futures::StreamExt;
-use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
+use rpc_handlers::{HttpEthRpcHandler, PubSubEthRpcHandler};
 use std::{io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
-mod beacon_error;
-mod beacon_handler;
-pub mod error;
-mod handler;
+mod beacon;
+mod rpc_handlers;
 
 /// Configures a server that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
 ///
@@ -45,22 +44,10 @@ pub fn router(api: EthApi, config: ServerConfig) -> Router {
     let rpc_router = anvil_server::http_ws_router(config, http, ws);
 
     // Beacon REST API router
-    let beacon_router = beacon_router(api);
+    let beacon_router = beacon::router(api);
 
     // Merge the routers
     rpc_router.merge(beacon_router)
-}
-
-/// Configures an [`axum::Router`] that handles Beacon REST API calls.
-fn beacon_router(api: EthApi) -> Router {
-    Router::new()
-        .route(
-            "/eth/v1/beacon/blob_sidecars/{block_id}",
-            get(beacon_handler::handle_get_blob_sidecars),
-        )
-        .route("/eth/v1/beacon/blobs/{block_id}", get(beacon_handler::handle_get_blobs))
-        .route("/eth/v1/beacon/genesis", get(beacon_handler::handle_get_genesis))
-        .with_state(api)
 }
 
 /// Launches an ipc server at the given path in a new task
