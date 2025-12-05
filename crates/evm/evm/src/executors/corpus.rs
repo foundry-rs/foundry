@@ -2,7 +2,7 @@ use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::Bytes;
-use eyre::eyre;
+use eyre::{Result, eyre};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_fuzz::{
     BasicTxDetails,
@@ -29,11 +29,16 @@ use uuid::Uuid;
 
 const METADATA_SUFFIX: &str = "metadata.json";
 const JSON_EXTENSION: &str = ".json";
-const FAVORABILITY_THRESHOLD: f64 = 0.3;
-const COVERAGE_MAP_SIZE: usize = 65536;
 const WORKER: &str = "worker";
 const CORPUS_DIR: &str = "corpus";
 const SYNC_DIR: &str = "sync";
+
+const FAVORABILITY_THRESHOLD: f64 = 0.3;
+const COVERAGE_MAP_SIZE: usize = 65536;
+
+/// Threshold for compressing corpus entries.
+/// 4KiB is usually the minimum file size on popular file systems.
+const GZIP_THRESHOLD: usize = 4 * 1024;
 
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
@@ -73,33 +78,34 @@ struct CorpusEntry {
 }
 
 impl CorpusEntry {
-    /// New corpus from given call sequence and corpus path to read uuid.
-    pub fn new(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> eyre::Result<Self> {
-        Self::_new(tx_seq, Some(path))
+    /// Creates a corpus entry with a new UUID.
+    pub fn new(tx_seq: Vec<BasicTxDetails>) -> Self {
+        Self::new_with(tx_seq, Uuid::new_v4())
     }
 
-    /// New corpus with given call sequence and new uuid.
-    pub fn from_tx_seq(tx_seq: &[BasicTxDetails]) -> Self {
-        Self::_new(tx_seq.into(), None).expect("infallible")
-    }
-
-    fn _new(tx_seq: Vec<BasicTxDetails>, path: Option<PathBuf>) -> eyre::Result<Self> {
-        let uuid = if let Some(path) = path
-            && let Some(stem) = path.file_stem()
-            && let Some(stem) = stem.to_str()
-        {
-            Uuid::try_from(stem.strip_suffix(JSON_EXTENSION).unwrap_or(stem).to_string())?
-        } else {
-            Uuid::new_v4()
+    /// Creates a corpus entry with a path.
+    /// The UUID is parsed from the file name, otherwise a new UUID is generated.
+    pub fn new_existing(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> Result<Self> {
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            eyre::bail!("invalid corpus file path: {path:?}");
         };
-        Ok(Self {
+        let uuid = parse_corpus_filename(name)?.0;
+        Ok(Self::new_with(tx_seq, uuid))
+    }
+
+    /// Creates a corpus entry with the given UUID.
+    pub fn new_with(tx_seq: Vec<BasicTxDetails>, uuid: Uuid) -> Self {
+        Self {
             uuid,
             total_mutations: 0,
             new_finds_produced: 0,
             tx_seq,
             is_favored: false,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-        })
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_secs(),
+        }
     }
 }
 
@@ -216,7 +222,7 @@ impl WorkerCorpus {
         executor: Option<&Executor>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
             Just(MutationType::Repeat),
@@ -286,7 +292,7 @@ impl WorkerCorpus {
 
                 metrics.corpus_count += 1;
 
-                trace!(
+                debug!(
                     target: "corpus",
                     "load sequence with len {} from corpus file {}",
                     tx_seq.len(),
@@ -294,7 +300,7 @@ impl WorkerCorpus {
                 );
 
                 // Populate in memory corpus with the sequence from corpus file.
-                in_memory_corpus.push(CorpusEntry::new(tx_seq, entry.path)?);
+                in_memory_corpus.push(CorpusEntry::new_with(tx_seq, entry.uuid));
             }
         }
 
@@ -318,11 +324,12 @@ impl WorkerCorpus {
     /// Updates stats for the given call sequence, if new coverage produced.
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
-    #[instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all)]
     pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
         let Some(worker_corpus) = &self.worker_dir else {
             return;
         };
+        let worker_corpus = worker_corpus.join(CORPUS_DIR);
 
         // Update stats of current mutated primary corpus.
         if let Some(uuid) = &self.current_mutated {
@@ -353,26 +360,33 @@ impl WorkerCorpus {
             return;
         }
 
-        let corpus = CorpusEntry::from_tx_seq(inputs);
+        let corpus = CorpusEntry::new(inputs.to_vec());
         let corpus_uuid = corpus.uuid;
         let timestamp = corpus.timestamp;
         let ext = self.file_extension();
         let file_path = worker_corpus.join(format!("{corpus_uuid}-{timestamp}{ext}"));
 
-        // Persist to disk if corpus dir is configured.
-        let write_result = if self.config.corpus_gzip {
+        // Persist to disk.
+        let should_gzip = || {
+            // TODO(dani): actually implement this. other places don't do this calc
+            // let size_estimate: usize =
+            //     corpus.tx_seq.iter().map(|tx| tx.estimate_serialized_size()).sum();
+            // size_estimate > GZIP_THRESHOLD
+            let _ = GZIP_THRESHOLD;
+            true
+        };
+        let write_result = if self.config.corpus_gzip && should_gzip() {
             foundry_common::fs::write_json_gzip_file(&file_path, &corpus.tx_seq)
         } else {
             foundry_common::fs::write_json_file(&file_path, &corpus.tx_seq)
         };
-
         if let Err(err) = write_result {
-            debug!(target: "corpus", %err, "Failed to record call sequence {:?}", &corpus.tx_seq);
+            debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
         } else {
             trace!(
                 target: "corpus",
                 "persisted {} inputs for new coverage for {corpus_uuid} corpus",
-                &corpus.tx_seq.len()
+                corpus.tx_seq.len()
             );
         }
 
@@ -401,13 +415,13 @@ impl WorkerCorpus {
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
     /// configured max mutations value. Used by invariant test campaigns.
-    #[instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all)]
     pub fn new_inputs(
         &mut self,
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
         targeted_contracts: &FuzzRunIdentifiedContracts,
-    ) -> eyre::Result<Vec<BasicTxDetails>> {
+    ) -> Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
 
         // Early return with first_input only if corpus dir / coverage guided fuzzing not
@@ -530,13 +544,13 @@ impl WorkerCorpus {
 
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
     /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
-    #[instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all)]
     pub fn new_input(
         &mut self,
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
         function: &Function,
-    ) -> eyre::Result<Bytes> {
+    ) -> Result<Bytes> {
         // Early return if not running with coverage guided fuzzing.
         if !self.config.is_coverage_guided() {
             return Ok(self.new_tx(test_runner)?.call_details.calldata);
@@ -559,7 +573,7 @@ impl WorkerCorpus {
     }
 
     /// Generates single call from corpus strategy.
-    pub fn new_tx(&self, test_runner: &mut TestRunner) -> eyre::Result<BasicTxDetails> {
+    pub fn new_tx(&self, test_runner: &mut TestRunner) -> Result<BasicTxDetails> {
         Ok(self
             .tx_generator
             .new_tree(test_runner)
@@ -579,7 +593,7 @@ impl WorkerCorpus {
         sequence: &[BasicTxDetails],
         discarded: bool,
         depth: usize,
-    ) -> eyre::Result<BasicTxDetails> {
+    ) -> Result<BasicTxDetails> {
         // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
         // call was discarded.
         if self.config.corpus_dir.is_none() || discarded {
@@ -598,7 +612,7 @@ impl WorkerCorpus {
 
     /// Flush the oldest corpus mutated more than configured max mutations unless they are
     /// favored.
-    fn evict_oldest_corpus(&mut self) -> eyre::Result<()> {
+    fn evict_oldest_corpus(&mut self) -> Result<()> {
         if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
             && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
                 corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
@@ -607,7 +621,7 @@ impl WorkerCorpus {
             let corpus = self.in_memory_corpus.get(index).unwrap();
 
             let uuid = corpus.uuid;
-            debug!(target: "corpus", "evict corpus {uuid}");
+            trace!(target: "corpus", "evict corpus {uuid}");
 
             // Flush to disk the seed metadata at the time of eviction.
             let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -644,7 +658,7 @@ impl WorkerCorpus {
         function: &Function,
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         // let rng = test_runner.rng();
         let mut arg_mutation_rounds =
             test_runner.rng().random_range(0..=function.inputs.len()).max(1);
@@ -683,8 +697,8 @@ impl WorkerCorpus {
     // Sync Methods
 
     /// Exports the new corpus entries to the master worker's (id = 0) sync dir.
-    #[instrument(skip_all, fields(worker_id = self.id))]
-    fn export(&self) -> eyre::Result<()> {
+    #[instrument(skip_all)]
+    fn export(&self) -> Result<()> {
         // Master doesn't export (it only receives from others).
         if self.id == 0 {
             return Ok(());
@@ -715,24 +729,23 @@ impl WorkerCorpus {
                 let file_path = corpus_dir.join(&file_name);
                 let sync_path = master_sync_dir.join(&file_name);
 
-                // TODO(dani): can we symlink and copy later instead?
-                let Ok(_) = foundry_common::fs::copy(file_path, sync_path) else {
-                    debug!(target: "corpus", "failed to export corpus {}", entry.uuid);
+                if let Err(err) = std::fs::hard_link(&file_path, &sync_path) {
+                    debug!(target: "corpus", %err, "failed to export corpus {}", entry.uuid);
                     continue;
-                };
+                }
 
                 exported += 1;
             }
         }
 
-        trace!(target: "corpus", "exported {exported} new corpus entries");
+        debug!(target: "corpus", "exported {exported} new corpus entries");
 
         Ok(())
     }
 
     /// Imports the new corpus entries tx sequence which will be used to replay and update history
     /// map.
-    fn import(&self) -> eyre::Result<Vec<Vec<BasicTxDetails>>> {
+    fn import(&self) -> Result<Vec<(CorpusDirEntry, Vec<BasicTxDetails>)>> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(vec![]);
         };
@@ -751,7 +764,8 @@ impl WorkerCorpus {
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
-            imports.push(entry.read_tx_seq()?);
+            let tx_seq = entry.read_tx_seq()?;
+            imports.push((entry, tx_seq));
         }
 
         Ok(imports)
@@ -759,74 +773,71 @@ impl WorkerCorpus {
 
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
     /// found from the corpus findings of other workers.
-    #[instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all)]
     fn calibrate(
         &mut self,
         executor: &Executor,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(());
         };
-
-        let sync_dir = worker_dir.join(SYNC_DIR);
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
         let mut executor = executor.clone();
-        for tx_seq in self.import()? {
-            if !tx_seq.is_empty() {
-                let mut new_coverage_on_sync = false;
-                for tx in &tx_seq {
-                    if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
-                        let mut call_result = execute_tx(&mut executor, tx)?;
+        for (entry, tx_seq) in self.import()? {
+            if tx_seq.is_empty() {
+                continue;
+            }
 
-                        // Check if this provides new coverage
-                        let (new_coverage, is_edge) =
-                            call_result.merge_edge_coverage(&mut self.history_map);
-
-                        if new_coverage {
-                            self.metrics.update_seen(is_edge);
-                            new_coverage_on_sync = true;
-                        }
-
-                        // Commit only for stateful tests
-                        if fuzzed_contracts.is_some() {
-                            executor.commit(&mut call_result);
-                        }
-
-                        trace!(
-                            target: "corpus",
-                            %new_coverage,
-                            "replayed tx for syncing: {:?}",
-                            &tx
-                        );
-                    }
+            let mut new_coverage_on_sync = false;
+            for tx in &tx_seq {
+                if !Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
+                    continue;
                 }
 
-                if new_coverage_on_sync {
-                    let corpus_entry = CorpusEntry::from_tx_seq(&tx_seq);
-                    let ext = self.file_extension();
-                    let file_name =
-                        format!("{}-{}{ext}", corpus_entry.uuid, corpus_entry.timestamp);
+                let mut call_result = execute_tx(&mut executor, tx)?;
 
-                    // Move file from sync/ to corpus/ directory
-                    let sync_path = sync_dir.join(&file_name);
-                    let corpus_path = corpus_dir.join(&file_name);
+                // Check if this provides new coverage
+                let (new_coverage, is_edge) =
+                    call_result.merge_edge_coverage(&mut self.history_map);
 
-                    let Ok(_) = std::fs::rename(&sync_path, &corpus_path) else {
-                        debug!(target: "corpus", "failed to move synced corpus {} from {sync_path:?} to {corpus_path:?} dir", corpus_entry.uuid);
-                        continue;
-                    };
-
-                    trace!(
-                        target: "corpus",
-                        "moved synced corpus {} to corpus dir",
-                        corpus_entry.uuid
-                    );
-
-                    self.in_memory_corpus.push(corpus_entry);
+                if new_coverage {
+                    self.metrics.update_seen(is_edge);
+                    new_coverage_on_sync = true;
                 }
+
+                // Commit only for stateful tests
+                if fuzzed_contracts.is_some() {
+                    executor.commit(&mut call_result);
+                }
+
+                debug!(
+                    target: "corpus",
+                    %new_coverage,
+                    "replayed tx for syncing: {:?}",
+                    &tx
+                );
+            }
+
+            if new_coverage_on_sync {
+                // Move file from sync/ to corpus/ directory
+                let sync_path = &entry.path;
+                let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
+                if let Err(err) = std::fs::rename(sync_path, &corpus_path) {
+                    debug!(target: "corpus", %err, "failed to move synced corpus from {sync_path:?} to {corpus_path:?} dir");
+                    continue;
+                };
+
+                debug!(
+                    target: "corpus",
+                    name=%entry.name(),
+                    "moved synced corpus to corpus dir",
+                );
+
+                let corpus_entry = CorpusEntry::new_existing(tx_seq.to_vec(), entry.path.clone())?;
+                self.in_memory_corpus.push(corpus_entry);
             }
         }
 
@@ -839,8 +850,8 @@ impl WorkerCorpus {
 
     /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
     /// of other workers.
-    #[instrument(skip_all, fields(worker_id = self.id))]
-    fn distribute(&mut self, num_workers: u32) -> eyre::Result<()> {
+    #[instrument(skip_all)]
+    fn distribute(&mut self, num_workers: u32) -> Result<()> {
         if self.id != 0 || self.worker_dir.is_none() {
             return Ok(());
         }
@@ -877,7 +888,7 @@ impl WorkerCorpus {
                         trace!(target: "corpus", %name, ?target_dir, "distributed corpus");
                     }
                     Err(err) => {
-                        trace!(target: "corpus", %name, %err, "failed to distribute corpus");
+                        debug!(target: "corpus", %name, %err, "failed to distribute corpus");
                         continue;
                     }
                 }
@@ -940,7 +951,7 @@ impl WorkerCorpus {
     }
 
     /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
-    #[instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all)]
     pub fn sync(
         &mut self,
         num_workers: u32,
@@ -948,7 +959,9 @@ impl WorkerCorpus {
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
         global_corpus_metrics: &GlobalCorpusMetrics,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
+        trace!(target: "corpus", "syncing");
+
         self.sync_metrics(global_corpus_metrics);
 
         let is_master = self.id == 0;
@@ -989,7 +1002,7 @@ fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
     let dir = match std::fs::read_dir(path) {
         Ok(dir) => dir,
         Err(err) => {
-            trace!(%err, ?path, "failed to read corpus directory");
+            debug!(%err, ?path, "failed to read corpus directory");
             return vec![].into_iter();
         }
     };
@@ -1008,15 +1021,15 @@ fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
                 return None;
             };
 
-            if let Ok((_, timestamp)) = parse_corpus_filename(name) {
-                Some(CorpusDirEntry { path, timestamp })
+            if let Ok((uuid, timestamp)) = parse_corpus_filename(name) {
+                Some(CorpusDirEntry { path, uuid, timestamp })
             } else {
-                trace!(target: "corpus", ?path, "failed to parse corpus filename");
+                debug!(target: "corpus", ?path, "failed to parse corpus filename");
                 None
             }
         }
         Err(err) => {
-            trace!(%err, "failed to read corpus directory entry");
+            debug!(%err, "failed to read corpus directory entry");
             None
         }
     })
@@ -1026,6 +1039,7 @@ fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
 
 struct CorpusDirEntry {
     path: PathBuf,
+    uuid: Uuid,
     timestamp: u64,
 }
 
@@ -1049,7 +1063,7 @@ impl CorpusDirEntry {
 }
 
 /// Parses the corpus filename and returns the uuid and timestamp associated with it.
-fn parse_corpus_filename(name: &str) -> eyre::Result<(Uuid, u64)> {
+fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
     let name = name.trim_end_matches(".gz").trim_end_matches(".json").trim_end_matches(".metadata");
 
     let (uuid_str, timestamp_str) =
@@ -1096,7 +1110,7 @@ mod tests {
         };
 
         let tx_seq = vec![basic_tx()];
-        let corpus = CorpusEntry::from_tx_seq(&tx_seq);
+        let corpus = CorpusEntry::new(tx_seq);
         let seed_uuid = corpus.uuid;
 
         // Create corpus root dir and worker subdirectory
@@ -1198,11 +1212,11 @@ mod tests {
             ..Default::default()
         };
 
-        let mut favored = CorpusEntry::from_tx_seq(&[basic_tx()]);
+        let mut favored = CorpusEntry::new(vec![basic_tx()]);
         favored.total_mutations = 2;
         favored.is_favored = true;
 
-        let mut non_favored = CorpusEntry::from_tx_seq(&[basic_tx()]);
+        let mut non_favored = CorpusEntry::new(vec![basic_tx()]);
         non_favored.total_mutations = 2;
         non_favored.is_favored = false;
         let non_favored_uuid = non_favored.uuid;
