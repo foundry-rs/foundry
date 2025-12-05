@@ -1197,19 +1197,27 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
-        if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, &log, interpreter);
+    fn log(&mut self, _ecx: Ecx, log: Log) {
+        if !self.expected_emits.is_empty()
+            && let Some(err) = expect::handle_expect_emit(self, &log, None)
+        {
+            // Because we do not have access to the interpreter here, we cannot fail the test
+            // immediately. In most cases the failure will still be caught on `call_end`.
+            // In the rare case it is not, we log the error here.
+            let _ = sh_err!("{err:?}");
         }
 
         // `recordLogs`
-        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs.push(Vm::Log {
-                topics: log.data.topics().to_vec(),
-                data: log.data.data.clone(),
-                emitter: log.address,
-            });
+        record_logs(&mut self.recorded_logs, &log);
+    }
+
+    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
+        if !self.expected_emits.is_empty() {
+            expect::handle_expect_emit(self, &log, Some(interpreter));
         }
+
+        // `recordLogs`
+        record_logs(&mut self.recorded_logs, &log);
     }
 
     fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
@@ -2434,6 +2442,17 @@ fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
             | crate::Vm::AccountAccessKind::CallCode
             | crate::Vm::AccountAccessKind::DelegateCall
     )
+}
+
+/// Records a log into the recorded logs vector, if it exists.
+fn record_logs(recorded_logs: &mut Option<Vec<Vm::Log>>, log: &Log) {
+    if let Some(storage_recorded_logs) = recorded_logs {
+        storage_recorded_logs.push(Vm::Log {
+            topics: log.data.topics().to_vec(),
+            data: log.data.data.clone(),
+            emitter: log.address,
+        });
+    }
 }
 
 /// Appends an AccountAccess that resumes the recording of the current context.
