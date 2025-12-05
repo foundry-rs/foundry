@@ -143,7 +143,7 @@ pub fn format_receipt(
         };
 
         format!(
-            "\n##### {chain}\n{status} Hash: {tx_hash:?}{function}{contract_name}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
+            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_name}{function}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
             status = if success { "✅  [Success]" } else { "❌  [Failed]" },
             tx_hash = receipt.transaction_hash,
             contract_address = if let Some(addr) = &receipt.contract_address {

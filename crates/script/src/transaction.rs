@@ -58,10 +58,12 @@ impl ScriptTransactionBuilder {
                 let function = if let Some(info) = local_contracts.get(&to) {
                     // This CALL is made to a local contract.
                     self.transaction.contract_name = Some(info.name.clone());
-                    info.abi.functions().find(|function| function.selector() == selector)
+                    // First try the contract's own ABI, fall back to decoder
+                    info.abi
+                        .functions()
+                        .find(|function| function.selector() == selector)
+                        .or_else(|| decoder.functions.get(selector).and_then(|v| v.first()))
                 } else {
-                    // This CALL is made to an external contract; try to decode it from the given
-                    // decoder.
                     decoder.functions.get(selector).and_then(|v| v.first())
                 };
 
