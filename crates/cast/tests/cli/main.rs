@@ -2905,7 +2905,6 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Compiling project to generate artifacts
 Nothing to compile
 
@@ -3002,7 +3001,6 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -4464,7 +4462,6 @@ forgetest_async!(cast_send_with_data, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
