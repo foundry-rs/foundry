@@ -212,7 +212,7 @@ impl WorkerCorpus {
         id: u32,
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
-        // Only required by master worker (id = 0) to replay existing corpus
+        // Only required by master worker (id = 0) to replay existing corpus.
         executor: Option<&Executor>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
@@ -227,24 +227,17 @@ impl WorkerCorpus {
         ]
         .boxed();
 
-        let worker_dir = if let Some(corpus_dir) = &config.corpus_dir {
-            // Create the necessary directories for the worker
+        let worker_dir = config.corpus_dir.as_ref().map(|corpus_dir| {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
-            let worker_corpus = &worker_dir.join(CORPUS_DIR);
-            let sync_dir = &worker_dir.join(SYNC_DIR);
+            let worker_corpus = worker_dir.join(CORPUS_DIR);
+            let sync_dir = worker_dir.join(SYNC_DIR);
 
-            if !worker_corpus.is_dir() {
-                foundry_common::fs::create_dir_all(worker_corpus)?;
-            }
+            // Create the necessary directories for the worker.
+            let _ = foundry_common::fs::create_dir_all(&worker_corpus);
+            let _ = foundry_common::fs::create_dir_all(&sync_dir);
 
-            if !sync_dir.is_dir() {
-                foundry_common::fs::create_dir_all(sync_dir)?;
-            }
-
-            Some(worker_dir)
-        } else {
-            None
-        };
+            worker_dir
+        });
 
         let mut in_memory_corpus = vec![];
         let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
@@ -256,16 +249,6 @@ impl WorkerCorpus {
         {
             // Master worker loads the initial corpus, if it exists.
             // Then, [distribute]s it to workers.
-            let can_replay_tx = |tx: &BasicTxDetails| -> bool {
-                fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
-                    || fuzzed_function.is_some_and(|function| {
-                        tx.call_details
-                            .calldata
-                            .get(..4)
-                            .is_some_and(|selector| function.selector() == selector)
-                    })
-            };
-
             let executor = executor.expect("Executor required for master worker");
             'corpus_replay: for entry in read_corpus_dir(corpus_dir) {
                 if entry.is_metadata() {
@@ -278,7 +261,7 @@ impl WorkerCorpus {
                 // Warm up history map from loaded sequences.
                 let mut executor = executor.clone();
                 for tx in &tx_seq {
-                    if can_replay_tx(tx) {
+                    if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
                         let (new_coverage, is_edge) =
                             call_result.merge_edge_coverage(&mut history_map);
@@ -335,7 +318,7 @@ impl WorkerCorpus {
     /// Updates stats for the given call sequence, if new coverage produced.
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
-    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all, fields(worker_id = self.id))]
     pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
         let Some(worker_corpus) = &self.worker_dir else {
             return;
@@ -373,19 +356,14 @@ impl WorkerCorpus {
         let corpus = CorpusEntry::from_tx_seq(inputs);
         let corpus_uuid = corpus.uuid;
         let timestamp = corpus.timestamp;
+        let ext = self.file_extension();
+        let file_path = worker_corpus.join(format!("{corpus_uuid}-{timestamp}{ext}"));
+
         // Persist to disk if corpus dir is configured.
         let write_result = if self.config.corpus_gzip {
-            foundry_common::fs::write_json_gzip_file(
-                worker_corpus
-                    .join(format!("{corpus_uuid}-{timestamp}{JSON_EXTENSION}.gz"))
-                    .as_path(),
-                &corpus.tx_seq,
-            )
+            foundry_common::fs::write_json_gzip_file(&file_path, &corpus.tx_seq)
         } else {
-            foundry_common::fs::write_json_file(
-                worker_corpus.join(format!("{corpus_uuid}-{timestamp}{JSON_EXTENSION}")).as_path(),
-                &corpus.tx_seq,
-            )
+            foundry_common::fs::write_json_file(&file_path, &corpus.tx_seq)
         };
 
         if let Err(err) = write_result {
@@ -423,7 +401,7 @@ impl WorkerCorpus {
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
     /// configured max mutations value. Used by invariant test campaigns.
-    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all, fields(worker_id = self.id))]
     pub fn new_inputs(
         &mut self,
         test_runner: &mut TestRunner,
@@ -552,7 +530,7 @@ impl WorkerCorpus {
 
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
     /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
-    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all, fields(worker_id = self.id))]
     pub fn new_input(
         &mut self,
         test_runner: &mut TestRunner,
@@ -705,20 +683,19 @@ impl WorkerCorpus {
     // Sync Methods
 
     /// Exports the new corpus entries to the master worker's (id = 0) sync dir.
-    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all, fields(worker_id = self.id))]
     fn export(&self) -> eyre::Result<()> {
-        // Early return if no new entries or corpus dir not configured
+        // Master doesn't export (it only receives from others).
+        if self.id == 0 {
+            return Ok(());
+        }
+
+        // Early return if no new entries or corpus dir not configured.
         if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
             return Ok(());
         }
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
-
-        // Master doesn't export (it only receives from others)
-        if self.id == 0 {
-            return Ok(());
-        }
-
         let Some(master_sync_dir) = self
             .config
             .corpus_dir
@@ -731,14 +708,9 @@ impl WorkerCorpus {
         let mut exported = 0;
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
+        let ext = self.file_extension();
         for &index in &self.new_entry_indices {
             if let Some(entry) = self.in_memory_corpus.get(index) {
-                // TODO(dani): with_added_extension
-                let ext = if self.config.corpus_gzip {
-                    &format!("{JSON_EXTENSION}.gz")
-                } else {
-                    JSON_EXTENSION
-                };
                 let file_name = format!("{}-{}{ext}", entry.uuid, entry.timestamp);
                 let file_path = corpus_dir.join(&file_name);
                 let sync_path = master_sync_dir.join(&file_name);
@@ -787,7 +759,7 @@ impl WorkerCorpus {
 
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
     /// found from the corpus findings of other workers.
-    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all, fields(worker_id = self.id))]
     fn calibrate(
         &mut self,
         executor: &Executor,
@@ -798,17 +770,6 @@ impl WorkerCorpus {
             return Ok(());
         };
 
-        // Helper to check if tx can be replayed
-        let can_replay_tx = |tx: &BasicTxDetails| -> bool {
-            fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
-                || fuzzed_function.is_some_and(|function| {
-                    tx.call_details
-                        .calldata
-                        .get(..4)
-                        .is_some_and(|selector| function.selector() == selector)
-                })
-        };
-
         let sync_dir = worker_dir.join(SYNC_DIR);
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
@@ -817,7 +778,7 @@ impl WorkerCorpus {
             if !tx_seq.is_empty() {
                 let mut new_coverage_on_sync = false;
                 for tx in &tx_seq {
-                    if can_replay_tx(tx) {
+                    if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
 
                         // Check if this provides new coverage
@@ -845,12 +806,7 @@ impl WorkerCorpus {
 
                 if new_coverage_on_sync {
                     let corpus_entry = CorpusEntry::from_tx_seq(&tx_seq);
-                    let ext = self
-                        .config
-                        .corpus_gzip
-                        .then_some(format!("{JSON_EXTENSION}.gz"))
-                        .unwrap_or(JSON_EXTENSION.to_string());
-
+                    let ext = self.file_extension();
                     let file_name =
                         format!("{}-{}{ext}", corpus_entry.uuid, corpus_entry.timestamp);
 
@@ -883,7 +839,7 @@ impl WorkerCorpus {
 
     /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
     /// of other workers.
-    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all, fields(worker_id = self.id))]
     fn distribute(&mut self, num_workers: u32) -> eyre::Result<()> {
         if self.id != 0 || self.worker_dir.is_none() {
             return Ok(());
@@ -984,7 +940,7 @@ impl WorkerCorpus {
     }
 
     /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
-    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
+    #[instrument(skip_all, fields(worker_id = self.id))]
     pub fn sync(
         &mut self,
         num_workers: u32,
@@ -1006,6 +962,26 @@ impl WorkerCorpus {
         self.new_entry_indices.clear();
         trace!(target: "corpus", "synced");
         Ok(())
+    }
+
+    /// Returns the file extension based on gzip config.
+    fn file_extension(&self) -> &str {
+        if self.config.corpus_gzip { ".json.gz" } else { JSON_EXTENSION }
+    }
+
+    /// Helper to check if a tx can be replayed.
+    fn can_replay_tx(
+        tx: &BasicTxDetails,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    ) -> bool {
+        fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
+            || fuzzed_function.is_some_and(|function| {
+                tx.call_details
+                    .calldata
+                    .get(..4)
+                    .is_some_and(|selector| function.selector() == selector)
+            })
     }
 }
 
@@ -1032,8 +1008,8 @@ fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
                 return None;
             };
 
-            if let Ok((uuid, timestamp)) = parse_corpus_filename(name) {
-                Some(CorpusDirEntry { path, uuid, timestamp })
+            if let Ok((_, timestamp)) = parse_corpus_filename(name) {
+                Some(CorpusDirEntry { path, timestamp })
             } else {
                 trace!(target: "corpus", ?path, "failed to parse corpus filename");
                 None
@@ -1050,7 +1026,6 @@ fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
 
 struct CorpusDirEntry {
     path: PathBuf,
-    uuid: Uuid,
     timestamp: u64,
 }
 
@@ -1077,9 +1052,11 @@ impl CorpusDirEntry {
 fn parse_corpus_filename(name: &str) -> eyre::Result<(Uuid, u64)> {
     let name = name.trim_end_matches(".gz").trim_end_matches(".json").trim_end_matches(".metadata");
 
-    let parts = name.rsplitn(2, "-").collect::<Vec<_>>();
-    let uuid = Uuid::parse_str(parts[0])?;
-    let timestamp = parts[1].parse()?;
+    let (uuid_str, timestamp_str) =
+        name.rsplit_once('-').ok_or_else(|| eyre!("invalid corpus filename format: {name}"))?;
+
+    let uuid = Uuid::parse_str(uuid_str)?;
+    let timestamp = timestamp_str.parse()?;
 
     Ok((uuid, timestamp))
 }
