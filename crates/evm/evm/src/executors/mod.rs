@@ -18,6 +18,7 @@ use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
+use alloy_rpc_types::trace::geth::AccountState;
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
     EvmEnv,
@@ -44,6 +45,7 @@ use revm::{
 };
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -529,6 +531,29 @@ impl Executor {
             convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
         Ok(result)
+    }
+    pub fn apply_prestate_trace(
+        &mut self,
+        trace: BTreeMap<Address, AccountState>,
+    ) -> eyre::Result<()> {
+        let backend = self.backend_mut();
+        for (address, account_state) in trace {
+            let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
+            let info = revm::state::AccountInfo {
+                nonce: account_state.nonce.unwrap_or_default(),
+                balance: account_state.balance.unwrap_or_default(),
+                ..Default::default()
+            }
+            .with_code(code);
+            backend.insert_account_info(address, info);
+
+            for (key, value) in account_state.storage {
+                let slot = U256::from_be_bytes(key.0);
+                let val = U256::from_be_bytes(value.0);
+                backend.insert_account_storage(address, slot, val)?;
+            }
+        }
+        Ok(())
     }
 
     /// Commit the changeset to the database and adjust `self.inspector_config` values according to
