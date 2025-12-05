@@ -994,19 +994,12 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         Ok(res)
     }
 
-    fn extract_block_range(filter: &Filter) -> Result<(Option<u64>, Option<u64>)> {
+    fn extract_block_range(filter: &Filter) -> (Option<u64>, Option<u64>) {
         let FilterBlockOption::Range { from_block, to_block } = &filter.block_option else {
-            return Ok((None, None));
+            return (None, None);
         };
 
-        let extract_number = |block: Option<BlockNumberOrTag>| {
-            block.and_then(|b| match b {
-                BlockNumberOrTag::Number(n) => Some(n),
-                _ => None,
-            })
-        };
-
-        Ok((extract_number(*from_block), extract_number(*to_block)))
+        (from_block.and_then(|b| b.as_number()), to_block.and_then(|b| b.as_number()))
     }
 
     /// Retrieves logs with automatic chunking fallback.
@@ -1038,7 +1031,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     where
         P: Clone + Unpin,
     {
-        let (from_block, to_block) = Self::extract_block_range(filter)?;
+        let (from_block, to_block) = Self::extract_block_range(filter);
         let (Some(from), Some(to)) = (from_block, to_block) else {
             return self.provider.get_logs(filter).await.map_err(Into::into);
         };

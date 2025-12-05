@@ -47,7 +47,7 @@ pub struct LogsArgs {
 
     /// Number of blocks to query in each chunk when the provider has range limits.
     /// Defaults to 10000 blocks per chunk.
-    #[arg(long, default_value = "10000")]
+    #[arg(long, default_value_t = 10000)]
     query_size: u64,
 
     #[command(flatten)]
