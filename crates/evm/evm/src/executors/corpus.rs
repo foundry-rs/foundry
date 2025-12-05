@@ -1,3 +1,46 @@
+//! Corpus management for parallel fuzzing with coverage-guided mutation.
+//!
+//! This module implements a corpus-based fuzzing system that stores, mutates, and shares
+//! transaction sequences across multiple fuzzing workers. Each corpus entry represents a
+//! sequence of transactions that has produced interesting coverage, and can be mutated to
+//! discover new execution paths.
+//!
+//! ## File System Structure
+//!
+//! The corpus is organized on disk as follows:
+//!
+//! ```text
+//! <corpus_dir>/
+//! ├── worker0/                  # Master worker directory
+//! │   ├── corpus/               # Master's corpus entries
+//! │   │   ├── <uuid>-<timestamp>.json          # Corpus entry (if small)
+//! │   │   ├── <uuid>-<timestamp>.json.gz       # Corpus entry (if large, compressed)
+//! │   │   └── <uuid>-<timestamp>.metadata.json # Corpus metadata
+//! │   └── sync/                 # Directory where workers export new findings
+//! │       └── <uuid>-<timestamp>.json          # New entries from other workers
+//! ├── worker1/                  # Worker 1 directory
+//! │   ├── corpus/               # Worker 1's local corpus
+//! │   │   ├── <uuid>-<timestamp>.json
+//! │   │   └── <uuid>-<timestamp>.metadata.json # Worker 1's local metrics
+//! │   └── sync/                 # Worker 1's sync directory
+//! │       └── <uuid>-<timestamp>.json          # New entries to export
+//! └── worker2/                  # Worker 2 directory
+//!     ├── corpus/               # Worker 2's local corpus
+//!     │   └── ...
+//!     └── sync/                 # Worker 2's sync directory
+//!         └── ...
+//! ```
+//!
+//! ## Workflow
+//!
+//! - Each worker maintains its own local corpus with entries stored as JSON files
+//! - The filename format is `<uuid>-<timestamp>.json[.gz]`
+//! - Metadata files follow the same naming pattern with `.metadata.json` suffix
+//! - Workers export new interesting entries to the master's sync directory via hard links
+//! - The master (worker0) imports new entries from its sync directory and distributes them
+//! - Workers periodically sync with the master to receive new corpus entries from other workers
+//! - Metadata files track cumulative coverage metrics and favored entry counts
+
 use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -111,13 +154,13 @@ impl CorpusEntry {
 
 #[derive(Serialize, Default)]
 pub(crate) struct GlobalCorpusMetrics {
-    // Number of edges seen during the invariant run
+    // Number of edges seen during the invariant run.
     cumulative_edges_seen: AtomicUsize,
-    // Number of features (new hitcount bin of previously hit edge) seen during the invariant run
+    // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
     cumulative_features_seen: AtomicUsize,
-    // Number of corpus entries
+    // Number of corpus entries.
     corpus_count: AtomicUsize,
-    // Number of corpus entries that are favored
+    // Number of corpus entries that are favored.
     favored_items: AtomicUsize,
 }
 
@@ -368,10 +411,10 @@ impl WorkerCorpus {
 
         // Persist to disk.
         let should_gzip = || {
-            // TODO(dani): actually implement this. other places don't do this calc
+            // TODO(dani): actually implement this. other places don't do this calc.
             // let size_estimate: usize =
             //     corpus.tx_seq.iter().map(|tx| tx.estimate_serialized_size()).sum();
-            // size_estimate > GZIP_THRESHOLD
+            // size_estimate > GZIP_THRESHOLD.
             let _ = GZIP_THRESHOLD;
             true
         };
@@ -390,7 +433,7 @@ impl WorkerCorpus {
             );
         }
 
-        // Track in-memory corpus changes to update MasterWorker on sync
+        // Track in-memory corpus changes to update MasterWorker on sync.
         let new_index = self.in_memory_corpus.len();
         self.new_entry_indices.push(new_index);
 
@@ -483,7 +526,7 @@ impl WorkerCorpus {
                     self.current_mutated = Some(primary.uuid);
 
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
-                        // chunks?
+                        // TODO: chunks?
                         let tx = if rng.random::<bool>() { tx1.clone() } else { tx2.clone() };
                         new_seq.push(tx);
                     }
@@ -523,8 +566,8 @@ impl WorkerCorpus {
                     let idx = rng.random_range(0..new_seq.len());
                     let tx = new_seq.get_mut(idx).unwrap();
                     if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        // TODO add call_value to call details and mutate it as well as sender some
-                        // of the time
+                        // TODO: add call_value to call details and mutate it as well as sender some
+                        // of the time.
                         if !function.inputs.is_empty() {
                             self.abi_mutate(tx, function, test_runner, fuzz_state)?;
                         }
@@ -606,7 +649,7 @@ impl WorkerCorpus {
             return self.new_tx(test_runner);
         }
 
-        // Continue with the next call initial sequence
+        // Continue with the next call initial sequence.
         Ok(sequence[depth].clone())
     }
 
@@ -618,7 +661,7 @@ impl WorkerCorpus {
                 corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
             })
         {
-            let corpus = self.in_memory_corpus.get(index).unwrap();
+            let corpus = &self.in_memory_corpus[index];
 
             let uuid = corpus.uuid;
             trace!(target: "corpus", "evict corpus {uuid}");
@@ -627,8 +670,9 @@ impl WorkerCorpus {
             let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             foundry_common::fs::write_json_file(
                 self.worker_dir
-                    .clone()
+                    .as_ref()
                     .unwrap()
+                    .join(CORPUS_DIR)
                     .join(format!("{uuid}-{eviction_time}.{METADATA_SUFFIX}"))
                     .as_path(),
                 &corpus,
@@ -637,13 +681,13 @@ impl WorkerCorpus {
             // Remove corpus from memory.
             self.in_memory_corpus.remove(index);
 
-            // Adjust the tracked indices
+            // Adjust the tracked indices.
             self.new_entry_indices.retain_mut(|i| {
                 if *i > index {
-                    *i -= 1; // Shift indices down
-                    true // Keep this index
+                    *i -= 1; // Shift indices down.
+                    true // Keep this index.
                 } else {
-                    *i != index // Remove if it's the deleted index, keep otherwise
+                    *i != index // Remove if it's the deleted index, keep otherwise.
                 }
             });
         }
@@ -694,7 +738,7 @@ impl WorkerCorpus {
         Ok(())
     }
 
-    // Sync Methods
+    // Sync Methods.
 
     /// Exports the new corpus entries to the master worker's (id = 0) sync dir.
     #[instrument(skip_all)]
@@ -799,7 +843,7 @@ impl WorkerCorpus {
 
                 let mut call_result = execute_tx(&mut executor, tx)?;
 
-                // Check if this provides new coverage
+                // Check if this provides new coverage.
                 let (new_coverage, is_edge) =
                     call_result.merge_edge_coverage(&mut self.history_map);
 
@@ -808,7 +852,7 @@ impl WorkerCorpus {
                     new_coverage_on_sync = true;
                 }
 
-                // Commit only for stateful tests
+                // Commit only for stateful tests.
                 if fuzzed_contracts.is_some() {
                     executor.commit(&mut call_result);
                 }
@@ -822,7 +866,7 @@ impl WorkerCorpus {
             }
 
             if new_coverage_on_sync {
-                // Move file from sync/ to corpus/ directory
+                // Move file from sync/ to corpus/ directory.
                 let sync_path = &entry.path;
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
                 if let Err(err) = std::fs::rename(sync_path, &corpus_path) {
@@ -898,9 +942,9 @@ impl WorkerCorpus {
         Ok(())
     }
 
-    /// Syncs local metrics with global corpus metrics by calculating and applying deltas
+    /// Syncs local metrics with global corpus metrics by calculating and applying deltas.
     pub(crate) fn sync_metrics(&mut self, global_corpus_metrics: &GlobalCorpusMetrics) {
-        // Calculate delta metrics since last sync
+        // Calculate delta metrics since last sync.
         let edges_delta = self
             .metrics
             .cumulative_edges_seen
@@ -909,13 +953,13 @@ impl WorkerCorpus {
             .metrics
             .cumulative_features_seen
             .saturating_sub(self.last_sync_metrics.cumulative_features_seen);
-        // For corpus count and favored items, calculate deltas
+        // For corpus count and favored items, calculate deltas.
         let corpus_count_delta =
             self.metrics.corpus_count as isize - self.last_sync_metrics.corpus_count as isize;
         let favored_delta =
             self.metrics.favored_items as isize - self.last_sync_metrics.favored_items as isize;
 
-        // Add delta values to global metrics
+        // Add delta values to global metrics.
 
         if edges_delta > 0 {
             global_corpus_metrics.cumulative_edges_seen.fetch_add(edges_delta, Ordering::Relaxed);
@@ -946,7 +990,7 @@ impl WorkerCorpus {
                 .fetch_sub((-favored_delta) as usize, Ordering::Relaxed);
         }
 
-        // Store current metrics as last sync metrics for next delta calculation
+        // Store current metrics as last sync metrics for next delta calculation.
         self.last_sync_metrics = self.metrics.clone();
     }
 
@@ -1113,7 +1157,7 @@ mod tests {
         let corpus = CorpusEntry::new(tx_seq);
         let seed_uuid = corpus.uuid;
 
-        // Create corpus root dir and worker subdirectory
+        // Create corpus root dir and worker subdirectory.
         let corpus_root = config.corpus_dir.clone().unwrap();
         let worker_subdir = corpus_root.join("worker0");
         let _ = fs::create_dir_all(&worker_subdir);
@@ -1142,13 +1186,13 @@ mod tests {
         let (mut manager, uuid) = new_manager_with_single_corpus();
         let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
         corpus.total_mutations = 4;
-        corpus.new_finds_produced = 2; // ratio currently 0.5 if both increment → 3/5 = 0.6 > 0.3
+        corpus.new_finds_produced = 2; // ratio currently 0.5 if both increment → 3/5 = 0.6 > 0.3.
         corpus.is_favored = false;
 
-        // ensure metrics start at 0
+        // Ensure metrics start at 0.
         assert_eq!(manager.metrics.favored_items, 0);
 
-        // mark this as the currently mutated corpus and process a run with new coverage
+        // Mark this as the currently mutated corpus and process a run with new coverage.
         manager.current_mutated = Some(uuid);
         manager.process_inputs(&[basic_tx()], true);
 
@@ -1165,12 +1209,12 @@ mod tests {
         let (mut manager, uuid) = new_manager_with_single_corpus();
         let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
         corpus.total_mutations = 9;
-        corpus.new_finds_produced = 3; // 3/9 = 0.333.. > 0.3; after +1: 3/10 = 0.3 => not favored
-        corpus.is_favored = true; // start as favored
+        corpus.new_finds_produced = 3; // 3/9 = 0.333.. > 0.3; after +1: 3/10 = 0.3 => not favored.
+        corpus.is_favored = true; // Start as favored.
 
         manager.metrics.favored_items = 1;
 
-        // Next run does NOT produce coverage → only total_mutations increments, ratio drops
+        // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
         manager.current_mutated = Some(uuid);
         manager.process_inputs(&[basic_tx()], false);
 
@@ -1186,7 +1230,7 @@ mod tests {
     fn favored_is_false_on_ratio_equal_threshold() {
         let (mut manager, uuid) = new_manager_with_single_corpus();
         let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        // After this call with new_coverage=true, totals become 10 and 3 → 0.3
+        // After this call with new_coverage=true, totals become 10 and 3 → 0.3.
         corpus.total_mutations = 9;
         corpus.new_finds_produced = 2;
         corpus.is_favored = false;
@@ -1203,7 +1247,7 @@ mod tests {
 
     #[test]
     fn eviction_skips_favored_and_evicts_non_favored() {
-        // manager with two corpora
+        // Manager with two corpora.
         let tx_gen = Just(basic_tx()).boxed();
         let config = FuzzCorpusConfig {
             corpus_dir: Some(temp_corpus_dir()),
@@ -1241,16 +1285,16 @@ mod tests {
             last_sync_metrics: CorpusMetrics::default(),
         };
 
-        // First eviction should remove the non-favored one
+        // First eviction should remove the non-favored one.
         manager.evict_oldest_corpus().unwrap();
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert!(manager.in_memory_corpus.iter().all(|c| c.is_favored));
 
-        // Attempt eviction again: only favored remains → should not remove
+        // Attempt eviction again: only favored remains → should not remove.
         manager.evict_oldest_corpus().unwrap();
         assert_eq!(manager.in_memory_corpus.len(), 1, "favored corpus must not be evicted");
 
-        // ensure the evicted one was the non-favored uuid
+        // Ensure the evicted one was the non-favored uuid.
         assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
     }
 }
