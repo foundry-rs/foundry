@@ -20,4 +20,4 @@ mod mutators;
 pub use mutators::BoundMutator;
 
 mod literals;
-pub use literals::{LiteralMaps, LiteralsCollector};
+pub use literals::{LiteralMaps, LiteralsCollector, LiteralsDictionary};
