@@ -17,6 +17,7 @@ use std::borrow::Cow;
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 
 #[derive(Clone, Debug, Default, Parser)]
+#[command(next_help_heading = "Rpc options")]
 pub struct RpcOpts {
     /// The RPC endpoint, default value is http://localhost:8545.
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
