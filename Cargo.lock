@@ -5064,10 +5064,13 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",
+ "alloy-rpc-types-eth",
  "alloy-serde",
  "op-alloy-consensus",
+ "op-alloy-rpc-types",
  "op-revm",
  "revm",
+ "serde",
  "serde_json",
 ]
 
