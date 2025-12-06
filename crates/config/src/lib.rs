@@ -3273,6 +3273,77 @@ mod tests {
     }
 
     #[test]
+    fn test_find_chain_prefers_matching_ok_over_unrelated_err() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                bad = { key = "${UNSET_ENV}" }
+                mainnet = { key = "KEY", chain = 1 }
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let res = config.get_etherscan_config_with_chain(Some(NamedChain::Mainnet.into()));
+            assert!(res.is_ok());
+            let cfg = res.unwrap().unwrap();
+            assert_eq!(cfg.chain, Some(NamedChain::Mainnet.into()));
+            assert_eq!(cfg.key, "KEY");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_find_chain_prefers_matching_unknown_chain_error() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                bad = { key = "${UNSET_ENV}" }
+                wrong = { chain = 3658348, key = "foo" }
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let unknown_chain = Chain::from_id(3658348);
+            let res = config.get_etherscan_config_with_chain(Some(unknown_chain));
+            assert!(res.is_err());
+            let err_msg = res.unwrap_err().to_string();
+            assert!(err_msg.contains("No known Etherscan API URL for chain `3658348`"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_find_chain_no_match_unrelated_err_bubbles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                bad = { key = "${UNSET_ENV}" }
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let res = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
+            assert!(res.is_err());
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_resolve_etherscan_with_versions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
