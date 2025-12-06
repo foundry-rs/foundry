@@ -11,21 +11,15 @@
 //!
 //! ```text
 //! <corpus_dir>/
-//! ├── worker0/                  # Master worker directory
+//! ├── worker0/                  # Master (worker 0) directory
 //! │   ├── corpus/               # Master's corpus entries
 //! │   │   ├── <uuid>-<timestamp>.json          # Corpus entry (if small)
 //! │   │   ├── <uuid>-<timestamp>.json.gz       # Corpus entry (if large, compressed)
 //! │   │   └── <uuid>-<timestamp>.metadata.json # Corpus metadata
-//! │   └── sync/                 # Directory where workers export new findings
+//! │   └── sync/                 # Directory where other workers export new findings
 //! │       └── <uuid>-<timestamp>.json          # New entries from other workers
-//! ├── worker1/                  # Worker 1 directory
-//! │   ├── corpus/               # Worker 1's local corpus
-//! │   │   ├── <uuid>-<timestamp>.json
-//! │   │   └── <uuid>-<timestamp>.metadata.json # Worker 1's local metrics
-//! │   └── sync/                 # Worker 1's sync directory
-//! │       └── <uuid>-<timestamp>.json          # New entries to export
-//! └── worker2/                  # Worker 2 directory
-//!     ├── corpus/               # Worker 2's local corpus
+//! └── workerN/                  # Worker N's directory
+//!     ├── corpus/               # Worker N's local corpus
 //!     │   └── ...
 //!     └── sync/                 # Worker 2's sync directory
 //!         └── ...
@@ -34,12 +28,12 @@
 //! ## Workflow
 //!
 //! - Each worker maintains its own local corpus with entries stored as JSON files
-//! - The filename format is `<uuid>-<timestamp>.json[.gz]`
-//! - Metadata files follow the same naming pattern with `.metadata.json` suffix
 //! - Workers export new interesting entries to the master's sync directory via hard links
-//! - The master (worker0) imports new entries from its sync directory and distributes them
-//! - Workers periodically sync with the master to receive new corpus entries from other workers
-//! - Metadata files track cumulative coverage metrics and favored entry counts
+//! - The master (worker0) imports new entries from its sync directory and exports them to all the
+//!   other workers
+//! - Workers sync with the master to receive new corpus entries from other workers
+//! - This all happens periodically, there is no clear order in which workers export or import
+//!   entries since it doesn't matter as long as the corpus eventually syncs across all workers
 
 use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
@@ -740,13 +734,11 @@ impl WorkerCorpus {
 
     // Sync Methods.
 
-    /// Exports the new corpus entries to the master worker's (id = 0) sync dir.
+    /// Exports the new corpus entries to the master worker's sync dir.
     #[instrument(skip_all)]
-    fn export(&self) -> Result<()> {
+    fn export_to_master(&self) -> Result<()> {
         // Master doesn't export (it only receives from others).
-        if self.id == 0 {
-            return Ok(());
-        }
+        assert_ne!(self.id, 0, "non-master only");
 
         // Early return if no new entries or corpus dir not configured.
         if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
@@ -787,9 +779,9 @@ impl WorkerCorpus {
         Ok(())
     }
 
-    /// Imports the new corpus entries tx sequence which will be used to replay and update history
-    /// map.
-    fn import(&self) -> Result<Vec<(CorpusDirEntry, Vec<BasicTxDetails>)>> {
+    /// Imports the new corpus entries from the `sync` directory.
+    /// These contain tx sequences which are replayed and used to update the history map.
+    fn load_sync_corpus(&self) -> Result<Vec<(CorpusDirEntry, Vec<BasicTxDetails>)>> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(vec![]);
         };
@@ -805,11 +797,19 @@ impl WorkerCorpus {
                 !entry.is_metadata(),
                 "there should be no metadata in sync dir {sync_dir:?}",
             );
+            // TODO(dani): delete unused file?
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
             let tx_seq = entry.read_tx_seq()?;
+            if tx_seq.is_empty() {
+                continue;
+            }
             imports.push((entry, tx_seq));
+        }
+
+        if !imports.is_empty() {
+            debug!("imported {} new corpus entries", imports.len());
         }
 
         Ok(imports)
@@ -830,11 +830,7 @@ impl WorkerCorpus {
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
         let mut executor = executor.clone();
-        for (entry, tx_seq) in self.import()? {
-            if tx_seq.is_empty() {
-                continue;
-            }
-
+        for (entry, tx_seq) in self.load_sync_corpus()? {
             let mut new_coverage_on_sync = false;
             for tx in &tx_seq {
                 if !Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
@@ -857,11 +853,11 @@ impl WorkerCorpus {
                     executor.commit(&mut call_result);
                 }
 
-                debug!(
+                trace!(
                     target: "corpus",
                     %new_coverage,
-                    "replayed tx for syncing: {:?}",
-                    &tx
+                    ?tx,
+                    "replayed tx for syncing",
                 );
             }
 
@@ -872,7 +868,7 @@ impl WorkerCorpus {
                 if let Err(err) = std::fs::rename(sync_path, &corpus_path) {
                     debug!(target: "corpus", %err, "failed to move synced corpus from {sync_path:?} to {corpus_path:?} dir");
                     continue;
-                };
+                }
 
                 debug!(
                     target: "corpus",
@@ -885,25 +881,24 @@ impl WorkerCorpus {
             }
         }
 
-        let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        trace!(target: "corpus", "sync complete, updating last sync time to {}", last_sync);
-        self.last_sync_timestamp = last_sync;
-
         Ok(())
     }
 
-    /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
-    /// of other workers.
+    /// Exports the global corpus to the `sync/` directories of all the non-master workers.
     #[instrument(skip_all)]
-    fn distribute(&mut self, num_workers: u32) -> Result<()> {
-        if self.id != 0 || self.worker_dir.is_none() {
+    fn export_to_workers(&mut self, num_workers: u32) -> Result<()> {
+        assert_eq!(self.id, 0, "master worker only");
+        if self.worker_dir.is_none() {
             return Ok(());
         }
 
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
-        let master_corpus = read_corpus_dir(&master_corpus_dir).collect::<Vec<_>>();
-
+        let filtered_master_corpus = read_corpus_dir(&master_corpus_dir)
+            .filter(|entry| !entry.is_metadata())
+            .filter(|entry| entry.timestamp > self.last_sync_timestamp)
+            .collect::<Vec<_>>();
+        let mut any_distributed = false;
         for target_worker in 1..num_workers {
             let target_dir = self
                 .config
@@ -917,27 +912,19 @@ impl WorkerCorpus {
                 foundry_common::fs::create_dir_all(&target_dir)?;
             }
 
-            for entry in &master_corpus {
-                if entry.is_metadata() {
-                    continue;
-                }
+            for entry in &filtered_master_corpus {
                 let name = entry.name();
                 let sync_path = target_dir.join(name);
-                if entry.timestamp <= self.last_sync_timestamp {
+                if let Err(err) = std::fs::hard_link(&entry.path, &sync_path) {
+                    debug!(target: "corpus", %name, %err, "failed to distribute corpus");
                     continue;
                 }
-
-                match foundry_common::fs::copy(&entry.path, &sync_path) {
-                    Ok(_) => {
-                        trace!(target: "corpus", %name, ?target_dir, "distributed corpus");
-                    }
-                    Err(err) => {
-                        debug!(target: "corpus", %name, %err, "failed to distribute corpus");
-                        continue;
-                    }
-                }
+                any_distributed = true;
+                trace!(target: "corpus", %name, ?target_dir, "distributed corpus");
             }
         }
+
+        debug!(target: "corpus", %any_distributed, "distributed master corpus to all workers");
 
         Ok(())
     }
@@ -1008,16 +995,20 @@ impl WorkerCorpus {
 
         self.sync_metrics(global_corpus_metrics);
 
-        let is_master = self.id == 0;
-        if !is_master {
-            self.export()?;
-        }
         self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
-        if is_master {
-            self.distribute(num_workers)?;
+        if self.id == 0 {
+            self.export_to_workers(num_workers)?;
+        } else {
+            self.export_to_master()?;
         }
+
+        let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        self.last_sync_timestamp = last_sync;
+
         self.new_entry_indices.clear();
-        trace!(target: "corpus", "synced");
+
+        debug!(target: "corpus", last_sync, "synced");
+
         Ok(())
     }
 
