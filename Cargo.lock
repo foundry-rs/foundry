@@ -4863,11 +4863,13 @@ dependencies = [
  "indicatif 0.18.3",
  "parking_lot",
  "proptest",
+ "rayon",
  "revm",
  "revm-inspectors",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "tokio",
  "tracing",
  "uuid 1.18.1",
 ]

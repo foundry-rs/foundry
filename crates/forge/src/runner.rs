@@ -1017,6 +1017,7 @@ impl<'a> FunctionRunner<'a> {
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
             &self.tcfg.early_exit,
+            self.cr.tokio_handle,
         ) {
             Ok(x) => x,
             Err(e) => {
