@@ -13,6 +13,7 @@ use foundry_common::{
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::{collections::BTreeMap, fs::canonicalize};
+use foundry_cli::utils::cache_signatures_from_abis;
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -76,6 +77,8 @@ pub enum SelectorsSubcommands {
     /// Cache project selectors (enables trace with local contracts functions and events).
     #[command(visible_alias = "c")]
     Cache {
+        #[arg(long, help = "Path to a folder containing additional abis to include in the cache")]
+        extra_abis_path: Option<String>,
         #[command(flatten)]
         project_paths: ProjectPathOpts,
     },
@@ -84,7 +87,13 @@ pub enum SelectorsSubcommands {
 impl SelectorsSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::Cache { project_paths } => {
+            Self::Cache { project_paths, extra_abis_path } => {
+                if let Some(extra_abis_path) = extra_abis_path {
+                    sh_println!("Caching selectors for ABIs at {extra_abis_path}")?;
+                    cache_signatures_from_abis(extra_abis_path)?;
+                    
+                }
+
                 sh_println!("Caching selectors for contracts in the project...")?;
                 let build_args = BuildOpts {
                     project_paths,
