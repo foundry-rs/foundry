@@ -1611,6 +1611,24 @@ casttest!(logs_sig_2, |_prj, cmd| {
     .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
 });
 
+casttest!(logs_chunked_large_range, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "18000000",
+        "--to-block",
+        "18050000",
+        "--query-size",
+        "1000",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0xA0b86a33E6441d02dd8C6B2b7E5D1E3eD7F73b4b",
+    ])
+    .assert_success();
+});
+
 casttest!(mktx, |_prj, cmd| {
     cmd.args([
         "mktx",

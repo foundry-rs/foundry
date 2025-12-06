@@ -127,11 +127,21 @@ impl MaybeFullDatabase for ForkDbStateSnapshot {
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
-        std::mem::take(&mut self.state_snapshot)
+        let mut state_snapshot = std::mem::take(&mut self.state_snapshot);
+        let local_state_snapshot = self.local.clear_into_state_snapshot();
+        state_snapshot.accounts.extend(local_state_snapshot.accounts);
+        state_snapshot.storage.extend(local_state_snapshot.storage);
+        state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        state_snapshot
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        self.state_snapshot.clone()
+        let mut state_snapshot = self.state_snapshot.clone();
+        let local_state_snapshot = self.local.read_as_state_snapshot();
+        state_snapshot.accounts.extend(local_state_snapshot.accounts);
+        state_snapshot.storage.extend(local_state_snapshot.storage);
+        state_snapshot.block_hashes.extend(local_state_snapshot.block_hashes);
+        state_snapshot
     }
 
     fn clear(&mut self) {
