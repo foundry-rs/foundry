@@ -248,7 +248,7 @@ alloy-network = { version = "1.1.2", default-features = false }
 alloy-provider = { version = "1.1.2", default-features = false }
 alloy-pubsub = { version = "1.1.2", default-features = false }
 alloy-rpc-client = { version = "1.1.2", default-features = false }
-alloy-rpc-types = { version = "1.1.2", default-features = true }
+alloy-rpc-types = { version = "1.1.2", default-features = true, features = ["trace"] }
 alloy-rpc-types-beacon = { version = "1.1.2", default-features = true }
 alloy-rpc-types-eth = { version = "1.1.2", default-features = false }
 alloy-serde = { version = "1.1.2", default-features = false }
