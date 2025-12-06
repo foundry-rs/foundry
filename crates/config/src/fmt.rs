@@ -44,6 +44,8 @@ pub struct FormatterConfig {
     pub prefer_compact: PreferCompact,
     /// Keep single imports on a single line even if they exceed line length.
     pub single_line_imports: bool,
+    /// Style of condition formatting in if statements
+    pub format_conditions: ConditionFormatStyle,
 }
 
 /// Style of integer types.
@@ -223,6 +225,17 @@ impl PreferCompact {
     }
 }
 
+/// Style of condition formatting in if statements
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConditionFormatStyle {
+    /// Inline all conditions on a single line
+    #[default]
+    Inline,
+    /// Place each condition on a separate line
+    Multi,
+}
+
 /// Style of indent
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -254,6 +267,7 @@ impl Default for FormatterConfig {
             prefer_compact: PreferCompact::default(),
             docs_style: DocCommentStyle::default(),
             single_line_imports: false,
+            format_conditions: ConditionFormatStyle::default(),
         }
     }
 }
