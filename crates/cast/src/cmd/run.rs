@@ -69,7 +69,7 @@ pub struct RunArgs {
     disable_labels: bool,
 
     /// Disable the debug trace API.
-    #[arg(long)]
+    #[arg(long, default_value_t = false)]
     disable_debug_trace_api: bool,
 
     /// Label addresses in the trace.
