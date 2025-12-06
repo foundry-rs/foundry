@@ -1,6 +1,92 @@
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
+LL | /     modifier payMeFixedGasAmount() {
+LL | |         uint256 pre = gasLeft();
+LL | |         uint256 amount = 12345;
+LL | |         _;
+LL | |         _payMeSubsidizedGasAfter(pre, amount);
+LL | |     }
+   | |_____^
+   |
+help: wrap modifier logic to reduce code size
+   |
+LL ~     modifier payMeFixedGasAmount() {
+LL +         (uint256 pre, uint256 amount) = _payMeFixedGasAmount();
+LL +         _;
+LL +         _payMeSubsidizedGasAfter(pre, amount);
+LL +     }
+LL + 
+LL +     function _payMeFixedGasAmount() internal returns (uint256, uint256) {
+LL +         uint256 pre = gasLeft();
+LL +         uint256 amount = 12345;
+LL +         return (pre, amount);
+LL +     }
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   |
+LL | /     modifier payMeSubsidizedGasAndRefund(uint256 amount) {
+LL | |         (uint256 pre, bool success) = gasLeftMulti();
+LL | |         _;
+LL | |         _payMeSubsidizedGasAfter(pre, amount);
+LL | |         _refund(pre);
+LL | |     }
+   | |_____^
+   |
+help: wrap modifier logic to reduce code size
+   |
+LL ~     modifier payMeSubsidizedGasAndRefund(uint256 amount) {
+LL +         (uint256 pre, bool success) = gasLeftMulti();
+LL +         _;
+LL +         _payMeSubsidizedGasAndRefund(amount, pre);
+LL +     }
+LL + 
+LL +     function _payMeSubsidizedGasAndRefund(uint256 amount, uint256 pre) internal {
+LL +         _payMeSubsidizedGasAfter(pre, amount);
+LL +         _refund(pre);
+LL +     }
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   |
+LL | /     modifier payMeFixedGasAmountAndRefund() {
+LL | |         uint256 pre = gasLeft();
+LL | |         uint256 amount = 12345;
+LL | |         _;
+LL | |         _payMeSubsidizedGasAfter(pre, amount);
+LL | |         _refund(pre);
+LL | |     }
+   | |_____^
+   |
+help: wrap modifier logic to reduce code size
+   |
+LL ~     modifier payMeFixedGasAmountAndRefund() {
+LL +         (uint256 pre, uint256 amount) = _payMeFixedGasAmountAndRefundBefore();
+LL +         _;
+LL +         _payMeFixedGasAmountAndRefundAfter(pre, amount);
+LL +     }
+LL + 
+LL +     function _payMeFixedGasAmountAndRefundBefore() internal returns (uint256, uint256) {
+LL +         uint256 pre = gasLeft();
+LL +         uint256 amount = 12345;
+LL +         return (pre, amount);
+LL +     }
+LL + 
+LL +     function _payMeFixedGasAmountAndRefundAfter(uint256 pre, uint256 amount) internal {
+LL +         _payMeSubsidizedGasAfter(pre, amount);
+LL +         _refund(pre);
+LL +     }
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   |
 LL | /     modifier multipleBeforePlaceholder() {
 LL | |         checkPublic(msg.sender); // These should become _multipleBeforePlaceholder()
 LL | |         checkPrivate(msg.sender);
