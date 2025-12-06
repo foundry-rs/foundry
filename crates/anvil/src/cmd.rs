@@ -100,7 +100,7 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
-    #[arg(long, visible_alias = "mixed-mining", requires = "block_time")]
+    #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
 
     /// The hosts the server will listen on.
