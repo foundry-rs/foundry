@@ -1,8 +1,7 @@
 use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_receipt};
 use alloy_chains::Chain;
 use alloy_primitives::{
-    Address,
-    B256,
+    Address, B256,
     map::{B256HashMap, HashMap},
 };
 use eyre::Result;
@@ -290,7 +289,8 @@ Add `--resume` to your command to try and continue broadcasting the transactions
 /// State of [ProgressBar]s displayed for contract verification.
 /// Shows progress of all contracts being verified.
 /// For each contract an individual progress bar is displayed.
-/// When a contract verification completes, their progress is removed and result summary is displayed.
+/// When a contract verification completes, their progress is removed and result summary is
+/// displayed.
 #[derive(Debug)]
 pub struct VerificationProgressState {
     /// Main [MultiProgress] instance showing progress for all verifications.
@@ -335,11 +335,7 @@ impl VerificationProgressState {
     pub fn end_contract_progress(&mut self, address: Address, success: bool, error: Option<&str>) {
         if let Some(contract_progress) = self.contracts_progress.remove(&address) {
             self.multi.suspend(|| {
-                let status = if success {
-                    "✓ Verified".green()
-                } else {
-                    "✗ Failed".red()
-                };
+                let status = if success { "✓ Verified".green() } else { "✗ Failed".red() };
                 if let Some(err) = error {
                     let _ = sh_println!("{address}\n  ↪ {status}: {err}");
                 } else {
@@ -366,8 +362,6 @@ pub struct VerificationProgress {
 
 impl VerificationProgress {
     pub fn new(contracts_len: usize) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(VerificationProgressState::new(contracts_len))),
-        }
+        Self { inner: Arc::new(RwLock::new(VerificationProgressState::new(contracts_len))) }
     }
 }
