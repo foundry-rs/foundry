@@ -1,6 +1,7 @@
 use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_receipt};
 use alloy_chains::Chain;
 use alloy_primitives::{
+    Address,
     B256,
     map::{B256HashMap, HashMap},
 };
@@ -283,5 +284,90 @@ Add `--resume` to your command to try and continue broadcasting the transactions
         }
 
         Ok(())
+    }
+}
+
+/// State of [ProgressBar]s displayed for contract verification.
+/// Shows progress of all contracts being verified.
+/// For each contract an individual progress bar is displayed.
+/// When a contract verification completes, their progress is removed and result summary is displayed.
+#[derive(Debug)]
+pub struct VerificationProgressState {
+    /// Main [MultiProgress] instance showing progress for all verifications.
+    multi: MultiProgress,
+    /// Progress bar counting completed / remaining verifications.
+    overall_progress: ProgressBar,
+    /// Individual contract verification progress.
+    contracts_progress: HashMap<Address, ProgressBar>,
+}
+
+impl VerificationProgressState {
+    /// Creates overall verification progress state.
+    pub fn new(contracts_len: usize) -> Self {
+        let multi = MultiProgress::new();
+        let overall_progress = multi.add(ProgressBar::new(contracts_len as u64));
+        overall_progress.set_style(
+            indicatif::ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+                .unwrap()
+                .progress_chars("##-"),
+        );
+        overall_progress.set_message("verifications completed");
+        Self { multi, overall_progress, contracts_progress: HashMap::default() }
+    }
+
+    /// Creates new contract verification progress and add it to overall progress.
+    pub fn start_contract_progress(&mut self, address: Address, contract_name: Option<&str>) {
+        let contract_progress = self.multi.add(ProgressBar::new_spinner());
+        contract_progress.set_style(
+            indicatif::ProgressStyle::with_template("{spinner} {wide_msg:.bold.dim}")
+                .unwrap()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        let display_name = contract_name
+            .map(|n| format!("{n} ({address})"))
+            .unwrap_or_else(|| format!("{address}"));
+        contract_progress.set_message(format!("{display_name} "));
+        contract_progress.enable_steady_tick(Duration::from_millis(100));
+        self.contracts_progress.insert(address, contract_progress);
+    }
+
+    /// Prints contract verification result summary and removes it from overall progress.
+    pub fn end_contract_progress(&mut self, address: Address, success: bool, error: Option<&str>) {
+        if let Some(contract_progress) = self.contracts_progress.remove(&address) {
+            self.multi.suspend(|| {
+                let status = if success {
+                    "✓ Verified".green()
+                } else {
+                    "✗ Failed".red()
+                };
+                if let Some(err) = error {
+                    let _ = sh_println!("{address}\n  ↪ {status}: {err}");
+                } else {
+                    let _ = sh_println!("{address}\n  ↪ {status}");
+                }
+            });
+            contract_progress.finish_and_clear();
+            // Increment overall progress bar to reflect completed verification.
+            self.overall_progress.inc(1);
+        }
+    }
+
+    /// Removes overall verification progress.
+    pub fn clear(&mut self) {
+        self.multi.clear().unwrap();
+    }
+}
+
+/// Cloneable wrapper around [VerificationProgressState].
+#[derive(Debug, Clone)]
+pub struct VerificationProgress {
+    pub inner: Arc<RwLock<VerificationProgressState>>,
+}
+
+impl VerificationProgress {
+    pub fn new(contracts_len: usize) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(VerificationProgressState::new(contracts_len))),
+        }
     }
 }
