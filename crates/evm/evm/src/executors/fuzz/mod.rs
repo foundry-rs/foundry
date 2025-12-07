@@ -215,11 +215,11 @@ impl FuzzedExecutor {
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {
                         exit_reason: status,
-                        counterexample: outcome,
+                        counterexample: mut outcome,
                         ..
                     }) => {
                         let reason = rd.maybe_decode(&outcome.1.result, status);
-                        test_data.logs.extend(outcome.1.logs.clone());
+                        test_data.logs.extend(std::mem::take(&mut outcome.1.logs));
                         test_data.counterexample = outcome;
                         test_data.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         break 'stop;
