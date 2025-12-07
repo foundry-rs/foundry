@@ -1,6 +1,7 @@
 use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
+    progress::VerificationProgress,
     sequence::{ScriptSequenceKind, get_commit_hash},
 };
 use alloy_primitives::{Address, hex};
@@ -103,6 +104,7 @@ impl VerifyBundle {
 
     /// Given a `VerifyBundle` and contract details, it tries to generate a valid `VerifyArgs` to
     /// use against the `contract_address`.
+    /// Returns both the VerifyArgs and the contract name if found.
     pub fn get_verify_args(
         &self,
         contract_address: Address,
@@ -110,7 +112,7 @@ impl VerifyBundle {
         data: &[u8],
         libraries: &[String],
         evm_version: EvmVersion,
-    ) -> Option<VerifyArgs> {
+    ) -> Option<(VerifyArgs, String)> {
         for (artifact, contract) in self.known_contracts.iter() {
             let Some(bytecode) = contract.bytecode() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
@@ -141,6 +143,7 @@ impl VerifyBundle {
                     artifact.version.patch,
                 );
 
+                let contract_name = contract.name.clone();
                 let verify = VerifyArgs {
                     address: contract_address,
                     contract: Some(contract),
@@ -169,7 +172,7 @@ impl VerifyBundle {
                     creation_transaction_hash: None,
                 };
 
-                return Some(verify);
+                return Some((verify, contract_name));
             }
         }
         None
@@ -191,7 +194,8 @@ async fn verify_contracts(
     {
         trace!(target: "script", "prepare future verifications");
 
-        let mut future_verifications = Vec::with_capacity(sequence.receipts.len());
+        // Store verification info: (address, contract_name, future)
+        let mut verification_tasks = Vec::new();
         let mut unverifiable_contracts = vec![];
 
         // Make sure the receipts have the right order first.
@@ -215,7 +219,9 @@ async fn verify_contracts(
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(verify) => future_verifications.push(verify.run()),
+                    Some((verify_args, contract_name)) => {
+                        verification_tasks.push((address, Some(contract_name), verify_args.run()));
+                    }
                     None => unverifiable_contracts.push(address),
                 };
             }
@@ -229,28 +235,80 @@ async fn verify_contracts(
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(verify) => future_verifications.push(verify.run()),
+                    Some((verify_args, contract_name)) => {
+                        verification_tasks.push((*address, Some(contract_name), verify_args.run()));
+                    }
                     None => unverifiable_contracts.push(*address),
                 };
             }
         }
 
-        trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", future_verifications.len(), unverifiable_contracts.len());
+        trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", verification_tasks.len(), unverifiable_contracts.len());
 
         check_unverified(sequence, unverifiable_contracts, verify);
 
-        let num_verifications = future_verifications.len();
+        let num_verifications = verification_tasks.len();
+        if num_verifications == 0 {
+            return Ok(());
+        }
+
+        // Create progress tracker
+        let progress = VerificationProgress::new(num_verifications);
+        let progress_ref = &progress;
+
+        // Start progress for all contracts
+        for (address, contract_name, _) in &verification_tasks {
+            progress_ref
+                .inner
+                .write()
+                .start_contract_progress(*address, contract_name.as_deref());
+        }
+
+        // Wrap each verification future to track progress
+        let futures_with_progress: Vec<_> = verification_tasks
+            .into_iter()
+            .map(|(address, _contract_name, future)| {
+                let progress = progress_ref.clone();
+                async move {
+                    let result = future.await;
+                    let (success, error) = match &result {
+                        Ok(_) => (true, None),
+                        Err(err) => (false, Some(err.to_string())),
+                    };
+                    progress
+                        .inner
+                        .write()
+                        .end_contract_progress(address, success, error.as_deref());
+                    result
+                }
+            })
+            .collect();
+
         sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
-        let results = join_all(future_verifications).await;
+        let results = join_all(futures_with_progress).await;
+
+        // Collect all errors and successes
         let mut num_of_successful_verifications = 0;
+        let mut errors = Vec::new();
+
         for result in results {
             match result {
                 Ok(_) => {
                     num_of_successful_verifications += 1;
                 }
                 Err(err) => {
-                    sh_err!("Failed to verify contract: {err:#}")?;
+                    errors.push(err);
                 }
+            }
+        }
+
+        // Clear progress display
+        progress.inner.write().clear();
+
+        // Report results
+        if !errors.is_empty() {
+            for err in &errors {
+                sh_err!("Failed to verify contract: {err:#}")?;
             }
         }
 
