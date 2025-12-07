@@ -212,6 +212,35 @@ function extractFileFromTarball(tarballBuffer, filepath) {
   throw new Error(`File ${filepath} not found in tarball`)
 }
 
+/**
+ * Gunzip with an explicit upper bound to avoid decompression bombs.
+ * @param {Buffer<ArrayBufferLike>} buffer
+ * @param {number} maxBytes
+ * @returns {Promise<Buffer<ArrayBufferLike>>}
+ */
+function gunzipWithLimit(buffer, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const gunzip = NodeZlib.createGunzip()
+    /** @type {Array<Buffer>} */
+    const chunks = []
+    let total = 0
+
+    gunzip.on('data', chunk => {
+      total += chunk.length
+      if (total > maxBytes) {
+        gunzip.destroy(new Error('Decompressed tarball exceeds maximum allowed size'))
+        return
+      }
+      chunks.push(chunk)
+    })
+
+    gunzip.on('error', reject)
+    gunzip.on('end', () => resolve(Buffer.concat(chunks)))
+
+    gunzip.end(buffer)
+  })
+}
+
 async function downloadBinaryFromRegistry() {
   if (!platformSpecificPackageName)
     throw new Error('Platform-specific package name is not defined')
@@ -330,7 +359,10 @@ async function downloadBinaryFromRegistry() {
   }
 
   // Unpack and write binary
-  const tarballBuffer = NodeZlib.gunzipSync(tarballDownloadBuffer)
+  const tarballBuffer = await gunzipWithLimit(
+    tarballDownloadBuffer,
+    MAX_BINARY_BYTES
+  )
 
   NodeFS.writeFileSync(
     fallbackBinaryPath,
