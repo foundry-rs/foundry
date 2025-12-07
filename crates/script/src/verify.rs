@@ -258,10 +258,7 @@ async fn verify_contracts(
 
         // Start progress for all contracts
         for (address, contract_name, _) in &verification_tasks {
-            progress_ref
-                .inner
-                .write()
-                .start_contract_progress(*address, contract_name.as_deref());
+            progress_ref.inner.write().start_contract_progress(*address, contract_name.as_deref());
         }
 
         // Wrap each verification future to track progress
@@ -275,10 +272,11 @@ async fn verify_contracts(
                         Ok(_) => (true, None),
                         Err(err) => (false, Some(err.to_string())),
                     };
-                    progress
-                        .inner
-                        .write()
-                        .end_contract_progress(address, success, error.as_deref());
+                    progress.inner.write().end_contract_progress(
+                        address,
+                        success,
+                        error.as_deref(),
+                    );
                     result
                 }
             })
