@@ -275,7 +275,7 @@ impl SourcifyVerificationProvider {
                 let sources = Source::read_all_from(path, &["vy", "vyi"])?;
                 let input = VyperInput::new(
                     sources,
-                    context.clone().compiler_settings.vyper,
+                    context.compiler_settings.vyper.clone(),
                     &context.compiler_version,
                 );
                 let std_json_input = serde_json::to_value(&input)
