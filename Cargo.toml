@@ -279,7 +279,7 @@ alloy-sol-macro-expander = "1.4.1"
 alloy-sol-macro-input = "1.4.1"
 alloy-sol-types = "1.4.1"
 
-alloy-chains = "0.2"
+alloy-chains = "0.2.22"
 alloy-rlp = "0.3"
 alloy-trie = "0.9"
 
