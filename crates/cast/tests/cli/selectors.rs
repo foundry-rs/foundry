@@ -243,5 +243,6 @@ forgetest!(cache_selectors_from_extra_abis, |prj, cmd| {
 MyUniqueExtraAbiError(uint256,bool)
 42
 true
+
 "#]]);
 });
