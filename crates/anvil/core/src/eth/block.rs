@@ -1,7 +1,8 @@
-use super::transaction::{TransactionInfo, TypedReceipt};
+use super::transaction::TransactionInfo;
 use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root,
 };
+use foundry_primitives::FoundryReceiptEnvelope;
 
 // Type alias to optionally support impersonated transactions
 type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
@@ -14,7 +15,7 @@ pub type Block = alloy_consensus::Block<Transaction>;
 pub struct BlockInfo {
     pub block: Block,
     pub transactions: Vec<TransactionInfo>,
-    pub receipts: Vec<TypedReceipt>,
+    pub receipts: Vec<FoundryReceiptEnvelope>,
 }
 
 /// Helper function to create a new block with Header and Anvil transactions
