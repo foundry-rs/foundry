@@ -210,12 +210,7 @@ pub struct ForkDbStateSnapshot {
 
 impl ForkDbStateSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
-        self.local
-            .cache
-            .accounts
-            .get(&address)
-            .and_then(|account| account.storage.get(&index))
-            .copied()
+        self.state_snapshot.storage.get(&address).and_then(|slots| slots.get(&index)).copied()
     }
 }
 
