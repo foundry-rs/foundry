@@ -223,7 +223,7 @@ async fn verify_contracts(
                 ) {
                     Some((verify_args, contract_name)) => {
                         // Extract details before moving verify_args
-                        let evm_version = verify_args.evm_version.clone();
+                        let evm_version = verify_args.evm_version;
                         let compiler_version = verify_args.compiler_version.clone();
                         let constructor_args = verify_args.constructor_args.clone();
                         let verifier_type = verify_args.verifier.verifier.clone();
@@ -250,7 +250,7 @@ async fn verify_contracts(
                 ) {
                     Some((verify_args, contract_name)) => {
                         // Extract details before moving verify_args
-                        let evm_version = verify_args.evm_version.clone();
+                        let evm_version = verify_args.evm_version;
                         let compiler_version = verify_args.compiler_version.clone();
                         let constructor_args = verify_args.constructor_args.clone();
                         let verifier_type = verify_args.verifier.verifier.clone();
