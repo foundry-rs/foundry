@@ -326,6 +326,7 @@ impl VerificationProgressState {
 
     /// Creates new contract verification progress and add it to overall progress.
     /// Displays contract details inline.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_contract_progress(
         &mut self,
         address: Address,
@@ -356,10 +357,10 @@ impl VerificationProgressState {
         if let Some(compiler) = compiler_version {
             details.push_str(&format!("   - Compiler version: {compiler}\n"));
         }
-        if let Some(args) = constructor_args {
-            if !args.is_empty() {
-                details.push_str(&format!("   - Constructor args: {args}\n"));
-            }
+        if let Some(args) = constructor_args
+            && !args.is_empty()
+        {
+            details.push_str(&format!("   - Constructor args: {args}\n"));
         }
         details.push_str(&format!("   - verifier: {verifier}"));
 
@@ -398,12 +399,10 @@ impl VerificationProgressState {
                 } else {
                     format!("{details}\n   - {status}")
                 }
+            } else if let Some(err) = error {
+                format!("{address}\n   - {status}: {err}")
             } else {
-                if let Some(err) = error {
-                    format!("{address}\n   - {status}: {err}")
-                } else {
-                    format!("{address}\n   - {status}")
-                }
+                format!("{address}\n   - {status}")
             };
             contract_progress.set_message(final_message);
             contract_progress.finish_and_clear();
