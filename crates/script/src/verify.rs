@@ -194,12 +194,14 @@ async fn verify_contracts(
     {
         trace!(target: "script", "prepare future verifications");
 
-        // Store verification info: (address, contract_name, future)
+        // Store verification info: (address, contract_name, contract_details, future)
         let mut verification_tasks = Vec::new();
         let mut unverifiable_contracts = vec![];
 
         // Make sure the receipts have the right order first.
         sequence.sort_receipts();
+
+        let chain: Chain = sequence.chain.into();
 
         for (receipt, tx) in sequence.receipts.iter_mut().zip(sequence.transactions.iter()) {
             // create2 hash offset
@@ -220,7 +222,18 @@ async fn verify_contracts(
                     config.evm_version,
                 ) {
                     Some((verify_args, contract_name)) => {
-                        verification_tasks.push((address, Some(contract_name), verify_args.run()));
+                        // Extract details before moving verify_args
+                        let evm_version = verify_args.evm_version.clone();
+                        let compiler_version = verify_args.compiler_version.clone();
+                        let constructor_args = verify_args.constructor_args.clone();
+                        let verifier_type = verify_args.verifier.verifier.clone();
+                        let future = verify_args.run();
+                        verification_tasks.push((
+                            address,
+                            Some(contract_name),
+                            (evm_version, compiler_version, constructor_args, verifier_type),
+                            future,
+                        ));
                     }
                     None => unverifiable_contracts.push(address),
                 };
@@ -236,7 +249,18 @@ async fn verify_contracts(
                     config.evm_version,
                 ) {
                     Some((verify_args, contract_name)) => {
-                        verification_tasks.push((*address, Some(contract_name), verify_args.run()));
+                        // Extract details before moving verify_args
+                        let evm_version = verify_args.evm_version.clone();
+                        let compiler_version = verify_args.compiler_version.clone();
+                        let constructor_args = verify_args.constructor_args.clone();
+                        let verifier_type = verify_args.verifier.verifier.clone();
+                        let future = verify_args.run();
+                        verification_tasks.push((
+                            *address,
+                            Some(contract_name),
+                            (evm_version, compiler_version, constructor_args, verifier_type),
+                            future,
+                        ));
                     }
                     None => unverifiable_contracts.push(*address),
                 };
@@ -256,15 +280,29 @@ async fn verify_contracts(
         let progress = VerificationProgress::new(num_verifications);
         let progress_ref = &progress;
 
-        // Start progress for all contracts
-        for (address, contract_name, _) in &verification_tasks {
-            progress_ref.inner.write().start_contract_progress(*address, contract_name.as_deref());
+        // Start progress for all contracts with details
+        for (
+            address,
+            contract_name,
+            (evm_version, compiler_version, constructor_args, verifier_type),
+            _,
+        ) in &verification_tasks
+        {
+            progress_ref.inner.write().start_contract_progress(
+                *address,
+                contract_name.as_deref(),
+                chain,
+                evm_version.as_ref(),
+                compiler_version.as_deref(),
+                constructor_args.as_deref(),
+                verifier_type,
+            );
         }
 
         // Wrap each verification future to track progress
         let futures_with_progress: Vec<_> = verification_tasks
             .into_iter()
-            .map(|(address, _contract_name, future)| {
+            .map(|(address, _contract_name, _contract_details, future)| {
                 let progress = progress_ref.clone();
                 async move {
                     let result = future.await;
