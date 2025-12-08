@@ -372,8 +372,8 @@ impl VerificationProgressState {
     }
 
     /// Updates contract verification progress message inline (as last entry).
-    /// This can be used to show intermediate progress messages like "Submitted contract for verification"
-    /// or "Verification Job ID: ..." during the verification process.
+    /// This can be used to show intermediate progress messages like "Submitted contract for
+    /// verification" or "Verification Job ID: ..." during the verification process.
     #[allow(dead_code)]
     pub fn update_contract_progress(&mut self, address: Address, message: &str) {
         if let Some(contract_progress) = self.contracts_progress.get(&address) {
