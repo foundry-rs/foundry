@@ -6,7 +6,7 @@ use revm::{
     Inspector,
     context::ContextTr,
     interpreter::{
-        CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult,
         interpreter::EthInterpreter,
     },
 };
@@ -50,7 +50,7 @@ impl<CTX> Inspector<CTX, EthInterpreter> for LogCollector
 where
     CTX: ContextTr,
 {
-    fn log_full(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
+    fn log(&mut self, _context: &mut CTX, log: Log) {
         self.logs.push(log);
     }
 
