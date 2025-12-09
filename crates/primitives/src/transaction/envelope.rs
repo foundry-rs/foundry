@@ -1,5 +1,5 @@
 use alloy_consensus::{
-    Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, Typed2718,
+    Sealed, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, Typed2718,
     transaction::{
         TxEip7702,
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
@@ -11,8 +11,7 @@ use alloy_primitives::{Address, B256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types::ConversionError;
 use alloy_serde::WithOtherFields;
-
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
 
@@ -28,19 +27,19 @@ pub enum FoundryTxEnvelope {
     Legacy(Signed<TxLegacy>),
     /// EIP-2930 transaction
     #[envelope(ty = 1)]
-    EIP2930(Signed<TxEip2930>),
+    Eip2930(Signed<TxEip2930>),
     /// EIP-1559 transaction
     #[envelope(ty = 2)]
-    EIP1559(Signed<TxEip1559>),
+    Eip1559(Signed<TxEip1559>),
     /// EIP-4844 transaction
     #[envelope(ty = 3)]
-    EIP4844(Signed<TxEip4844Variant>),
+    Eip4844(Signed<TxEip4844Variant>),
     /// EIP-7702 transaction
     #[envelope(ty = 4)]
-    EIP7702(Signed<TxEip7702>),
+    Eip7702(Signed<TxEip7702>),
     /// op-stack deposit transaction
     #[envelope(ty = 126)]
-    Deposit(TxDeposit),
+    Deposit(Sealed<TxDeposit>),
 }
 
 impl FoundryTxEnvelope {
@@ -51,17 +50,17 @@ impl FoundryTxEnvelope {
     pub fn try_into_eth(self) -> Result<TxEnvelope, Self> {
         match self {
             Self::Legacy(tx) => Ok(TxEnvelope::Legacy(tx)),
-            Self::EIP2930(tx) => Ok(TxEnvelope::Eip2930(tx)),
-            Self::EIP1559(tx) => Ok(TxEnvelope::Eip1559(tx)),
-            Self::EIP4844(tx) => Ok(TxEnvelope::Eip4844(tx)),
-            Self::EIP7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
+            Self::Eip2930(tx) => Ok(TxEnvelope::Eip2930(tx)),
+            Self::Eip1559(tx) => Ok(TxEnvelope::Eip1559(tx)),
+            Self::Eip4844(tx) => Ok(TxEnvelope::Eip4844(tx)),
+            Self::Eip7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
             Self::Deposit(_) => Err(self),
         }
     }
 
     pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
         match self {
-            Self::EIP4844(signed_variant) => match signed_variant.tx() {
+            Self::Eip4844(signed_variant) => match signed_variant.tx() {
                 TxEip4844Variant::TxEip4844WithSidecar(with_sidecar) => Some(with_sidecar),
                 _ => None,
             },
@@ -76,10 +75,10 @@ impl FoundryTxEnvelope {
     pub fn hash(&self) -> B256 {
         match self {
             Self::Legacy(t) => *t.hash(),
-            Self::EIP2930(t) => *t.hash(),
-            Self::EIP1559(t) => *t.hash(),
-            Self::EIP4844(t) => *t.hash(),
-            Self::EIP7702(t) => *t.hash(),
+            Self::Eip2930(t) => *t.hash(),
+            Self::Eip1559(t) => *t.hash(),
+            Self::Eip4844(t) => *t.hash(),
+            Self::Eip7702(t) => *t.hash(),
             Self::Deposit(t) => t.tx_hash(),
         }
     }
@@ -98,11 +97,39 @@ impl FoundryTxEnvelope {
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         match self {
             Self::Legacy(tx) => tx.recover_signer(),
-            Self::EIP2930(tx) => tx.recover_signer(),
-            Self::EIP1559(tx) => tx.recover_signer(),
-            Self::EIP4844(tx) => tx.recover_signer(),
-            Self::EIP7702(tx) => tx.recover_signer(),
+            Self::Eip2930(tx) => tx.recover_signer(),
+            Self::Eip1559(tx) => tx.recover_signer(),
+            Self::Eip4844(tx) => tx.recover_signer(),
+            Self::Eip7702(tx) => tx.recover_signer(),
             Self::Deposit(tx) => Ok(tx.from),
+        }
+    }
+}
+
+impl OpTransactionTrait for FoundryTxEnvelope {
+    fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
+        match self {
+            Self::Deposit(tx) => Some(tx),
+            _ => None,
+        }
+    }
+}
+
+impl TryFrom<FoundryTxEnvelope> for TxEnvelope {
+    type Error = FoundryTxEnvelope;
+
+    fn try_from(envelope: FoundryTxEnvelope) -> Result<Self, Self::Error> {
+        match envelope {
+            FoundryTxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
+            FoundryTxEnvelope::Eip2930(tx) => Ok(Self::Eip2930(tx)),
+            FoundryTxEnvelope::Eip1559(tx) => Ok(Self::Eip1559(tx)),
+            FoundryTxEnvelope::Eip4844(tx) => Ok(Self::Eip4844(tx)),
+            FoundryTxEnvelope::Eip7702(tx) => Ok(Self::Eip7702(tx)),
+            FoundryTxEnvelope::Deposit(_) => Err(envelope),
         }
     }
 }
@@ -116,10 +143,10 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
         match inner.inner.into_inner() {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-                TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
-                TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
-                TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
-                TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
+                TxEnvelope::Eip2930(tx) => Ok(Self::Eip2930(tx)),
+                TxEnvelope::Eip1559(tx) => Ok(Self::Eip1559(tx)),
+                TxEnvelope::Eip4844(tx) => Ok(Self::Eip4844(tx)),
+                TxEnvelope::Eip7702(tx) => Ok(Self::Eip7702(tx)),
             },
             AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
@@ -132,7 +159,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                             ))
                         })?;
 
-                    return Ok(Self::Deposit(deposit_tx));
+                    return Ok(Self::Deposit(Sealed::new(deposit_tx)));
                 };
 
                 Err(ConversionError::Custom("UnknownTxType".to_string()))
@@ -145,13 +172,15 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
     fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
         match tx {
             FoundryTxEnvelope::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::EIP2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::EIP1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::EIP4844(signed_tx) => {
+            FoundryTxEnvelope::Eip2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Eip1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Eip4844(signed_tx) => {
                 Self::from_recovered_tx(signed_tx.tx().tx(), caller)
             }
-            FoundryTxEnvelope::EIP7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Deposit(tx) => Self::from_recovered_tx(tx, caller),
+            FoundryTxEnvelope::Eip7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Deposit(sealed_tx) => {
+                Self::from_recovered_tx(sealed_tx.inner(), caller)
+            }
         }
     }
 }
@@ -171,6 +200,32 @@ impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
         };
 
         Self { base, deposit, enveloped_tx: None }
+    }
+}
+
+impl std::fmt::Display for FoundryTxType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Legacy => write!(f, "legacy"),
+            Self::Eip2930 => write!(f, "eip2930"),
+            Self::Eip1559 => write!(f, "eip1559"),
+            Self::Eip4844 => write!(f, "eip4844"),
+            Self::Eip7702 => write!(f, "eip7702"),
+            Self::Deposit => write!(f, "deposit"),
+        }
+    }
+}
+
+impl From<FoundryTxEnvelope> for FoundryTypedTx {
+    fn from(envelope: FoundryTxEnvelope) -> Self {
+        match envelope {
+            FoundryTxEnvelope::Legacy(signed_tx) => Self::Legacy(signed_tx.strip_signature()),
+            FoundryTxEnvelope::Eip2930(signed_tx) => Self::Eip2930(signed_tx.strip_signature()),
+            FoundryTxEnvelope::Eip1559(signed_tx) => Self::Eip1559(signed_tx.strip_signature()),
+            FoundryTxEnvelope::Eip4844(signed_tx) => Self::Eip4844(signed_tx.strip_signature()),
+            FoundryTxEnvelope::Eip7702(signed_tx) => Self::Eip7702(signed_tx.strip_signature()),
+            FoundryTxEnvelope::Deposit(sealed_tx) => Self::Deposit(sealed_tx.into_inner()),
+        }
     }
 }
 
@@ -225,7 +280,7 @@ mod tests {
         // random mainnet tx: https://etherscan.io/tx/0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f
         let bytes = hex::decode("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9").unwrap();
 
-        let Ok(FoundryTxEnvelope::EIP1559(tx)) = FoundryTxEnvelope::decode(&mut &bytes[..]) else {
+        let Ok(FoundryTxEnvelope::Eip1559(tx)) = FoundryTxEnvelope::decode(&mut &bytes[..]) else {
             panic!("decoding FoundryTxEnvelope failed");
         };
 
@@ -253,7 +308,7 @@ mod tests {
         assert!(res.is_type(3));
 
         let tx = match res {
-            FoundryTxEnvelope::EIP4844(tx) => tx,
+            FoundryTxEnvelope::Eip4844(tx) => tx,
             _ => unreachable!(),
         };
 
