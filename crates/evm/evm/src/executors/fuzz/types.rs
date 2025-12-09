@@ -117,16 +117,13 @@ impl SharedFuzzState {
     }
 
     pub fn should_continue(&self) -> bool {
-        // Check fail-fast
         if self.early_exit.should_stop() {
             return false;
         }
 
         if self.timer.is_enabled() {
-            // Check timer
             !self.timer.is_timed_out()
         } else {
-            // Check runs
             let total_runs = self.total_runs.load(Ordering::Relaxed);
             total_runs < self.max_runs
         }
@@ -135,16 +132,12 @@ impl SharedFuzzState {
     /// Returns true if the worker was able to claim the failure, false if failure was set by
     /// another worker
     pub fn try_claim_failure(&self, worker_id: u32) -> bool {
-        if self.found_failure.get().is_some() {
-            return false;
-        }
-
-        let claimed = self.found_failure.set(worker_id).is_ok();
-        if claimed {
-            // Record failure in EarlyExit as well
+        let mut claimed = false;
+        let _ = self.found_failure.get_or_init(|| {
+            claimed = true;
             self.early_exit.record_exit();
-        }
-
+            worker_id
+        });
         claimed
     }
 

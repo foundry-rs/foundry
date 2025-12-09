@@ -971,6 +971,18 @@ impl RawCallResult {
         let mut new_coverage = false;
         let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
+            {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .write(true)
+                    .open("/tmp/coverage.txt")
+                    .unwrap();
+                file.lock().unwrap();
+                writeln!(file, "{x:?}").unwrap();
+            }
+
             // Iterate over the current map and the history map together and update
             // the history map, if we discover some new coverage, report true
             for (curr, hist) in std::iter::zip(x, history_map) {
