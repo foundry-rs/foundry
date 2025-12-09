@@ -1,3 +1,6 @@
 //! Foundry primitives
+mod network;
 mod transaction;
-pub use transaction::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
+
+pub use network::*;
+pub use transaction::*;
