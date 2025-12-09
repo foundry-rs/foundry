@@ -4,7 +4,7 @@ use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN}
 use eyre::Result;
 use foundry_cli::{
     opts::{BuildOpts, CompilerOpts, ProjectPathOpts},
-    utils::{FoundryPathExt, cache_local_signatures},
+    utils::{FoundryPathExt, cache_local_signatures, cache_signatures_from_abis},
 };
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler, compile_target},
@@ -13,7 +13,6 @@ use foundry_common::{
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::{collections::BTreeMap, fs::canonicalize};
-use foundry_cli::utils::cache_signatures_from_abis;
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -91,7 +90,6 @@ impl SelectorsSubcommands {
                 if let Some(extra_abis_path) = extra_abis_path {
                     sh_println!("Caching selectors for ABIs at {extra_abis_path}")?;
                     cache_signatures_from_abis(extra_abis_path)?;
-                    
                 }
 
                 sh_println!("Caching selectors for contracts in the project...")?;

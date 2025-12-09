@@ -1,6 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use eyre::{Result, WrapErr};
-use foundry_common::{TestFunctionExt, fs, selectors::SelectorKind, shell};
+use foundry_common::{TestFunctionExt, fs, fs::json_files, selectors::SelectorKind, shell};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{CompactBytecode, Settings},
@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use yansi::Paint;
-use foundry_common::fs::json_files;
 
 /// Given a `Project`'s output, finds the contract by path and name and returns its
 /// ABI, creation bytecode, and `ArtifactId`.
@@ -397,7 +396,7 @@ pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
     json_files(folder_path.as_ref())
         .filter_map(|path| std::fs::read_to_string(&path).ok())
         .filter_map(|content| serde_json::from_str::<JsonAbi>(&content).ok())
-        .for_each(|json_abi|signatures.extend_from_abi(&json_abi));
+        .for_each(|json_abi| signatures.extend_from_abi(&json_abi));
 
     signatures.save(&path);
     Ok(())
