@@ -3,7 +3,8 @@
 use crate::mem::Backend;
 use alloy_network::AnyRpcBlock;
 use alloy_primitives::B256;
-use anvil_core::eth::{block::Block, transaction::TypedReceipt};
+use anvil_core::eth::block::Block;
+use foundry_primitives::FoundryReceiptEnvelope;
 use std::{fmt, sync::Arc};
 
 /// A type that can fetch data related to the ethereum storage.
@@ -22,7 +23,7 @@ impl StorageInfo {
     }
 
     /// Returns the receipts of the current block
-    pub fn current_receipts(&self) -> Option<Vec<TypedReceipt>> {
+    pub fn current_receipts(&self) -> Option<Vec<FoundryReceiptEnvelope>> {
         self.backend.mined_receipts(self.backend.best_hash())
     }
 
@@ -32,7 +33,7 @@ impl StorageInfo {
     }
 
     /// Returns the receipts of the block with the given hash
-    pub fn receipts(&self, hash: B256) -> Option<Vec<TypedReceipt>> {
+    pub fn receipts(&self, hash: B256) -> Option<Vec<FoundryReceiptEnvelope>> {
         self.backend.mined_receipts(hash)
     }
 

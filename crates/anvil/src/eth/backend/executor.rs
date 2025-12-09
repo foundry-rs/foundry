@@ -23,15 +23,15 @@ use alloy_eips::{
     eip7840::BlobParams,
 };
 use alloy_evm::{
-    EthEvm, Evm, FromRecoveredTx,
+    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
-use alloy_op_evm::OpEvm;
+use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{BlockInfo, create_block},
-    transaction::{PendingTransaction, TransactionInfo, TypedReceipt},
+    transaction::{PendingTransaction, TransactionInfo},
 };
 use foundry_evm::{
     backend::DatabaseError,
@@ -39,18 +39,13 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryTxEnvelope;
-use op_revm::{L1BlockInfo, OpContext, OpTransaction, precompiles::OpPrecompiles};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use op_revm::{OpContext, OpTransaction};
 use revm::{
-    Database, DatabaseRef, Inspector, Journal,
-    context::{
-        Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
-    },
+    Database, Inspector,
+    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
-    database::WrapDatabaseRef,
-    handler::{EthPrecompiles, instructions::EthInstructions},
     interpreter::InstructionResult,
-    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
 use std::{fmt::Debug, sync::Arc};
@@ -71,7 +66,7 @@ pub struct ExecutedTransaction {
 
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
-    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> TypedReceipt {
+    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> FoundryReceiptEnvelope {
         let logs = self.logs.clone();
         *cumulative_gas_used = cumulative_gas_used.saturating_add(self.gas_used);
 
@@ -85,13 +80,13 @@ impl ExecutedTransaction {
         .into();
 
         match self.transaction.pending_transaction.transaction.as_ref() {
-            FoundryTxEnvelope::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
-            FoundryTxEnvelope::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
-            FoundryTxEnvelope::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
-            FoundryTxEnvelope::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
-            FoundryTxEnvelope::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
+            FoundryTxEnvelope::Legacy(_) => FoundryReceiptEnvelope::Legacy(receipt_with_bloom),
+            FoundryTxEnvelope::Eip2930(_) => FoundryReceiptEnvelope::Eip2930(receipt_with_bloom),
+            FoundryTxEnvelope::Eip1559(_) => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
+            FoundryTxEnvelope::Eip4844(_) => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
+            FoundryTxEnvelope::Eip7702(_) => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
             FoundryTxEnvelope::Deposit(_tx) => {
-                TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+                FoundryReceiptEnvelope::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
                     receipt: op_alloy_consensus::OpDepositReceipt {
                         inner: receipt_with_bloom.receipt,
                         deposit_nonce: Some(0),
@@ -277,7 +272,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut tx_env: OpTransaction<TxEnv> =
             FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
 
-        if let FoundryTxEnvelope::EIP7702(tx_7702) = tx.transaction.as_ref()
+        if let FoundryTxEnvelope::Eip7702(tx_7702) = tx.transaction.as_ref()
             && self.cheats.has_recover_overrides()
         {
             // Override invalid recovered authorizations with signature overrides from cheat manager
@@ -505,78 +500,16 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.networks.is_optimism() {
-        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
-        let op_context = OpContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                // Converting SpecId into OpSpecId
-                journal.set_spec_id(env.evm_env.cfg_env.spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: op_cfg.clone(),
-            tx: env.tx.clone(),
-            chain: L1BlockInfo::default(),
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
-        let op_evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
-            op_context,
-            inspector,
-            EthInstructions::default(),
-            PrecompilesMap::from_static(op_precompiles),
-        ));
-
-        let op = OpEvm::new(op_evm, true);
-
-        EitherEvm::Op(op)
-    } else {
-        let spec = env.evm_env.cfg_env.spec;
-        let eth_context = EthEvmContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                journal.set_spec_id(spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone(),
-            tx: env.tx.base.clone(),
-            chain: (),
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let eth_precompiles = EthPrecompiles {
-            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
-            spec,
-        }
-        .precompiles;
-        let eth_evm = RevmEvm::new_with_inspector(
-            eth_context,
-            inspector,
-            EthInstructions::default(),
-            PrecompilesMap::from_static(eth_precompiles),
+        let evm_env = EvmEnv::new(
+            env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS),
+            env.evm_env.block_env.clone(),
         );
-
-        let eth = EthEvm::new(eth_evm, true);
-
-        EitherEvm::Eth(eth)
+        EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
+    } else {
+        EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
+            db,
+            env.evm_env.clone(),
+            inspector,
+        ))
     }
-}
-
-/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'db, DB, I>(
-    db: &'db DB,
-    env: &Env,
-    inspector: &'db mut I,
-) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
-where
-    DB: DatabaseRef<Error = DatabaseError> + Debug + 'db + ?Sized,
-    I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-        + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
-    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-{
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

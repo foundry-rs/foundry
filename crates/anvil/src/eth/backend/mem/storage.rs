@@ -25,12 +25,13 @@ use alloy_rpc_types::{
 };
 use anvil_core::eth::{
     block::{Block, create_block},
-    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
+    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo},
 };
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
+use foundry_primitives::FoundryReceiptEnvelope;
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -512,7 +513,7 @@ pub struct MinedBlockOutcome {
 #[derive(Clone, Debug)]
 pub struct MinedTransaction {
     pub info: TransactionInfo,
-    pub receipt: TypedReceipt,
+    pub receipt: FoundryReceiptEnvelope,
     pub block_hash: B256,
     pub block_number: u64,
 }
