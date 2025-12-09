@@ -333,8 +333,8 @@ main() {
 
     # Compute the URL of the release tarball in the Tempo Foundry repository.
     RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
-    BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
-    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
+    BIN_ARCHIVE_URL="${RELEASE_URL}foundry_nightly_${PLATFORM}_${ARCHITECTURE}.$EXT"
+    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_nightly.tar.gz"
 
     ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
 
