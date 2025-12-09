@@ -240,7 +240,6 @@ impl CallArgs {
 
         let provider = utils::get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
-
         let from = sender.address();
 
         let code = if let Some(CallSubcommands::Create {
