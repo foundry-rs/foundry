@@ -58,7 +58,7 @@ pub struct SharedFuzzState {
     /// The worker that found the failure sets it's ID.
     ///
     /// This ID is then used to correctly extract the failure reason and counterexample.
-    found_failure: OnceLock<u32>,
+    failed_worker_id: OnceLock<usize>,
     /// Maximum number of runs
     max_runs: u32,
     /// Total rejects across workers
@@ -81,7 +81,7 @@ impl SharedFuzzState {
         Self {
             state,
             total_runs: Arc::new(AtomicU32::new(0)),
-            found_failure: OnceLock::new(),
+            failed_worker_id: OnceLock::new(),
             max_runs,
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
@@ -131,9 +131,9 @@ impl SharedFuzzState {
 
     /// Returns true if the worker was able to claim the failure, false if failure was set by
     /// another worker
-    pub fn try_claim_failure(&self, worker_id: u32) -> bool {
+    pub fn try_claim_failure(&self, worker_id: usize) -> bool {
         let mut claimed = false;
-        let _ = self.found_failure.get_or_init(|| {
+        let _ = self.failed_worker_id.get_or_init(|| {
             claimed = true;
             self.early_exit.record_exit();
             worker_id
@@ -149,15 +149,15 @@ impl SharedFuzzState {
         self.total_rejects.load(Ordering::Relaxed)
     }
 
-    pub fn failed_worked_id(&self) -> Option<u32> {
-        self.found_failure.get().copied()
+    pub fn failed_worker_id(&self) -> Option<usize> {
+        self.failed_worker_id.get().copied()
     }
 }
 
 #[derive(Default)]
 pub struct FuzzWorker {
     /// Worker identifier
-    pub worker_id: u32,
+    pub worker_id: usize,
     /// First fuzz case this worker encountered (with global run number)
     pub first_case: Option<(u32, FuzzCase)>,
     /// Gas usage for all cases this worker ran
@@ -191,7 +191,7 @@ pub struct FuzzWorker {
 }
 
 impl FuzzWorker {
-    pub fn new(worker_id: u32) -> Self {
+    pub fn new(worker_id: usize) -> Self {
         Self { worker_id, ..Default::default() }
     }
 }

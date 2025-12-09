@@ -221,7 +221,7 @@ impl CorpusMetrics {
 /// Per-worker corpus manager.
 pub struct WorkerCorpus {
     /// Worker Id
-    id: u32,
+    id: usize,
     /// In-memory corpus entries populated from the persisted files and
     /// runs administered by this worker.
     in_memory_corpus: Vec<CorpusEntry>,
@@ -252,7 +252,7 @@ pub struct WorkerCorpus {
 
 impl WorkerCorpus {
     pub fn new(
-        id: u32,
+        id: usize,
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         // Only required by master worker (id = 0) to replay existing corpus.
@@ -657,10 +657,10 @@ impl WorkerCorpus {
         {
             let corpus = &self.in_memory_corpus[index];
 
-            let uuid = corpus.uuid;
-            trace!(target: "corpus", "evict corpus {uuid}");
-
+            // TODO(dani): metadata?
+            /*
             // Flush to disk the seed metadata at the time of eviction.
+            let uuid = corpus.uuid;
             let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             foundry_common::fs::write_json_file(
                 self.worker_dir
@@ -671,6 +671,8 @@ impl WorkerCorpus {
                     .as_path(),
                 &corpus,
             )?;
+            */
+            trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
 
             // Remove corpus from memory.
             self.in_memory_corpus.remove(index);

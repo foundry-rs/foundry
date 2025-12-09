@@ -94,7 +94,7 @@ impl FuzzedExecutor {
             .map(|worker_id| {
                 let _guard = tokio_handle.enter();
                 self.run_worker(
-                    worker_id,
+                    worker_id as usize,
                     func,
                     fuzz_fixtures,
                     address,
@@ -181,13 +181,9 @@ impl FuzzedExecutor {
     ) -> FuzzTestResult {
         let mut result = FuzzTestResult::default();
 
-        // Extract failed worker first if it exists
-        let failed_worker = shared_state.failed_worked_id().and_then(|id| {
-            workers.iter().position(|w| w.worker_id == id).map(|idx| workers.swap_remove(idx))
-        });
-
         // Process failure first if exists
-        if let Some(failed_worker) = failed_worker {
+        if let Some(failed_worker) = shared_state.failed_worker_id() {
+            let failed_worker = workers.swap_remove(failed_worker);
             result.success = false;
             let (calldata, call) = failed_worker.counterexample;
             result.labels = call.labels;
@@ -281,7 +277,7 @@ impl FuzzedExecutor {
     #[instrument(name = "fuzz_worker", skip_all, fields(id = worker_id))]
     fn run_worker(
         &self,
-        worker_id: u32,
+        worker_id: usize,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
         address: Address,
@@ -354,7 +350,7 @@ impl FuzzedExecutor {
 
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
         // time.
-        let sync_offset = worker_id * 100;
+        let sync_offset = worker_id as u32 * 100;
         let mut runs_since_sync = 0;
         let sync_threshold = SYNC_INTERVAL + sync_offset;
         let mut last_metrics_report = Instant::now();
