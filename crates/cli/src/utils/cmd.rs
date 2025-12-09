@@ -386,6 +386,8 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput) -> Result<()> {
     Ok(())
 }
 
+/// Traverses all files at `folder_path`, parses any JSON ABI files found,
+/// and caches their function/event/error signatures to the local signatures cache.
 pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
     let Some(cache_dir) = Config::foundry_cache_dir() else {
         eyre::bail!("Failed to get `cache_dir` to generate local signatures.");
