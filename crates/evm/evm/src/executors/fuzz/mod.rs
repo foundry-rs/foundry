@@ -92,8 +92,6 @@ struct SharedFuzzState {
     ///
     /// This ID is then used to correctly extract the failure reason and counterexample.
     failed_worker_id: OnceLock<usize>,
-    /// Maximum number of runs
-    max_runs: u32,
     /// Total rejects across workers
     total_rejects: Arc<AtomicU32>,
     /// Fuzz timer
@@ -105,17 +103,11 @@ struct SharedFuzzState {
 }
 
 impl SharedFuzzState {
-    fn new(
-        state: EvmFuzzState,
-        max_runs: u32,
-        timeout: Option<u32>,
-        early_exit: EarlyExit,
-    ) -> Self {
+    fn new(state: EvmFuzzState, timeout: Option<u32>, early_exit: EarlyExit) -> Self {
         Self {
             state,
             total_runs: Arc::new(AtomicU32::new(0)),
             failed_worker_id: OnceLock::new(),
-            max_runs,
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
             early_exit,
@@ -123,20 +115,9 @@ impl SharedFuzzState {
         }
     }
 
-    /// Tries to increment the number of runs and returns `Some` if successful with the new value.
-    fn try_increment_runs(&self) -> Option<u32> {
-        let total = self.total_runs.fetch_add(1, Ordering::Relaxed) + 1;
-        if total <= self.max_runs {
-            Some(total)
-        } else {
-            // We went over the limit, decrement back
-            self.total_runs.fetch_sub(1, Ordering::Relaxed);
-            None
-        }
-    }
-
-    fn increment_runs(&self) {
-        self.total_runs.fetch_add(1, Ordering::Relaxed);
+    /// Increments the number of runs and returns the new value.
+    fn increment_runs(&self) -> u32 {
+        self.total_runs.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Increments and returns the new value of the number of rejected tests.
@@ -146,16 +127,7 @@ impl SharedFuzzState {
 
     /// Returns `true` if the worker should continue running.
     fn should_continue(&self) -> bool {
-        if self.early_exit.should_stop() {
-            return false;
-        }
-
-        if self.timer.is_enabled() {
-            !self.timer.is_timed_out()
-        } else {
-            let total_runs = self.total_runs.load(Ordering::Relaxed);
-            total_runs < self.max_runs
-        }
+        !(self.early_exit.should_stop() || self.timer.is_timed_out())
     }
 
     /// Returns true if the worker was able to claim the failure, false if failure was set by
@@ -219,13 +191,12 @@ impl FuzzedExecutor {
         tokio_handle: &tokio::runtime::Handle,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
-        let shared_state =
-            SharedFuzzState::new(state, self.config.runs, self.config.timeout, early_exit.clone());
+        let shared_state = SharedFuzzState::new(state, self.config.timeout, early_exit.clone());
 
         // Determine number of workers
         let num_workers = self.num_workers();
+        debug!(num_workers);
         // Use single worker for deterministic behavior when replaying persisted failures
-        let persisted_failure = self.persisted_failure.take();
         let workers = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
@@ -238,7 +209,6 @@ impl FuzzedExecutor {
                     rd,
                     &shared_state,
                     progress,
-                    if worker_id == 0 { persisted_failure.clone() } else { None },
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -409,7 +379,6 @@ impl FuzzedExecutor {
         rd: &RevertDecoder,
         shared_state: &SharedFuzzState,
         progress: Option<&ProgressBar>,
-        mut persisted_failure: Option<BaseCounterExample>,
     ) -> Result<WorkerState> {
         // Prepare
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
@@ -472,6 +441,12 @@ impl FuzzedExecutor {
             TestRunner::new(runner_config)
         };
 
+        let mut persisted_failure = if self.persisted_failure.is_some() && worker_id == 0 {
+            self.persisted_failure.as_ref()
+        } else {
+            None
+        };
+
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
         // time.
         let sync_offset = worker_id as u32 * 100;
@@ -482,11 +457,12 @@ impl FuzzedExecutor {
         // 1. Global state allows (not timed out, not at global limit, no failure found)
         // 2. Worker hasn't reached its specific run limit
         'stop: while shared_state.should_continue() && worker.runs < worker_runs {
-            // Only the master worker replays the persisted failure, if any.
+            // If counterexample recorded, replay it first, without incrementing runs.
             let input = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
+                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
-                failure.calldata
+                failure.calldata.clone()
             } else {
                 runs_since_sync += 1;
                 if runs_since_sync >= sync_threshold {
@@ -515,40 +491,45 @@ impl FuzzedExecutor {
                 }
             };
 
+            let mut inc_runs = || {
+                let total_runs = shared_state.increment_runs();
+                debug_assert!(
+                    total_runs <= self.config.runs,
+                    "worker runs were not distributed correctly"
+                );
+                worker.runs += 1;
+                if let Some(progress) = progress {
+                    progress.inc(1);
+                }
+                total_runs
+            };
+
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             match self.single_fuzz(address, input, &mut corpus) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
-                        // Only increment runs for successful non-rejected cases
-                        // Check if we should actually count this run
-                        let Some(total_runs) = shared_state.try_increment_runs() else {
-                            // We've exceeded the run limit, stop
-                            break 'stop;
-                        };
-                        worker.runs += 1;
+                        let total_runs = inc_runs();
 
-                        if let Some(progress) = progress {
-                            progress.inc(1);
-                            if self.config.corpus.collect_edge_coverage() && worker_id == 0 {
+                        if worker_id == 0 && self.config.corpus.collect_edge_coverage() {
+                            if let Some(progress) = progress {
                                 corpus.sync_metrics(&shared_state.global_corpus_metrics);
                                 progress
                                     .set_message(format!("{}", shared_state.global_corpus_metrics));
+                            } else if last_metrics_report.elapsed()
+                                > DURATION_BETWEEN_METRICS_REPORT
+                            {
+                                corpus.sync_metrics(&shared_state.global_corpus_metrics);
+                                // Display metrics inline.
+                                let metrics = json!({
+                                    "timestamp": SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)?
+                                        .as_secs(),
+                                    "test": func.name,
+                                    "metrics": shared_state.global_corpus_metrics.load(),
+                                });
+                                let _ = sh_println!("{metrics}");
+                                last_metrics_report = Instant::now();
                             }
-                        } else if self.config.corpus.collect_edge_coverage()
-                            && worker_id == 0
-                            && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
-                        {
-                            corpus.sync_metrics(&shared_state.global_corpus_metrics);
-                            // Display metrics inline.
-                            let metrics = json!({
-                                "timestamp": SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)?
-                                    .as_secs(),
-                                "test": func.name,
-                                "metrics": shared_state.global_corpus_metrics.load(),
-                            });
-                            let _ = sh_println!("{metrics}");
-                            last_metrics_report = Instant::now();
                         }
 
                         worker.gas_by_case.push((case.case.gas, case.case.stipend));
@@ -582,14 +563,8 @@ impl FuzzedExecutor {
                         counterexample: outcome,
                         ..
                     }) => {
-                        // Count this as a run since we found a counterexample
-                        // We always count counterexamples regardless of run limit
-                        shared_state.increment_runs();
-                        worker.runs += 1;
+                        inc_runs();
 
-                        if let Some(progress) = progress {
-                            progress.inc(1);
-                        }
                         let reason = rd.maybe_decode(&outcome.1.result, status);
                         worker.logs.extend(outcome.1.logs.clone());
                         worker.counterexample = outcome;
@@ -639,12 +614,7 @@ impl FuzzedExecutor {
         Ok(worker)
     }
 
-    /// Determines the number of workers to run
-    ///
-    /// Depends on:
-    /// - Whether we're replaying a persisted failure
-    /// - `--jobs` specified by the user
-    /// - Available threads
+    /// Determines the number of workers to run.
     fn num_workers(&self) -> u32 {
         if self.persisted_failure.is_some() {
             1

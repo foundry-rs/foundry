@@ -248,7 +248,7 @@ contract CounterTest is Test {
    "#,
     );
     // Tests should fail and record counterexample with value 200.
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest
@@ -775,12 +775,12 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
     );
 
     // Helper to create expected output for a test failure
-    let expected_fail = |test_name: &str, type_sig: &str, value: &str, runs: u32| -> String {
+    let expected_fail = |test_name: &str, type_sig: &str, value: &str| -> String {
         format!(
             r#"No files changed, compilation skipped
 
 Ran 1 test for test/MagicFuzz.t.sol:MagicTest
-[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[{value}]] {test_name}({type_sig}) (runs: {runs}, [AVG_GAS])
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[{value}]] {test_name}({type_sig}) (runs: [..], [AVG_GAS])
 [..]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
@@ -797,8 +797,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     let mut test_literal = |seed: u32,
                             test_name: &'static str,
                             type_sig: &'static str,
-                            expected_value: &'static str,
-                            expected_runs: u32| {
+                            expected_value: &'static str| {
         // the fuzzer is UNABLE to find a breaking input (fast) when NOT seeding from the AST
         prj.update_config(|config| {
             config.fuzz.runs = 100;
@@ -812,24 +811,23 @@ Encountered a total of 1 failing tests, 0 tests succeeded
             config.fuzz.dictionary.max_fuzz_dictionary_literals = 10_000;
         });
 
-        let expected_output = expected_fail(test_name, type_sig, expected_value, expected_runs);
+        let expected_output = expected_fail(test_name, type_sig, expected_value);
         cmd.forge_fuse()
             .args(["test", "--match-test", test_name])
             .assert_failure()
             .stdout_eq(expected_output);
     };
 
-    test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F", 28);
-    test_literal(200, "testFuzz_Number", "uint64", "1122334455 [1.122e9]", 5);
-    test_literal(300, "testFuzz_Integer", "int32", "-777", 0);
+    test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    test_literal(200, "testFuzz_Number", "uint64", "1122334455 [1.122e9]");
+    test_literal(300, "testFuzz_Integer", "int32", "-777");
     test_literal(
         400,
         "testFuzz_Word",
         "bytes32",
         "0x6162636431323334000000000000000000000000000000000000000000000000", /* bytes32("abcd1234") */
-        7,
     );
-    test_literal(500, "testFuzz_BytesFromHex", "bytes", "0xdeadbeef", 5);
-    test_literal(600, "testFuzz_String", "string", "\"xyzzy\"", 35);
-    test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79", 19); // abi.encodePacked("xyzzy")
+    test_literal(500, "testFuzz_BytesFromHex", "bytes", "0xdeadbeef");
+    test_literal(600, "testFuzz_String", "string", "\"xyzzy\"");
+    test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79"); // abi.encodePacked("xyzzy")
 });
