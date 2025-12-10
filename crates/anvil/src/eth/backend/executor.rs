@@ -43,7 +43,7 @@ use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, Inspector,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, TxEnv},
+    context::{Block as RevmBlock, Cfg, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,
@@ -119,9 +119,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub validator: &'a V,
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
-    pub block_env: BlockEnv,
-    /// The configuration environment and spec id
-    pub cfg_env: CfgEnv,
+    pub evm_env: EvmEnv,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: u64,
@@ -149,23 +147,24 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut cumulative_gas_used = 0u64;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
-        let gas_limit = self.block_env.gas_limit;
+        let gas_limit = self.evm_env.block_env().gas_limit;
         let parent_hash = self.parent_hash;
-        let block_number = self.block_env.number;
-        let difficulty = self.block_env.difficulty;
-        let mix_hash = self.block_env.prevrandao;
-        let beneficiary = self.block_env.beneficiary;
-        let timestamp = self.block_env.timestamp;
-        let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
-            Some(self.block_env.basefee)
+        let block_number = self.evm_env.block_env().number;
+        let difficulty = self.evm_env.block_env().difficulty;
+        let mix_hash = self.evm_env.block_env().prevrandao;
+        let beneficiary = self.evm_env.block_env().beneficiary;
+        let timestamp = self.evm_env.block_env().timestamp;
+        let base_fee = if self.evm_env.cfg_env().spec.is_enabled_in(SpecId::LONDON) {
+            Some(self.evm_env.block_env().basefee)
         } else {
             None
         };
 
-        let is_shanghai = self.cfg_env.spec >= SpecId::SHANGHAI;
-        let is_cancun = self.cfg_env.spec >= SpecId::CANCUN;
-        let is_prague = self.cfg_env.spec >= SpecId::PRAGUE;
-        let excess_blob_gas = if is_cancun { self.block_env.blob_excess_gas() } else { None };
+        let is_shanghai = self.evm_env.cfg_env().spec >= SpecId::SHANGHAI;
+        let is_cancun = self.evm_env.cfg_env().spec >= SpecId::CANCUN;
+        let is_prague = self.evm_env.cfg_env().spec >= SpecId::PRAGUE;
+        let excess_blob_gas =
+            if is_cancun { self.evm_env.block_env().blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
         for tx in self.into_iter() {
@@ -305,7 +304,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(tx.transaction.as_ref()).into());
         }
 
-        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.networks)
+        Env::new(self.evm_env.clone(), tx_env, self.networks)
     }
 }
 
