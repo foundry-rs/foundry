@@ -2678,12 +2678,11 @@ impl MemberOrCallArgs {
 }
 
 #[derive(Debug, Clone)]
-#[expect(dead_code)]
 enum AttributeKind<'ast> {
-    Visibility(ast::Visibility),
-    StateMutability(ast::StateMutability),
+    Visibility,
+    StateMutability,
     Virtual,
-    Override(&'ast ast::Override<'ast>),
+    Override,
     Modifier(&'ast ast::Modifier<'ast>),
 }
 
@@ -2757,14 +2756,14 @@ impl<'ast> AttributeCommentMapper<'ast> {
                 first_pos = v.span.lo()
             }
             self.attributes
-                .push(AttributeInfo { kind: AttributeKind::Visibility(*v), span: v.span });
+                .push(AttributeInfo { kind: AttributeKind::Visibility, span: v.span });
         }
         if let Some(sm) = header.state_mutability {
             if sm.span.lo() < first_pos {
                 first_pos = sm.span.lo()
             }
             self.attributes
-                .push(AttributeInfo { kind: AttributeKind::StateMutability(*sm), span: sm.span });
+                .push(AttributeInfo { kind: AttributeKind::StateMutability, span: sm.span });
         }
         if let Some(span) = header.virtual_ {
             if span.lo() < first_pos {
@@ -2776,7 +2775,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
             if o.span.lo() < first_pos {
                 first_pos = o.span.lo()
             }
-            self.attributes.push(AttributeInfo { kind: AttributeKind::Override(o), span: o.span });
+            self.attributes.push(AttributeInfo { kind: AttributeKind::Override, span: o.span });
         }
         for m in header.modifiers.iter() {
             if m.span().lo() < first_pos {
