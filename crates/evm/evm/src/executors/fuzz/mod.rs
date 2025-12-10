@@ -494,7 +494,7 @@ impl FuzzedExecutor {
             let mut inc_runs = || {
                 let total_runs = shared_state.increment_runs();
                 debug_assert!(
-                    total_runs <= self.config.runs,
+                    shared_state.timer.is_enabled() || total_runs <= self.config.runs,
                     "worker runs were not distributed correctly"
                 );
                 worker.runs += 1;

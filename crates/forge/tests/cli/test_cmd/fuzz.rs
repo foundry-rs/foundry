@@ -88,7 +88,7 @@ forgetest_init!(test_fuzz_timeout, |prj, cmd| {
 import {Test} from "forge-std/Test.sol";
 
 contract FuzzTimeoutTest is Test {
-    /// forge-config: default.fuzz.max-test-rejects = 50000
+    /// forge-config: default.fuzz.max-test-rejects = 0
     /// forge-config: default.fuzz.timeout = 1
     function test_fuzz_bound(uint256 a) public pure {
         vm.assume(a == 0);
@@ -97,7 +97,7 @@ contract FuzzTimeoutTest is Test {
    "#,
     );
 
-    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-j2"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -186,7 +186,7 @@ contract Counter {
     );
 
     // Tests should fail as revert happens in cheatcode (assert) and test (require) contract.
-    cmd.assert_failure().stdout_eq(str![[r#"
+    cmd.args(["-j1"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
