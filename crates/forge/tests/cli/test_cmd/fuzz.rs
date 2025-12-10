@@ -324,7 +324,7 @@ contract CounterTest is Test {
    "#,
     );
     // Test should fail with replayed counterexample 200 (0 runs).
-    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest

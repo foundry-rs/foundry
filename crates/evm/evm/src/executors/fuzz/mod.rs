@@ -441,11 +441,7 @@ impl FuzzedExecutor {
             TestRunner::new(runner_config)
         };
 
-        let mut persisted_failure = if self.persisted_failure.is_some() && worker_id == 0 {
-            self.persisted_failure.as_ref()
-        } else {
-            None
-        };
+        let mut persisted_failure = self.persisted_failure.as_ref().filter(|_| worker_id == 0);
 
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
         // time.
@@ -616,9 +612,7 @@ impl FuzzedExecutor {
 
     /// Determines the number of workers to run.
     fn num_workers(&self) -> u32 {
-        if self.persisted_failure.is_some() {
-            1
-        } else if let Some(threads) = self.config.threads {
+        if let Some(threads) = self.config.threads {
             threads as u32
         } else {
             rayon::current_num_threads() as u32
