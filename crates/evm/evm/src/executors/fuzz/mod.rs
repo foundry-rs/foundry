@@ -182,8 +182,9 @@ impl FuzzedExecutor {
         let mut result = FuzzTestResult::default();
 
         // Process failure first if exists
-        if let Some(failed_worker) = shared_state.failed_worker_id() {
-            let failed_worker = workers.swap_remove(failed_worker);
+        if let Some(failed_worker_id) = shared_state.failed_worker_id() {
+            let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
+            let failed_worker = workers.swap_remove(failed_worker_idx);
             result.success = false;
             let (calldata, call) = failed_worker.counterexample;
             result.labels = call.labels;
@@ -234,7 +235,7 @@ impl FuzzedExecutor {
 
             // Only retrieve from worker 0 i.e master worker which is responsible for replaying
             // persisted corpus.
-            if worker.worker_id == 0 {
+            if worker.id == 0 {
                 result.failed_corpus_replays = worker.failed_corpus_replays;
             }
         }
@@ -336,9 +337,8 @@ impl FuzzedExecutor {
                 seed
             } else {
                 // Derive a worker-specific seed using keccak256(seed || worker_id)
-                let mut seed_data = [0u8; 36]; // 32 bytes for seed + 4 bytes for worker_id
-                seed_data[..32].copy_from_slice(&seed.to_be_bytes::<32>());
-                seed_data[32..36].copy_from_slice(&worker_id.to_be_bytes());
+                let seed_data =
+                    [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
                 U256::from_be_bytes(keccak256(seed_data).0)
             };
             trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
@@ -383,7 +383,7 @@ impl FuzzedExecutor {
                     Err(err) => {
                         worker.failure = Some(TestCaseError::fail(format!(
                             "failed to generate fuzzed input in worker {}: {err}",
-                            worker.worker_id
+                            worker.id
                         )));
                         shared_state.try_claim_failure(worker_id);
                         break 'stop;

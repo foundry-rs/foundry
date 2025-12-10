@@ -157,7 +157,7 @@ impl SharedFuzzState {
 #[derive(Default)]
 pub struct FuzzWorker {
     /// Worker identifier
-    pub worker_id: usize,
+    pub id: usize,
     /// First fuzz case this worker encountered (with global run number)
     pub first_case: Option<(u32, FuzzCase)>,
     /// Gas usage for all cases this worker ran
@@ -192,6 +192,6 @@ pub struct FuzzWorker {
 
 impl FuzzWorker {
     pub fn new(worker_id: usize) -> Self {
-        Self { worker_id, ..Default::default() }
+        Self { id: worker_id, ..Default::default() }
     }
 }
