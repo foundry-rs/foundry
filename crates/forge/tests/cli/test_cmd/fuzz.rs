@@ -804,7 +804,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
             config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
             config.fuzz.seed = Some(U256::from(seed));
         });
-        cmd.forge_fuse().args(["test", "--match-test", test_name]).assert_success();
+        cmd.forge_fuse().args(["test", "--match-test", test_name, "-j1"]).assert_success();
 
         // the fuzzer is ABLE to find a breaking input when seeding from the AST
         prj.update_config(|config| {
@@ -813,7 +813,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
         let expected_output = expected_fail(test_name, type_sig, expected_value);
         cmd.forge_fuse()
-            .args(["test", "--match-test", test_name])
+            .args(["test", "--match-test", test_name, "-j1"])
             .assert_failure()
             .stdout_eq(expected_output);
     };
