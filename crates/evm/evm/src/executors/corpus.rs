@@ -146,7 +146,7 @@ impl CorpusEntry {
     }
 }
 
-#[derive(Serialize, Default)]
+#[derive(Default)]
 pub(crate) struct GlobalCorpusMetrics {
     // Number of edges seen during the invariant run.
     cumulative_edges_seen: AtomicUsize,
@@ -165,7 +165,7 @@ impl fmt::Display for GlobalCorpusMetrics {
 }
 
 impl GlobalCorpusMetrics {
-    fn load(&self) -> CorpusMetrics {
+    pub(crate) fn load(&self) -> CorpusMetrics {
         CorpusMetrics {
             cumulative_edges_seen: self.cumulative_edges_seen.load(Ordering::Relaxed),
             cumulative_features_seen: self.cumulative_features_seen.load(Ordering::Relaxed),
@@ -931,6 +931,7 @@ impl WorkerCorpus {
         Ok(())
     }
 
+    // TODO(dani): currently only master syncs metrics?
     /// Syncs local metrics with global corpus metrics by calculating and applying deltas.
     pub(crate) fn sync_metrics(&mut self, global_corpus_metrics: &GlobalCorpusMetrics) {
         // Calculate delta metrics since last sync.

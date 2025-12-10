@@ -1,15 +1,15 @@
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor,
-    corpus::WorkerCorpus,
-    fuzz::types::{FuzzWorker, SharedFuzzState},
+    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
+    corpus::{GlobalCorpusMetrics, WorkerCorpus},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256, keccak256};
+use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
+    Breakpoints,
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::{RevertDecoder, SkipReason},
 };
@@ -19,6 +19,7 @@ use foundry_evm_fuzz::{
     FuzzFixtures, FuzzTestResult,
     strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
 };
+use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::{
     strategy::Strategy,
@@ -26,13 +27,149 @@ use proptest::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json::json;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU32, Ordering},
+    },
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
 const SYNC_INTERVAL: u32 = 1000;
+
+#[derive(Default)]
+struct WorkerState {
+    /// Worker identifier
+    id: usize,
+    /// First fuzz case this worker encountered (with global run number)
+    first_case: Option<(u32, FuzzCase)>,
+    /// Gas usage for all cases this worker ran
+    gas_by_case: Vec<(u64, u64)>,
+    /// Counterexample if this worker found one
+    counterexample: (Bytes, RawCallResult),
+    /// Traces collected by this worker
+    ///
+    /// Stores up to `max_traces_to_collect` which is `config.gas_report_samples / num_workers`
+    traces: Vec<SparsedTraceArena>,
+    /// Last breakpoints from this worker
+    breakpoints: Option<Breakpoints>,
+    /// Coverage collected by this worker
+    coverage: Option<HitMaps>,
+    /// Logs from all cases this worker ran
+    logs: Vec<Log>,
+    /// Deprecated cheatcodes seen by this worker
+    deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+    /// Number of runs this worker completed
+    runs: u32,
+    /// Failure reason if this worker failed
+    failure: Option<TestCaseError>,
+    /// Last run timestamp in milliseconds
+    ///
+    /// Used to identify which worker ran last and collect its traces and call breakpoints
+    last_run_timestamp: u128,
+    /// Failed corpus replays
+    failed_corpus_replays: usize,
+}
+
+impl WorkerState {
+    fn new(worker_id: usize) -> Self {
+        Self { id: worker_id, ..Default::default() }
+    }
+}
+
+/// Shared state for coordinating parallel fuzz workers
+struct SharedFuzzState {
+    state: EvmFuzzState,
+    /// Total runs across workers
+    total_runs: Arc<AtomicU32>,
+    /// Found failure
+    ///
+    /// The worker that found the failure sets it's ID.
+    ///
+    /// This ID is then used to correctly extract the failure reason and counterexample.
+    failed_worker_id: OnceLock<usize>,
+    /// Maximum number of runs
+    max_runs: u32,
+    /// Total rejects across workers
+    total_rejects: Arc<AtomicU32>,
+    /// Fuzz timer
+    timer: FuzzTestTimer,
+    /// Fail Fast coordinator
+    early_exit: EarlyExit,
+    /// Global corpus metrics
+    global_corpus_metrics: GlobalCorpusMetrics,
+}
+
+impl SharedFuzzState {
+    fn new(
+        state: EvmFuzzState,
+        max_runs: u32,
+        timeout: Option<u32>,
+        early_exit: EarlyExit,
+    ) -> Self {
+        Self {
+            state,
+            total_runs: Arc::new(AtomicU32::new(0)),
+            failed_worker_id: OnceLock::new(),
+            max_runs,
+            total_rejects: Arc::new(AtomicU32::new(0)),
+            timer: FuzzTestTimer::new(timeout),
+            early_exit,
+            global_corpus_metrics: GlobalCorpusMetrics::default(),
+        }
+    }
+
+    /// Tries to increment the number of runs and returns `Some` if successful with the new value.
+    fn try_increment_runs(&self) -> Option<u32> {
+        let total = self.total_runs.fetch_add(1, Ordering::Relaxed) + 1;
+        if total <= self.max_runs {
+            Some(total)
+        } else {
+            // We went over the limit, decrement back
+            self.total_runs.fetch_sub(1, Ordering::Relaxed);
+            None
+        }
+    }
+
+    fn increment_runs(&self) {
+        self.total_runs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments and returns the new value of the number of rejected tests.
+    fn increment_rejects(&self) -> u32 {
+        self.total_rejects.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Returns `true` if the worker should continue running.
+    fn should_continue(&self) -> bool {
+        if self.early_exit.should_stop() {
+            return false;
+        }
+
+        if self.timer.is_enabled() {
+            !self.timer.is_timed_out()
+        } else {
+            let total_runs = self.total_runs.load(Ordering::Relaxed);
+            total_runs < self.max_runs
+        }
+    }
+
+    /// Returns true if the worker was able to claim the failure, false if failure was set by
+    /// another worker
+    fn try_claim_failure(&self, worker_id: usize) -> bool {
+        let mut claimed = false;
+        let _ = self.failed_worker_id.get_or_init(|| {
+            claimed = true;
+            self.early_exit.record_exit();
+            worker_id
+        });
+        claimed
+    }
+}
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
 ///
@@ -175,23 +312,49 @@ impl FuzzedExecutor {
     /// Aggregates the results from all workers
     fn aggregate_results(
         &self,
-        mut workers: Vec<FuzzWorker>,
+        mut workers: Vec<WorkerState>,
         func: &Function,
         shared_state: &SharedFuzzState,
     ) -> FuzzTestResult {
         let mut result = FuzzTestResult::default();
 
-        // Process failure first if exists
-        if let Some(failed_worker_id) = shared_state.failed_worker_id() {
-            let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
-            let failed_worker = workers.swap_remove(failed_worker_idx);
+        // Find first case and last run worker. Set `failed_corpus_replays`.
+        let mut first_case_candidate: Option<(u32, FuzzCase)> = None;
+        let mut last_run_worker: Option<&WorkerState> = None;
+        let mut last_run_timestamp = 0u128;
+        for worker in &workers {
+            if let Some((run, ref case)) = worker.first_case
+                && first_case_candidate.as_ref().is_none_or(|&(r, _)| run < r)
+            {
+                first_case_candidate = Some((run, case.clone()));
+            }
+
+            if worker.last_run_timestamp > last_run_timestamp {
+                last_run_timestamp = worker.last_run_timestamp;
+                last_run_worker = Some(worker);
+            }
+
+            // Only retrieve from worker 0 i.e master worker which is responsible for replaying
+            // persisted corpus.
+            if worker.id == 0 {
+                result.failed_corpus_replays = worker.failed_corpus_replays;
+            }
+        }
+        result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
+        let last_run_worker = last_run_worker.expect("at least one worker");
+
+        if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
             result.success = false;
-            let (calldata, call) = failed_worker.counterexample;
+
+            let failed_worker_idx = workers.iter().position(|w| w.id == failed_worker_id).unwrap();
+            let failed_worker = &mut workers[failed_worker_idx];
+
+            let (calldata, call) = std::mem::take(&mut failed_worker.counterexample);
             result.labels = call.labels;
             result.traces = call.traces.clone();
             result.breakpoints = call.cheatcodes.map(|c| c.breakpoints);
 
-            match failed_worker.failure {
+            match &failed_worker.failure {
                 Some(TestCaseError::Fail(reason)) => {
                     let reason = reason.to_string();
                     result.reason = (!reason.is_empty()).then_some(reason);
@@ -212,57 +375,18 @@ impl FuzzedExecutor {
             }
         } else {
             result.success = true;
-        }
-
-        // Single pass aggregation for remaining workers
-        let mut first_case_candidate: Option<(u32, FuzzCase)> = None;
-        let mut last_run_worker: Option<&FuzzWorker> = None;
-        let mut last_run_timestamp = 0u128;
-
-        for worker in &workers {
-            // Track first case (compare without cloning)
-            if let Some((run, case)) = &worker.first_case
-                && first_case_candidate.as_ref().is_none_or(|(r, _)| run < r)
-            {
-                first_case_candidate = Some((*run, case.clone()));
-            }
-
-            // Track last run worker (keep reference, no clone)
-            if worker.last_run_timestamp > last_run_timestamp {
-                last_run_timestamp = worker.last_run_timestamp;
-                last_run_worker = Some(worker);
-            }
-
-            // Only retrieve from worker 0 i.e master worker which is responsible for replaying
-            // persisted corpus.
-            if worker.id == 0 {
-                result.failed_corpus_replays = worker.failed_corpus_replays;
-            }
-        }
-
-        // Set first case
-        result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
-
-        // If no failure, set traces and breakpoints from last run
-        if result.success
-            && let Some(last_worker) = last_run_worker
-        {
-            result.traces = last_worker.traces.last().cloned();
-            result.breakpoints = last_worker.breakpoints.clone();
+            result.traces = last_run_worker.traces.last().cloned();
+            result.breakpoints = last_run_worker.breakpoints.clone();
         }
 
         for mut worker in workers {
             result.gas_by_case.append(&mut worker.gas_by_case);
             result.logs.append(&mut worker.logs);
             result.gas_report_traces.extend(worker.traces.into_iter().map(|t| t.arena));
-
-            // Merge coverage
             HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
-
             result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
         }
 
-        // Check for skip reason
         if let Some(reason) = &result.reason
             && let Some(reason) = SkipReason::decode_self(reason)
         {
@@ -286,7 +410,7 @@ impl FuzzedExecutor {
         shared_state: &SharedFuzzState,
         progress: Option<&ProgressBar>,
         mut persisted_failure: Option<BaseCounterExample>,
-    ) -> Result<FuzzWorker> {
+    ) -> Result<WorkerState> {
         // Prepare
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
@@ -310,7 +434,7 @@ impl FuzzedExecutor {
             None, // fuzzed_contracts for invariant tests
         )?;
 
-        let mut worker = FuzzWorker::new(worker_id);
+        let mut worker = WorkerState::new(worker_id);
         let num_workers = self.num_workers();
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples / num_workers);
@@ -397,10 +521,10 @@ impl FuzzedExecutor {
                     FuzzOutcome::Case(case) => {
                         // Only increment runs for successful non-rejected cases
                         // Check if we should actually count this run
-                        if shared_state.try_increment_runs().is_none() {
+                        let Some(total_runs) = shared_state.try_increment_runs() else {
                             // We've exceeded the run limit, stop
                             break 'stop;
-                        }
+                        };
                         worker.runs += 1;
 
                         if let Some(progress) = progress {
@@ -411,8 +535,8 @@ impl FuzzedExecutor {
                                     .set_message(format!("{}", shared_state.global_corpus_metrics));
                             }
                         } else if self.config.corpus.collect_edge_coverage()
-                            && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
                             && worker_id == 0
+                            && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
                         {
                             corpus.sync_metrics(&shared_state.global_corpus_metrics);
                             // Display metrics inline.
@@ -421,17 +545,16 @@ impl FuzzedExecutor {
                                     .duration_since(UNIX_EPOCH)?
                                     .as_secs(),
                                 "test": func.name,
-                                "metrics": &shared_state.global_corpus_metrics,
+                                "metrics": shared_state.global_corpus_metrics.load(),
                             });
-                            let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                            let _ = sh_println!("{metrics}");
                             last_metrics_report = Instant::now();
                         }
 
                         worker.gas_by_case.push((case.case.gas, case.case.stipend));
 
                         if worker.first_case.is_none() {
-                            let total_runs = shared_state.total_runs();
-                            worker.first_case.replace((total_runs, case.case));
+                            worker.first_case = Some((total_runs, case.case));
                         }
 
                         if let Some(call_traces) = case.traces {
@@ -439,11 +562,16 @@ impl FuzzedExecutor {
                                 worker.traces.pop();
                             }
                             worker.traces.push(call_traces);
-                            worker.breakpoints.replace(case.breakpoints);
+                            worker.breakpoints = Some(case.breakpoints);
                         }
 
+                        // Always store logs from the last run in test_data.logs for display at
+                        // verbosity >= 2. When show_logs is true,
+                        // accumulate all logs. When false, only keep the last run's logs.
                         if self.config.show_logs {
                             worker.logs.extend(case.logs);
+                        } else {
+                            worker.logs = case.logs;
                         }
 
                         HitMaps::merge_opt(&mut worker.coverage, case.coverage);
@@ -477,14 +605,21 @@ impl FuzzedExecutor {
                         break 'stop;
                     }
                     TestCaseError::Reject(_) => {
-                        worker.rejects += 1;
-                        shared_state.increment_rejects();
-                        if self.config.max_test_rejects > 0
-                            && shared_state.total_rejects() >= self.config.max_test_rejects
+                        let max = self.config.max_test_rejects;
+
+                        let total = shared_state.increment_rejects();
+
+                        // Update progress bar to reflect rejected runs.
+                        // TODO(dani): (pre-existing) conflicts with corpus metrics `set_message`
+                        if !self.config.corpus.collect_edge_coverage()
+                            && let Some(progress) = progress
                         {
-                            worker.failure = Some(TestCaseError::reject(
-                                FuzzError::TooManyRejects(self.config.max_test_rejects),
-                            ));
+                            progress.set_message(format!("([{total}] rejected)"));
+                        }
+
+                        if max > 0 && total > max {
+                            worker.failure =
+                                Some(TestCaseError::reject(FuzzError::TooManyRejects(max)));
                             shared_state.try_claim_failure(worker_id);
                             break 'stop;
                         }
