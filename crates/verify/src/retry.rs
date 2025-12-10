@@ -16,7 +16,7 @@ pub struct RetryArgs {
     #[arg(
         long,
         value_parser = RangedU64ValueParser::<u32>::new().range(1..),
-        default_value = "5",
+        default_value = "10",
     )]
     pub retries: u32,
 
@@ -53,7 +53,7 @@ mod tests {
         assert_eq!(args.delay, 5);
 
         let args = RetryArgs::parse_from(["foundry-cli", "--delay", "10"]);
-        assert_eq!(args.retries, 5);
+        assert_eq!(args.retries, 10);
         assert_eq!(args.delay, 10);
 
         let args = RetryArgs::parse_from(["foundry-cli", "--retries", "10", "--delay", "10"]);
