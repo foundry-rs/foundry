@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_op_hardforks::OpHardfork;
-use alloy_primitives::{B256, U256, utils::Unit};
+use alloy_primitives::{Address, B256, U256, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
@@ -168,6 +168,21 @@ pub struct NodeArgs {
     )]
     pub load_state: Option<SerializableState>,
 
+    /// Run in offline mode when forking.
+    ///
+    /// This prevents any RPC requests and requires a previously saved state to be loaded with
+    /// `--load-state`.
+    #[arg(long, requires = "load_state", requires = "fork_url")]
+    pub offline: bool,
+
+    /// Fund specific accounts with custom balances on startup.
+    ///
+    /// Accepts multiple address:balance pairs where balance is in ETH.
+    /// Example: --fund-accounts 0x1234...5678:1000 0xabcd...ef01:5000
+    /// This will fund the first address with 1000 ETH and the second with 5000 ETH.
+    #[arg(long, value_name = "ADDRESS:AMOUNT", value_delimiter = ' ', num_args = 1..)]
+    pub fund_accounts: Vec<String>,
+
     #[arg(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
     pub ipc: Option<Option<String>>,
 
@@ -215,6 +230,9 @@ impl NodeArgs {
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let compute_units_per_second =
             if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
+
+        // Parse funded accounts early before any moves occur
+        let funded_accounts = self.parse_funded_accounts()?;
 
         let hardfork = match &self.hardfork {
             Some(hf) => {
@@ -283,7 +301,41 @@ impl NodeArgs {
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
-            .with_cache_path(self.cache_path))
+            .with_cache_path(self.cache_path.clone())
+            .with_offline(self.offline)
+            .with_funded_accounts(funded_accounts))
+    }
+
+    /// Parses the --fund-accounts argument into a HashMap of Address to balance in wei
+    fn parse_funded_accounts(&self) -> eyre::Result<std::collections::HashMap<Address, U256>> {
+        use std::collections::HashMap;
+
+        let mut accounts = HashMap::new();
+
+        for entry in &self.fund_accounts {
+            let parts: Vec<&str> = entry.split(':').collect();
+            if parts.len() != 2 {
+                eyre::bail!(
+                    "Invalid fund-accounts entry '{}'. Expected format: ADDRESS:AMOUNT",
+                    entry
+                );
+            }
+
+            let address = parts[0]
+                .parse::<Address>()
+                .map_err(|e| eyre::eyre!("Invalid address '{}': {}", parts[0], e))?;
+
+            let amount: u64 = parts[1]
+                .parse()
+                .map_err(|e| eyre::eyre!("Invalid amount '{}': {}", parts[1], e))?;
+
+            // Convert ETH to wei (1 ETH = 10^18 wei)
+            let balance = Unit::ETHER.wei().saturating_mul(U256::from(amount));
+
+            accounts.insert(address, balance);
+        }
+
+        Ok(accounts)
     }
 
     fn account_generator(&self) -> AccountGenerator {

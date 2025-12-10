@@ -24,3 +24,6 @@ _
 .vite
 .wrangler
 *.zip
+
+# Offline fork test artifacts
+state.json
