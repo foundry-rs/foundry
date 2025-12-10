@@ -1158,7 +1158,7 @@ pub enum CastSubcommand {
         raw: bool,
 
         /// Include the basic trace of the transaction.
-        #[arg(long, default_value = "true", requires = "raw")]
+        #[arg(long, requires = "raw")]
         trace: bool,
 
         /// Include the full trace of the virtual machine's state during transaction execution

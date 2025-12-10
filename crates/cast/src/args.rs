@@ -796,6 +796,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .filter_map(|(enabled, name)| enabled.then_some(name))
                         .collect();
 
+                if trace_types.is_empty() {
+                    eyre::bail!(
+                        "No trace type specified. Use --trace, --vm-trace, or --state-diff"
+                    );
+                }
+
                 let params = serde_json::json!([out, trace_types]);
                 Cast::new(&provider).rpc("trace_rawTransaction", params).await?
             } else {
