@@ -1146,6 +1146,20 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: Erc20Subcommand,
     },
+
+    Trace {
+        /// Transaction hash (for trace_transaction) or raw tx hex/JSON (for trace_rawTransaction
+        /// with --raw)
+        tx: Option<String>,
+
+        /// Use trace_rawTransaction instead of trace_transaction.
+        /// Required when passing raw transaction hex or JSON instead of a tx hash.
+        #[arg(long)]
+        raw: bool,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
 }
 
 /// CLI arguments for `cast --to-base`.

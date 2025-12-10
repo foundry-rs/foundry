@@ -6,8 +6,9 @@ use crate::{
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
-use alloy_eips::eip7702::SignedAuthorization;
+use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{ProviderEnsExt, namehash};
+use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -26,6 +27,7 @@ use foundry_common::{
     },
     shell, stdin,
 };
+use op_alloy_consensus::OpTxEnvelope;
 use std::time::Instant;
 
 /// Run the `cast` command-line interface.
@@ -755,6 +757,47 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
+        }
+        CastSubcommand::Trace { tx, raw, rpc } => {
+            let config = rpc.load_config()?;
+            let provider = utils::get_provider(&config)?;
+            let input = stdin::unwrap_line(tx)?;
+
+            let trimmed = input.trim();
+            let is_json = trimmed.starts_with('{');
+            let is_raw_hex = trimmed.starts_with("0x") && trimmed.len() > 66;
+
+            let result = if raw {
+                // trace_rawTransaction: accepts raw hex OR JSON tx
+                let out = if is_raw_hex {
+                    trimmed.to_string()
+                } else if is_json {
+                    match serde_json::from_str::<AnyRpcTransaction>(trimmed) {
+                        Ok(tx) => {
+                            let envelope = tx.try_into_either::<OpTxEnvelope>()?;
+                            hex::encode_prefixed(envelope.encoded_2718())
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse JSON transaction: {}", e);
+                            eprintln!("\nUse single quotes:");
+                            eprintln!("  cast trace '{{\"type\":\"0x2\",...}}' --raw");
+                            return Err(e.into());
+                        }
+                    }
+                } else {
+                    // assume it's raw hex without the prefix
+                    format!("0x{}", trimmed)
+                };
+
+                let params = serde_json::json!([out, ["trace"]]);
+                Cast::new(&provider).rpc("trace_rawTransaction", params).await?
+            } else {
+                // trace_transaction: use tx hash directly
+                let params = serde_json::json!([input]);
+                Cast::new(&provider).rpc("trace_transaction", params).await?
+            };
+
+            sh_println!("{}", result)?;
         }
     };
 
