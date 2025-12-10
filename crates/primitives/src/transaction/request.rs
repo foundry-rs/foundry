@@ -68,7 +68,7 @@ impl FoundryTransactionRequest {
         // Handle deposit transactions
         if self.is_deposit()
             && let (Some(mint), Some(source_hash), Some(is_system_transaction)) = (
-                self.get_other_field::<U256>("mint"),
+                self.get_other_field::<u128>("mint"),
                 self.get_other_field::<B256>("sourceHash"),
                 self.get_other_field::<bool>("isSystemTx"),
             )
@@ -77,7 +77,7 @@ impl FoundryTransactionRequest {
                 from: self.from().unwrap_or_default(),
                 source_hash,
                 to: self.kind().unwrap_or_default(),
-                mint: mint.to(),
+                mint,
                 value: self.value().unwrap_or_default(),
                 gas_limit: self.gas_limit().unwrap_or_default(),
                 is_system_transaction,
