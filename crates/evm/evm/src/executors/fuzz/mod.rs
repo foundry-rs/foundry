@@ -406,19 +406,9 @@ impl FuzzedExecutor {
         let max_traces_to_collect =
             std::cmp::max(1, self.config.gas_report_samples / num_workers as u32);
 
-        // Calculate worker-specific run limit when not using timer
-        let worker_runs = if self.config.timeout.is_some() {
-            // When using timer, workers run as many as possible
-            u32::MAX
-        } else {
-            // Distribute runs evenly across workers, with worker 0 handling any remainder
-            let base_runs = self.config.runs / num_workers as u32;
-            let remainder = self.config.runs % num_workers as u32;
-            if worker_id == 0 { base_runs + remainder } else { base_runs }
-        };
+        let worker_runs = self.runs_per_worker(worker_id);
 
         let mut runner_config = self.runner.config().clone();
-        // Set the runner cases to worker_runs
         runner_config.cases = worker_runs;
 
         let mut runner = if let Some(seed) = self.config.seed {
@@ -611,5 +601,15 @@ impl FuzzedExecutor {
     /// Determines the number of workers to run.
     fn num_workers(&self) -> usize {
         rayon::current_num_threads()
+    }
+
+    /// Determines the number of runs per worker.
+    fn runs_per_worker(&self, worker_id: usize) -> u32 {
+        let worker_id = worker_id as u32;
+        let total_runs = self.config.runs;
+        let n = self.num_workers() as u32;
+        let runs = total_runs / n;
+        let remainder = total_runs % n;
+        if worker_id < remainder { runs + 1 } else { runs }
     }
 }
