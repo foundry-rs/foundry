@@ -1146,7 +1146,7 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: Erc20Subcommand,
     },
-
+    #[command(name = "trace")]
     Trace {
         /// Transaction hash (for trace_transaction) or raw tx hex/JSON (for trace_rawTransaction
         /// with --raw)
@@ -1156,6 +1156,18 @@ pub enum CastSubcommand {
         /// Required when passing raw transaction hex or JSON instead of a tx hash.
         #[arg(long)]
         raw: bool,
+
+        /// Include the basic trace of the transaction.
+        #[arg(long, default_value = "true", requires = "raw")]
+        trace: bool,
+
+        /// Include the full trace of the virtual machine's state during transaction execution
+        #[arg(long, requires = "raw")]
+        vm_trace: bool,
+
+        /// Include state changes caused by the transaction (requires --raw).
+        #[arg(long, requires = "raw")]
+        state_diff: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,

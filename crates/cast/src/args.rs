@@ -758,7 +758,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }
-        CastSubcommand::Trace { tx, raw, rpc } => {
+        CastSubcommand::Trace { tx, raw, trace, vm_trace, state_diff, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let input = stdin::unwrap_line(tx)?;
@@ -789,7 +789,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     format!("0x{}", trimmed)
                 };
 
-                let params = serde_json::json!([out, ["trace"]]);
+                // Build trace type array based on flags
+                let trace_types: Vec<&str> =
+                    [(trace, "trace"), (vm_trace, "vmTrace"), (state_diff, "stateDiff")]
+                        .into_iter()
+                        .filter_map(|(enabled, name)| enabled.then_some(name))
+                        .collect();
+
+                let params = serde_json::json!([out, trace_types]);
                 Cast::new(&provider).rpc("trace_rawTransaction", params).await?
             } else {
                 // trace_transaction: use tx hash directly
