@@ -129,6 +129,7 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `sort_imports` | `false` | Sort import statements alphabetically in groups. A group is a set of imports separated by a newline. |
 | `pow_no_space` | `false` | Suppress spaces around the power operator (`**`). |
 | `single_line_imports` | `false` | Keep single imports on a single line, even if they exceed the line length limit. |
+| `format_conditions` | `inline` | Style for formatting conditional expressions in control flow statements. Options: `inline`, `multi`. |
 
 > Check [`FormatterConfig`](../config/src/fmt.rs) for a more detailed explanation.
 
