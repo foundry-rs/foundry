@@ -1,5 +1,5 @@
 use super::{CommentConfig, Separator, State};
-use crate::pp::{BreakToken, Printer, SIZE_INFINITY};
+use crate::pp::{Printer, SIZE_INFINITY};
 use foundry_common::iter::IterDelimited;
 use foundry_config::fmt as config;
 use itertools::{Either, Itertools};
@@ -573,12 +573,6 @@ impl<'ast> State<'_, 'ast> {
         mut get_block_span: impl FnMut(&'ast T) -> Span,
         pos_hi: BytePos,
     ) {
-        // Attempt to print in a single line.
-        if block_format.attempt_single_line() && block.len() == 1 {
-            self.print_single_line_block(block, block_format, print, get_block_span);
-            return;
-        }
-
         // Empty blocks with comments require special attention.
         if block.is_empty() {
             self.print_empty_block(block_format, pos_hi);
@@ -704,37 +698,6 @@ impl<'ast> State<'_, 'ast> {
 
         // restore block depth
         self.block_depth -= 1;
-    }
-
-    fn print_single_line_block<T: Debug>(
-        &mut self,
-        block: &'ast [T],
-        block_format: BlockFormat,
-        mut print: impl FnMut(&mut Self, &'ast T),
-        mut get_block_span: impl FnMut(&'ast T) -> Span,
-    ) {
-        self.s.cbox(self.ind);
-
-        match block_format {
-            BlockFormat::Compact(true) => {
-                self.scan_break(BreakToken { pre_break: Some("{"), ..Default::default() });
-                print(self, &block[0]);
-                self.print_comments(get_block_span(&block[0]).hi(), CommentConfig::default());
-                self.s.scan_break(BreakToken { post_break: Some("}"), ..Default::default() });
-                self.s.offset(-self.ind);
-            }
-            _ => {
-                self.word("{");
-                self.space();
-                print(self, &block[0]);
-                self.print_comments(get_block_span(&block[0]).hi(), CommentConfig::default());
-                self.space_if_not_bol();
-                self.s.offset(-self.ind);
-                self.word("}");
-            }
-        }
-
-        self.end();
     }
 
     fn print_empty_block(&mut self, block_format: BlockFormat, pos_hi: BytePos) {
@@ -935,12 +898,8 @@ impl ListFormat {
 
 /// Formatting style for code blocks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(dead_code)]
 pub(crate) enum BlockFormat {
     Regular,
-    /// Attempts to fit all elements in one line, before breaking consistently. Flags whether to
-    /// use braces or not.
-    Compact(bool),
     /// Doesn't print braces. Flags the offset that should be applied before opening the block box.
     /// Useful when the caller needs to manually handle the braces.
     NoBraces(Option<isize>),
@@ -952,9 +911,5 @@ impl BlockFormat {
     }
     pub(crate) fn breaks(&self) -> bool {
         matches!(self, Self::NoBraces(None))
-    }
-
-    pub(crate) fn attempt_single_line(&self) -> bool {
-        matches!(self, Self::Compact(_))
     }
 }
