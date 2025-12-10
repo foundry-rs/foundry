@@ -85,10 +85,21 @@ impl FoundryTxEnvelope {
 
     /// Returns the hash if the transaction is impersonated (using a fake signature)
     ///
-    /// This appends the `address` before hashing it
+    /// This encodes the transaction without signature (following Ethereum standard),
+    /// then appends the `sender` address before hashing to ensure uniqueness for
+    /// impersonated transactions that share the same fake signature.
     pub fn impersonated_hash(&self, sender: Address) -> B256 {
         let mut buffer = Vec::new();
-        Encodable::encode(self, &mut buffer);
+        // Encode transaction data without signature (same as standard hash())
+        match self {
+            Self::Legacy(t) => t.tx().encode(&mut buffer),
+            Self::Eip2930(t) => t.tx().encode(&mut buffer),
+            Self::Eip1559(t) => t.tx().encode(&mut buffer),
+            Self::Eip4844(t) => t.tx().tx().encode(&mut buffer),
+            Self::Eip7702(t) => t.tx().encode(&mut buffer),
+            Self::Deposit(t) => t.inner().encode(&mut buffer),
+        }
+        // Append sender address to ensure uniqueness for impersonated transactions
         buffer.extend_from_slice(sender.as_ref());
         B256::from_slice(alloy_primitives::utils::keccak256(&buffer).as_slice())
     }
