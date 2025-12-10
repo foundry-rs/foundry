@@ -31,11 +31,6 @@ pub struct FuzzConfig {
     pub show_logs: bool,
     /// Optional timeout (in seconds) for each property test
     pub timeout: Option<u32>,
-    /// Number of threads to use for parallel fuzz runs
-    ///
-    /// This is set by passing `-j` or `--jobs`
-    #[serde(skip)]
-    pub threads: Option<usize>,
 }
 
 impl Default for FuzzConfig {
@@ -51,7 +46,6 @@ impl Default for FuzzConfig {
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
-            threads: None,
         }
     }
 }

@@ -190,19 +190,16 @@ impl FuzzedExecutor {
         early_exit: &EarlyExit,
         tokio_handle: &tokio::runtime::Handle,
     ) -> Result<FuzzTestResult> {
-        // Stores the fuzz test execution data.
         let shared_state = SharedFuzzState::new(state, self.config.timeout, early_exit.clone());
 
-        // Determine number of workers
         let num_workers = self.num_workers();
-        debug!(num_workers);
-        // Use single worker for deterministic behavior when replaying persisted failures
+        debug!(n = num_workers, "spawning workers");
         let workers = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
                 let _guard = tokio_handle.enter();
                 self.run_worker(
-                    worker_id as usize,
+                    worker_id,
                     func,
                     fuzz_fixtures,
                     address,
@@ -406,7 +403,8 @@ impl FuzzedExecutor {
         let mut worker = WorkerState::new(worker_id);
         let num_workers = self.num_workers();
         // We want to collect at least one trace which will be displayed to user.
-        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples / num_workers);
+        let max_traces_to_collect =
+            std::cmp::max(1, self.config.gas_report_samples / num_workers as u32);
 
         // Calculate worker-specific run limit when not using timer
         let worker_runs = if self.config.timeout.is_some() {
@@ -414,8 +412,8 @@ impl FuzzedExecutor {
             u32::MAX
         } else {
             // Distribute runs evenly across workers, with worker 0 handling any remainder
-            let base_runs = self.config.runs / num_workers;
-            let remainder = self.config.runs % num_workers;
+            let base_runs = self.config.runs / num_workers as u32;
+            let remainder = self.config.runs % num_workers as u32;
             if worker_id == 0 { base_runs + remainder } else { base_runs }
         };
 
@@ -611,11 +609,7 @@ impl FuzzedExecutor {
     }
 
     /// Determines the number of workers to run.
-    fn num_workers(&self) -> u32 {
-        if let Some(threads) = self.config.threads {
-            threads as u32
-        } else {
-            rayon::current_num_threads() as u32
-        }
+    fn num_workers(&self) -> usize {
+        rayon::current_num_threads()
     }
 }

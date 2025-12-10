@@ -888,7 +888,7 @@ impl WorkerCorpus {
 
     /// Exports the global corpus to the `sync/` directories of all the non-master workers.
     #[instrument(skip_all)]
-    fn export_to_workers(&mut self, num_workers: u32) -> Result<()> {
+    fn export_to_workers(&mut self, num_workers: usize) -> Result<()> {
         assert_eq!(self.id, 0, "master worker only");
         if self.worker_dir.is_none() {
             return Ok(());
@@ -988,7 +988,7 @@ impl WorkerCorpus {
     #[instrument(skip_all)]
     pub fn sync(
         &mut self,
-        num_workers: u32,
+        num_workers: usize,
         executor: &Executor,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
