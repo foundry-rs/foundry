@@ -67,3 +67,6 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
