@@ -286,10 +286,10 @@ impl FuzzedExecutor {
         let mut result = FuzzTestResult::default();
 
         // Find first case and last run worker. Set `failed_corpus_replays`.
-        let mut first_case_candidate: Option<(u32, FuzzCase)> = None;
-        let mut last_run_worker: Option<&WorkerState> = None;
+        let mut first_case_candidate = None;
+        let mut last_run_worker = None;
         let mut last_run_timestamp = 0u128;
-        for worker in &workers {
+        for (i, worker) in workers.iter().enumerate() {
             if let Some((run, ref case)) = worker.first_case
                 && first_case_candidate.as_ref().is_none_or(|&(r, _)| run < r)
             {
@@ -298,7 +298,7 @@ impl FuzzedExecutor {
 
             if worker.last_run_timestamp > last_run_timestamp {
                 last_run_timestamp = worker.last_run_timestamp;
-                last_run_worker = Some(worker);
+                last_run_worker = Some(i);
             }
 
             // Only retrieve from worker 0 i.e master worker which is responsible for replaying
@@ -308,7 +308,7 @@ impl FuzzedExecutor {
             }
         }
         result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
-        let last_run_worker = last_run_worker.expect("at least one worker");
+        let last_run_worker_idx = last_run_worker.expect("at least one worker");
 
         if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
             result.success = false;
@@ -341,14 +341,21 @@ impl FuzzedExecutor {
                 None => {}
             }
         } else {
+            let last_run_worker = &workers[last_run_worker_idx];
             result.success = true;
             result.traces = last_run_worker.traces.last().cloned();
             result.breakpoints = last_run_worker.breakpoints.clone();
         }
 
+        if !self.config.show_logs {
+            result.logs = workers[last_run_worker_idx].logs.clone();
+        }
+
         for mut worker in workers {
             result.gas_by_case.append(&mut worker.gas_by_case);
-            result.logs.append(&mut worker.logs);
+            if self.config.show_logs {
+                result.logs.append(&mut worker.logs);
+            }
             result.gas_report_traces.extend(worker.traces.into_iter().map(|t| t.arena));
             HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
             result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
@@ -407,6 +414,7 @@ impl FuzzedExecutor {
             std::cmp::max(1, self.config.gas_report_samples / num_workers as u32);
 
         let worker_runs = self.runs_per_worker(worker_id);
+        debug!(worker_runs);
 
         let mut runner_config = self.runner.config().clone();
         runner_config.cases = worker_runs;
@@ -610,6 +618,8 @@ impl FuzzedExecutor {
         let n = self.num_workers() as u32;
         let runs = total_runs / n;
         let remainder = total_runs % n;
+        // Distribute the remainder evenly among the first `remainder` workers,
+        // assuming `worker_id` is in `0..n`.
         if worker_id < remainder { runs + 1 } else { runs }
     }
 }

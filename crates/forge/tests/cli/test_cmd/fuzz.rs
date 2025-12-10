@@ -525,7 +525,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         assert.stdout_eq(expected.clone());
     };
 
-    cmd.arg("test");
+    cmd.args(["test", "-j1"]);
 
     // Run several times, asserting that the failure persists and is the same.
     for _ in 0..3 {
