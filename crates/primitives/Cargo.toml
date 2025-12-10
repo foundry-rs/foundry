@@ -21,7 +21,7 @@ alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true
 alloy-evm = { workspace = true, features = ["op"] }
-op-alloy-consensus = { workspace = true, features = ["serde"] }
+op-alloy-consensus = { workspace = true, features = ["serde", "alloy-compat"] }
 op-alloy-rpc-types.workspace = true
 op-revm.workspace = true
 revm.workspace = true
