@@ -187,14 +187,7 @@ impl VerifyBytecodeArgs {
         let etherscan_metadata = source_code.items.first().unwrap();
 
         // Obtain local artifact
-        let artifact = if let Ok(local_bytecode) =
-            crate::utils::build_using_cache(&self, etherscan_metadata, &config)
-        {
-            trace!("using cache");
-            local_bytecode
-        } else {
-            crate::utils::build_project(&self, &config)?
-        };
+        let artifact = crate::utils::build_project(&self, &config)?;
 
         // Get local bytecode (creation code)
         let local_bytecode = artifact

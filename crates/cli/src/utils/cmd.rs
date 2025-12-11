@@ -1,6 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use eyre::{Result, WrapErr};
-use foundry_common::{TestFunctionExt, fs, selectors::SelectorKind, shell};
+use foundry_common::{TestFunctionExt, fs, fs::json_files, selectors::SelectorKind, shell};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{CompactBytecode, Settings},
@@ -13,7 +13,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{
         CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
-        render_trace_arena_inner,
+        prune_trace_depth, render_trace_arena_inner,
     },
 };
 use std::{
@@ -329,6 +329,7 @@ pub async fn print_traces(
     decoder: &CallTraceDecoder,
     verbose: bool,
     state_changes: bool,
+    trace_depth: Option<usize>,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
@@ -338,6 +339,11 @@ pub async fn print_traces(
 
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await;
+
+        if let Some(trace_depth) = trace_depth {
+            prune_trace_depth(arena, trace_depth);
+        }
+
         sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
@@ -378,4 +384,73 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput) -> Result<()> {
     }
     signatures.save(&path);
     Ok(())
+}
+
+/// Traverses all files at `folder_path`, parses any JSON ABI files found,
+/// and caches their function/event/error signatures to the local signatures cache.
+pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
+    let Some(cache_dir) = Config::foundry_cache_dir() else {
+        eyre::bail!("Failed to get `cache_dir` to generate local signatures.");
+    };
+    let path = cache_dir.join("signatures");
+    let mut signatures = SignaturesCache::load(&path);
+
+    json_files(folder_path.as_ref())
+        .filter_map(|path| std::fs::read_to_string(&path).ok())
+        .filter_map(|content| serde_json::from_str::<JsonAbi>(&content).ok())
+        .for_each(|json_abi| signatures.extend_from_abi(&json_abi));
+
+    signatures.save(&path);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_cache_signatures_from_abis() {
+        let temp_dir = tempdir().unwrap();
+        let abi_json = r#"[
+              {
+                  "type": "function",
+                  "name": "myCustomFunction",
+                  "inputs": [{"name": "amount", "type": "uint256"}],
+                  "outputs": [],
+                  "stateMutability": "nonpayable"
+              },
+              {
+                  "type": "event",
+                  "name": "MyCustomEvent",
+                  "inputs": [{"name": "value", "type": "uint256", "indexed": false}],
+                  "anonymous": false
+              },
+              {
+                  "type": "error",
+                  "name": "MyCustomError",
+                  "inputs": [{"name": "code", "type": "uint256"}]
+              }
+          ]"#;
+
+        let abi_path = temp_dir.path().join("test.json");
+        fs::write(&abi_path, abi_json).unwrap();
+
+        cache_signatures_from_abis(temp_dir.path()).unwrap();
+
+        let cache_dir = Config::foundry_cache_dir().unwrap();
+        let cache_path = cache_dir.join("signatures");
+        let cache = SignaturesCache::load(&cache_path);
+
+        let func_selector: alloy_primitives::Selector = "0x2e2dbaf7".parse().unwrap();
+        assert!(cache.contains_key(&SelectorKind::Function(func_selector)));
+
+        let event_selector: alloy_primitives::B256 =
+            "0x8cc20c47f3a2463817352f75dec0dbf43a7a771b5f6817a92bd5724c1f4aa745".parse().unwrap();
+        assert!(cache.contains_key(&SelectorKind::Event(event_selector)));
+
+        let error_selector: alloy_primitives::Selector = "0xd35f45de".parse().unwrap();
+        assert!(cache.contains_key(&SelectorKind::Error(error_selector)));
+    }
 }

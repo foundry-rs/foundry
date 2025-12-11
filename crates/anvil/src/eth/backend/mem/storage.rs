@@ -25,12 +25,13 @@ use alloy_rpc_types::{
 };
 use anvil_core::eth::{
     block::{Block, create_block},
-    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
+    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo},
 };
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
+use foundry_primitives::FoundryReceiptEnvelope;
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -512,7 +513,7 @@ pub struct MinedBlockOutcome {
 #[derive(Clone, Debug)]
 pub struct MinedTransaction {
     pub info: TransactionInfo,
-    pub receipt: TypedReceipt,
+    pub receipt: FoundryReceiptEnvelope,
     pub block_hash: B256,
     pub block_number: u64,
 }
@@ -575,7 +576,7 @@ mod tests {
     use crate::eth::backend::db::Db;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
-    use anvil_core::eth::transaction::TypedTransaction;
+    use foundry_primitives::FoundryTxEnvelope;
     use revm::{database::DatabaseRef, state::AccountInfo};
 
     #[test]
@@ -682,7 +683,7 @@ mod tests {
         let header = Header { gas_limit: 123456, ..Default::default() };
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction =
-            TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();
+            FoundryTxEnvelope::decode(&mut &bytes_first[..]).unwrap().into();
         let block = create_block(header.clone(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);

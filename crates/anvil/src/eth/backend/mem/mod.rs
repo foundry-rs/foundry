@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::executor::new_evm_with_inspector;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::PruneStateHistoryConfig,
@@ -87,8 +87,7 @@ use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
         MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceipt, TypedReceiptRpc, TypedTransaction, has_optimism_fields,
-        transaction_request_to_typed,
+        TypedReceiptRpc, has_optimism_fields, transaction_request_to_typed,
     },
     wallet::WalletCapabilities,
 };
@@ -108,6 +107,7 @@ use foundry_evm::{
     },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
@@ -1187,7 +1187,7 @@ impl Backend {
             + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        let mut evm = new_evm_with_inspector(WrapDatabaseRef(db), env, inspector);
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
@@ -1218,13 +1218,13 @@ impl Backend {
     > {
         let mut env = self.next_env();
         env.tx = FromRecoveredTx::from_recovered_tx(
-            &tx.pending_transaction.transaction.transaction,
+            tx.pending_transaction.transaction.as_ref(),
             *tx.pending_transaction.sender(),
         );
 
         if env.networks.is_optimism() {
             env.tx.enveloped_tx =
-                Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
+                Some(alloy_rlp::encode(tx.pending_transaction.transaction.as_ref()).into());
         }
 
         let db = self.db.read().await;
@@ -1283,8 +1283,7 @@ impl Backend {
             db: &mut cache_db,
             validator: self,
             pending: pool_transactions.into_iter(),
-            block_env: env.evm_env.block_env.clone(),
-            cfg_env: env.evm_env.cfg_env,
+            evm_env: env.evm_env,
             parent_hash: storage.best_hash,
             gas_used: 0,
             blob_gas_used: 0,
@@ -1372,8 +1371,7 @@ impl Backend {
                     db: &mut **db,
                     validator: self,
                     pending: pool_transactions.into_iter(),
-                    block_env: env.evm_env.block_env.clone(),
-                    cfg_env: env.evm_env.cfg_env.clone(),
+                    evm_env: env.evm_env.clone(),
                     parent_hash: best_hash,
                     gas_used: 0,
                     blob_gas_used: 0,
@@ -2093,7 +2091,10 @@ impl Backend {
     }
 
     /// returns all receipts for the given transactions
-    fn get_receipts(&self, tx_hashes: impl IntoIterator<Item = TxHash>) -> Vec<TypedReceipt> {
+    fn get_receipts(
+        &self,
+        tx_hashes: impl IntoIterator<Item = TxHash>,
+    ) -> Vec<FoundryReceiptEnvelope> {
         let storage = self.blockchain.storage.read();
         let mut receipts = vec![];
 
@@ -2766,8 +2767,7 @@ impl Backend {
                 db: &mut cache_db,
                 validator: self,
                 pending: pool_txs.into_iter(),
-                block_env: env.evm_env.block_env.clone(),
-                cfg_env: env.evm_env.cfg_env.clone(),
+                evm_env: env.evm_env.clone(),
                 parent_hash: block.header.parent_hash,
                 gas_used: 0,
                 blob_gas_used: 0,
@@ -2786,11 +2786,11 @@ impl Backend {
             let target_tx = block.body.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
             let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
-                &target_tx.transaction.transaction,
+                target_tx.transaction.as_ref(),
                 *target_tx.sender(),
             );
             if env.networks.is_optimism() {
-                tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
+                tx_env.enveloped_tx = Some(target_tx.transaction.encoded_2718().into());
             }
 
             let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
@@ -3081,7 +3081,7 @@ impl Backend {
     }
 
     /// Returns all receipts of the block
-    pub fn mined_receipts(&self, hash: B256) -> Option<Vec<TypedReceipt>> {
+    pub fn mined_receipts(&self, hash: B256) -> Option<Vec<FoundryReceiptEnvelope>> {
         let block = self.mined_block_by_hash(hash)?;
         let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
@@ -3120,54 +3120,19 @@ impl Backend {
             alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas_used();
 
-        let effective_gas_price = match transaction.transaction {
-            TypedTransaction::Legacy(t) => t.tx().gas_price,
-            TypedTransaction::EIP2930(t) => t.tx().gas_price,
-            TypedTransaction::EIP1559(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().max_priority_fee_per_gas),
-            TypedTransaction::EIP4844(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().tx().max_priority_fee_per_gas),
-            TypedTransaction::EIP7702(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().max_priority_fee_per_gas),
-            TypedTransaction::Deposit(_) => 0_u128,
-        };
+        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas);
 
         let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
-        // specially
-        let (status, cumulative_gas_used, logs_source, logs_bloom) = match &tx_receipt {
-            TypedReceipt::Deposit(r) => (
-                r.receipt.inner.status,
-                r.receipt.inner.cumulative_gas_used,
-                r.receipt.inner.logs.to_vec(),
-                r.logs_bloom,
-            ),
-            _ => {
-                let receipt_ref = tx_receipt.as_receipt_with_bloom();
-                (
-                    receipt_ref.receipt.status,
-                    receipt_ref.receipt.cumulative_gas_used,
-                    receipt_ref.receipt.logs.to_vec(),
-                    receipt_ref.logs_bloom,
-                )
-            }
-        };
-
+        // TODO: refactor MinedTransactionReceipt building
+        // Build a ReceiptWithBloom<rpc_types::Log> from the FoundryReceiptEnvelope
         let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
-            status,
-            cumulative_gas_used,
-            logs: logs_source
+            status: tx_receipt.as_receipt().status,
+            cumulative_gas_used: tx_receipt.cumulative_gas_used(),
+            logs: tx_receipt
+                .logs()
+                .to_vec()
                 .into_iter()
                 .enumerate()
                 .map(|(index, log)| alloy_rpc_types::Log {
@@ -3182,15 +3147,16 @@ impl Backend {
                 })
                 .collect(),
         };
+        let logs_bloom = tx_receipt.logs_bloom().to_owned();
         let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom };
 
         let inner = match tx_receipt {
-            TypedReceipt::EIP1559(_) => TypedReceiptRpc::EIP1559(receipt_with_bloom),
-            TypedReceipt::Legacy(_) => TypedReceiptRpc::Legacy(receipt_with_bloom),
-            TypedReceipt::EIP2930(_) => TypedReceiptRpc::EIP2930(receipt_with_bloom),
-            TypedReceipt::EIP4844(_) => TypedReceiptRpc::EIP4844(receipt_with_bloom),
-            TypedReceipt::EIP7702(_) => TypedReceiptRpc::EIP7702(receipt_with_bloom),
-            TypedReceipt::Deposit(r) => {
+            FoundryReceiptEnvelope::Legacy(_) => TypedReceiptRpc::Legacy(receipt_with_bloom),
+            FoundryReceiptEnvelope::Eip2930(_) => TypedReceiptRpc::Eip2930(receipt_with_bloom),
+            FoundryReceiptEnvelope::Eip1559(_) => TypedReceiptRpc::Eip1559(receipt_with_bloom),
+            FoundryReceiptEnvelope::Eip4844(_) => TypedReceiptRpc::Eip4844(receipt_with_bloom),
+            FoundryReceiptEnvelope::Eip7702(_) => TypedReceiptRpc::Eip7702(receipt_with_bloom),
+            FoundryReceiptEnvelope::Deposit(r) => {
                 TypedReceiptRpc::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
                     receipt: op_alloy_consensus::OpDepositReceipt {
                         inner: Receipt {
@@ -3356,7 +3322,7 @@ impl Backend {
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         // Try to get the mined transaction by hash
         if let Some(tx) = self.mined_transaction_by_hash(hash)
-            && let Ok(typed_tx) = TypedTransaction::try_from(tx)
+            && let Ok(typed_tx) = FoundryTxEnvelope::try_from(tx)
             && let Some(sidecar) = typed_tx.sidecar()
         {
             return Ok(Some(sidecar.sidecar.blobs.clone()));
@@ -3396,7 +3362,7 @@ impl Backend {
         if let Some(full_block) = self.get_full_block(block_id) {
             let sidecar = full_block
                 .into_transactions_iter()
-                .map(TypedTransaction::try_from)
+                .map(FoundryTxEnvelope::try_from)
                 .filter_map(|typed_tx_result| {
                     typed_tx_result.ok()?.sidecar().map(|sidecar| sidecar.sidecar().clone())
                 })
@@ -3664,7 +3630,7 @@ impl TransactionValidator for Backend {
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id.to::<u64>() != tx_chain_id {
-                if let TypedTransaction::Legacy(tx) = tx.as_ref() {
+                if let FoundryTxEnvelope::Legacy(tx) = tx.as_ref() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON
                         && tx.chain_id().is_none()
@@ -3680,8 +3646,7 @@ impl TransactionValidator for Backend {
         }
 
         // Nonce validation
-        let is_deposit_tx =
-            matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
+        let is_deposit_tx = matches!(pending.transaction.as_ref(), FoundryTxEnvelope::Deposit(_));
         let nonce = tx.nonce();
         if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
@@ -3689,10 +3654,10 @@ impl TransactionValidator for Backend {
         }
 
         // EIP-4844 structural validation
-        if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
+        if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.is_eip4844() {
             // Heavy (blob validation) checks
-            let blob_tx = match &tx.transaction {
-                TypedTransaction::EIP4844(tx) => tx.tx(),
+            let blob_tx = match tx.as_ref() {
+                FoundryTxEnvelope::Eip4844(tx) => tx.tx(),
                 _ => unreachable!(),
             };
 
@@ -3752,8 +3717,8 @@ impl TransactionValidator for Backend {
                     return Err(InvalidTransactionError::FeeCapTooLow);
                 }
 
-                if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
-                    (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+                if let (Some(max_priority_fee_per_gas), max_fee_per_gas) =
+                    (tx.as_ref().max_priority_fee_per_gas(), tx.as_ref().max_fee_per_gas())
                     && max_priority_fee_per_gas > max_fee_per_gas
                 {
                     warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
@@ -3763,8 +3728,8 @@ impl TransactionValidator for Backend {
 
             // EIP-4844 blob fee validation
             if env.evm_env.cfg_env.spec >= SpecId::CANCUN
-                && tx.transaction.is_eip4844()
-                && let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
+                && tx.is_eip4844()
+                && let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas()
                 && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
                 && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
             {
@@ -3783,8 +3748,8 @@ impl TransactionValidator for Backend {
                         .mul(tx.max_fee_per_blob_gas().unwrap_or(0)),
                 );
             let value = tx.value();
-            match &tx.transaction {
-                TypedTransaction::Deposit(deposit_tx) => {
+            match tx.as_ref() {
+                FoundryTxEnvelope::Deposit(deposit_tx) => {
                     // Deposit transactions
                     // https://specs.optimism.io/protocol/deposits.html#execution
                     // 1. no gas cost check required since already have prepaid gas from L1
@@ -3834,7 +3799,7 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
-    if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
+    if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
         let dep_tx = deposit_tx;
 
         let ser = serde_json::to_value(dep_tx).expect("could not serialize TxDeposit");
