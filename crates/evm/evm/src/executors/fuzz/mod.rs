@@ -448,7 +448,7 @@ impl FuzzedExecutor {
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
         // time.
         let sync_offset = worker_id as u32 * 100;
-        let mut runs_since_sync = 0;
+        let mut runs_since_sync = u32::MAX;
         let sync_threshold = SYNC_INTERVAL + sync_offset;
         let mut last_metrics_report = Instant::now();
         // Continue while:
@@ -462,7 +462,7 @@ impl FuzzedExecutor {
             {
                 failure.calldata.clone()
             } else {
-                runs_since_sync += 1;
+                runs_since_sync = runs_since_sync.wrapping_add(1);
                 if runs_since_sync >= sync_threshold {
                     let timer = Instant::now();
                     corpus.sync(
