@@ -12,7 +12,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types::ConversionError;
 use alloy_serde::WithOtherFields;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_revm::OpTransaction;
 use revm::context::TxEnv;
 
 /// Container type for signed, typed transactions.
@@ -174,9 +174,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
             FoundryTxEnvelope::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip4844(signed_tx) => {
-                Self::from_recovered_tx(signed_tx.tx().tx(), caller)
-            }
+            FoundryTxEnvelope::Eip4844(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Deposit(sealed_tx) => {
                 Self::from_recovered_tx(sealed_tx.inner(), caller)
@@ -187,19 +185,16 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
 
 impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
     fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
-        let base = TxEnv::from_recovered_tx(tx, caller);
-
-        let deposit = if let FoundryTxEnvelope::Deposit(deposit_tx) = tx {
-            DepositTransactionParts {
-                source_hash: deposit_tx.source_hash,
-                mint: Some(deposit_tx.mint),
-                is_system_transaction: deposit_tx.is_system_transaction,
+        match tx {
+            FoundryTxEnvelope::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Eip2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Eip1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Eip4844(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Eip7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Deposit(sealed_tx) => {
+                Self::from_recovered_tx(sealed_tx.inner(), caller)
             }
-        } else {
-            Default::default()
-        };
-
-        Self { base, deposit, enveloped_tx: None }
+        }
     }
 }
 
