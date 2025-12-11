@@ -37,12 +37,15 @@ pub use inspector::Fuzzer;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BasicTxDetails {
     /// Time (in seconds) to increase block timestamp before executing the tx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warp: Option<U256>,
     /// Number to increase block number before executing the tx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roll: Option<U256>,
     /// Transaction sender address.
     pub sender: Address,
     /// Transaction call details.
+    #[serde(flatten)]
     pub call_details: CallDetails,
 }
 
@@ -58,7 +61,7 @@ pub struct CallDetails {
 impl BasicTxDetails {
     /// Returns an estimate of the serialized (JSON) size in bytes.
     pub fn estimate_serialized_size(&self) -> usize {
-        (size_of::<Self>() + self.call_details.calldata.len()) * 2
+        size_of::<Self>() + self.call_details.calldata.len() * 2
     }
 }
 

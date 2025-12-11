@@ -63,7 +63,6 @@ use std::{
 };
 use uuid::Uuid;
 
-const JSON_EXTENSION: &str = ".json";
 const WORKER: &str = "worker";
 const CORPUS_DIR: &str = "corpus";
 const SYNC_DIR: &str = "sync";
@@ -141,6 +140,29 @@ impl CorpusEntry {
                 .expect("time went backwards")
                 .as_secs(),
         }
+    }
+
+    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<()> {
+        let file_name = self.file_name(can_gzip);
+        let path = dir.join(file_name);
+        if self.should_gzip(can_gzip) {
+            foundry_common::fs::write_json_gzip_file(&path, &self.tx_seq)
+        } else {
+            foundry_common::fs::write_json_file(&path, &self.tx_seq)
+        }
+    }
+
+    fn file_name(&self, can_gzip: bool) -> String {
+        let ext = if self.should_gzip(can_gzip) { ".json.gz" } else { ".json" };
+        format!("{}-{}{ext}", self.uuid, self.timestamp)
+    }
+
+    fn should_gzip(&self, can_gzip: bool) -> bool {
+        if !can_gzip {
+            return false;
+        }
+        let size: usize = self.tx_seq.iter().map(|tx| tx.estimate_serialized_size()).sum();
+        size > GZIP_THRESHOLD
     }
 }
 
@@ -393,32 +415,17 @@ impl WorkerCorpus {
         }
 
         let corpus = CorpusEntry::new(inputs.to_vec());
-        let corpus_uuid = corpus.uuid;
-        let timestamp = corpus.timestamp;
-        let ext = self.file_extension();
-        let file_path = worker_corpus.join(format!("{corpus_uuid}-{timestamp}{ext}"));
 
         // Persist to disk.
-        let should_gzip = || {
-            // TODO(dani): actually implement this. other places don't do this calc.
-            // let size_estimate: usize =
-            //     corpus.tx_seq.iter().map(|tx| tx.estimate_serialized_size()).sum();
-            // size_estimate > GZIP_THRESHOLD.
-            let _ = GZIP_THRESHOLD;
-            true
-        };
-        let write_result = if self.config.corpus_gzip && should_gzip() {
-            foundry_common::fs::write_json_gzip_file(&file_path, &corpus.tx_seq)
-        } else {
-            foundry_common::fs::write_json_file(&file_path, &corpus.tx_seq)
-        };
+        let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
         if let Err(err) = write_result {
             debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
         } else {
             trace!(
                 target: "corpus",
-                "persisted {} inputs for new coverage for {corpus_uuid} corpus",
-                corpus.tx_seq.len()
+                "persisted {} inputs for new coverage for {} corpus",
+                corpus.tx_seq.len(),
+                corpus.uuid,
             );
         }
 
@@ -740,15 +747,14 @@ impl WorkerCorpus {
         let mut exported = 0;
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-        let ext = self.file_extension();
         for &index in &self.new_entry_indices {
-            if let Some(entry) = self.in_memory_corpus.get(index) {
-                let file_name = format!("{}-{}{ext}", entry.uuid, entry.timestamp);
+            if let Some(corpus) = self.in_memory_corpus.get(index) {
+                let file_name = corpus.file_name(self.config.corpus_gzip);
                 let file_path = corpus_dir.join(&file_name);
                 let sync_path = master_sync_dir.join(&file_name);
 
                 if let Err(err) = std::fs::hard_link(&file_path, &sync_path) {
-                    debug!(target: "corpus", %err, "failed to export corpus {}", entry.uuid);
+                    debug!(target: "corpus", %err, "failed to export corpus {}", corpus.uuid);
                     continue;
                 }
 
@@ -988,11 +994,6 @@ impl WorkerCorpus {
         debug!(target: "corpus", last_sync, "synced");
 
         Ok(())
-    }
-
-    /// Returns the file extension based on gzip config.
-    fn file_extension(&self) -> &str {
-        if self.config.corpus_gzip { ".json.gz" } else { JSON_EXTENSION }
     }
 
     /// Helper to check if a tx can be replayed.
