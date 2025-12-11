@@ -204,7 +204,9 @@ impl FuzzedExecutor {
             .into_par_iter()
             .map(|worker_id| {
                 let _guard = tokio_handle.enter();
-                self.run_worker(
+                let _guard = info_span!("fuzz_worker", id = worker_id).entered();
+                let timer = Instant::now();
+                let r = self.run_worker(
                     worker_id,
                     func,
                     fuzz_fixtures,
@@ -212,7 +214,9 @@ impl FuzzedExecutor {
                     rd,
                     &shared_state,
                     progress,
-                )
+                );
+                debug!("finished in {:?}", timer.elapsed());
+                r
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -379,7 +383,6 @@ impl FuzzedExecutor {
 
     /// Runs a single fuzz worker
     #[allow(clippy::too_many_arguments)]
-    #[instrument(name = "fuzz_worker", skip_all, fields(id = worker_id))]
     fn run_worker(
         &self,
         worker_id: usize,
