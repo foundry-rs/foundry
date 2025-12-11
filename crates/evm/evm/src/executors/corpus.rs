@@ -388,7 +388,7 @@ impl WorkerCorpus {
         // Update stats of current mutated primary corpus.
         if let Some(uuid) = &self.current_mutated {
             if let Some(corpus) =
-                self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid.eq(uuid))
+                self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid == *uuid)
             {
                 corpus.total_mutations += 1;
                 if new_coverage {
@@ -749,18 +749,15 @@ impl WorkerCorpus {
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
         for &index in &self.new_entry_indices {
-            if let Some(corpus) = self.in_memory_corpus.get(index) {
-                let file_name = corpus.file_name(self.config.corpus_gzip);
-                let file_path = corpus_dir.join(&file_name);
-                let sync_path = master_sync_dir.join(&file_name);
-
-                if let Err(err) = std::fs::hard_link(&file_path, &sync_path) {
-                    debug!(target: "corpus", %err, "failed to export corpus {}", corpus.uuid);
-                    continue;
-                }
-
-                exported += 1;
+            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
+            let file_name = corpus.file_name(self.config.corpus_gzip);
+            let file_path = corpus_dir.join(&file_name);
+            let sync_path = master_sync_dir.join(&file_name);
+            if let Err(err) = std::fs::hard_link(&file_path, &sync_path) {
+                debug!(target: "corpus", %err, "failed to export corpus {}", corpus.uuid);
+                continue;
             }
+            exported += 1;
         }
 
         debug!(target: "corpus", "exported {exported} new corpus entries");
@@ -782,19 +779,19 @@ impl WorkerCorpus {
 
         let mut imports = vec![];
         for entry in read_corpus_dir(&sync_dir) {
-            // TODO(dani): delete unused file?
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
             let tx_seq = entry.read_tx_seq()?;
             if tx_seq.is_empty() {
+                warn!(target: "corpus", "skipping empty corpus entry: {}", entry.path.display());
                 continue;
             }
             imports.push((entry, tx_seq));
         }
 
         if !imports.is_empty() {
-            debug!("imported {} new corpus entries", imports.len());
+            debug!(target: "corpus", "imported {} new corpus entries", imports.len());
         }
 
         Ok(imports)
@@ -846,9 +843,9 @@ impl WorkerCorpus {
                 );
             }
 
+            let sync_path = &entry.path;
             if new_coverage_on_sync {
                 // Move file from sync/ to corpus/ directory.
-                let sync_path = &entry.path;
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
                 if let Err(err) = std::fs::rename(sync_path, &corpus_path) {
                     debug!(target: "corpus", %err, "failed to move synced corpus from {sync_path:?} to {corpus_path:?} dir");
@@ -863,6 +860,13 @@ impl WorkerCorpus {
 
                 let corpus_entry = CorpusEntry::new_existing(tx_seq.to_vec(), entry.path.clone())?;
                 self.in_memory_corpus.push(corpus_entry);
+            } else {
+                // Remove the file as it did not generate new coverage.
+                if let Err(err) = std::fs::remove_file(&entry.path) {
+                    debug!(target: "corpus", %err, "failed to remove synced corpus from {sync_path:?}");
+                    continue;
+                }
+                trace!(target: "corpus", "removed synced corpus from {sync_path:?}");
             }
         }
 
