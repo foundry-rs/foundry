@@ -3396,7 +3396,7 @@ impl EthApi {
             FoundryTypedTx::Eip4844(TxEip4844Variant::TxEip4844(_))
                 if !self.backend.skip_blob_validation(from) =>
             {
-                // If blob validation is not skiped, reject TxEip4844 variant without sidecar.
+                // If blob validation is not skipped, reject TxEip4844 variant without sidecar.
                 Err(BlockchainError::FailedToDecodeTransaction)
             }
             res => Ok(res),
