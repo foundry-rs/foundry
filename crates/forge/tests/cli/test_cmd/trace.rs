@@ -394,6 +394,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#]]);
 });
 
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(trace_test_detph, |prj, cmd| {
     prj.add_test(
         "Trace.t.sol",

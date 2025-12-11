@@ -18,6 +18,7 @@ use crate::{
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip7840::BlobParams;
+use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_op_hardforks::OpHardfork;
@@ -1076,12 +1077,14 @@ impl NodeConfig {
 
         let spec_id = cfg.spec;
         let mut env = Env::new(
-            cfg,
-            BlockEnv {
-                gas_limit: self.gas_limit(),
-                basefee: self.get_base_fee(),
-                ..Default::default()
-            },
+            EvmEnv::new(
+                cfg,
+                BlockEnv {
+                    gas_limit: self.gas_limit(),
+                    basefee: self.get_base_fee(),
+                    ..Default::default()
+                },
+            ),
             OpTransaction {
                 base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
                 ..Default::default()

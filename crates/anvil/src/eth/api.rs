@@ -3419,35 +3419,35 @@ impl EthApi {
                 }
                 FoundryTypedTx::Legacy(m)
             }
-            Some(FoundryTypedTx::EIP2930(mut m)) => {
+            Some(FoundryTypedTx::Eip2930(mut m)) => {
                 m.nonce = nonce;
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
                     m.gas_price = self.gas_price();
                 }
-                FoundryTypedTx::EIP2930(m)
+                FoundryTypedTx::Eip2930(m)
             }
-            Some(FoundryTypedTx::EIP1559(mut m)) => {
+            Some(FoundryTypedTx::Eip1559(mut m)) => {
                 m.nonce = nonce;
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
                     m.max_fee_per_gas = self.gas_price();
                 }
-                FoundryTypedTx::EIP1559(m)
+                FoundryTypedTx::Eip1559(m)
             }
-            Some(FoundryTypedTx::EIP7702(mut m)) => {
+            Some(FoundryTypedTx::Eip7702(mut m)) => {
                 m.nonce = nonce;
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
                     m.max_fee_per_gas = self.gas_price();
                 }
-                FoundryTypedTx::EIP7702(m)
+                FoundryTypedTx::Eip7702(m)
             }
-            Some(FoundryTypedTx::EIP4844(m)) => {
-                FoundryTypedTx::EIP4844(match m {
+            Some(FoundryTypedTx::Eip4844(m)) => {
+                FoundryTypedTx::Eip4844(match m {
                     // We only accept the TxEip4844 variant which has the sidecar.
                     TxEip4844Variant::TxEip4844WithSidecar(mut m) => {
                         m.tx.nonce = nonce;
@@ -3507,10 +3507,10 @@ impl EthApi {
                 B256::with_last_byte(1),
                 false,
             ),
-            FoundryTypedTx::EIP2930(_)
-            | FoundryTypedTx::EIP1559(_)
-            | FoundryTypedTx::EIP7702(_)
-            | FoundryTypedTx::EIP4844(_)
+            FoundryTypedTx::Eip2930(_)
+            | FoundryTypedTx::Eip1559(_)
+            | FoundryTypedTx::Eip7702(_)
+            | FoundryTypedTx::Eip4844(_)
             | FoundryTypedTx::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
@@ -3580,10 +3580,10 @@ impl EthApi {
     /// additional validation against hardfork
     fn ensure_typed_transaction_supported(&self, tx: &FoundryTxEnvelope) -> Result<()> {
         match &tx {
-            FoundryTxEnvelope::EIP2930(_) => self.backend.ensure_eip2930_active(),
-            FoundryTxEnvelope::EIP1559(_) => self.backend.ensure_eip1559_active(),
-            FoundryTxEnvelope::EIP4844(_) => self.backend.ensure_eip4844_active(),
-            FoundryTxEnvelope::EIP7702(_) => self.backend.ensure_eip7702_active(),
+            FoundryTxEnvelope::Eip2930(_) => self.backend.ensure_eip2930_active(),
+            FoundryTxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active(),
+            FoundryTxEnvelope::Eip4844(_) => self.backend.ensure_eip4844_active(),
+            FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
             FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
         }
@@ -3618,33 +3618,16 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
 fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
-    match transaction_request_to_typed(request.clone()) {
-        Some(request) => match request {
-            FoundryTypedTx::Legacy(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::EIP1559(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::EIP7702(req) => {
-                MIN_TRANSACTION_GAS
-                    + req.authorization_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
-            }
-            FoundryTypedTx::EIP2930(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::EIP4844(_) => MIN_TRANSACTION_GAS,
-            FoundryTypedTx::Deposit(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-        },
-        // Tighten the gas limit upwards if we don't know the transaction type to avoid deployments
-        // failing.
-        _ => MIN_CREATE_GAS,
+    match request.kind() {
+        Some(TxKind::Call(_)) => {
+            MIN_TRANSACTION_GAS
+                + request.inner().authorization_list.as_ref().map_or(0, |auths_list| {
+                    auths_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
+                })
+        }
+        Some(TxKind::Create) => MIN_CREATE_GAS,
+        // Tighten the gas limit upwards if we don't know the tx kind to avoid deployments failing.
+        None => MIN_CREATE_GAS,
     }
 }
 
