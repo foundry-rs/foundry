@@ -118,8 +118,8 @@ pub enum BlockchainError {
         /// Duration that was waited before timing out
         duration: Duration,
     },
-    #[error("Failed to parse transaction request: missing required fields")]
-    MissingRequiredFields,
+    #[error("Invalid transaction request: {0}")]
+    InvalidTransactionRequest(String),
 }
 
 impl From<eyre::Report> for BlockchainError {
@@ -568,7 +568,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::UnknownTransactionType => {
                     RpcError::invalid_params(err.to_string())
                 }
-                err @ BlockchainError::MissingRequiredFields => {
+                err @ BlockchainError::InvalidTransactionRequest(_) => {
                     RpcError::invalid_params(err.to_string())
                 }
             }
