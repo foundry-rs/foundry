@@ -872,6 +872,286 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: ConvertSubCommand,
     },
+    /// Deprecated convert operations
+    /// Formats a string into bytes32 encoding.
+    #[command(name = "format-bytes32-string", visible_aliases = &["--format-bytes32-string"])]
+    FormatBytes32String {
+        /// The string to format.
+        string: Option<String>,
+    },
+
+    /// Parses a string from bytes32 encoding.
+    #[command(name = "parse-bytes32-string", visible_aliases = &["--parse-bytes32-string"])]
+    ParseBytes32String {
+        /// The string to parse.
+        bytes: Option<String>,
+    },
+    #[command(name = "parse-bytes32-address", visible_aliases = &["--parse-bytes32-address"])]
+    #[command(about = "Parses a checksummed address from bytes32 encoding.")]
+    ParseBytes32Address {
+        #[arg(value_name = "BYTES")]
+        bytes: Option<String>,
+    },
+    /// Convert an ETH amount into another unit (ether, gwei or wei).
+    ///
+    /// Examples:
+    /// - 1ether wei
+    /// - "1 ether" wei
+    /// - 1ether
+    /// - 1 gwei
+    /// - 1gwei ether
+    #[command(visible_aliases = &["--to-unit", "tun", "2un"])]
+    ToUnit {
+        /// The value to convert.
+        value: Option<String>,
+
+        /// The unit to convert to (ether, gwei, wei).
+        #[arg(default_value = "wei")]
+        unit: String,
+    },
+
+    /// Convert a number from decimal to smallest unit with arbitrary decimals.
+    ///
+    /// Examples:
+    /// - 1.0 6    (for USDC, result: 1000000)
+    /// - 2.5 12   (for 12 decimals token, result: 2500000000000)
+    /// - 1.23 3   (for 3 decimals token, result: 1230)
+    #[command(visible_aliases = &["--parse-units", "pun"])]
+    ParseUnits {
+        /// The value to convert.
+        value: Option<String>,
+
+        /// The unit to convert to.
+        #[arg(default_value = "18")]
+        unit: u8,
+    },
+
+    /// Format a number from smallest unit to decimal with arbitrary decimals.
+    ///
+    /// Examples:
+    /// - 1000000 6       (for USDC, result: 1.0)
+    /// - 2500000000000 12 (for 12 decimals, result: 2.5)
+    /// - 1230 3          (for 3 decimals, result: 1.23)
+    #[command(visible_aliases = &["--format-units", "fun"])]
+    FormatUnits {
+        /// The value to format.
+        value: Option<String>,
+
+        /// The unit to format to.
+        #[arg(default_value = "18")]
+        unit: u8,
+    },
+
+    /// Convert an ETH amount to wei.
+    ///
+    /// Consider using --to-unit.
+    #[command(visible_aliases = &["--to-wei", "tw", "2w"])]
+    ToWei {
+        /// The value to convert.
+        #[arg(allow_hyphen_values = true)]
+        value: Option<String>,
+
+        /// The unit to convert from (ether, gwei, wei).
+        #[arg(default_value = "eth")]
+        unit: String,
+    },
+
+    /// Convert wei into an ETH amount.
+    ///
+    /// Consider using --to-unit.
+    #[command(visible_aliases = &["--from-wei", "fw"])]
+    FromWei {
+        /// The value to convert.
+        #[arg(allow_hyphen_values = true)]
+        value: Option<String>,
+
+        /// The unit to convert from (ether, gwei, wei).
+        #[arg(default_value = "eth")]
+        unit: String,
+    },
+
+    /// RLP encodes hex data, or an array of hex data.
+    ///
+    /// Accepts a hex-encoded string, or an array of hex-encoded strings.
+    /// Can be arbitrarily recursive.
+    ///
+    /// Examples:
+    /// - `cast to-rlp "[]"` -> `0xc0`
+    /// - `cast to-rlp "0x22"` -> `0x22`
+    /// - `cast to-rlp "[\"0x61\"]"` -> `0xc161`
+    /// - `cast to-rlp "[\"0xf1\", \"f2\"]"` -> `0xc481f181f2`
+    #[command(visible_aliases = &["--to-rlp"])]
+    ToRlp {
+        /// The value to convert.
+        ///
+        /// This is a hex-encoded string, or an array of hex-encoded strings.
+        /// Can be arbitrarily recursive.
+        value: Option<String>,
+    },
+
+    /// Decodes RLP hex-encoded data.
+    #[command(visible_aliases = &["--from-rlp"])]
+    FromRlp {
+        /// The RLP hex-encoded data.
+        value: Option<String>,
+
+        /// Decode the RLP data as int
+        #[arg(long, alias = "int")]
+        as_int: bool,
+    },
+
+    /// Converts a number of one base to another
+    #[command(visible_aliases = &["--to-hex", "th", "2h"])]
+    ToHex(ToBaseArgs),
+
+    /// Converts a number of one base to decimal
+    #[command(visible_aliases = &["--to-dec", "td", "2d"])]
+    ToDec(ToBaseArgs),
+
+    /// Converts a number of one base to another
+    #[command(
+        visible_aliases = &["--to-base",
+        "--to-radix",
+        "to-radix",
+        "tr",
+        "2r"]
+    )]
+    ToBase {
+        #[command(flatten)]
+        base: ToBaseArgs,
+
+        /// The output base.
+        #[arg(value_name = "BASE")]
+        base_out: Option<String>,
+    },
+    /// Convert UTF8 text to hex.
+    #[command(
+        visible_aliases = &[
+        "--from-ascii",
+        "--from-utf8",
+        "from-ascii",
+        "fu",
+        "fa"]
+    )]
+    FromUtf8 {
+        /// The text to convert.
+        text: Option<String>,
+    },
+
+    /// Concatenate hex strings.
+    #[command(visible_aliases = &["--concat-hex", "ch"])]
+    ConcatHex {
+        /// The data to concatenate.
+        data: Vec<String>,
+    },
+
+    /// Convert binary data into hex data.
+    #[command(visible_aliases = &["--from-bin", "from-binx", "fb"])]
+    FromBin,
+
+    /// Normalize the input to lowercase, 0x-prefixed hex.
+    ///
+    /// The input can be:
+    /// - mixed case hex with or without 0x prefix
+    /// - 0x prefixed hex, concatenated with a ':'
+    /// - an absolute path to file
+    /// - @tag, where the tag is defined in an environment variable
+    #[command(visible_aliases = &["--to-hexdata", "thd", "2hd"])]
+    ToHexdata {
+        /// The input to normalize.
+        input: Option<String>,
+    },
+
+    /// Convert an address to a checksummed format (EIP-55).
+    #[command(
+        visible_aliases = &["--to-checksum-address",
+        "--to-checksum",
+        "to-checksum",
+        "ta",
+        "2a"]
+    )]
+    ToCheckSumAddress {
+        /// The address to convert.
+        address: Option<Address>,
+        /// EIP-155 chain ID to encode the address using EIP-1191.
+        chain_id: Option<u64>,
+    },
+
+    /// Convert hex data to an ASCII string.
+    #[command(visible_aliases = &["--to-ascii", "tas", "2as"])]
+    ToAscii {
+        /// The hex data to convert.
+        hexdata: Option<String>,
+    },
+
+    /// Convert hex data to a utf-8 string.
+    #[command(visible_aliases = &["--to-utf8", "tu8", "2u8"])]
+    ToUtf8 {
+        /// The hex data to convert.
+        hexdata: Option<String>,
+    },
+
+    /// Convert a fixed point number into an integer.
+    #[command(visible_aliases = &["--from-fix", "ff"])]
+    FromFixedPoint {
+        /// The number of decimals to use.
+        decimals: Option<String>,
+
+        /// The value to convert.
+        #[arg(allow_hyphen_values = true)]
+        value: Option<String>,
+    },
+
+    /// Right-pads hex data to 32 bytes.
+    #[command(visible_aliases = &["--to-bytes32", "tb", "2b"])]
+    ToBytes32 {
+        /// The hex data to convert.
+        bytes: Option<String>,
+    },
+
+    /// Pads hex data to a specified length.
+    #[command(visible_aliases = &["pd"])]
+    Pad {
+        /// The hex data to pad.
+        data: Option<String>,
+
+        /// Right-pad the data (instead of left-pad).
+        #[arg(long)]
+        right: bool,
+
+        /// Left-pad the data (default).
+        #[arg(long, conflicts_with = "right")]
+        left: bool,
+
+        /// Target length in bytes (default: 32).
+        #[arg(long, default_value = "32")]
+        len: usize,
+    },
+
+    /// Convert an integer into a fixed point number.
+    #[command(visible_aliases = &["--to-fix", "tf", "2f"])]
+    ToFixedPoint {
+        /// The number of decimals to use.
+        decimals: Option<String>,
+
+        /// The value to convert.
+        #[arg(allow_hyphen_values = true)]
+        value: Option<String>,
+    },
+
+    /// Convert a number to a hex-encoded uint256.
+    #[command(name = "to-uint256", visible_aliases = &["--to-uint256", "tu", "2u"])]
+    ToUint256 {
+        /// The value to convert.
+        value: Option<String>,
+    },
+
+    /// Convert a number to a hex-encoded int256.
+    #[command(name = "to-int256", visible_aliases = &["--to-int256", "ti", "2i"])]
+    ToInt256 {
+        /// The value to convert.
+        value: Option<String>,
+    },
 }
 
 /// CLI arguments for `cast --to-base`.
