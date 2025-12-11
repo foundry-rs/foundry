@@ -15,13 +15,13 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{EthereumOpts, TransactionOpts},
+    opts::{ChainValueParser, RpcOpts, TransactionOpts},
     utils::{self, TraceResult, parse_ether_value},
 };
 use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Config,
+    Chain, Config,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -32,6 +32,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_wallets::WalletOpts;
 use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
@@ -129,7 +130,19 @@ pub struct CallArgs {
     tx: TransactionOpts,
 
     #[command(flatten)]
-    eth: EthereumOpts,
+    rpc: RpcOpts,
+
+    #[command(flatten)]
+    wallet: WalletOpts,
+
+    #[arg(
+        short,
+        long,
+        alias = "chain-id",
+        env = "CHAIN",
+        value_parser = ChainValueParser::default(),
+    )]
+    pub chain: Option<Chain>,
 
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
@@ -196,7 +209,7 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
-        let figment = self.eth.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
         let state_overrides = self.get_state_overrides()?;
@@ -207,7 +220,6 @@ impl CallArgs {
             mut sig,
             mut args,
             mut tx,
-            eth,
             command,
             block,
             trace,
@@ -218,6 +230,7 @@ impl CallArgs {
             data,
             with_local_artifacts,
             disable_labels,
+            wallet,
             ..
         } = self;
 
@@ -226,7 +239,7 @@ impl CallArgs {
         }
 
         let provider = utils::get_provider(&config)?;
-        let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
+        let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
         let code = if let Some(CallSubcommands::Create {
