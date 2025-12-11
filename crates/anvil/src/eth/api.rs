@@ -3618,33 +3618,16 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
 fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
-    match transaction_request_to_typed(request.clone()) {
-        Some(request) => match request {
-            FoundryTypedTx::Legacy(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::Eip1559(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::Eip7702(req) => {
-                MIN_TRANSACTION_GAS
-                    + req.authorization_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
-            }
-            FoundryTypedTx::Eip2930(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::Eip4844(_) => MIN_TRANSACTION_GAS,
-            FoundryTypedTx::Deposit(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-        },
-        // Tighten the gas limit upwards if we don't know the transaction type to avoid deployments
-        // failing.
-        _ => MIN_CREATE_GAS,
+    match request.kind() {
+        Some(TxKind::Call(_)) => {
+            MIN_TRANSACTION_GAS
+                + request.inner().authorization_list.as_ref().map_or(0, |auths_list| {
+                    auths_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
+                })
+        }
+        Some(TxKind::Create) => MIN_CREATE_GAS,
+        // Tighten the gas limit upwards if we don't know the tx kind to avoid deployments failing.
+        None => MIN_CREATE_GAS,
     }
 }
 
