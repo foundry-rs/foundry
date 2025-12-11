@@ -724,47 +724,6 @@ impl WorkerCorpus {
 
     // Sync Methods.
 
-    /// Exports the new corpus entries to the master worker's sync dir.
-    #[instrument(skip_all)]
-    fn export_to_master(&self) -> Result<()> {
-        // Master doesn't export (it only receives from others).
-        assert_ne!(self.id, 0, "non-master only");
-
-        // Early return if no new entries or corpus dir not configured.
-        if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
-            return Ok(());
-        }
-
-        let worker_dir = self.worker_dir.as_ref().unwrap();
-        let Some(master_sync_dir) = self
-            .config
-            .corpus_dir
-            .as_ref()
-            .map(|dir| dir.join(format!("{WORKER}0")).join(SYNC_DIR))
-        else {
-            return Ok(());
-        };
-
-        let mut exported = 0;
-        let corpus_dir = worker_dir.join(CORPUS_DIR);
-
-        for &index in &self.new_entry_indices {
-            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
-            let file_name = corpus.file_name(self.config.corpus_gzip);
-            let file_path = corpus_dir.join(&file_name);
-            let sync_path = master_sync_dir.join(&file_name);
-            if let Err(err) = std::fs::hard_link(&file_path, &sync_path) {
-                debug!(target: "corpus", %err, "failed to export corpus {}", corpus.uuid);
-                continue;
-            }
-            exported += 1;
-        }
-
-        debug!(target: "corpus", "exported {exported} new corpus entries");
-
-        Ok(())
-    }
-
     /// Imports the new corpus entries from the `sync` directory.
     /// These contain tx sequences which are replayed and used to update the history map.
     fn load_sync_corpus(&self) -> Result<Vec<(CorpusDirEntry, Vec<BasicTxDetails>)>> {
@@ -869,6 +828,47 @@ impl WorkerCorpus {
                 trace!(target: "corpus", "removed synced corpus from {sync_path:?}");
             }
         }
+
+        Ok(())
+    }
+
+    /// Exports the new corpus entries to the master worker's sync dir.
+    #[instrument(skip_all)]
+    fn export_to_master(&self) -> Result<()> {
+        // Master doesn't export (it only receives from others).
+        assert_ne!(self.id, 0, "non-master only");
+
+        // Early return if no new entries or corpus dir not configured.
+        if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
+            return Ok(());
+        }
+
+        let worker_dir = self.worker_dir.as_ref().unwrap();
+        let Some(master_sync_dir) = self
+            .config
+            .corpus_dir
+            .as_ref()
+            .map(|dir| dir.join(format!("{WORKER}0")).join(SYNC_DIR))
+        else {
+            return Ok(());
+        };
+
+        let mut exported = 0;
+        let corpus_dir = worker_dir.join(CORPUS_DIR);
+
+        for &index in &self.new_entry_indices {
+            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
+            let file_name = corpus.file_name(self.config.corpus_gzip);
+            let file_path = corpus_dir.join(&file_name);
+            let sync_path = master_sync_dir.join(&file_name);
+            if let Err(err) = std::fs::hard_link(&file_path, &sync_path) {
+                debug!(target: "corpus", %err, "failed to export corpus {}", corpus.uuid);
+                continue;
+            }
+            exported += 1;
+        }
+
+        debug!(target: "corpus", "exported {exported} new corpus entries");
 
         Ok(())
     }
