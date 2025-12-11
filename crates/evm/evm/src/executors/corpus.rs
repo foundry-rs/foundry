@@ -15,7 +15,6 @@
 //! │   ├── corpus/               # Master's corpus entries
 //! │   │   ├── <uuid>-<timestamp>.json          # Corpus entry (if small)
 //! │   │   ├── <uuid>-<timestamp>.json.gz       # Corpus entry (if large, compressed)
-//! │   │   └── <uuid>-<timestamp>.metadata.json # Corpus metadata
 //! │   └── sync/                 # Directory where other workers export new findings
 //! │       └── <uuid>-<timestamp>.json          # New entries from other workers
 //! └── workerN/                  # Worker N's directory
@@ -64,7 +63,6 @@ use std::{
 };
 use uuid::Uuid;
 
-const METADATA_SUFFIX: &str = "metadata.json";
 const JSON_EXTENSION: &str = ".json";
 const WORKER: &str = "worker";
 const CORPUS_DIR: &str = "corpus";
@@ -294,9 +292,6 @@ impl WorkerCorpus {
             // Then, [distribute]s it to workers.
             let executor = executor.expect("Executor required for master worker");
             'corpus_replay: for entry in read_corpus_dir(corpus_dir) {
-                if entry.is_metadata() {
-                    continue;
-                }
                 let tx_seq = entry.read_tx_seq()?;
                 if tx_seq.is_empty() {
                     continue;
@@ -657,21 +652,6 @@ impl WorkerCorpus {
         {
             let corpus = &self.in_memory_corpus[index];
 
-            // TODO(dani): metadata?
-            /*
-            // Flush to disk the seed metadata at the time of eviction.
-            let uuid = corpus.uuid;
-            let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            foundry_common::fs::write_json_file(
-                self.worker_dir
-                    .as_ref()
-                    .unwrap()
-                    .join(CORPUS_DIR)
-                    .join(format!("{uuid}-{eviction_time}.{METADATA_SUFFIX}"))
-                    .as_path(),
-                &corpus,
-            )?;
-            */
             trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
 
             // Remove corpus from memory.
@@ -795,10 +775,6 @@ impl WorkerCorpus {
 
         let mut imports = vec![];
         for entry in read_corpus_dir(&sync_dir) {
-            debug_assert!(
-                !entry.is_metadata(),
-                "there should be no metadata in sync dir {sync_dir:?}",
-            );
             // TODO(dani): delete unused file?
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
@@ -897,7 +873,6 @@ impl WorkerCorpus {
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
         let filtered_master_corpus = read_corpus_dir(&master_corpus_dir)
-            .filter(|entry| !entry.is_metadata())
             .filter(|entry| entry.timestamp > self.last_sync_timestamp)
             .collect::<Vec<_>>();
         let mut any_distributed = false;
@@ -1086,10 +1061,6 @@ impl CorpusDirEntry {
         self.path.file_name().unwrap().to_str().unwrap()
     }
 
-    fn is_metadata(&self) -> bool {
-        self.name().contains(METADATA_SUFFIX)
-    }
-
     fn read_tx_seq(&self) -> foundry_common::fs::Result<Vec<BasicTxDetails>> {
         let path = &self.path;
         if path.extension() == Some("gz".as_ref()) {
@@ -1102,7 +1073,7 @@ impl CorpusDirEntry {
 
 /// Parses the corpus filename and returns the uuid and timestamp associated with it.
 fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
-    let name = name.trim_end_matches(".gz").trim_end_matches(".json").trim_end_matches(".metadata");
+    let name = name.trim_end_matches(".gz").trim_end_matches(".json");
 
     let (uuid_str, timestamp_str) =
         name.rsplit_once('-').ok_or_else(|| eyre!("invalid corpus filename format: {name}"))?;

@@ -96,10 +96,13 @@ struct SharedFuzzState {
     total_rejects: Arc<AtomicU32>,
     /// Fuzz timer
     timer: FuzzTestTimer,
-    /// Fail Fast coordinator
-    early_exit: EarlyExit,
     /// Global corpus metrics
     global_corpus_metrics: GlobalCorpusMetrics,
+
+    /// Global test suite early exit.
+    global_early_exit: EarlyExit,
+    /// Local fuzz early exit.
+    local_early_exit: EarlyExit,
 }
 
 impl SharedFuzzState {
@@ -110,8 +113,9 @@ impl SharedFuzzState {
             failed_worker_id: OnceLock::new(),
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
-            early_exit,
             global_corpus_metrics: GlobalCorpusMetrics::default(),
+            global_early_exit: early_exit,
+            local_early_exit: EarlyExit::new(true),
         }
     }
 
@@ -127,7 +131,9 @@ impl SharedFuzzState {
 
     /// Returns `true` if the worker should continue running.
     fn should_continue(&self) -> bool {
-        !(self.early_exit.should_stop() || self.timer.is_timed_out())
+        !(self.global_early_exit.should_stop()
+            || self.local_early_exit.should_stop()
+            || self.timer.is_timed_out())
     }
 
     /// Returns true if the worker was able to claim the failure, false if failure was set by
@@ -136,7 +142,7 @@ impl SharedFuzzState {
         let mut claimed = false;
         let _ = self.failed_worker_id.get_or_init(|| {
             claimed = true;
-            self.early_exit.record_exit();
+            self.local_early_exit.record_failure();
             worker_id
         });
         claimed
