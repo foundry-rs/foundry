@@ -41,6 +41,10 @@ pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
 const SYNC_INTERVAL: u32 = 1000;
 
+/// Minimum number of runs per worker.
+/// This is mainly to reduce the overall number of rayon jobs.
+const MIN_RUNS_PER_WORKER: u32 = 64;
+
 #[derive(Default)]
 struct WorkerState {
     /// Worker identifier
@@ -165,6 +169,8 @@ pub struct FuzzedExecutor {
     config: FuzzConfig,
     /// The persisted counterexample to be replayed, if any.
     persisted_failure: Option<BaseCounterExample>,
+    /// The number of parallel workers.
+    num_workers: usize,
 }
 
 impl FuzzedExecutor {
@@ -176,7 +182,12 @@ impl FuzzedExecutor {
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        Self { executor, runner, sender, config, persisted_failure }
+        let mut max_workers = Ord::max(1, config.runs / MIN_RUNS_PER_WORKER);
+        if config.runs == 0 {
+            max_workers = 0;
+        }
+        let num_workers = Ord::min(rayon::current_num_threads(), max_workers as usize);
+        Self { executor, runner, sender, config, persisted_failure, num_workers }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -198,9 +209,8 @@ impl FuzzedExecutor {
     ) -> Result<FuzzTestResult> {
         let shared_state = SharedFuzzState::new(state, self.config.timeout, early_exit.clone());
 
-        let num_workers = self.num_workers();
-        debug!(n = num_workers, "spawning workers");
-        let workers = (0..num_workers)
+        debug!(n = self.num_workers, "spawning workers");
+        let workers = (0..self.num_workers)
             .into_par_iter()
             .map(|worker_id| {
                 let _guard = tokio_handle.enter();
@@ -294,11 +304,14 @@ impl FuzzedExecutor {
         shared_state: &SharedFuzzState,
     ) -> FuzzTestResult {
         let mut result = FuzzTestResult::default();
+        if workers.is_empty() {
+            result.success = true;
+            return result;
+        }
 
         // Find first case and last run worker. Set `failed_corpus_replays`.
         let mut first_case_candidate = None;
         let mut last_run_worker = None;
-        let mut last_run_timestamp = 0u128;
         for (i, worker) in workers.iter().enumerate() {
             if let Some((run, ref case)) = worker.first_case
                 && first_case_candidate.as_ref().is_none_or(|&(r, _)| run < r)
@@ -306,19 +319,17 @@ impl FuzzedExecutor {
                 first_case_candidate = Some((run, case.clone()));
             }
 
-            if worker.last_run_timestamp > last_run_timestamp {
-                last_run_timestamp = worker.last_run_timestamp;
-                last_run_worker = Some(i);
+            if last_run_worker.is_none_or(|(t, _)| worker.last_run_timestamp > t) {
+                last_run_worker = Some((worker.last_run_timestamp, i));
             }
 
-            // Only retrieve from worker 0 i.e master worker which is responsible for replaying
-            // persisted corpus.
+            // Only set replays from master which is responsible for replaying persisted corpus.
             if worker.id == 0 {
                 result.failed_corpus_replays = worker.failed_corpus_replays;
             }
         }
         result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
-        let last_run_worker_idx = last_run_worker.expect("at least one worker");
+        let (_, last_run_worker_idx) = last_run_worker.expect("at least one worker");
 
         if let Some(&failed_worker_id) = shared_state.failed_worker_id.get() {
             result.success = false;
@@ -417,10 +428,9 @@ impl FuzzedExecutor {
         )?;
 
         let mut worker = WorkerState::new(worker_id);
-        let num_workers = self.num_workers();
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect =
-            std::cmp::max(1, self.config.gas_report_samples / num_workers as u32);
+            std::cmp::max(1, self.config.gas_report_samples / self.num_workers as u32);
 
         let worker_runs = self.runs_per_worker(worker_id);
         debug!(worker_runs);
@@ -469,7 +479,7 @@ impl FuzzedExecutor {
                 if runs_since_sync >= sync_threshold {
                     let timer = Instant::now();
                     corpus.sync(
-                        num_workers,
+                        self.num_workers,
                         &self.executor,
                         Some(func),
                         None,
@@ -615,16 +625,11 @@ impl FuzzedExecutor {
         Ok(worker)
     }
 
-    /// Determines the number of workers to run.
-    fn num_workers(&self) -> usize {
-        rayon::current_num_threads()
-    }
-
     /// Determines the number of runs per worker.
     fn runs_per_worker(&self, worker_id: usize) -> u32 {
         let worker_id = worker_id as u32;
         let total_runs = self.config.runs;
-        let n = self.num_workers() as u32;
+        let n = self.num_workers as u32;
         let runs = total_runs / n;
         let remainder = total_runs % n;
         // Distribute the remainder evenly among the first `remainder` workers,

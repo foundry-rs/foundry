@@ -904,7 +904,7 @@ impl WorkerCorpus {
                 let name = entry.name();
                 let sync_path = target_dir.join(name);
                 if let Err(err) = std::fs::hard_link(&entry.path, &sync_path) {
-                    debug!(target: "corpus", %name, %err, "failed to distribute corpus");
+                    debug!(target: "corpus", %err, from=?entry.path, to=?sync_path, "failed to distribute corpus");
                     continue;
                 }
                 any_distributed = true;
