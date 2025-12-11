@@ -5069,6 +5069,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-eth",
  "alloy-serde",
+ "derive_more",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",

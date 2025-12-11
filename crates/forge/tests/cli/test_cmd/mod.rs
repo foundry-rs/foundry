@@ -556,6 +556,83 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     cmd.assert_empty_stderr();
 });
 
+// Verify that --show-progress doesn't stop tests after first failure
+forgetest_init!(show_progress_runs_all_tests, |prj, cmd| {
+    prj.add_test(
+        "MultiTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MultiTest is Test {
+    function test_1_Fail() public {
+        assertTrue(false);
+    }
+
+    function test_2_Pass() public {
+        assertTrue(true);
+    }
+
+    function test_3_Pass() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With --show-progress, all 3 tests should run despite first one failing
+    let output = cmd.args(["test", "--show-progress", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    // Verify all 3 tests were executed
+    assert!(stdout.contains("test_1_Fail"), "test_1_Fail should run");
+    assert!(stdout.contains("test_2_Pass"), "test_2_Pass should run");
+    assert!(stdout.contains("test_3_Pass"), "test_3_Pass should run");
+    assert!(stdout.contains("2 passed; 1 failed"), "Should show 2 passed and 1 failed");
+});
+
+// Verify that --show-progress with --fail-fast DOES stop after first failure
+forgetest_init!(show_progress_with_fail_fast_exits_early, |prj, cmd| {
+    prj.add_test(
+        "MultiTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MultiTest is Test {
+    function test_1_Fail() public {
+        assertTrue(false);
+    }
+
+    function test_2_SlowPass() public {
+        vm.sleep(60000); // Sleep for 60 seconds to ensure fail-fast stops before this completes
+        assertTrue(true);
+    }
+
+    function test_3_SlowPass() public {
+        vm.sleep(60000); // Sleep for 60 seconds to ensure fail-fast stops before this completes
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With both --show-progress and --fail-fast, should stop after first failure
+    let output = cmd.args(["test", "--show-progress", "--fail-fast", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    // Verify first test ran and failed
+    assert!(stdout.contains("test_1_Fail"), "test_1_Fail should run");
+
+    // With -j1 (sequential execution) and fail-fast, the slow tests should not run
+    // since test_1_Fail will fail first
+    let slow_tests_count = (if stdout.contains("test_2_SlowPass") { 1 } else { 0 })
+        + (if stdout.contains("test_3_SlowPass") { 1 } else { 0 });
+
+    assert!(
+        slow_tests_count < 2,
+        "With --fail-fast and sequential execution, not all slow tests should run after first failure"
+    );
+});
+
 // https://github.com/foundry-rs/foundry/pull/6531
 forgetest_init!(fork_traces, |prj, cmd| {
     let endpoint = rpc::next_http_archive_rpc_url();
