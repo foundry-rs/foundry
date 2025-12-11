@@ -1,15 +1,16 @@
-use std::ops::{Deref, DerefMut};
-
-use alloy_consensus::constants::{
-    EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-    LEGACY_TX_TYPE_ID,
+use alloy_consensus::{
+    EthereumTypedTransaction,
+    constants::{
+        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
+        LEGACY_TX_TYPE_ID,
+    },
 };
 use alloy_network::{BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilderError};
-use alloy_primitives::{Address, ChainId, TxKind, U256};
+use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
-use alloy_serde::WithOtherFields;
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTypedTransaction};
-use op_alloy_rpc_types::OpTransactionRequest;
+use alloy_serde::{OtherFields, WithOtherFields};
+use derive_more::{AsMut, AsRef, From, Into};
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 use serde::{Deserialize, Serialize};
 
 use super::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
@@ -17,31 +18,17 @@ use crate::FoundryNetwork;
 
 /// Foundry transaction request builder.
 ///
-/// This is implemented as a transparent wrapper around [`OpTransactionRequest`],
+/// This is implemented as a wrapper around [`WithOtherFields<TransactionRequest>`],
 /// which provides handling of deposit transactions.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FoundryTransactionRequest(OpTransactionRequest);
-
-impl Deref for FoundryTransactionRequest {
-    type Target = OpTransactionRequest;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for FoundryTransactionRequest {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+#[derive(Clone, Debug, Default, PartialEq, Eq, From, Into, AsRef, AsMut)]
+pub struct FoundryTransactionRequest(WithOtherFields<TransactionRequest>);
 
 impl Serialize for FoundryTransactionRequest {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        self.0.serialize(serializer)
+        self.as_ref().serialize(serializer)
     }
 }
 
@@ -50,82 +37,64 @@ impl<'de> Deserialize<'de> for FoundryTransactionRequest {
     where
         D: serde::Deserializer<'de>,
     {
-        OpTransactionRequest::deserialize(deserializer).map(Self)
-    }
-}
-
-impl From<OpTransactionRequest> for FoundryTransactionRequest {
-    fn from(req: OpTransactionRequest) -> Self {
-        Self(req)
-    }
-}
-
-impl From<FoundryTransactionRequest> for OpTransactionRequest {
-    fn from(req: FoundryTransactionRequest) -> Self {
-        req.0
-    }
-}
-
-impl From<TransactionRequest> for FoundryTransactionRequest {
-    fn from(req: TransactionRequest) -> Self {
-        Self(req.into())
-    }
-}
-
-impl From<FoundryTransactionRequest> for TransactionRequest {
-    fn from(req: FoundryTransactionRequest) -> Self {
-        req.0.into()
-    }
-}
-
-impl From<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest {
-    fn from(req: WithOtherFields<TransactionRequest>) -> Self {
-        Self(req.inner.into())
+        WithOtherFields::<TransactionRequest>::deserialize(deserializer).map(Self)
     }
 }
 
 impl FoundryTransactionRequest {
-    /// Create a new empty transaction request.
+    /// Create a new [`FoundryTransactionRequest`] from given
+    /// [`WithOtherFields<TransactionRequest>`].
     #[inline]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(inner: WithOtherFields<TransactionRequest>) -> Self {
+        Self(inner)
     }
 
     /// Check if this is a deposit transaction.
     #[inline]
     pub fn is_deposit(&self) -> bool {
-        self.as_ref().transaction_type == Some(0x7E)
+        self.as_ref().transaction_type == Some(DEPOSIT_TX_TYPE_ID)
     }
 
-    /// Mark this as a deposit transaction.
-    #[inline]
-    pub fn set_deposit_type(&mut self) {
-        self.as_mut().transaction_type = Some(0x7E);
-    }
-
-    /// Builder-pattern method to mark as deposit transaction.
-    #[inline]
-    pub fn as_deposit(mut self) -> Self {
-        self.set_deposit_type();
-        self
+    /// Helper to access [`FoundryTransactionRequest`] custom fields
+    pub fn get_other_field<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.as_ref().other.get_deserialized::<T>(key).transpose().ok().flatten()
     }
 
     /// Build a typed transaction from this request.
     ///
-    /// Converts the request into a `FoundryTypedTx`, handling all Ethereum
-    /// and OP-stack transaction types.
+    /// Converts the request into a `FoundryTypedTx`, handling all Ethereum and OP-stack transaction
+    /// types.
     pub fn build_typed_tx(self) -> Result<FoundryTypedTx, Self> {
-        // Use OpTransactionRequest's build_typed_tx
-        let op_typed = self.0.build_typed_tx().map_err(Self)?;
-
-        // Convert OpTypedTransaction → FoundryTypedTx
-        Ok(match op_typed {
-            OpTypedTransaction::Legacy(tx) => FoundryTypedTx::Legacy(tx),
-            OpTypedTransaction::Eip2930(tx) => FoundryTypedTx::Eip2930(tx),
-            OpTypedTransaction::Eip1559(tx) => FoundryTypedTx::Eip1559(tx),
-            OpTypedTransaction::Eip7702(tx) => FoundryTypedTx::Eip7702(tx),
-            OpTypedTransaction::Deposit(tx) => FoundryTypedTx::Deposit(tx),
-        })
+        // Handle deposit transactions
+        if self.is_deposit()
+            && let (Some(mint), Some(source_hash), Some(is_system_transaction)) = (
+                self.get_other_field::<u128>("mint"),
+                self.get_other_field::<B256>("sourceHash"),
+                self.get_other_field::<bool>("isSystemTx"),
+            )
+        {
+            Ok(FoundryTypedTx::Deposit(TxDeposit {
+                from: self.from().unwrap_or_default(),
+                source_hash,
+                to: self.kind().unwrap_or_default(),
+                mint,
+                value: self.value().unwrap_or_default(),
+                gas_limit: self.gas_limit().unwrap_or_default(),
+                is_system_transaction,
+                input: self.input().cloned().unwrap_or_default(),
+            }))
+        } else {
+            // Use the inner transaction request to build EthereumTypedTransaction
+            let typed_tx = self.0.into_inner().build_typed_tx().map_err(|tx| Self(tx.into()))?;
+            // Convert EthereumTypedTransaction to FoundryTypedTx
+            Ok(match typed_tx {
+                EthereumTypedTransaction::Legacy(tx) => FoundryTypedTx::Legacy(tx),
+                EthereumTypedTransaction::Eip2930(tx) => FoundryTypedTx::Eip2930(tx),
+                EthereumTypedTransaction::Eip1559(tx) => FoundryTypedTx::Eip1559(tx),
+                EthereumTypedTransaction::Eip4844(tx) => FoundryTypedTx::Eip4844(tx),
+                EthereumTypedTransaction::Eip7702(tx) => FoundryTypedTx::Eip7702(tx),
+            })
+        }
     }
 }
 
@@ -137,7 +106,14 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
             FoundryTypedTx::Eip1559(tx) => Self(Into::<TransactionRequest>::into(tx).into()),
             FoundryTypedTx::Eip4844(tx) => Self(Into::<TransactionRequest>::into(tx).into()),
             FoundryTypedTx::Eip7702(tx) => Self(Into::<TransactionRequest>::into(tx).into()),
-            FoundryTypedTx::Deposit(tx) => Self(tx.into()),
+            FoundryTypedTx::Deposit(tx) => {
+                let other = OtherFields::from_iter([
+                    ("sourceHash", tx.source_hash.to_string().into()),
+                    ("mint", tx.mint.to_string().into()),
+                    ("isSystemTx", tx.is_system_transaction.to_string().into()),
+                ]);
+                WithOtherFields { inner: Into::<TransactionRequest>::into(tx), other }.into()
+            }
         }
     }
 }
@@ -372,29 +348,27 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     }
 
     fn can_build(&self) -> bool {
-        let inner = self.as_ref();
-        let common = inner.gas.is_some() && inner.nonce.is_some();
+        let common = self.gas_limit().is_some() && self.nonce().is_some();
 
-        let legacy = inner.gas_price.is_some();
-        let eip2930 = legacy && inner.access_list.is_some();
-        let eip1559 = inner.max_fee_per_gas.is_some() && inner.max_priority_fee_per_gas.is_some();
-        let eip4844 = eip1559 && inner.sidecar.is_some() && inner.to.is_some();
-        let eip7702 = eip1559 && inner.authorization_list.is_some();
+        let legacy = self.gas_price().is_some();
+        let eip2930 = legacy && self.access_list().is_some();
+        let eip1559 = self.max_fee_per_gas().is_some() && self.max_priority_fee_per_gas().is_some();
+        let eip4844 = eip1559 && self.as_ref().sidecar.is_some() && self.kind().is_some();
+        let eip7702 = eip1559 && self.as_ref().authorization_list.is_some();
 
-        let deposit =
-            inner.transaction_type == Some(0x7E) && inner.from.is_some() && inner.to.is_some();
+        let deposit = self.is_deposit() && self.from().is_some() && self.kind().is_some();
 
         (common && (legacy || eip2930 || eip1559 || eip4844 || eip7702)) || deposit
     }
 
     fn output_tx_type(&self) -> FoundryTxType {
-        if self.as_ref().transaction_type == Some(DEPOSIT_TX_TYPE_ID) {
+        if self.is_deposit() {
             return FoundryTxType::Deposit;
         }
 
         // Default to EIP1559 if the transaction type is not explicitly set
-        if self.as_ref().transaction_type.is_some() {
-            match self.as_ref().transaction_type.unwrap() {
+        if let Some(transaction_type) = self.as_ref().transaction_type {
+            match transaction_type {
                 LEGACY_TX_TYPE_ID => FoundryTxType::Legacy,
                 EIP2930_TX_TYPE_ID => FoundryTxType::Eip2930,
                 EIP1559_TX_TYPE_ID => FoundryTxType::Eip1559,

@@ -609,7 +609,7 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 networks: self.networks,
-                early_exit: EarlyExit::new(self.fail_fast || self.config.show_progress),
+                early_exit: EarlyExit::new(self.fail_fast),
                 config: self.config,
             },
 

@@ -109,7 +109,7 @@ Please also make sure that the following commands pass if you have changed the c
 cargo check --all
 cargo test --all --all-features
 cargo +nightly fmt -- --check
-cargo +nightly clippy --all --all-targets --all-features -- -D warning
+cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 or alternatively:
