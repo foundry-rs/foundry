@@ -414,6 +414,7 @@ impl WorkerCorpus {
             return;
         }
 
+        assert!(!inputs.is_empty());
         let corpus = CorpusEntry::new(inputs.to_vec());
 
         // Persist to disk.
