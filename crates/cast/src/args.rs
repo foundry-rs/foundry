@@ -1,9 +1,7 @@
-use crate::cmd::convert::ConvertSubCommand;
-use crate::opts::ToBaseArgs;
 use crate::{
     Cast, SimpleCast,
-    cmd::erc20::IERC20,
-    opts::{Cast as CastArgs, CastSubcommand},
+    cmd::{convert::ConvertSubCommand, erc20::IERC20},
+    opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
