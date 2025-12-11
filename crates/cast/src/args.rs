@@ -1,4 +1,5 @@
 use crate::cmd::convert::{ConvertSubCommand, ToBaseArgs as ConvertToBaseArgs};
+use crate::opts::ToBaseArgs;
 use crate::{
     Cast, SimpleCast,
     cmd::erc20::IERC20,
