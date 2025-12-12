@@ -221,10 +221,7 @@ impl PreSimulationState {
         }
 
         if !failed_transactions.is_empty() {
-            eyre::bail!(
-                "Simulated execution failed for: {}",
-                failed_transactions.join("; ")
-            );
+            eyre::bail!("Simulated execution failed for: {}", failed_transactions.join("; "));
         }
 
         Ok(final_txs)
