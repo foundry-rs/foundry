@@ -7,6 +7,7 @@ use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
 use alloy_serde::{OtherFields, WithOtherFields};
 use derive_more::{AsMut, AsRef, From, Into};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use op_revm::transaction::deposit::DepositTransactionParts;
 use serde::{Deserialize, Serialize};
 
 use super::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
@@ -51,11 +52,6 @@ impl FoundryTransactionRequest {
         self.as_ref().transaction_type == Some(DEPOSIT_TX_TYPE_ID)
     }
 
-    /// Helper to access [`FoundryTransactionRequest`] custom fields
-    pub fn get_other_field<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.as_ref().other.get_deserialized::<T>(key).transpose().ok().flatten()
-    }
-
     /// Returns the minimal transaction type this request can be converted into based on the fields
     /// that are set. See [`TransactionRequest::preferred_type`].
     pub fn preferred_type(&self) -> FoundryTxType {
@@ -85,17 +81,7 @@ impl FoundryTransactionRequest {
     /// Check if all necessary keys are present to build a Deposit transaction, returning a list of
     /// keys that are missing.
     pub fn complete_deposit(&self) -> Result<(), Vec<&'static str>> {
-        let mut missing = Vec::new();
-        if self.get_other_field::<B256>("sourceHash").is_none() {
-            missing.push("sourceHash");
-        }
-        if self.get_other_field::<u128>("mint").is_none() {
-            missing.push("mint");
-        }
-        if self.get_other_field::<bool>("isSystemTx").is_none() {
-            missing.push("isSystemTx");
-        }
-        if missing.is_empty() { Ok(()) } else { Err(missing) }
+        get_deposit_tx_parts(&self.as_ref().other).map(|_| ())
     }
 
     /// Return the tx type this request can be built as. Computed by checking
@@ -141,19 +127,15 @@ impl FoundryTransactionRequest {
     /// types.
     pub fn build_typed_tx(self) -> Result<FoundryTypedTx, Self> {
         // Handle deposit transactions
-        if let (Some(source_hash), Some(mint), Some(is_system_transaction)) = (
-            self.get_other_field::<B256>("sourceHash"),
-            self.get_other_field::<U256>("mint").map(|m| m.to::<u128>()),
-            self.get_other_field::<bool>("isSystemTx"),
-        ) {
+        if let Ok(deposit_tx_parts) = get_deposit_tx_parts(&self.as_ref().other) {
             Ok(FoundryTypedTx::Deposit(TxDeposit {
                 from: self.from().unwrap_or_default(),
-                source_hash,
+                source_hash: deposit_tx_parts.source_hash,
                 to: self.kind().unwrap_or_default(),
-                mint,
+                mint: deposit_tx_parts.mint.unwrap_or_default(),
                 value: self.value().unwrap_or_default(),
                 gas_limit: self.gas_limit().unwrap_or_default(),
-                is_system_transaction,
+                is_system_transaction: deposit_tx_parts.is_system_transaction,
                 input: self.input().cloned().unwrap_or_default(),
             }))
         } else if self.as_ref().has_eip4844_fields() && self.as_ref().blob_sidecar().is_none() {
@@ -336,11 +318,7 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     }
 
     fn can_build(&self) -> bool {
-        let deposit = self.get_other_field::<B256>("sourceHash").is_some()
-            && self.get_other_field::<u128>("mint").is_some()
-            && self.get_other_field::<bool>("isSystemTx").is_some();
-
-        self.as_ref().can_build() || deposit
+        self.as_ref().can_build() || get_deposit_tx_parts(&self.as_ref().other).is_ok()
     }
 
     fn output_tx_type(&self) -> FoundryTxType {
@@ -404,5 +382,39 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         wallet: &W,
     ) -> Result<FoundryTxEnvelope, TransactionBuilderError<FoundryNetwork>> {
         Ok(wallet.sign_request(self).await?)
+    }
+}
+
+/// Converts `OtherFields` to `DepositTransactionParts`, produces error with missing fields
+pub fn get_deposit_tx_parts(
+    other: &OtherFields,
+) -> Result<DepositTransactionParts, Vec<&'static str>> {
+    let mut missing = Vec::new();
+    let source_hash =
+        other.get_deserialized::<B256>("sourceHash").transpose().ok().flatten().unwrap_or_else(
+            || {
+                missing.push("sourceHash");
+                Default::default()
+            },
+        );
+    let mint = other
+        .get_deserialized::<U256>("mint")
+        .transpose()
+        .unwrap_or_else(|_| {
+            missing.push("mint");
+            Default::default()
+        })
+        .map(|value| value.to::<u128>());
+    let is_system_transaction =
+        other.get_deserialized::<bool>("isSystemTx").transpose().ok().flatten().unwrap_or_else(
+            || {
+                missing.push("isSystemTx");
+                Default::default()
+            },
+        );
+    if missing.is_empty() {
+        Ok(DepositTransactionParts { source_hash, mint, is_system_transaction })
+    } else {
+        Err(missing)
     }
 }
