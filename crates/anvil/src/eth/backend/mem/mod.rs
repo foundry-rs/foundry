@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::executor::new_evm_with_inspector;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::PruneStateHistoryConfig,
@@ -55,7 +55,7 @@ use alloy_evm::{
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
-    EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
+    EthereumWallet, TransactionBuilder, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
@@ -87,7 +87,7 @@ use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
         MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceiptRpc, has_optimism_fields, transaction_request_to_typed,
+        TypedReceiptRpc,
     },
     wallet::WalletCapabilities,
 };
@@ -107,7 +107,7 @@ use foundry_evm::{
     },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
@@ -1187,7 +1187,7 @@ impl Backend {
             + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        let mut evm = new_evm_with_inspector(WrapDatabaseRef(db), env, inspector);
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
@@ -1283,8 +1283,7 @@ impl Backend {
             db: &mut cache_db,
             validator: self,
             pending: pool_transactions.into_iter(),
-            block_env: env.evm_env.block_env.clone(),
-            cfg_env: env.evm_env.cfg_env,
+            evm_env: env.evm_env,
             parent_hash: storage.best_hash,
             gas_used: 0,
             blob_gas_used: 0,
@@ -1372,8 +1371,7 @@ impl Backend {
                     db: &mut **db,
                     validator: self,
                     pending: pool_transactions.into_iter(),
-                    block_env: env.evm_env.block_env.clone(),
-                    cfg_env: env.evm_env.cfg_env.clone(),
+                    evm_env: env.evm_env.clone(),
                     parent_hash: best_hash,
                     gas_used: 0,
                     blob_gas_used: 0,
@@ -1634,21 +1632,20 @@ impl Backend {
         }
 
         // Deposit transaction?
-        if transaction_type == Some(DEPOSIT_TX_TYPE_ID) && has_optimism_fields(&other) {
-            let deposit = DepositTransactionParts {
-                source_hash: other
-                    .get_deserialized::<B256>("sourceHash")
-                    .map(|sh| sh.unwrap_or_default())
-                    .unwrap_or_default(),
-                mint: other
-                    .get_deserialized::<u128>("mint")
-                    .map(|m| m.unwrap_or_default())
-                    .or(None),
-                is_system_transaction: other
-                    .get_deserialized::<bool>("isSystemTx")
-                    .map(|st| st.unwrap_or_default())
-                    .unwrap_or_default(),
-            };
+        if transaction_type == Some(DEPOSIT_TX_TYPE_ID)
+            && let (Some(source_hash), Some(mint), Some(is_system_transaction)) = (
+                other.get_deserialized::<B256>("sourceHash").transpose().ok().flatten(),
+                other
+                    .get_deserialized::<U256>("mint")
+                    .transpose()
+                    .ok()
+                    .flatten()
+                    .map(|m| m.to::<u128>()),
+                other.get_deserialized::<bool>("isSystemTx").transpose().ok().flatten(),
+            )
+        {
+            let deposit =
+                DepositTransactionParts { source_hash, mint: Some(mint), is_system_transaction };
             env.tx.deposit = deposit;
         }
 
@@ -1763,10 +1760,14 @@ impl Backend {
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
-                    let request = transaction_request_to_typed(WithOtherFields::new(request))
-                        .ok_or(BlockchainError::MissingRequiredFields)?;
+
+                    let mut request = Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    request.prep_for_submission();
+
+                    let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
+
                     let tx = build_typed_transaction(
-                        request,
+                        typed_tx,
                         Signature::new(Default::default(), Default::default(), false),
                     )?;
                     let tx_hash = tx.hash();
@@ -2769,8 +2770,7 @@ impl Backend {
                 db: &mut cache_db,
                 validator: self,
                 pending: pool_txs.into_iter(),
-                block_env: env.evm_env.block_env.clone(),
-                cfg_env: env.evm_env.cfg_env.clone(),
+                evm_env: env.evm_env.clone(),
                 parent_hash: block.header.parent_hash,
                 gas_used: 0,
                 blob_gas_used: 0,
