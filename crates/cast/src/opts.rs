@@ -4,7 +4,7 @@ use crate::cmd::{
     creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, erc20::Erc20Subcommand,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    trace::TraceArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1146,6 +1146,8 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: Erc20Subcommand,
     },
+    #[command(name = "trace")]
+    Trace(TraceArgs),
 }
 
 /// CLI arguments for `cast --to-base`.
