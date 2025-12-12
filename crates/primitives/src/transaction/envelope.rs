@@ -1,5 +1,6 @@
 use alloy_consensus::{
-    Sealed, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, Typed2718,
+    Sealed, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxType,
+    Typed2718,
     transaction::{
         TxEip7702,
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
@@ -207,6 +208,18 @@ impl std::fmt::Display for FoundryTxType {
             Self::Eip4844 => write!(f, "eip4844"),
             Self::Eip7702 => write!(f, "eip7702"),
             Self::Deposit => write!(f, "deposit"),
+        }
+    }
+}
+
+impl From<TxType> for FoundryTxType {
+    fn from(tx: TxType) -> Self {
+        match tx {
+            TxType::Legacy => Self::Legacy,
+            TxType::Eip2930 => Self::Eip2930,
+            TxType::Eip1559 => Self::Eip1559,
+            TxType::Eip4844 => Self::Eip4844,
+            TxType::Eip7702 => Self::Eip7702,
         }
     }
 }
