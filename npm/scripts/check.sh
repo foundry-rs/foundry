@@ -267,7 +267,7 @@ for tool in "${tools[@]}"; do
   PACK_EXIT=$?
   
   # Clean up any generated .tgz files
-  rm -f *.tgz
+  rm -f -- *.tgz
   
   cd "$ORIG_DIR" || exit 1
   

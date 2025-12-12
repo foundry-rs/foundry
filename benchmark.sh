@@ -1,3 +1,5 @@
+#!/bin/bash
+
 versions="v1.3.6,v1.4.0-rc1"
 
 # Repositories

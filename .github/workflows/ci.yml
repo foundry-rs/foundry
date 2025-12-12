@@ -60,6 +60,19 @@ jobs:
           persist-credentials: false
       - uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06 # v1
 
+  shellcheck:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Shellcheck
+        shell: bash
+        run: ./.github/scripts/shellcheck.sh
+
   clippy:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
