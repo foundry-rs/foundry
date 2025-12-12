@@ -2923,7 +2923,6 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Compiling project to generate artifacts
 Nothing to compile
 
@@ -2937,7 +2936,6 @@ Nothing to compile
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
@@ -2955,7 +2953,6 @@ Transaction successfully executed.
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
@@ -3020,7 +3017,6 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -4482,7 +4478,6 @@ forgetest_async!(cast_send_with_data, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
