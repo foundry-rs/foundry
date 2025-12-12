@@ -25,4 +25,5 @@ pub mod run;
 pub mod send;
 pub mod storage;
 pub mod txpool;
+pub mod validate_auth;
 pub mod wallet;
