@@ -115,6 +115,12 @@ impl PreSimulationState {
 
         let mut final_txs = VecDeque::new();
 
+        // Save transaction metadata for error reporting before consuming transactions
+        let tx_metadata: Vec<_> = transactions
+            .iter()
+            .map(|tx| (tx.contract_name.clone(), tx.contract_address, tx.function.clone()))
+            .collect();
+
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
             .into_iter()
@@ -166,8 +172,8 @@ impl PreSimulationState {
             sh_println!("Simulated On-chain Traces:\n")?;
         }
 
-        let mut abort = false;
-        for res in join_all(futs).await {
+        let mut failed_transactions = Vec::new();
+        for (index, res) in join_all(futs).await.into_iter().enumerate() {
             let (tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
@@ -198,12 +204,27 @@ impl PreSimulationState {
 
                 final_txs.push_back(tx);
             } else {
-                abort = true;
+                // Collect failed transaction information
+                let (contract_name, contract_address, function) = &tx_metadata[index];
+                let mut info = format!("Transaction #{}", index + 1);
+                if let Some(name) = contract_name.as_ref().filter(|s| !s.is_empty()) {
+                    info.push_str(&format!(", contract: {name}"));
+                }
+                if let Some(addr) = contract_address {
+                    info.push_str(&format!(", address: {addr}"));
+                }
+                if let Some(func) = function.as_ref().filter(|s| !s.is_empty()) {
+                    info.push_str(&format!(", function: {func}"));
+                }
+                failed_transactions.push(info);
             }
         }
 
-        if abort {
-            eyre::bail!("Simulated execution failed.")
+        if !failed_transactions.is_empty() {
+            eyre::bail!(
+                "Simulated execution failed for: {}",
+                failed_transactions.join("; ")
+            );
         }
 
         Ok(final_txs)
