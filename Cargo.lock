@@ -4446,6 +4446,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "url",
  "yansi",
 ]
 
