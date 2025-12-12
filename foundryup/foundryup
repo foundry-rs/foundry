@@ -36,6 +36,7 @@ main() {
       -i|--install)     shift; FOUNDRYUP_VERSION=$1;;
       -l|--list)        shift; list;;
       -u|--use)         shift; FOUNDRYUP_VERSION=$1; use;;
+      -c|--check)       shift; check_installation;;
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
@@ -454,6 +455,7 @@ OPTIONS:
     -i, --install   Install a specific version from built binaries
     -l, --list      List versions installed from built binaries
     -u, --use       Use a specific installed version from built binaries
+    -c, --check     Check installed version status with verification
     -b, --branch    Build and install a specific branch
     -P, --pr        Build and install a specific Pull Request
     -C, --commit    Build and install a specific commit
@@ -558,6 +560,72 @@ EOF
   else
     err "version $FOUNDRYUP_VERSION not installed"
   fi
+}
+
+check_installation() {
+  if ! [ -d "$FOUNDRY_BIN_DIR" ]; then
+    err "Error: No binaries found in $FOUNDRY_BIN_DIR"
+  fi
+
+  # Capture installed checksums
+  map_bin=()
+  map_hash=()
+  map_ver=()
+
+  for b in "${BINS[@]}"; do
+    map_bin+=("$b")
+    map_hash+=("$(compute_sha256 "$FOUNDRY_BIN_DIR/$b")")
+  done
+
+  # List versions with usage status
+  if [ -d "$FOUNDRY_VERSIONS_DIR" ]; then
+    for v in $FOUNDRY_VERSIONS_DIR/*; do
+      vn="${v##*/}"
+      all=true any=false
+
+      i=0
+      for b in "${BINS[@]}"; do
+        bin_path="$v/$b"
+        if [ -f "$bin_path" ]; then
+          vh=$(compute_sha256 "$bin_path")
+          if [ "$vh" = "${map_hash[$i]}" ]; then
+            any=true
+            [ -z "${map_ver[$i]}" ] && map_ver[$i]="$vn"
+          else
+            all=false
+          fi
+        else
+          all=false
+        fi
+        i=$((i + 1))
+      done
+
+      if [ "$all" = true ]; then
+        say "$vn (in use)"
+      elif [ "$any" = true ]; then
+        say "$vn (partially used)"
+      else
+        say "$vn"
+      fi
+
+      for b in "${BINS[@]}"; do
+        say "- $(ensure "$v/$b" -V)"
+      done
+      printf "\n"
+    done
+  else
+    say "No versions directory found"
+  fi
+
+  # Show installed binaries
+  say "Currently installed binaries ($FOUNDRY_BIN_DIR):"
+  i=0
+  for b in "${map_bin[@]}"; do
+    say "  $b: ${map_hash[$i]:0:16}... (from ${map_ver[$i]:-unknown})"
+    i=$((i + 1))
+  done
+
+  exit 0
 }
 
 say() {
