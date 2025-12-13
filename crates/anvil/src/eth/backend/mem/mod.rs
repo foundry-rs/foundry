@@ -107,12 +107,12 @@ use foundry_evm::{
     },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope};
+use foundry_primitives::{
+    FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope, get_deposit_tx_parts,
+};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
-use op_revm::{
-    OpContext, OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts,
-};
+use op_revm::{OpContext, OpHaltReason, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
@@ -1555,7 +1555,6 @@ impl Backend {
                     nonce,
                     sidecar: _,
                     chain_id,
-                    transaction_type,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
@@ -1632,20 +1631,7 @@ impl Backend {
         }
 
         // Deposit transaction?
-        if transaction_type == Some(DEPOSIT_TX_TYPE_ID)
-            && let (Some(source_hash), Some(mint), Some(is_system_transaction)) = (
-                other.get_deserialized::<B256>("sourceHash").transpose().ok().flatten(),
-                other
-                    .get_deserialized::<U256>("mint")
-                    .transpose()
-                    .ok()
-                    .flatten()
-                    .map(|m| m.to::<u128>()),
-                other.get_deserialized::<bool>("isSystemTx").transpose().ok().flatten(),
-            )
-        {
-            let deposit =
-                DepositTransactionParts { source_hash, mint: Some(mint), is_system_transaction };
+        if let Ok(deposit) = get_deposit_tx_parts(&other) {
             env.tx.deposit = deposit;
         }
 
