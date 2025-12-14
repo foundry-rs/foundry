@@ -1,20 +1,17 @@
 //! Transaction related types
 use alloy_consensus::{
-    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEnvelope, TxReceipt,
-    Typed2718, transaction::Recovered,
+    Receipt, Signed, Transaction, TxEnvelope, TxReceipt, Typed2718, transaction::Recovered,
 };
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt};
-use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, U64};
+use alloy_primitives::{Address, B256, Bytes, TxHash, U64};
 use alloy_rlp::{Decodable, Encodable};
-use alloy_rpc_types::{
-    Transaction as RpcTransaction, TransactionReceipt, trace::otterscan::OtsReceipt,
-};
+use alloy_rpc_types::{Log, Transaction as RpcTransaction, TransactionReceipt};
 use alloy_serde::WithOtherFields;
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
@@ -229,133 +226,7 @@ pub struct TransactionInfo {
     pub gas_used: u64,
 }
 
-/// RPC-specific variant of TypedReceipt for boundary conversion
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum TypedReceiptRpc {
-    #[serde(rename = "0x0", alias = "0x00")]
-    Legacy(ReceiptWithBloom<Receipt<alloy_rpc_types::Log>>),
-    #[serde(rename = "0x1", alias = "0x01")]
-    Eip2930(ReceiptWithBloom<Receipt<alloy_rpc_types::Log>>),
-    #[serde(rename = "0x2", alias = "0x02")]
-    Eip1559(ReceiptWithBloom<Receipt<alloy_rpc_types::Log>>),
-    #[serde(rename = "0x3", alias = "0x03")]
-    Eip4844(ReceiptWithBloom<Receipt<alloy_rpc_types::Log>>),
-    #[serde(rename = "0x4", alias = "0x04")]
-    Eip7702(ReceiptWithBloom<Receipt<alloy_rpc_types::Log>>),
-    #[serde(rename = "0x7E", alias = "0x7e")]
-    Deposit(OpDepositReceiptWithBloom),
-}
-
-impl TypedReceiptRpc {
-    pub fn as_receipt_with_bloom(&self) -> &ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
-        match self {
-            Self::Legacy(r)
-            | Self::Eip1559(r)
-            | Self::Eip2930(r)
-            | Self::Eip4844(r)
-            | Self::Eip7702(r) => r,
-            Self::Deposit(_) => unreachable!("use variant-specific helpers for deposit"),
-        }
-    }
-
-    pub fn logs_bloom(&self) -> &Bloom {
-        match self {
-            Self::Legacy(r)
-            | Self::Eip1559(r)
-            | Self::Eip2930(r)
-            | Self::Eip4844(r)
-            | Self::Eip7702(r) => &r.logs_bloom,
-            Self::Deposit(r) => &r.logs_bloom,
-        }
-    }
-
-    pub fn logs(&self) -> &[alloy_rpc_types::Log] {
-        match self {
-            Self::Legacy(r)
-            | Self::Eip1559(r)
-            | Self::Eip2930(r)
-            | Self::Eip4844(r)
-            | Self::Eip7702(r) => &r.receipt.logs,
-            Self::Deposit(_) => unreachable!("use variant-specific helpers for deposit"),
-        }
-    }
-
-    pub fn cumulative_gas_used(&self) -> u64 {
-        self.as_receipt_with_bloom().cumulative_gas_used()
-    }
-}
-
-// Intentionally only provide a concrete conversion used by RPC response/Otterscan path.
-impl From<TypedReceiptRpc> for ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
-    fn from(value: TypedReceiptRpc) -> Self {
-        match value {
-            TypedReceiptRpc::Legacy(r)
-            | TypedReceiptRpc::Eip1559(r)
-            | TypedReceiptRpc::Eip2930(r)
-            | TypedReceiptRpc::Eip4844(r)
-            | TypedReceiptRpc::Eip7702(r) => r,
-            TypedReceiptRpc::Deposit(r) => {
-                // Convert OP deposit receipt (primitives::Log) to RPC receipt (rpc_types::Log)
-                let receipt = Receipt::<alloy_rpc_types::Log> {
-                    status: r.receipt.inner.status,
-                    cumulative_gas_used: r.receipt.inner.cumulative_gas_used,
-                    logs: r
-                        .receipt
-                        .inner
-                        .logs
-                        .into_iter()
-                        .map(|l| alloy_rpc_types::Log {
-                            inner: l,
-                            block_hash: None,
-                            block_number: None,
-                            block_timestamp: None,
-                            transaction_hash: None,
-                            transaction_index: None,
-                            log_index: None,
-                            removed: false,
-                        })
-                        .collect(),
-                };
-                Self { receipt, logs_bloom: r.logs_bloom }
-            }
-        }
-    }
-}
-
-impl From<TypedReceiptRpc> for OtsReceipt {
-    fn from(value: TypedReceiptRpc) -> Self {
-        let r#type = match value {
-            TypedReceiptRpc::Legacy(_) => 0x00,
-            TypedReceiptRpc::Eip2930(_) => 0x01,
-            TypedReceiptRpc::Eip1559(_) => 0x02,
-            TypedReceiptRpc::Eip4844(_) => 0x03,
-            TypedReceiptRpc::Eip7702(_) => 0x04,
-            TypedReceiptRpc::Deposit(_) => 0x7E,
-        } as u8;
-        let receipt = ReceiptWithBloom::<Receipt<alloy_rpc_types::Log>>::from(value);
-        let status = receipt.status();
-        let cumulative_gas_used = receipt.cumulative_gas_used();
-        let logs = receipt.logs().to_vec();
-        let logs_bloom = receipt.logs_bloom;
-
-        Self { status, cumulative_gas_used, logs: Some(logs), logs_bloom: Some(logs_bloom), r#type }
-    }
-}
-
-impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceiptRpc {
-    fn from(value: ReceiptEnvelope<alloy_rpc_types::Log>) -> Self {
-        match value {
-            ReceiptEnvelope::Legacy(r) => Self::Legacy(r),
-            ReceiptEnvelope::Eip2930(r) => Self::Eip2930(r),
-            ReceiptEnvelope::Eip1559(r) => Self::Eip1559(r),
-            ReceiptEnvelope::Eip4844(r) => Self::Eip4844(r),
-            ReceiptEnvelope::Eip7702(r) => Self::Eip7702(r),
-        }
-    }
-}
-
-pub type ReceiptResponse = WithOtherFields<TransactionReceipt<TypedReceiptRpc>>;
+pub type ReceiptResponse = WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>;
 
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
     let WithOtherFields {
@@ -391,24 +262,19 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             blob_gas_price,
             blob_gas_used,
             inner: match r#type {
-                0x00 => TypedReceiptRpc::Legacy(receipt_with_bloom),
-                0x01 => TypedReceiptRpc::Eip2930(receipt_with_bloom),
-                0x02 => TypedReceiptRpc::Eip1559(receipt_with_bloom),
-                0x03 => TypedReceiptRpc::Eip4844(receipt_with_bloom),
-                0x04 => TypedReceiptRpc::Eip7702(receipt_with_bloom),
-                0x7E => TypedReceiptRpc::Deposit(OpDepositReceiptWithBloom {
+                0x00 => FoundryReceiptEnvelope::Legacy(receipt_with_bloom),
+                0x01 => FoundryReceiptEnvelope::Eip2930(receipt_with_bloom),
+                0x02 => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
+                0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
+                0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
+                0x7E => FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
                     receipt: OpDepositReceipt {
                         inner: Receipt {
                             status: alloy_consensus::Eip658Value::Eip658(
                                 receipt_with_bloom.status(),
                             ),
                             cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
-                            logs: receipt_with_bloom
-                                .receipt
-                                .logs
-                                .into_iter()
-                                .map(|l| l.inner)
-                                .collect(),
+                            logs: receipt_with_bloom.receipt.logs,
                         },
                         deposit_nonce: other
                             .get_deserialized::<U64>("depositNonce")

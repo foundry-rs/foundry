@@ -34,14 +34,14 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Blob, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEnvelope, Typed2718,
+    Account, Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    TxEnvelope, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
 use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
-    Encodable2718,
+    BlockNumHash, Encodable2718,
     eip1559::BaseFeeParams,
     eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
     eip7840::BlobParams,
@@ -87,7 +87,6 @@ use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
         MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceiptRpc,
     },
     wallet::WalletCapabilities,
 };
@@ -3114,60 +3113,16 @@ impl Backend {
         let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        // TODO: refactor MinedTransactionReceipt building
-        // Build a ReceiptWithBloom<rpc_types::Log> from the FoundryReceiptEnvelope
-        let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
-            status: tx_receipt.as_receipt().status,
-            cumulative_gas_used: tx_receipt.cumulative_gas_used(),
-            logs: tx_receipt
-                .logs()
-                .to_vec()
-                .into_iter()
-                .enumerate()
-                .map(|(index, log)| alloy_rpc_types::Log {
-                    inner: log,
-                    block_hash: Some(block_hash),
-                    block_number: Some(block.header.number),
-                    block_timestamp: Some(block.header.timestamp),
-                    transaction_hash: Some(info.transaction_hash),
-                    transaction_index: Some(info.transaction_index),
-                    log_index: Some((next_log_index + index) as u64),
-                    removed: false,
-                })
-                .collect(),
-        };
-        let logs_bloom = tx_receipt.logs_bloom().to_owned();
-        let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom };
-
-        let inner = match tx_receipt {
-            FoundryReceiptEnvelope::Legacy(_) => TypedReceiptRpc::Legacy(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip2930(_) => TypedReceiptRpc::Eip2930(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip1559(_) => TypedReceiptRpc::Eip1559(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip4844(_) => TypedReceiptRpc::Eip4844(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip7702(_) => TypedReceiptRpc::Eip7702(receipt_with_bloom),
-            FoundryReceiptEnvelope::Deposit(r) => {
-                TypedReceiptRpc::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                    receipt: op_alloy_consensus::OpDepositReceipt {
-                        inner: Receipt {
-                            status: receipt_with_bloom.receipt.status,
-                            cumulative_gas_used: receipt_with_bloom.receipt.cumulative_gas_used,
-                            logs: receipt_with_bloom
-                                .receipt
-                                .logs
-                                .into_iter()
-                                .map(|l| l.inner)
-                                .collect(),
-                        },
-                        deposit_nonce: r.receipt.deposit_nonce,
-                        deposit_receipt_version: r.receipt.deposit_receipt_version,
-                    },
-                    logs_bloom: receipt_with_bloom.logs_bloom,
-                })
-            }
-        };
+        let tx_receipt = tx_receipt.convert_logs_rpc(
+            BlockNumHash::new(block.header.number, block_hash),
+            block.header.timestamp,
+            info.transaction_hash,
+            info.transaction_index,
+            next_log_index,
+        );
 
         let inner = TransactionReceipt {
-            inner,
+            inner: tx_receipt,
             transaction_hash: info.transaction_hash,
             transaction_index: Some(info.transaction_index),
             block_number: Some(block.header.number),

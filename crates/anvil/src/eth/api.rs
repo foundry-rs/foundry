@@ -2772,14 +2772,7 @@ impl EthApi {
                         && let Some(output) = receipt.out
                     {
                         // insert revert reason if failure
-                        if !receipt
-                            .inner
-                            .inner
-                            .inner
-                            .as_receipt_with_bloom()
-                            .receipt
-                            .status
-                            .coerce_status()
+                        if !receipt.inner.inner.inner.status()
                             && let Some(reason) = RevertDecoder::new().maybe_decode(&output, None)
                         {
                             tx.other.insert(
