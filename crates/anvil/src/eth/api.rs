@@ -1350,7 +1350,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_fillTransaction`
     pub async fn fill_transaction(
         &self,
-        request: WithOtherFields<TransactionRequest>,
+        mut request: WithOtherFields<TransactionRequest>,
     ) -> Result<FillTransaction<AnyRpcTransaction>> {
         node_info!("eth_fillTransaction");
 
@@ -1364,6 +1364,7 @@ impl EthApi {
         } else {
             self.request_nonce(&request, from).await?.0
         };
+        
         // Prefill gas limit with estimated gas, bubble up the error if the gas estimation fails
         // This is a workaround to avoid the error being swallowed by the `build_tx_request` function
         if request.as_ref().gas_limit().is_none() {
