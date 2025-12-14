@@ -164,14 +164,14 @@ impl BrowserWalletServer {
             return Err(BrowserWalletError::NotConnected);
         }
 
-        let tx_id = request.id;
+        let sign_id = request.id;
 
         self.state.add_signing_request(request).await;
 
         let start = Instant::now();
 
         loop {
-            if let Some(response) = self.state.get_signing_response(&tx_id).await {
+            if let Some(response) = self.state.get_signing_response(&sign_id).await {
                 if let Some(signature) = response.signature {
                     return Ok(signature);
                 } else if let Some(error) = response.error {
@@ -187,7 +187,7 @@ impl BrowserWalletServer {
             }
 
             if start.elapsed() > self.timeout {
-                self.state.remove_signing_request(&tx_id).await;
+                self.state.remove_signing_request(&sign_id).await;
                 return Err(BrowserWalletError::Timeout { operation: "Signing" });
             }
 
