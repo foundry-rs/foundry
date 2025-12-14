@@ -5,7 +5,6 @@ use crate::{
     utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
 use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559};
-use alloy_sol_types::SolCall;
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844, TxSignerSync};
 use alloy_primitives::{
     Address, B256, ChainId, U256, b256, bytes,
@@ -17,6 +16,7 @@ use alloy_rpc_types::{
     state::AccountOverride,
 };
 use alloy_serde::WithOtherFields;
+use alloy_sol_types::SolCall;
 use anvil::{CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn};
 use foundry_test_utils::rpc;
 use futures::join;
