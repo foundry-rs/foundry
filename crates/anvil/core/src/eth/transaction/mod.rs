@@ -1,183 +1,24 @@
 //! Transaction related types
 use alloy_consensus::{
-    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
-    TxEnvelope, TxLegacy, TxReceipt, Typed2718,
-    transaction::{
-        Recovered, TxEip7702,
-        eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-    },
+    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEnvelope, TxReceipt,
+    Typed2718, transaction::Recovered,
 };
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt};
-use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256};
+use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, U64};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
-    Transaction as RpcTransaction, TransactionReceipt, request::TransactionRequest,
-    trace::otterscan::OtsReceipt,
+    Transaction as RpcTransaction, TransactionReceipt, trace::otterscan::OtsReceipt,
 };
-use alloy_serde::{OtherFields, WithOtherFields};
+use alloy_serde::WithOtherFields;
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
-use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
+use foundry_primitives::FoundryTxEnvelope;
+use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
-
-/// Converts a [TransactionRequest] into a [FoundryTypedTx].
-/// Should be removed once the call builder abstraction for providers is in place.
-pub fn transaction_request_to_typed(
-    tx: WithOtherFields<TransactionRequest>,
-) -> Option<FoundryTypedTx> {
-    let WithOtherFields::<TransactionRequest> {
-        inner:
-            TransactionRequest {
-                from,
-                to,
-                gas_price,
-                max_fee_per_gas,
-                max_priority_fee_per_gas,
-                max_fee_per_blob_gas,
-                blob_versioned_hashes,
-                gas,
-                value,
-                input,
-                nonce,
-                access_list,
-                sidecar,
-                transaction_type,
-                authorization_list,
-                chain_id: _,
-            },
-        other,
-    } = tx;
-
-    // Special case: OP-stack deposit tx
-    if transaction_type == Some(0x7E) || has_optimism_fields(&other) {
-        let mint = other.get_deserialized::<U256>("mint")?.map(|m| m.to::<u128>()).ok()?;
-
-        return Some(FoundryTypedTx::Deposit(TxDeposit {
-            from: from.unwrap_or_default(),
-            source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
-            to: to.unwrap_or_default(),
-            mint,
-            value: value.unwrap_or_default(),
-            gas_limit: gas.unwrap_or_default(),
-            is_system_transaction: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
-            input: input.into_input().unwrap_or_default(),
-        }));
-    }
-
-    // EIP7702
-    if transaction_type == Some(4) || authorization_list.is_some() {
-        return Some(FoundryTypedTx::Eip7702(TxEip7702 {
-            nonce: nonce.unwrap_or_default(),
-            max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
-            max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default(),
-            gas_limit: gas.unwrap_or_default(),
-            value: value.unwrap_or(U256::ZERO),
-            input: input.into_input().unwrap_or_default(),
-            // requires to
-            to: to?.into_to()?,
-            chain_id: 0,
-            access_list: access_list.unwrap_or_default(),
-            authorization_list: authorization_list.unwrap_or_default(),
-        }));
-    }
-
-    match (
-        transaction_type,
-        gas_price,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        access_list.as_ref(),
-        max_fee_per_blob_gas,
-        blob_versioned_hashes.as_ref(),
-        sidecar.as_ref(),
-        to,
-    ) {
-        // legacy transaction
-        (Some(0), _, None, None, None, None, None, None, _)
-        | (None, Some(_), None, None, None, None, None, None, _) => {
-            Some(FoundryTypedTx::Legacy(TxLegacy {
-                nonce: nonce.unwrap_or_default(),
-                gas_price: gas_price.unwrap_or_default(),
-                gas_limit: gas.unwrap_or_default(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.into_input().unwrap_or_default(),
-                to: to.unwrap_or_default(),
-                chain_id: None,
-            }))
-        }
-        // EIP2930
-        (Some(1), _, None, None, _, None, None, None, _)
-        | (None, _, None, None, Some(_), None, None, None, _) => {
-            Some(FoundryTypedTx::Eip2930(TxEip2930 {
-                nonce: nonce.unwrap_or_default(),
-                gas_price: gas_price.unwrap_or_default(),
-                gas_limit: gas.unwrap_or_default(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.into_input().unwrap_or_default(),
-                to: to.unwrap_or_default(),
-                chain_id: 0,
-                access_list: access_list.unwrap_or_default(),
-            }))
-        }
-        // EIP1559
-        (Some(2), None, _, _, _, _, None, None, _)
-        | (None, None, Some(_), _, _, _, None, None, _)
-        | (None, None, _, Some(_), _, _, None, None, _)
-        | (None, None, None, None, None, _, None, None, _) => {
-            // Empty fields fall back to the canonical transaction schema.
-            Some(FoundryTypedTx::Eip1559(TxEip1559 {
-                nonce: nonce.unwrap_or_default(),
-                max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
-                max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default(),
-                gas_limit: gas.unwrap_or_default(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.into_input().unwrap_or_default(),
-                to: to.unwrap_or_default(),
-                chain_id: 0,
-                access_list: access_list.unwrap_or_default(),
-            }))
-        }
-        // EIP4844
-        (Some(3), None, _, _, _, _, Some(_), _, to) => {
-            let tx = TxEip4844 {
-                nonce: nonce.unwrap_or_default(),
-                max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
-                max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_blob_gas: max_fee_per_blob_gas.unwrap_or_default(),
-                gas_limit: gas.unwrap_or_default(),
-                value: value.unwrap_or(U256::ZERO),
-                input: input.into_input().unwrap_or_default(),
-                to: match to.unwrap_or(TxKind::Create) {
-                    TxKind::Call(to) => to,
-                    TxKind::Create => Address::ZERO,
-                },
-                chain_id: 0,
-                access_list: access_list.unwrap_or_default(),
-                blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
-            };
-
-            if let Some(sidecar) = sidecar {
-                Some(FoundryTypedTx::Eip4844(TxEip4844Variant::TxEip4844WithSidecar(
-                    TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
-                )))
-            } else {
-                Some(FoundryTypedTx::Eip4844(TxEip4844Variant::TxEip4844(tx)))
-            }
-        }
-        _ => None,
-    }
-}
-
-pub fn has_optimism_fields(other: &OtherFields) -> bool {
-    other.contains_key("sourceHash")
-        && other.contains_key("mint")
-        && other.contains_key("isSystemTx")
-}
 
 /// A wrapper for [FoundryTxEnvelope] that allows impersonating accounts.
 ///
