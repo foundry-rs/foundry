@@ -3349,9 +3349,7 @@ impl EthApi {
         if request.gas_limit().is_none() {
             request.set_gas_limit(
                 self.do_estimate_gas(request.as_ref().clone(), None, EvmOverrides::default())
-                    .await
-                    .map(|v| v as u64)
-                    .unwrap_or(self.backend.gas_limit()),
+                    .await? as u64,
             );
         }
 
