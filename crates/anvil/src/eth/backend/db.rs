@@ -481,6 +481,97 @@ where
     Ok(number)
 }
 
+/// Wrapper around StateDb that prevents RPC calls in offline mode
+///
+/// This wrapper is used for cached historical states to ensure that in offline mode,
+/// queries for missing data return defaults instead of attempting RPC calls.
+#[derive(Debug)]
+pub struct OfflineStateDb<'a> {
+    inner: &'a StateDb,
+}
+
+impl<'a> OfflineStateDb<'a> {
+    pub fn new_ref(inner: &'a StateDb) -> Self {
+        Self { inner }
+    }
+}
+
+impl<'a> DatabaseRef for OfflineStateDb<'a> {
+    type Error = DatabaseError;
+
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        // Try to get from the underlying database's HashMap (if it's a full database)
+        if let Some(db) = self.inner.maybe_as_full_db() {
+            if let Some(account) = db.get(&address) {
+                return Ok(Some(account.info.clone()));
+            }
+            // Not in cache - return default instead of fetching
+            return Ok(Some(AccountInfo::default()));
+        }
+        // Fallback: delegate to inner (should not happen with StateDb)
+        self.inner.basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        // If it's the empty hash, return empty bytecode
+        if code_hash == revm::primitives::KECCAK_EMPTY {
+            return Ok(Bytecode::default());
+        }
+
+        // For non-empty code hashes, try to delegate to inner
+        // If code is not in cache, return empty instead of fetching
+        // Note: This is defensive - in practice, code should be cached for accounts in the snapshot
+        match self.inner.code_by_hash_ref(code_hash) {
+            Ok(code) => Ok(code),
+            Err(_) => Ok(Bytecode::default()), // Return empty if not in cache (offline safe)
+        }
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        // Try to get from the underlying database's HashMap
+        if let Some(db) = self.inner.maybe_as_full_db() {
+            if let Some(account) = db.get(&address) {
+                if let Some(value) = account.storage.get(&index) {
+                    return Ok(*value);
+                }
+                // Account exists but storage slot not accessed - return zero
+                return Ok(U256::ZERO);
+            }
+            // Account not in cache - return zero for storage
+            return Ok(U256::ZERO);
+        }
+        // Fallback
+        self.inner.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        // Block hashes are pre-loaded, safe to delegate
+        self.inner.block_hash_ref(number)
+    }
+}
+
+impl<'a> MaybeFullDatabase for OfflineStateDb<'a> {
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        self.inner.maybe_as_full_db()
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        unreachable!("OfflineStateDb is read-only")
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.inner.read_as_state_snapshot()
+    }
+
+    fn clear(&mut self) {
+        unreachable!("OfflineStateDb is read-only")
+    }
+
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {
+        unreachable!("OfflineStateDb is read-only")
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SerializableState {
     /// The block number of the state
