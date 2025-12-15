@@ -78,19 +78,10 @@ impl BenchmarkResults {
 
         // Summary
         output.push_str("## Summary\n\n");
-        // Count actual repos that have results
-        let mut repos_with_results = std::collections::HashSet::new();
-        for version_data in self.data.values() {
-            for repo_data in version_data.values() {
-                for repo_name in repo_data.keys() {
-                    repos_with_results.insert(repo_name.clone());
-                }
-            }
-        }
         output.push_str(&format!(
             "Benchmarked {} Foundry versions across {} repositories.\n\n",
             versions.len(),
-            repos_with_results.len()
+            repos.len()
         ));
 
         // Repositories tested
