@@ -492,15 +492,17 @@ impl SessionSource {
     ///
     /// Returns `true` if the new line was added to `run()`.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(Self, bool)> {
-        if let Some((new_source, fragment)) = self
+        // Clone once and reuse for all parse attempts to avoid multiple expensive clones
+        let cloned = self.clone();
+        if let Some((new_source, fragment)) = cloned
             .parse_fragment(&content)
             .or_else(|| {
                 content.push(';');
-                self.parse_fragment(&content)
+                cloned.parse_fragment(&content)
             })
             .or_else(|| {
                 content = content.trim_end().trim_end_matches(';').to_string();
-                self.parse_fragment(&content)
+                cloned.parse_fragment(&content)
             })
         {
             Ok((new_source, matches!(fragment, ParseTreeFragment::Function)))
@@ -517,20 +519,36 @@ impl SessionSource {
             debug!("{errors}");
         }
 
+        // Clone once and reuse, rolling back changes between attempts
         let mut this = self.clone();
+        let original_run_len = this.run_code.len();
+        let original_contract_len = this.contract_code.len();
+        let original_global_len = this.global_code.len();
+
+        // Try adding to run() function
         match this.add_run_code(buffer).parse() {
             Ok(()) => return Some((this, ParseTreeFragment::Function)),
-            Err(e) => debug_errors(&e),
+            Err(e) => {
+                debug_errors(&e);
+                this.run_code.truncate(original_run_len);
+            }
         }
-        this = self.clone();
+
+        // Try adding to contract level
         match this.add_contract_code(buffer).parse() {
             Ok(()) => return Some((this, ParseTreeFragment::Contract)),
-            Err(e) => debug_errors(&e),
+            Err(e) => {
+                debug_errors(&e);
+                this.contract_code.truncate(original_contract_len);
+            }
         }
-        this = self.clone();
+
+        // Try adding to global scope
         match this.add_global_code(buffer).parse() {
             Ok(()) => return Some((this, ParseTreeFragment::Source)),
-            Err(e) => debug_errors(&e),
+            Err(e) => {
+                debug_errors(&e);
+            }
         }
         None
     }
