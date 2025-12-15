@@ -39,7 +39,7 @@ impl FlattenArgs {
         let project = config.ephemeral_project()?;
 
         let target_path = dunce::canonicalize(target_path)?;
-        let flattened = flatten(project, &target_path)?;
+        let flattened = flatten(&project, &target_path)?;
 
         match output {
             Some(output) => {
