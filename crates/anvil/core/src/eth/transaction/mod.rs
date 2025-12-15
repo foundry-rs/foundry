@@ -1,18 +1,13 @@
 //! Transaction related types
-use alloy_consensus::{
-    Receipt, Signed, Transaction, TxEnvelope, TxReceipt, Typed2718, transaction::Recovered,
-};
+use alloy_consensus::{Signed, Transaction, TxEnvelope, Typed2718, transaction::Recovered};
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt};
-use alloy_primitives::{Address, B256, Bytes, TxHash, U64};
+use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_rlp::{Decodable, Encodable};
-use alloy_rpc_types::{Log, Transaction as RpcTransaction, TransactionReceipt};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::Transaction as RpcTransaction;
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
-use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
+use foundry_primitives::FoundryTxEnvelope;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
@@ -224,87 +219,4 @@ pub struct TransactionInfo {
     pub out: Option<Bytes>,
     pub nonce: u64,
     pub gas_used: u64,
-}
-
-pub type ReceiptResponse = WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>;
-
-pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
-    let WithOtherFields {
-        inner:
-            TransactionReceipt {
-                transaction_hash,
-                transaction_index,
-                block_hash,
-                block_number,
-                gas_used,
-                contract_address,
-                effective_gas_price,
-                from,
-                to,
-                blob_gas_price,
-                blob_gas_used,
-                inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
-            },
-        other,
-    } = receipt;
-
-    Some(WithOtherFields {
-        inner: TransactionReceipt {
-            transaction_hash,
-            transaction_index,
-            block_hash,
-            block_number,
-            gas_used,
-            contract_address,
-            effective_gas_price,
-            from,
-            to,
-            blob_gas_price,
-            blob_gas_used,
-            inner: match r#type {
-                0x00 => FoundryReceiptEnvelope::Legacy(receipt_with_bloom),
-                0x01 => FoundryReceiptEnvelope::Eip2930(receipt_with_bloom),
-                0x02 => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
-                0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
-                0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
-                0x7E => FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
-                    receipt: OpDepositReceipt {
-                        inner: Receipt {
-                            status: alloy_consensus::Eip658Value::Eip658(
-                                receipt_with_bloom.status(),
-                            ),
-                            cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
-                            logs: receipt_with_bloom.receipt.logs,
-                        },
-                        deposit_nonce: other
-                            .get_deserialized::<U64>("depositNonce")
-                            .transpose()
-                            .ok()?
-                            .map(|v| v.to()),
-                        deposit_receipt_version: other
-                            .get_deserialized::<U64>("depositReceiptVersion")
-                            .transpose()
-                            .ok()?
-                            .map(|v| v.to()),
-                    },
-                    logs_bloom: receipt_with_bloom.logs_bloom,
-                }),
-                _ => return None,
-            },
-        },
-        other,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // <https://github.com/foundry-rs/foundry/issues/10852>
-    #[test]
-    fn test_receipt_convert() {
-        let s = r#"{"type":"0x4","status":"0x1","cumulativeGasUsed":"0x903fd1","logs":[{"address":"0x0000d9fcd47bf761e7287d8ee09917d7e2100000","topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000000000000000000000000000000000000000000000","0x000000000000000000000000234ce51365b9c417171b6dad280f49143e1b0547"],"data":"0x00000000000000000000000000000000000000000000032139b42c3431700000","blockHash":"0xd26b59c1d8b5bfa9362d19eb0da3819dfe0b367987a71f6d30908dd45e0d7a60","blockNumber":"0x159663e","blockTimestamp":"0x68411f7b","transactionHash":"0x17a6af73d1317e69cfc3cac9221bd98261d40f24815850a44dbfbf96652ae52a","transactionIndex":"0x22","logIndex":"0x158","removed":false}],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000008100000000000000000000000000000000000000000000000020000200000000000000800000000800000000000000010000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x17a6af73d1317e69cfc3cac9221bd98261d40f24815850a44dbfbf96652ae52a","transactionIndex":"0x22","blockHash":"0xd26b59c1d8b5bfa9362d19eb0da3819dfe0b367987a71f6d30908dd45e0d7a60","blockNumber":"0x159663e","gasUsed":"0x28ee7","effectiveGasPrice":"0x4bf02090","from":"0x234ce51365b9c417171b6dad280f49143e1b0547","to":"0x234ce51365b9c417171b6dad280f49143e1b0547","contractAddress":null}"#;
-        let receipt: AnyTransactionReceipt = serde_json::from_str(s).unwrap();
-        let _converted = convert_to_anvil_receipt(receipt).unwrap();
-    }
 }

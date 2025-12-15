@@ -5,7 +5,9 @@ use crate::{
     utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
 use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559};
-use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844, TxSignerSync};
+use alloy_network::{
+    EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync,
+};
 use alloy_primitives::{
     Address, B256, ChainId, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
@@ -433,8 +435,8 @@ async fn can_send_raw_tx_sync() {
     tx.eip2718_encode(&mut encoded);
 
     let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
-    assert_eq!(receipt.from, wallets[1].address());
-    assert_eq!(receipt.to, tx.to());
+    assert_eq!(receipt.from(), wallets[1].address());
+    assert_eq!(receipt.to(), tx.to());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -453,7 +455,7 @@ async fn can_send_tx_sync() {
         .with_input(logger_bytecode);
 
     let receipt = api.send_transaction_sync(WithOtherFields::new(tx)).await.unwrap();
-    assert_eq!(receipt.from, wallets[0].address());
+    assert_eq!(receipt.from(), wallets[0].address());
 }
 
 #[tokio::test(flavor = "multi_thread")]
