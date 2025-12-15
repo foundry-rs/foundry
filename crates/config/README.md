@@ -26,10 +26,10 @@ The following is an example of what such a file might look like. This can also b
 ```toml
 ## defaults for _all_ profiles
 [profile.default]
+solc = "/home/<user>/.foundry/bin/solc" ##In WSL environments, this may be required for Foundry to function correctly.
 src = "src"
 out = "out"
 libs = ["lib"]
-solc = "0.8.10" # to use a specific local solc install set the path as `solc = "<path to solc>/solc"`
 eth-rpc-url = "https://mainnet.infura.io"
 
 ## set only when the `hardhat` profile is selected
@@ -61,6 +61,7 @@ The following is a foundry.toml file with all configuration options set. See als
 ```toml
 ## defaults for _all_ profiles
 [profile.default]
+solc = "/home/<user>/.foundry/bin/solc" ##In WSL environments, this may be required for Foundry to function correctly.
 src = 'src'
 test = 'test'
 script = 'script'
