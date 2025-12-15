@@ -1,7 +1,7 @@
 use alloy_consensus::{Receipt, TxReceipt};
 use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt, ReceiptResponse};
 use alloy_primitives::{Address, B256, BlockHash, TxHash, U64};
-use alloy_rpc_types::{Log, TransactionReceipt};
+use alloy_rpc_types::{ConversionError, Log, TransactionReceipt};
 use alloy_serde::WithOtherFields;
 use derive_more::AsRef;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
@@ -77,7 +77,7 @@ impl ReceiptResponse for FoundryTxReceipt {
 }
 
 impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
-    type Error = ();
+    type Error = ConversionError;
 
     fn try_from(receipt: AnyTransactionReceipt) -> Result<Self, Self::Error> {
         let WithOtherFields {
@@ -150,7 +150,12 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                             logs_bloom: receipt_with_bloom.logs_bloom,
                         })
                     }
-                    _ => return Err(()),
+                    _ => {
+                        let tx_type = r#type;
+                        return Err(ConversionError::Custom(format!(
+                            "Unknown transaction receipt type: 0x{tx_type:02X}"
+                        )));
+                    }
                 },
             },
             other,
