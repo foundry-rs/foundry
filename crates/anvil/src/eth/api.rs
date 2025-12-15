@@ -1364,13 +1364,13 @@ impl EthApi {
         } else {
             self.request_nonce(&request, from).await?.0
         };
-        
+
         // Prefill gas limit with estimated gas, bubble up the error if the gas estimation fails
-        // This is a workaround to avoid the error being swallowed by the `build_tx_request` function
+        // This is a workaround to avoid the error being swallowed by the `build_tx_request`
+        // function
         if request.as_ref().gas_limit().is_none() {
-            let estimated_gas = self
-                .estimate_gas(request.clone(), None, EvmOverrides::default())
-                .await?;
+            let estimated_gas =
+                self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
             request.as_mut().set_gas_limit(estimated_gas.to());
         }
 
