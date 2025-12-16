@@ -432,6 +432,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
+    let contract_dump_dir = tmp_dump_dir.join(contract_name);
     source_tree
         .write_to(&tmp_dump_dir)
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
@@ -444,8 +445,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     // * if there is any other directory other than `src`, `contracts`, `lib`, `hardhat`,
     //   `forge-std`,
     // or not started with `@`, we should not re-organize.
-    let to_reorg = !no_reorg
-        && std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
+    let to_reorg = !no_reorg && std::fs::read_dir(&contract_dump_dir)?.all(|e| {
             let Ok(e) = e else { return false };
             let folder_name = e.file_name();
             folder_name == "src"
@@ -462,7 +462,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     eyre::ensure!(Path::exists(&root.join(lib_dir)), "`lib` directory must exists");
 
     // move source files
-    for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
+    for entry in std::fs::read_dir(contract_dump_dir)? {
         let entry = entry?;
         let folder_name = entry.file_name();
         // special handling when we need to re-organize the directories: we flatten them.
