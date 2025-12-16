@@ -114,7 +114,7 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
 }
 
 /// Checks if a function getter is a valid constant getter with a heuristic:
-///  * name is `SCREAMING_SNAKE_CASE`
+///  * name is `SCREAMING_SNAKE_CASE` (check_screaming_snake_case returns None)
 ///  * external view visibility and mutability.
 ///  * zero parameters.
 ///  * exactly one return value.
@@ -128,5 +128,5 @@ fn is_constant_getter(header: &FunctionHeader<'_>) -> bool {
             .returns()
             .first()
             .is_some_and(|ret| ret.ty.kind.is_elementary() || ret.ty.kind.is_custom())
-        && check_screaming_snake_case(header.name.unwrap().as_str()).is_none()
+        && header.name.is_some_and(|name| check_screaming_snake_case(name.as_str()).is_none())
 }
