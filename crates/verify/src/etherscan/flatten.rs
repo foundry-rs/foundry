@@ -33,7 +33,7 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
             bch,
         );
 
-        let flattened_source = flatten(&context.project, &context.target_path)?;
+        let flattened_source = flatten(context.project.clone(), &context.target_path)?;
         if !args.force {
             // solc dry run of flattened code
             self.check_flattened(
