@@ -38,8 +38,8 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionBuilder4844,
-    TransactionResponse, eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, ReceiptResponse, TransactionBuilder,
+    TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, Signature, TxHash, TxKind, U64, U256,
@@ -69,7 +69,7 @@ use anvil_core::{
     eth::{
         EthRequest,
         block::BlockInfo,
-        transaction::{MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse},
+        transaction::{MaybeImpersonatedTransaction, PendingTransaction},
         wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
@@ -78,7 +78,7 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
-    FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxType, FoundryTypedTx,
+    FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -1099,7 +1099,7 @@ impl EthApi {
     }
 
     /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
-    async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+    async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
         let mut stream = self.new_block_notifications();
         // Check if the transaction is already included before listening for new blocks.
         if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
@@ -1118,7 +1118,7 @@ impl EthApi {
     }
 
     /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
-    async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+    async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
         const TIMEOUT_DURATION: Duration = Duration::from_secs(30);
         tokio::time::timeout(TIMEOUT_DURATION, self.await_transaction_inclusion(hash))
             .await
@@ -1136,13 +1136,13 @@ impl EthApi {
     pub async fn send_transaction_sync(
         &self,
         request: WithOtherFields<TransactionRequest>,
-    ) -> Result<ReceiptResponse> {
+    ) -> Result<FoundryTxReceipt> {
         node_info!("eth_sendTransactionSync");
         let hash = self.send_transaction(request).await?;
 
         let receipt = self.check_transaction_inclusion(hash).await?;
 
-        Ok(ReceiptResponse::from(receipt))
+        Ok(receipt)
     }
 
     /// Sends signed transaction, returning its hash.
@@ -1186,13 +1186,13 @@ impl EthApi {
     /// Sends signed transaction, returning its receipt.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
-    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<ReceiptResponse> {
+    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<FoundryTxReceipt> {
         node_info!("eth_sendRawTransactionSync");
 
         let hash = self.send_raw_transaction(tx).await?;
         let receipt = self.check_transaction_inclusion(hash).await?;
 
-        Ok(ReceiptResponse::from(receipt))
+        Ok(receipt)
     }
 
     /// Call contract, returning the output data.
@@ -1350,7 +1350,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_fillTransaction`
     pub async fn fill_transaction(
         &self,
-        request: WithOtherFields<TransactionRequest>,
+        mut request: WithOtherFields<TransactionRequest>,
     ) -> Result<FillTransaction<AnyRpcTransaction>> {
         node_info!("eth_fillTransaction");
 
@@ -1364,6 +1364,15 @@ impl EthApi {
         } else {
             self.request_nonce(&request, from).await?.0
         };
+
+        // Prefill gas limit with estimated gas, bubble up the error if the gas estimation fails
+        // This is a workaround to avoid the error being swallowed by the `build_tx_request`
+        // function
+        if request.as_ref().gas_limit().is_none() {
+            let estimated_gas =
+                self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
+            request.as_mut().set_gas_limit(estimated_gas.to());
+        }
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
         let tx = build_typed_transaction(
@@ -1569,7 +1578,7 @@ impl EthApi {
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
-    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<ReceiptResponse>> {
+    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<FoundryTxReceipt>> {
         node_info!("eth_getTransactionReceipt");
         self.backend.transaction_receipt(hash).await
     }
@@ -1577,7 +1586,7 @@ impl EthApi {
     /// Returns block receipts by block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
-    pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<ReceiptResponse>>> {
+    pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<FoundryTxReceipt>>> {
         node_info!("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
@@ -2763,14 +2772,7 @@ impl EthApi {
                         && let Some(output) = receipt.out
                     {
                         // insert revert reason if failure
-                        if !receipt
-                            .inner
-                            .inner
-                            .inner
-                            .as_receipt_with_bloom()
-                            .receipt
-                            .status
-                            .coerce_status()
+                        if !receipt.inner.as_ref().status()
                             && let Some(reason) = RevertDecoder::new().maybe_decode(&output, None)
                         {
                             tx.other.insert(
