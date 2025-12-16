@@ -93,11 +93,13 @@ pub fn strip_bytecode_placeholders(bytecode: &BytecodeObject) -> Option<Bytes> {
 /// Flattens the given target of the project. Falls back to the old flattening implementation
 /// if the target cannot be compiled successfully. This would be the case if the target has invalid
 /// syntax. (e.g. Solang)
-pub fn flatten(project: &Project, target_path: &Path) -> eyre::Result<String> {
-    let flattened = match Flattener::new(project.clone(), target_path) {
+pub fn flatten(project: Project, target_path: &Path) -> eyre::Result<String> {
+    // Save paths for fallback before Flattener::new takes ownership
+    let paths = project.paths.clone();
+    let flattened = match Flattener::new(project, target_path) {
         Ok(flattener) => Ok(flattener.flatten()),
         Err(FlattenerError::Compilation(_)) => {
-            project.paths.with_language::<SolcLanguage>().flatten(target_path)
+            paths.with_language::<SolcLanguage>().flatten(target_path)
         }
         Err(FlattenerError::Other(err)) => Err(err),
     }
