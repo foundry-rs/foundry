@@ -19,17 +19,25 @@ pub enum RetryError<E = Report> {
 pub struct Retry {
     retries: u32,
     delay: Duration,
+    /// If true, suppresses warning output (uses tracing::debug instead of sh_warn).
+    silent: bool,
 }
 
 impl Retry {
     /// Creates a new `Retry` instance.
     pub fn new(retries: u32, delay: Duration) -> Self {
-        Self { retries, delay }
+        Self { retries, delay, silent: false }
     }
 
     /// Creates a new `Retry` instance with no delay between retries.
     pub fn new_no_delay(retries: u32) -> Self {
         Self::new(retries, Duration::ZERO)
+    }
+
+    /// Sets the retry to silent mode (no sh_warn! output).
+    pub fn silent(mut self) -> Self {
+        self.silent = true;
+        self
     }
 
     /// Runs the given closure in a loop, retrying if it fails up to the specified number of times.
@@ -110,7 +118,9 @@ impl Retry {
             },
             retries = self.retries,
         );
-        if warn {
+        if self.silent {
+            tracing::debug!("{msg}");
+        } else if warn {
             let _ = sh_warn!("{msg}");
         } else {
             tracing::info!("{msg}");

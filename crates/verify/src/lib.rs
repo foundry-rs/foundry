@@ -16,6 +16,11 @@ pub mod provider;
 pub mod bytecode;
 pub use bytecode::VerifyBytecodeArgs;
 
+pub mod progress;
+pub use progress::{
+    ContractProgressBar, VerificationProgress, VerificationProgressState, VerificationStatus,
+};
+
 pub mod retry;
 pub use retry::RetryArgs;
 

@@ -1,5 +1,5 @@
 use crate::{
-    VerifierArgs,
+    ContractProgressBar, VerificationProgress, VerifierArgs,
     provider::{VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
     utils::ensure_solc_build_metadata,
@@ -62,14 +62,18 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
         let (etherscan, verify_args) = self.prepare_verify_request(&args, &context).await?;
+        let progress_bar = args.progress_bar.clone();
 
         if !args.skip_is_verified_check
             && self.is_contract_verified(&etherscan, &verify_args).await?
         {
-            sh_println!(
-                "\nContract [{}] {:?} is already verified. Skipping verification.",
-                verify_args.contract_name,
-                verify_args.address.to_checksum(None)
+            print_or_update_progress(
+                &progress_bar,
+                &format!(
+                    "Contract [{}] {:?} is already verified. Skipping verification.",
+                    verify_args.contract_name,
+                    verify_args.address.to_checksum(None)
+                ),
             )?;
 
             return Ok(());
@@ -77,14 +81,18 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
         trace!(?verify_args, "submitting verification request");
 
-        let resp = args
-            .retry
-            .into_retry()
-            .run_async(|| async {
-                sh_println!(
-                    "\nSubmitting verification for [{}] {}.",
-                    verify_args.contract_name,
-                    verify_args.address
+        let retry_progress_bar = progress_bar.clone();
+        let mut retry = args.retry.into_retry();
+        if progress_bar.is_some() {
+            retry = retry.silent();
+        }
+        let resp = retry.run_async(|| async {
+                print_or_update_progress(
+                    &retry_progress_bar,
+                    &format!(
+                        "Submitting verification for [{}] {}.",
+                        verify_args.contract_name, verify_args.address
+                    ),
                 )?;
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
@@ -109,17 +117,21 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         || resp.result.starts_with("The address is not a smart contract")
                         || resp.result.starts_with("Address is not a smart-contract")
                     {
-                        warn!("{}", resp.result);
-                        return Err(eyre!("Could not detect deployment: {}", resp.result));
+                        let msg = format!("Could not detect deployment: {}", resp.result);
+                        if retry_progress_bar.is_some() {
+                            let _ = print_or_update_progress(&retry_progress_bar, &msg);
+                            return Err(eyre!("retrying"));
+                        } else {
+                            return Err(eyre!("{msg}"));
+                        }
                     }
 
-                    sh_err!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
-                        `{}`",
+                    let msg = format!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
                         resp.message,
                         resp.result
-                    )?;
-                    warn!("Failed verify submission: {:?}", resp);
+                    );
+                    let _ = print_or_update_progress(&retry_progress_bar, &msg);
                     std::process::exit(1);
                 }
 
@@ -128,11 +140,14 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            sh_println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
-                resp.message,
-                resp.result,
-                etherscan.address_url(args.address)
+            print_or_update_progress(
+                &progress_bar,
+                &format!(
+                    "Submitted contract for verification: Response: `{}` GUID: `{}` URL: {}",
+                    resp.message,
+                    resp.result,
+                    etherscan.address_url(args.address)
+                ),
             )?;
 
             if args.watch {
@@ -141,11 +156,13 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     etherscan: args.etherscan,
                     retry: RETRY_CHECK_ON_VERIFY,
                     verifier: args.verifier,
+                    progress: args.progress.clone(),
+                    progress_bar: progress_bar.clone(),
                 };
                 return self.check(check_args).await;
             }
         } else {
-            sh_println!("Contract source code already verified")?;
+            print_or_update_progress(&progress_bar, "Contract source code already verified")?;
         }
 
         Ok(())
@@ -155,8 +172,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
         let config = args.load_config()?;
         let etherscan = self.client(&args.etherscan, &args.verifier, &config)?;
-        args.retry
-            .into_retry()
+        let progress_bar = args.progress_bar.clone();
+        let mut retry = args.retry.into_retry();
+        if progress_bar.is_some() {
+            retry = retry.silent();
+        }
+        retry
             .run_async_until_break(|| async {
                 let resp = etherscan
                     .check_contract_verification_status(args.id.clone())
@@ -166,43 +187,74 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                 trace!(?resp, "Received verification response");
 
-                let _ = sh_println!(
-                    "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                    resp.message,
-                    resp.result
+                let _ = print_or_update_progress(
+                    &progress_bar,
+                    &format!(
+                        "Contract verification status: Response: `{}` Details: `{}`",
+                        resp.message, resp.result
+                    ),
                 );
 
                 if resp.result == "Pending in queue"
                     || resp.result.starts_with("Error: contract does not exist")
                 {
-                    return Err(RetryError::Retry(eyre!("Verification is still pending...")));
+                    let _ =
+                        print_or_update_progress(&progress_bar, "Verification is still pending...");
+                    let err_msg = if progress_bar.is_some() {
+                        "retrying"
+                    } else {
+                        "Verification is still pending..."
+                    };
+                    return Err(RetryError::Retry(eyre!("{err_msg}")));
                 }
 
                 if resp.result == "Unable to verify" {
-                    return Err(RetryError::Retry(eyre!("Unable to verify.")));
+                    let _ =
+                        print_or_update_progress(&progress_bar, "Unable to verify, retrying...");
+                    let err_msg =
+                        if progress_bar.is_some() { "retrying" } else { "Unable to verify." };
+                    return Err(RetryError::Retry(eyre!("{err_msg}")));
                 }
 
                 if resp.result == "Already Verified" {
-                    let _ = sh_println!("Contract source code already verified");
+                    let _ = print_or_update_progress(
+                        &progress_bar,
+                        "Contract source code already verified",
+                    );
                     return Ok(());
                 }
 
                 if resp.status == "0" {
-                    return Err(RetryError::Break(eyre!(
+                    let msg = format!(
                         "Contract verification failed:\nStatus: `{}`\nResult: `{}`",
-                        resp.status,
-                        resp.result
-                    )));
+                        resp.status, resp.result
+                    );
+                    let _ = print_or_update_progress(&progress_bar, &msg);
+                    let err_msg = if progress_bar.is_some() { "failed".to_string() } else { msg };
+                    return Err(RetryError::Break(eyre!("{err_msg}")));
                 }
 
                 if resp.result == "Pass - Verified" {
-                    let _ = sh_println!("Contract successfully verified");
+                    let _ =
+                        print_or_update_progress(&progress_bar, "Contract successfully verified");
                 }
 
                 Ok(())
             })
             .await
             .wrap_err("Checking verification result failed")
+    }
+}
+
+/// Helper to print message or update specific contract's progress bar.
+/// Multi-line messages are flattened for progress bar display.
+fn print_or_update_progress(progress_bar: &Option<ContractProgressBar>, msg: &str) -> Result<()> {
+    if let Some(pb) = progress_bar {
+        let flat_msg = msg.lines().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+        VerificationProgress::update_contract(pb, &flat_msg);
+        Ok(())
+    } else {
+        sh_println!("{msg}")
     }
 }
 
@@ -446,7 +498,9 @@ impl EtherscanVerificationProvider {
         if maybe_creation_code.starts_with(bytecode) {
             let constructor_args = &maybe_creation_code[bytecode.len()..];
             let constructor_args = hex::encode(constructor_args);
-            sh_println!("Identified constructor arguments: {constructor_args}")?;
+            if args.progress_bar.is_none() {
+                sh_println!("Identified constructor arguments: {constructor_args}")?;
+            }
             Ok(constructor_args)
         } else {
             eyre::bail!("Local bytecode doesn't match on-chain bytecode")

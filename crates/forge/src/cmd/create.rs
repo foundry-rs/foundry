@@ -252,6 +252,8 @@ impl CreateArgs {
             compilation_profile: Some(id.profile.to_string()),
             language: None,
             creation_transaction_hash: None,
+            progress: None,
+            progress_bar: None,
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -441,6 +443,8 @@ impl CreateArgs {
             compilation_profile: Some(id.profile.to_string()),
             language: None,
             creation_transaction_hash: Some(receipt.transaction_hash),
+            progress: None,
+            progress_bar: None,
         };
         sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await

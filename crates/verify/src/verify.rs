@@ -1,7 +1,7 @@
 //! The `forge verify-bytecode` command.
 
 use crate::{
-    RetryArgs,
+    ContractProgressBar, RetryArgs, VerificationProgress, VerificationStatus,
     etherscan::EtherscanVerificationProvider,
     provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::is_host_only,
@@ -172,6 +172,14 @@ pub struct VerifyArgs {
     /// Defaults to `solidity` if none provided.
     #[arg(long, value_enum)]
     pub language: Option<ContractLanguage>,
+
+    /// Progress tracker for verification (set programmatically, not via CLI).
+    #[arg(skip)]
+    pub progress: Option<VerificationProgress>,
+
+    /// Progress bar for this verification (set programmatically, not via CLI).
+    #[arg(skip)]
+    pub progress_bar: Option<ContractProgressBar>,
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -243,6 +251,7 @@ impl VerifyArgs {
         };
 
         let context = self.resolve_context().await?;
+        let contract_name = context.target_name.clone();
 
         // Set Etherscan options.
         self.etherscan.chain = Some(chain);
@@ -257,22 +266,72 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        let address = self.address;
+        let progress = self.progress.clone();
+        let progress_bar = self.progress_bar.clone();
+        let address_str = format!("{address}");
+
+        // Build verification details message.
+        let mut details = vec![format!("{chain}")];
         if let Some(version) = &self.evm_version {
-            sh_println!("EVM version: {version}")?;
+            details.push(format!("evm: {version}"));
         }
         if let Some(version) = &self.compiler_version {
-            sh_println!("Compiler version: {version}")?;
+            details.push(format!("solc: {version}"));
         }
         if let Some(optimizations) = &self.num_of_optimizations {
-            sh_println!("Optimizations:    {optimizations}")?
+            details.push(format!("opt: {optimizations}"));
         }
-        if let Some(args) = &self.constructor_args
-            && !args.is_empty()
-        {
-            sh_println!("Constructor args: {args}")?
+        let details_msg = details.join(", ");
+
+        // Start progress tracking if available, otherwise print to stdout.
+        if let Some(pb) = &progress_bar {
+            VerificationProgress::start_verification(
+                pb,
+                &address_str,
+                &contract_name,
+                &details_msg,
+            );
+        } else {
+            sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+            if let Some(version) = &self.evm_version {
+                sh_println!("EVM version: {version}")?;
+            }
+            if let Some(version) = &self.compiler_version {
+                sh_println!("Compiler version: {version}")?;
+            }
+            if let Some(optimizations) = &self.num_of_optimizations {
+                sh_println!("Optimizations:    {optimizations}")?
+            }
+            if let Some(args) = &self.constructor_args
+                && !args.is_empty()
+            {
+                sh_println!("Constructor args: {args}")?
+            }
         }
-        self.verifier.verifier.client(self.etherscan.key().as_deref(), self.etherscan.chain, self.verifier.verifier_url.is_some())?.verify(self, context).await.map_err(|err| {
+
+        let result = self
+            .verifier
+            .verifier
+            .client(
+                self.etherscan.key().as_deref(),
+                self.etherscan.chain,
+                self.verifier.verifier_url.is_some(),
+            )?
+            .verify(self, context)
+            .await;
+
+        // End progress tracking with appropriate status.
+        if let (Some(p), Some(pb)) = (&progress, &progress_bar) {
+            let status = if result.is_ok() {
+                VerificationStatus::Success
+            } else {
+                VerificationStatus::Failed
+            };
+            p.end_verification(pb, &address_str, &contract_name, status);
+        }
+
+        result.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
@@ -488,6 +547,14 @@ pub struct VerifyCheckArgs {
 
     #[command(flatten)]
     pub verifier: VerifierArgs,
+
+    /// Progress tracker for verification (set programmatically, not via CLI).
+    #[arg(skip)]
+    pub progress: Option<VerificationProgress>,
+
+    /// Progress bar for this verification (set programmatically, not via CLI).
+    #[arg(skip)]
+    pub progress_bar: Option<ContractProgressBar>,
 }
 
 impl_figment_convert_cast!(VerifyCheckArgs);
@@ -495,10 +562,12 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        sh_println!(
-            "Checking verification status on {}",
-            self.etherscan.chain.unwrap_or_default()
-        )?;
+        if self.progress_bar.is_none() {
+            sh_println!(
+                "Checking verification status on {}",
+                self.etherscan.chain.unwrap_or_default()
+            )?;
+        }
         self.verifier
             .verifier
             .client(

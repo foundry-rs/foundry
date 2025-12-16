@@ -1,4 +1,5 @@
 use crate::{
+    ContractProgressBar, VerificationProgress,
     provider::{VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
     utils::ensure_solc_build_metadata,
@@ -39,12 +40,16 @@ impl VerificationProvider for SourcifyVerificationProvider {
     async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
         let body = self.prepare_verify_request(&args, &context).await?;
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
+        let progress_bar = args.progress_bar.clone();
 
         if !args.skip_is_verified_check && self.is_contract_verified(&args).await? {
-            sh_println!(
-                "\nContract [{}] {:?} is already verified. Skipping verification.",
-                context.target_name,
-                args.address.to_string()
+            print_or_update_progress(
+                &progress_bar,
+                &format!(
+                    "Contract [{}] {:?} is already verified. Skipping verification.",
+                    context.target_name,
+                    args.address.to_string()
+                ),
             )?;
 
             return Ok(());
@@ -56,15 +61,22 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let url =
             Self::get_verify_url(args.verifier.verifier_url.as_deref(), chain_id, args.address);
 
-        let resp = args
-            .retry
-            .into_retry()
+        let retry_progress_bar = progress_bar.clone();
+        let target_name = context.target_name.clone();
+        let mut retry = args.retry.into_retry();
+        if progress_bar.is_some() {
+            retry = retry.silent();
+        }
+        let resp = retry
             .run_async(|| {
                 async {
-                    sh_println!(
-                        "\nSubmitting verification for [{}] {:?}.",
-                        context.target_name,
-                        args.address.to_string()
+                    print_or_update_progress(
+                        &retry_progress_bar,
+                        &format!(
+                            "Submitting verification for [{}] {:?}.",
+                            target_name,
+                            args.address.to_string()
+                        ),
                     )?;
                     let response = client
                         .post(&url)
@@ -76,7 +88,10 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     let status = response.status();
                     match status {
                         StatusCode::CONFLICT => {
-                            sh_println!("Contract source code already fully verified")?;
+                            print_or_update_progress(
+                                &retry_progress_bar,
+                                "Contract source code already fully verified",
+                            )?;
                             Ok(None)
                         }
                         StatusCode::ACCEPTED => {
@@ -88,12 +103,17 @@ impl VerificationProvider for SourcifyVerificationProvider {
                         }
                         _ => {
                             let error: serde_json::Value = response.json().await?;
-                            eyre::bail!(
+                            let msg = format!(
                                 "Sourcify verification request for address ({}) \
-                            failed with status code {status}\n\
-                            Details: {error:#}",
+                                failed with status code {status}\nDetails: {error:#}",
                                 args.address,
                             );
+                            if retry_progress_bar.is_some() {
+                                let _ = print_or_update_progress(&retry_progress_bar, &msg);
+                                eyre::bail!("retrying");
+                            } else {
+                                eyre::bail!("{msg}");
+                            }
                         }
                     }
                 }
@@ -106,10 +126,12 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 args.verifier.verifier_url.as_deref(),
                 resp.verification_id.clone(),
             );
-            sh_println!(
-                "Submitted contract for verification:\n\tVerification Job ID: `{}`\n\tURL: {}",
-                resp.verification_id,
-                job_url
+            print_or_update_progress(
+                &progress_bar,
+                &format!(
+                    "Submitted contract for verification: Job ID: `{}` URL: {}",
+                    resp.verification_id, job_url
+                ),
             )?;
 
             if args.watch {
@@ -118,6 +140,8 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     etherscan: args.etherscan,
                     retry: RETRY_CHECK_ON_VERIFY,
                     verifier: args.verifier,
+                    progress: args.progress.clone(),
+                    progress_bar: progress_bar.clone(),
                 };
                 return self.check(check_args).await;
             }
@@ -128,9 +152,13 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
         let url = Self::get_job_status_url(args.verifier.verifier_url.as_deref(), args.id.clone());
+        let progress_bar = args.progress_bar.clone();
 
-        args.retry
-            .into_retry()
+        let mut retry = args.retry.into_retry();
+        if progress_bar.is_some() {
+            retry = retry.silent();
+        }
+        retry
             .run_async_until_break(|| async {
                 let response = reqwest::get(&url)
                     .await
@@ -138,17 +166,20 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     .map_err(RetryError::Retry)?;
 
                 if response.status() == StatusCode::NOT_FOUND {
-                    return Err(RetryError::Break(eyre!(
-                        "No verification job found for ID {}",
-                        args.id
-                    )));
+                    let msg = format!("No verification job found for ID {}", args.id);
+                    let _ = print_or_update_progress(&progress_bar, &msg);
+                    let err_msg = if progress_bar.is_some() { "failed".to_string() } else { msg };
+                    return Err(RetryError::Break(eyre!("{err_msg}")));
                 }
 
                 if !response.status().is_success() {
-                    return Err(RetryError::Retry(eyre!(
+                    let msg = format!(
                         "Failed to request verification status with status code {}",
                         response.status()
-                    )));
+                    );
+                    let _ = print_or_update_progress(&progress_bar, &msg);
+                    let err_msg = if progress_bar.is_some() { "retrying" } else { &msg };
+                    return Err(RetryError::Retry(eyre!("{err_msg}")));
                 }
 
                 let job_response: SourcifyJobResponse = response
@@ -158,32 +189,56 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     .map_err(RetryError::Retry)?;
 
                 if !job_response.is_job_completed {
-                    return Err(RetryError::Retry(eyre!("Verification is still pending...")));
+                    let _ =
+                        print_or_update_progress(&progress_bar, "Verification is still pending...");
+                    let err_msg = if progress_bar.is_some() {
+                        "retrying"
+                    } else {
+                        "Verification is still pending..."
+                    };
+                    return Err(RetryError::Retry(eyre!("{err_msg}")));
                 }
 
                 if let Some(error) = job_response.error {
                     if error.custom_code == "already_verified" {
-                        let _ = sh_println!("Contract source code already verified");
+                        let _ = print_or_update_progress(
+                            &progress_bar,
+                            "Contract source code already verified",
+                        );
                         return Ok(());
                     }
 
-                    return Err(RetryError::Break(eyre!(
+                    let msg = format!(
                         "Verification job failed:\nError Code: `{}`\nMessage: `{}`",
-                        error.custom_code,
-                        error.message
-                    )));
+                        error.custom_code, error.message
+                    );
+                    let _ = print_or_update_progress(&progress_bar, &msg);
+                    let err_msg = if progress_bar.is_some() { "failed".to_string() } else { msg };
+                    return Err(RetryError::Break(eyre!("{err_msg}")));
                 }
 
                 if let Some(contract_status) = job_response.contract.match_status {
-                    let _ = sh_println!(
-                        "Contract successfully verified:\nStatus: `{}`",
-                        contract_status,
+                    let _ = print_or_update_progress(
+                        &progress_bar,
+                        &format!("Contract successfully verified: Status: `{contract_status}`"),
                     );
                 }
                 Ok(())
             })
             .await
             .wrap_err("Checking verification result failed")
+    }
+}
+
+/// Helper to print message or update specific contract's progress bar.
+/// Multi-line messages are flattened for progress bar display.
+fn print_or_update_progress(progress_bar: &Option<ContractProgressBar>, msg: &str) -> Result<()> {
+    if let Some(pb) = progress_bar {
+        let flat_msg = msg.lines().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+        VerificationProgress::update_contract(pb, &flat_msg);
+        Ok(())
+    } else {
+        sh_println!("{msg}")
     }
 }
 

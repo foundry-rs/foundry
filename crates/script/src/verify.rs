@@ -6,11 +6,14 @@ use crate::{
 use alloy_primitives::{Address, hex};
 use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
+use forge_verify::{
+    RetryArgs, VerificationProgress, VerifierArgs, VerifyArgs, provider::VerificationProviderType,
+};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
+use futures::future::join_all;
 use semver::Version;
 
 /// State after we have broadcasted the script.
@@ -166,6 +169,8 @@ impl VerifyBundle {
                     compilation_profile: Some(artifact.profile.to_string()),
                     language: None,
                     creation_transaction_hash: None,
+                    progress: None,
+                    progress_bar: None,
                 };
 
                 return Some(verify);
@@ -190,7 +195,7 @@ async fn verify_contracts(
     {
         trace!(target: "script", "prepare future verifications");
 
-        let mut future_verifications = Vec::with_capacity(sequence.receipts.len());
+        let mut verify_args_list: Vec<VerifyArgs> = Vec::with_capacity(sequence.receipts.len());
         let mut unverifiable_contracts = vec![];
 
         // Make sure the receipts have the right order first.
@@ -214,7 +219,7 @@ async fn verify_contracts(
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(verify) => future_verifications.push(verify.run()),
+                    Some(args) => verify_args_list.push(args),
                     None => unverifiable_contracts.push(address),
                 };
             }
@@ -228,21 +233,37 @@ async fn verify_contracts(
                     &sequence.libraries,
                     config.evm_version,
                 ) {
-                    Some(verify) => future_verifications.push(verify.run()),
+                    Some(args) => verify_args_list.push(args),
                     None => unverifiable_contracts.push(*address),
                 };
             }
         }
 
-        trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", future_verifications.len(), unverifiable_contracts.len());
+        trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", verify_args_list.len(), unverifiable_contracts.len());
 
         check_unverified(sequence, unverifiable_contracts, verify);
 
-        let num_verifications = future_verifications.len();
+        let num_verifications = verify_args_list.len();
+
+        // Create progress tracker for all verifications.
+        let progress = VerificationProgress::new(num_verifications);
+
+        // Add all contracts to progress upfront (shown as pending) and attach progress to each.
+        for verify_args in &mut verify_args_list {
+            let address_str = format!("{}", verify_args.address);
+            let contract_name =
+                verify_args.contract.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            let progress_bar = progress.add_contract(&address_str, &contract_name);
+            verify_args.progress = Some(progress.clone());
+            verify_args.progress_bar = Some(progress_bar);
+        }
+
+        // Run all verifications in parallel.
+        let results = join_all(verify_args_list.into_iter().map(|args| args.run())).await;
+
         let mut num_of_successful_verifications = 0;
-        sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
-        for verification in future_verifications {
-            match verification.await {
+        for result in results {
+            match result {
                 Ok(_) => {
                     num_of_successful_verifications += 1;
                 }
@@ -251,6 +272,8 @@ async fn verify_contracts(
                 }
             }
         }
+
+        progress.clear();
 
         if num_of_successful_verifications < num_verifications {
             return Err(eyre!(

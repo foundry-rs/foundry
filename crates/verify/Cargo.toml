@@ -35,6 +35,8 @@ revm.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 reqwest = { workspace = true, features = ["json"] }
 async-trait.workspace = true
+indicatif.workspace = true
+parking_lot.workspace = true
 futures.workspace = true
 semver.workspace = true
 regex = { workspace = true, default-features = false }
