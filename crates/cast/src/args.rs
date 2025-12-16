@@ -740,13 +740,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
             let tx = SimpleCast::decode_raw_transaction(&tx)?;
-
-            if let Ok(signer) = tx.recover_signer() {
-                let recovered = Recovered::new_unchecked(tx, signer);
-                sh_println!("{}", serde_json::to_string_pretty(&recovered)?)?;
-            } else {
-                sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
-            }
+            print_tx(tx)?
         }
         CastSubcommand::RecoverAuthority { auth } => {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;
@@ -778,6 +772,20 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 let _ = sh_println!("{t}");
             });
         }
+    }
+
+    Ok(())
+}
+
+fn print_tx<T>(tx: T) -> eyre::Result<()>
+where
+    T: SignerRecoverable + serde::Serialize,
+{
+    if let Ok(signer) = tx.recover_signer() {
+        let recovered = Recovered::new_unchecked(tx, signer);
+        sh_println!("{}", serde_json::to_string_pretty(&recovered)?)?;
+    } else {
+        sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
     }
 
     Ok(())
