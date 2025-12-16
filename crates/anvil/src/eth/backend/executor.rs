@@ -27,6 +27,7 @@ use alloy_evm::{
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
+use alloy_monad_evm::MonadEvmFactory;
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
@@ -40,6 +41,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use monad_revm::MonadContext;
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, Inspector,
@@ -496,7 +498,7 @@ pub fn new_evm_with_inspector<DB, I>(
 ) -> EitherEvm<DB, I, PrecompilesMap>
 where
     DB: Database<Error = DatabaseError> + Debug,
-    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
 {
     if env.networks.is_optimism() {
         let evm_env = EvmEnv::new(
@@ -504,6 +506,15 @@ where
             env.evm_env.block_env.clone(),
         );
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
+    } else if env.networks.is_monad() {
+        // TODO: update Monad spec id to MONAD
+        let evm_env = EvmEnv::new(
+            env.evm_env.cfg_env.clone().with_spec(monad_revm::MonadSpecId::Monad),
+            env.evm_env.block_env.clone(),
+        );
+        EitherEvm::Monad(
+            MonadEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector),
+        )
     } else {
         EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
             db,

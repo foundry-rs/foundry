@@ -33,6 +33,7 @@ foundry-primitives.workspace = true
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
 alloy-op-evm.workspace = true
+alloy-monad-evm.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
@@ -70,6 +71,7 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 op-revm.workspace = true
+monad-revm.workspace = true
 
 # axum related
 axum.workspace = true

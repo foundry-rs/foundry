@@ -28,6 +28,10 @@ pub struct NetworkConfigs {
     #[arg(help_heading = "Networks", long, conflicts_with = "optimism")]
     #[serde(default)]
     celo: bool,
+    /// Enable Monad network features.
+    #[arg(help_heading = "Networks", long, conflicts_with = "optimism")]
+    #[serde(default)]
+    monad: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
     #[serde(default)]
@@ -41,6 +45,14 @@ impl NetworkConfigs {
 
     pub fn with_celo() -> Self {
         Self { celo: true, ..Default::default() }
+    }
+
+    pub fn with_monad() -> Self {
+        Self { monad: true, ..Default::default() }
+    }
+
+    pub fn is_monad(&self) -> bool {
+        self.monad
     }
 
     pub fn is_optimism(&self) -> bool {
@@ -65,6 +77,11 @@ impl NetworkConfigs {
         if let Ok(NamedChain::Celo | NamedChain::CeloSepolia) = NamedChain::try_from(chain_id) {
             self.celo = true;
         }
+
+        if let Ok(NamedChain::Monad | NamedChain::MonadTestnet) = NamedChain::try_from(chain_id) {
+            self.monad = true;
+        }
+
         self
     }
 
