@@ -889,6 +889,7 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
 
     assert!(prj.root().join("foundry.toml").exists());
     assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("lib/tempo-std").exists());
 
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("src").join("Mail.sol").exists());
