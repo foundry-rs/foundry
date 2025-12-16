@@ -73,6 +73,14 @@ remappings = []
 libraries = []
 cache = true
 cache_path = 'cache'
+# Whether to dynamically link tests
+dynamic_test_linking = false
+# Where the gas snapshots are stored
+snapshots = 'snapshots'
+# Whether to check for differences against previously stored gas snapshots
+gas_snapshot_check = false
+# Whether to emit gas snapshots to disk
+gas_snapshot_emit = false
 broadcast = 'broadcast'
 # additional solc allow paths
 allow_paths = []
@@ -82,6 +90,8 @@ force = false
 evm_version = 'prague'
 gas_reports = ['*']
 gas_reports_ignore = []
+# Whether to include gas reports for tests
+gas_reports_include_tests = false
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
 # solc = '0.8.10'
 auto_detect_solc = true
@@ -100,6 +110,14 @@ model_checker = { contracts = { 'a.sol' = [
 ], timeout = 10000 }
 verbosity = 0
 eth_rpc_url = "https://example.com/"
+# Whether to accept invalid certificates for the rpc server
+eth_rpc_accept_invalid_certs = false
+# JWT secret that should be used for any rpc calls
+# eth_rpc_jwt = "your-jwt-secret"
+# Timeout that should be used for any rpc calls (in milliseconds)
+# eth_rpc_timeout = 45000
+# Headers that should be used for any rpc calls
+# eth_rpc_headers = ["x-custom-header:value"]
 # Setting this option enables decoding of error traces from mainnet deployed / verified contracts via etherscan
 etherscan_api_key = "YOURETHERSCANAPIKEY"
 # ignore solc warnings for missing license and exceeded contract size
@@ -119,11 +137,15 @@ no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
 no_match_coverage = "Baz"
+# Path where last test run failures are recorded
+test_failures_file = 'cache/test-failures'
 # Number of threads to use. Specifying 0 defaults to the number of logical cores.
 threads = 0
 # whether to show test execution progress
 show_progress = true
 ffi = false
+# Whether to allow `expectRevert` for internal functions
+allow_internal_expect_revert = false
 always_use_create_2_factory = false
 prompt_timeout = 120
 # These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`
@@ -137,6 +159,8 @@ chain_id = 1
 # `gas_limit = "max"` is equivalent to `gas_limit = "18446744073709551615"`. This is not recommended
 # as it will make infinite loops effectively hang during execution.
 gas_limit = 1073741824
+# EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
+# code_size_limit = 24576
 gas_price = 0
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
@@ -158,6 +182,8 @@ ast = false
 rpc_storage_caching = { chains = "all", endpoints = "all" }
 # this overrides `rpc_storage_caching` entirely
 no_storage_caching = false
+# Disables rate limiting entirely
+no_rpc_rate_limit = false
 # Whether to store the referenced sources in the metadata as literal data.
 use_literal_content = false
 # use ipfs method to generate the metadata hash, solc's default.
@@ -189,11 +215,36 @@ root = "root"
 # following example enables read-write access for the project dir :
 #       `fs_permissions = [{ access = "read-write", path = "./"}]`
 fs_permissions = [{ access = "read", path = "./out"}]
+# Whether to enable call isolation. Useful for more correct gas accounting and EVM behavior in general.
+isolate = false
+# Whether to disable the block gas limit checks
+disable_block_gas_limit = false
+# Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825)
+enable_tx_gas_limit = false
+# Address labels
+# labels = { "0x...": "MyContract" }
+# Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
+# If disabled, it is possible to access artifacts which were not recompiled or cached.
+unchecked_cheatcode_artifacts = false
+# CREATE2 salt to use for the library deployment in scripts
+create2_library_salt = '0x0000000000000000000000000000000000000000000000000000000000000000'
+# The CREATE2 deployer address to use
+create2_deployer = '0x4e59b44847b379578588920cA78FbF26c0B4956C'
+# Timeout for transactions in seconds
+transaction_timeout = 120
+# Whether to enable script execution protection
+script_execution_protection = false
+# Additional settings profiles to use when compiling
+# additional_compiler_profiles = []
+# Restrictions on compilation of certain files
+# compilation_restrictions = []
 # whether failed assertions should revert
 # note that this only applies to native (cheatcode) assertions, invoked on Vm contract
 assertions_revert = true
 # whether `failed()` should be invoked to check if the test have failed
 legacy_assertions = false
+# Optional additional CLI arguments to pass to `solc` binary
+# extra_args = []
 
 [fuzz]
 runs = 256
