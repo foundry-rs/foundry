@@ -284,13 +284,13 @@ alloy-rlp = "0.3"
 alloy-trie = "0.9"
 
 ## op-alloy
-op-alloy-consensus = "0.22.0"
-op-alloy-rpc-types = "0.22.0"
+op-alloy-consensus = "0.23.1"
+op-alloy-rpc-types = "0.23.1"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.24.1"
-alloy-op-evm = "0.24.1"
+alloy-evm = "0.25.1"
+alloy-op-evm = "0.25.1"
 
 # revm
 revm = { version = "33.1.0", default-features = false }

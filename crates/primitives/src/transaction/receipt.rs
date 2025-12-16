@@ -5,8 +5,9 @@ use alloy_network::eip2718::{
     Decodable2718, EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
     Eip2718Error, Encodable2718, LEGACY_TX_TYPE_ID,
 };
-use alloy_primitives::{Bloom, Log, logs_bloom};
+use alloy_primitives::{Bloom, Log, TxHash, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header, bytes};
+use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 use serde::{Deserialize, Serialize};
 
@@ -29,18 +30,18 @@ pub enum FoundryReceiptEnvelope<T = Log> {
     Deposit(OpDepositReceiptWithBloom<T>),
 }
 
-impl FoundryReceiptEnvelope<Log> {
+impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
     /// Creates a new [`FoundryReceiptEnvelope`] from the given parts.
-    pub fn from_parts<'a>(
+    pub fn from_parts(
         status: bool,
         cumulative_gas_used: u64,
-        logs: impl IntoIterator<Item = &'a Log>,
+        logs: impl IntoIterator<Item = alloy_rpc_types::Log>,
         tx_type: FoundryTxType,
         deposit_nonce: Option<u64>,
         deposit_receipt_version: Option<u64>,
     ) -> Self {
-        let logs = logs.into_iter().cloned().collect::<Vec<_>>();
-        let logs_bloom = logs_bloom(&logs);
+        let logs = logs.into_iter().collect::<Vec<_>>();
+        let logs_bloom = logs_bloom(logs.iter().map(|l| &l.inner).collect::<Vec<_>>());
         let inner_receipt =
             Receipt { status: Eip658Value::Eip658(status), cumulative_gas_used, logs };
         match tx_type {
@@ -74,6 +75,41 @@ impl FoundryReceiptEnvelope<Log> {
     }
 }
 
+impl FoundryReceiptEnvelope<Log> {
+    pub fn convert_logs_rpc(
+        self,
+        block_numhash: BlockNumHash,
+        block_timestamp: u64,
+        transaction_hash: TxHash,
+        transaction_index: u64,
+        next_log_index: usize,
+    ) -> FoundryReceiptEnvelope<alloy_rpc_types::Log> {
+        let logs = self
+            .logs()
+            .iter()
+            .enumerate()
+            .map(|(index, log)| alloy_rpc_types::Log {
+                inner: log.clone(),
+                block_hash: Some(block_numhash.hash),
+                block_number: Some(block_numhash.number),
+                block_timestamp: Some(block_timestamp),
+                transaction_hash: Some(transaction_hash),
+                transaction_index: Some(transaction_index),
+                log_index: Some((next_log_index + index) as u64),
+                removed: false,
+            })
+            .collect::<Vec<_>>();
+        FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
+            self.status(),
+            self.cumulative_gas_used(),
+            logs,
+            self.tx_type(),
+            self.deposit_nonce(),
+            self.deposit_receipt_version(),
+        )
+    }
+}
+
 impl<T> FoundryReceiptEnvelope<T> {
     /// Return the [`FoundryTxType`] of the inner receipt.
     pub const fn tx_type(&self) -> FoundryTxType {
@@ -85,11 +121,6 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip7702(_) => FoundryTxType::Eip7702,
             Self::Deposit(_) => FoundryTxType::Deposit,
         }
-    }
-
-    /// Return true if the transaction was successful.
-    pub const fn is_success(&self) -> bool {
-        self.status()
     }
 
     /// Returns the success status of the receipt's transaction.
@@ -189,29 +220,6 @@ impl<T> FoundryReceiptEnvelope<T> {
     }
 }
 
-impl FoundryReceiptEnvelope {
-    /// Get the length of the inner receipt in the 2718 encoding.
-    pub fn inner_length(&self) -> usize {
-        match self {
-            Self::Legacy(t) => t.length(),
-            Self::Eip2930(t) => t.length(),
-            Self::Eip1559(t) => t.length(),
-            Self::Eip4844(t) => t.length(),
-            Self::Eip7702(t) => t.length(),
-            Self::Deposit(t) => t.length(),
-        }
-    }
-
-    /// Calculate the length of the rlp payload of the network encoded receipt.
-    pub fn rlp_payload_length(&self) -> usize {
-        let length = self.inner_length();
-        match self {
-            Self::Legacy(_) => length,
-            _ => length + 1,
-        }
-    }
-}
-
 impl<T> TxReceipt for FoundryReceiptEnvelope<T>
 where
     T: Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
@@ -223,7 +231,7 @@ where
     }
 
     fn status(&self) -> bool {
-        self.as_receipt().status.coerce_status()
+        self.status()
     }
 
     /// Return the receipt's bloom.
@@ -237,12 +245,12 @@ where
 
     /// Returns the cumulative gas used at this receipt.
     fn cumulative_gas_used(&self) -> u64 {
-        self.as_receipt().cumulative_gas_used
+        self.cumulative_gas_used()
     }
 
     /// Return the receipt logs.
     fn logs(&self) -> &[T] {
-        &self.as_receipt().logs
+        self.logs()
     }
 }
 
@@ -404,6 +412,18 @@ impl Decodable2718 for FoundryReceiptEnvelope {
         match ReceiptEnvelope::fallback_decode(buf)? {
             ReceiptEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
             _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
+        }
+    }
+}
+
+impl From<FoundryReceiptEnvelope<alloy_rpc_types::Log>> for OtsReceipt {
+    fn from(receipt: FoundryReceiptEnvelope<alloy_rpc_types::Log>) -> Self {
+        Self {
+            status: receipt.status(),
+            cumulative_gas_used: receipt.cumulative_gas_used(),
+            logs: Some(receipt.logs().to_vec()),
+            logs_bloom: Some(receipt.logs_bloom().to_owned()),
+            r#type: receipt.tx_type() as u8,
         }
     }
 }
