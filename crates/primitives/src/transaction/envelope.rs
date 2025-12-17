@@ -15,6 +15,7 @@ use alloy_serde::WithOtherFields;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
 use op_revm::OpTransaction;
 use revm::context::TxEnv;
+use tempo_primitives::{AASigned, TempoTransaction};
 
 /// Container type for signed, typed transactions.
 #[derive(Clone, Debug, TransactionEnvelope)]
@@ -51,13 +52,17 @@ pub enum FoundryTxEnvelope {
     /// See <https://docs.optimism.io/op-stack/bridging/deposit-flow>.
     #[envelope(ty = 126)]
     Deposit(Sealed<TxDeposit>),
+    /// Tempo transaction type.
+    ///
+    /// See <https://docs.tempo.xyz/protocol/transactions>.
+    #[envelope(ty = 0x76, typed = TempoTransaction)]
+    Tempo(AASigned),
 }
 
 impl FoundryTxEnvelope {
-    /// Converts the transaction into a [`TxEnvelope`].
+    /// Converts the transaction into an Ethereum [`TxEnvelope`].
     ///
-    /// Returns an error if the transaction is a Deposit transaction, which is not part of the
-    /// standard Ethereum transaction types.
+    /// Returns an error if the transaction is not part of the standard Ethereum transaction types.
     pub fn try_into_eth(self) -> Result<TxEnvelope, Self> {
         match self {
             Self::Legacy(tx) => Ok(TxEnvelope::Legacy(tx)),
@@ -66,6 +71,7 @@ impl FoundryTxEnvelope {
             Self::Eip4844(tx) => Ok(TxEnvelope::Eip4844(tx)),
             Self::Eip7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
             Self::Deposit(_) => Err(self),
+            Self::Tempo(_) => Err(self),
         }
     }
 
@@ -81,7 +87,9 @@ impl FoundryTxEnvelope {
 
     /// Returns the hash of the transaction.
     ///
-    /// Note: If this transaction has the Impersonated signature then this returns a modified unique
+    /// # Note
+    ///
+    /// If this transaction has the Impersonated signature then this returns a modified unique
     /// hash. This allows us to treat impersonated transactions as unique.
     pub fn hash(&self) -> B256 {
         match self {
@@ -91,6 +99,7 @@ impl FoundryTxEnvelope {
             Self::Eip4844(t) => *t.hash(),
             Self::Eip7702(t) => *t.hash(),
             Self::Deposit(t) => t.tx_hash(),
+            Self::Tempo(t) => *t.hash(),
         }
     }
 
@@ -113,6 +122,13 @@ impl FoundryTxEnvelope {
             Self::Eip4844(tx) => tx.recover_signer(),
             Self::Eip7702(tx) => tx.recover_signer(),
             Self::Deposit(tx) => Ok(tx.from),
+            // TODO(onbjerg): this returns `RecoveryError`, so we should probably do the same for
+            // `recover` TODO(onbjerg): it's a bit iffy having to reach into signature
+            // and pass in the signature hash manually.
+            Self::Tempo(tx) => tx
+                .signature()
+                .recover_signer(&tx.signature_hash())
+                .map_err(|_| alloy_primitives::SignatureError::InvalidParity(0)),
         }
     }
 }
@@ -183,6 +199,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
             FoundryTxEnvelope::Deposit(sealed_tx) => {
                 Self::from_recovered_tx(sealed_tx.inner(), caller)
             }
+            FoundryTxEnvelope::Tempo(_) => panic!("unsupported tx type on ethereum"),
         }
     }
 }
@@ -198,6 +215,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
             FoundryTxEnvelope::Deposit(sealed_tx) => {
                 Self::from_recovered_tx(sealed_tx.inner(), caller)
             }
+            FoundryTxEnvelope::Tempo(_) => panic!("unsupported tx type on optimism"),
         }
     }
 }
@@ -211,6 +229,7 @@ impl std::fmt::Display for FoundryTxType {
             Self::Eip4844 => write!(f, "eip4844"),
             Self::Eip7702 => write!(f, "eip7702"),
             Self::Deposit => write!(f, "deposit"),
+            Self::Tempo => write!(f, "tempo"),
         }
     }
 }
@@ -236,6 +255,7 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
             FoundryTxEnvelope::Eip4844(signed_tx) => Self::Eip4844(signed_tx.strip_signature()),
             FoundryTxEnvelope::Eip7702(signed_tx) => Self::Eip7702(signed_tx.strip_signature()),
             FoundryTxEnvelope::Deposit(sealed_tx) => Self::Deposit(sealed_tx.into_inner()),
+            FoundryTxEnvelope::Tempo(signed_tx) => Self::Tempo(signed_tx.strip_signature()),
         }
     }
 }
