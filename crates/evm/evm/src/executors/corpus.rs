@@ -489,8 +489,7 @@ impl CorpusManager {
             let corpus = &self.in_memory_corpus
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
-            let new_seq = corpus.tx_seq.clone();
-            let mut tx = new_seq.first().unwrap().clone();
+            let mut tx = corpus.tx_seq.first().cloned().unwrap();
             self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
             tx
         } else {
