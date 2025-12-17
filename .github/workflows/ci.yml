@@ -107,6 +107,8 @@ jobs:
           toolchain: nightly
           components: rustfmt
       - run: cargo fmt --all --check
+        env:
+          RUSTC_WRAPPER: ""
 
   forge-fmt:
     runs-on: depot-ubuntu-latest
