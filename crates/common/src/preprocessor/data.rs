@@ -1,6 +1,7 @@
 use super::span_to_range;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
+use regex::Regex;
 use solar::sema::{
     Gcx,
     hir::{Contract, ContractId},
@@ -9,11 +10,18 @@ use solar::sema::{
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
 /// Keeps data about project contracts definitions referenced from tests and scripts.
 /// Contract id -> Contract data definition mapping.
 pub type PreprocessorData = BTreeMap<ContractId, ContractData>;
+
+/// Regex to match `memory` and `calldata` as whole words (not substrings).
+/// Used to safely remove data location modifiers from constructor parameter declarations.
+static REMOVE_DATA_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(memory|calldata)\b").expect("Failed to compile data location regex")
+});
 
 /// Collects preprocessor data from referenced contracts.
 pub(crate) fn collect_preprocessor_data(
@@ -96,7 +104,11 @@ impl ContractData {
                     let src = source.file.src.as_str();
                     let loc =
                         span_to_range(gcx.sess.source_map(), gcx.hir.variable(*param_id).span);
-                    let mut new_src = src[loc].replace(" memory ", " ").replace(" calldata ", " ");
+                    // Remove data location modifiers (memory/calldata) as whole words only,
+                    // to avoid replacing substrings within type names (e.g., "MemoryToken").
+                    let mut new_src = REMOVE_DATA_LOCATION_RE.replace_all(&src[loc], " ").to_string();
+                    // Collapse multiple spaces into single space and trim.
+                    new_src = new_src.split_whitespace().collect::<Vec<_>>().join(" ");
                     if let Some(ident) = gcx.hir.variable(*param_id).name {
                         abi_encode_args.push(format!("args.{}", ident.name));
                     } else {
