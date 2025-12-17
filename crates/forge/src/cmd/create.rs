@@ -14,7 +14,7 @@ use eyre::{Context, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
-    utils::{self, LoadConfig, read_constructor_args_file, remove_contract},
+    utils::{self, LoadConfig, find_contract_artifacts, read_constructor_args_file},
 };
 use foundry_common::{
     compile::{self},
@@ -123,7 +123,7 @@ impl CreateArgs {
 
         let output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
-        let (abi, bin, id) = remove_contract(output, &target_path, &self.contract.name)?;
+        let (abi, bin, id) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,

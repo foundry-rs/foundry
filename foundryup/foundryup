@@ -3,7 +3,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.4.0"
+FOUNDRYUP_INSTALLER_VERSION="1.5.0"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -40,6 +40,7 @@ main() {
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
       -j|--jobs)        shift; FOUNDRYUP_JOBS=$1;;
+      -n|--network)     shift; FOUNDRYUP_NETWORK=$1;;
       -f|--force)       FOUNDRYUP_IGNORE_VERIFICATION=true;;
       --arch)           shift; FOUNDRYUP_ARCH=$1;;
       --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
@@ -53,6 +54,11 @@ main() {
         exit 1
     esac; shift
   done
+
+  # Tempo only distributes a subset of the binaries
+  if [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
+    BINS=(forge cast)
+  fi
 
   CARGO_BUILD_ARGS=(--release)
 
@@ -101,7 +107,13 @@ main() {
     exit 0
   fi
 
-  FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
+  # If Tempo network is set, use the Tempo fork of Foundry
+  if [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
+    FOUNDRYUP_REPO="tempoxyz/tempo-foundry"
+  else
+  # Default to Foundry repo
+    FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
+  fi
 
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
@@ -119,37 +131,8 @@ main() {
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
-    uname_s=$(uname -s)
-    PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$uname_s}")
-    EXT="tar.gz"
-    case $PLATFORM in
-      linux|alpine) ;;
-      darwin|mac*)
-        PLATFORM="darwin"
-        ;;
-      mingw*|win*)
-        EXT="zip"
-        PLATFORM="win32"
-        ;;
-      *)
-        err "unsupported platform: $PLATFORM"
-        ;;
-    esac
-
-    uname_m=$(uname -m)
-    ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$uname_m}")
-    if [ "${ARCHITECTURE}" = "x86_64" ]; then
-      # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
-      if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
-        ARCHITECTURE="arm64" # Rosetta.
-      else
-        ARCHITECTURE="amd64" # Intel.
-      fi
-    elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
-      ARCHITECTURE="arm64" # Arm.
-    else
-      ARCHITECTURE="amd64" # Amd.
-    fi
+    # Detect platform and architecture.
+    detect_platform_arch
 
     # Compute the URL of the release tarball in the Foundry repository.
     RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
@@ -338,7 +321,58 @@ main() {
     use
 
     say "done!"
+  # Install from Tempo's fork of Foundry if --network tempo is set
+  elif [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
+    FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
 
+    say "installing tempo-foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
+
+    # Detect platform and architecture.
+    detect_platform_arch
+
+    # Compute the URL of the release tarball in the Tempo Foundry repository.
+    RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
+    BIN_ARCHIVE_URL="${RELEASE_URL}foundry_nightly_${PLATFORM}_${ARCHITECTURE}.$EXT"
+    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_nightly.tar.gz"
+
+    ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
+
+    # Download and extract the binaries archive
+    say "downloading forge and cast for $FOUNDRYUP_TAG version"
+    if [ "$PLATFORM" = "win32" ]; then
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.zip"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      rm -f "$tmp"
+    else
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.tar.gz"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      # Make sure it's a valid tar archive.
+      ensure tar tf "$tmp" 1> /dev/null
+      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
+      rm -f "$tmp"
+    fi
+
+    # Optionally download the manuals
+    if check_cmd tar; then
+      say "downloading manpages"
+      mkdir -p "$FOUNDRY_MAN_DIR"
+      if ! download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"; then
+        warn "skipping manpage download: unavailable or invalid archive"
+      fi
+    else
+      say 'skipping manpage download: missing "tar"'
+    fi
+
+    # Use newly installed version.
+    FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
+    use
+
+    say "done!"
   # Install by cloning the repo with the provided branch/tag
   else
     need_cmd cargo
@@ -427,6 +461,7 @@ OPTIONS:
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
     -f, --force     Skip SHA verification for downloaded binaries (INSECURE - use with caution)
+    -n, --network   Install binaries for a specific network (e.g., tempo)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, darwin and alpine)
 EOF
@@ -544,7 +579,8 @@ tolower() {
 
 compute_sha256() {
   if check_cmd sha256sum; then
-    sha256sum "$1" | cut -d' ' -f1
+    # Use sed to strip leading backslash (sha256sum on Windows/Git Bash outputs \ prefix for binary files)
+    sha256sum "$1" | cut -d' ' -f1 | sed 's/^\\//'
   else
     shasum -a 256 "$1" | awk '{print $1}'
   fi
@@ -558,6 +594,40 @@ need_cmd() {
 
 check_cmd() {
   command -v "$1" &>/dev/null
+}
+
+detect_platform_arch() {
+  uname_s=$(uname -s)
+  PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$uname_s}")
+  EXT="tar.gz"
+  case $PLATFORM in
+    linux|alpine) ;;
+    darwin|mac*)
+      PLATFORM="darwin"
+      ;;
+    mingw*|win*)
+      EXT="zip"
+      PLATFORM="win32"
+      ;;
+    *)
+      err "unsupported platform: $PLATFORM"
+      ;;
+  esac
+
+  uname_m=$(uname -m)
+  ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$uname_m}")
+  if [ "${ARCHITECTURE}" = "x86_64" ]; then
+    # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
+    if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+      ARCHITECTURE="arm64" # Rosetta.
+    else
+      ARCHITECTURE="amd64" # Intel.
+    fi
+  elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
+    ARCHITECTURE="arm64" # Arm.
+  else
+    ARCHITECTURE="amd64" # Amd.
+  fi
 }
 
 check_installer_up_to_date() {

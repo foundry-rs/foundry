@@ -3,6 +3,7 @@ use crate::{
     cmd::erc20::IERC20,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
+    tx::CastTxSender,
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
@@ -338,17 +339,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, field, raw, rpc } => {
+        CastSubcommand::Block { block, full, fields, raw, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
-
             // Can use either --raw or specify raw as a field
-            let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+            let raw = raw || fields.contains(&"raw".into());
 
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, raw)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, fields, raw)
                     .await?
             )?
         }
@@ -524,7 +524,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
             sh_println!(
                 "{}",
-                Cast::new(provider)
+                CastTxSender::new(provider)
                     .receipt(tx_hash, field, confirmations, None, cast_async)
                     .await?
             )?

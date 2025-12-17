@@ -144,157 +144,253 @@ fn test_verify_bytecode_with_ignore(
         );
     }
 }
-forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
-    test_verify_bytecode(
-        prj,
-        cmd,
-        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
-        "SystemConfig",
-        None,
-        Config {
-            evm_version: EvmVersion::London,
-            optimizer_runs: Some(999999),
-            optimizer: Some(true),
-            cbor_metadata: false,
-            bytecode_hash: BytecodeHash::None,
-            ..Default::default()
-        },
-        "etherscan",
-        "https://api.etherscan.io/v2/api?chainid=1",
-        ("partial", "partial"),
-    );
-});
 
-forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
-    test_verify_bytecode(
-        prj,
-        cmd,
-        "0xb8901acb165ed027e32754e0ffe830802919727f",
-        "L1_ETH_Bridge",
-        None,
-        Config {
-            evm_version: EvmVersion::Paris,
-            optimizer_runs: Some(50000),
-            optimizer: Some(true),
-            ..Default::default()
-        },
-        "etherscan",
-        "https://api.etherscan.io/v2/api?chainid=1",
-        ("partial", "partial"),
-    );
-});
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_verify_bytecode_no_metadata,
+    |prj, cmd| {
+        test_verify_bytecode(
+            prj,
+            cmd,
+            "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+            "SystemConfig",
+            None,
+            Config {
+                evm_version: EvmVersion::London,
+                optimizer_runs: Some(999999),
+                optimizer: Some(true),
+                cbor_metadata: false,
+                bytecode_hash: BytecodeHash::None,
+                ..Default::default()
+            },
+            "etherscan",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            ("partial", "partial"),
+        );
+    }
+);
+
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_verify_bytecode_with_metadata,
+    |prj, cmd| {
+        test_verify_bytecode(
+            prj,
+            cmd,
+            "0xb8901acb165ed027e32754e0ffe830802919727f",
+            "L1_ETH_Bridge",
+            None,
+            Config {
+                evm_version: EvmVersion::Paris,
+                optimizer_runs: Some(50000),
+                optimizer: Some(true),
+                ..Default::default()
+            },
+            "etherscan",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            ("partial", "partial"),
+        );
+    }
+);
 
 // Test non-CREATE2 deployed contract with blockscout
-forgetest_async!(can_verify_bytecode_with_blockscout, |prj, cmd| {
-    test_verify_bytecode(
-        prj,
-        cmd,
-        "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
-        "StrategyManager",
-        None,
-        Config {
-            evm_version: EvmVersion::London,
-            optimizer: Some(true),
-            optimizer_runs: Some(200),
-            ..Default::default()
-        },
-        "blockscout",
-        "https://eth.blockscout.com/api",
-        ("partial", "partial"),
-    );
-});
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_verify_bytecode_with_blockscout,
+    |prj, cmd| {
+        test_verify_bytecode(
+            prj,
+            cmd,
+            "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
+            "StrategyManager",
+            None,
+            Config {
+                evm_version: EvmVersion::London,
+                optimizer: Some(true),
+                optimizer_runs: Some(200),
+                ..Default::default()
+            },
+            "blockscout",
+            "https://eth.blockscout.com/api",
+            ("partial", "partial"),
+        );
+    }
+);
 
 // Test CREATE2 deployed contract with blockscout
-forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
-    test_verify_bytecode(
-        prj,
-        cmd,
-        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
-        "SystemConfig",
-        None,
-        Config {
-            evm_version: EvmVersion::London,
-            optimizer_runs: Some(999999),
-            optimizer: Some(true),
-            cbor_metadata: false,
-            bytecode_hash: BytecodeHash::None,
-            ..Default::default()
-        },
-        "blockscout",
-        "https://eth.blockscout.com/api",
-        ("partial", "partial"),
-    );
-});
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_vb_create2_with_blockscout,
+    |prj, cmd| {
+        test_verify_bytecode(
+            prj,
+            cmd,
+            "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+            "SystemConfig",
+            None,
+            Config {
+                evm_version: EvmVersion::London,
+                optimizer_runs: Some(999999),
+                optimizer: Some(true),
+                cbor_metadata: false,
+                bytecode_hash: BytecodeHash::None,
+                ..Default::default()
+            },
+            "blockscout",
+            "https://eth.blockscout.com/api",
+            ("partial", "partial"),
+        );
+    }
+);
 
 // Test `--constructor-args`
-forgetest_async!(can_verify_bytecode_with_constructor_args, |prj, cmd| {
-    let constructor_args = vec![
-        "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
-        "0x91E677b07F7AF907ec9a428aafA9fc14a0d3A338",
-        "0xD92145c07f8Ed1D392c1B88017934E301CC1c3Cd",
-    ];
-    test_verify_bytecode(
-        prj,
-        cmd,
-        "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
-        "StrategyManager",
-        Some(constructor_args),
-        Config {
-            evm_version: EvmVersion::London,
-            optimizer: Some(true),
-            optimizer_runs: Some(200),
-            ..Default::default()
-        },
-        "etherscan",
-        "https://api.etherscan.io/v2/api?chainid=1",
-        ("partial", "partial"),
-    );
-});
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_verify_bytecode_with_constructor_args,
+    |prj, cmd| {
+        let constructor_args = vec![
+            "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
+            "0x91E677b07F7AF907ec9a428aafA9fc14a0d3A338",
+            "0xD92145c07f8Ed1D392c1B88017934E301CC1c3Cd",
+        ];
+        test_verify_bytecode(
+            prj,
+            cmd,
+            "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
+            "StrategyManager",
+            Some(constructor_args),
+            Config {
+                evm_version: EvmVersion::London,
+                optimizer: Some(true),
+                optimizer_runs: Some(200),
+                ..Default::default()
+            },
+            "etherscan",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            ("partial", "partial"),
+        );
+    }
+);
 
 // `--ignore` tests
-forgetest_async!(can_ignore_creation, |prj, cmd| {
-    test_verify_bytecode_with_ignore(
-        prj,
-        cmd,
-        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
-        "SystemConfig",
-        Config {
-            evm_version: EvmVersion::London,
-            optimizer_runs: Some(999999),
-            optimizer: Some(true),
-            cbor_metadata: false,
-            bytecode_hash: BytecodeHash::None,
-            ..Default::default()
-        },
-        "etherscan",
-        "https://api.etherscan.io/v2/api?chainid=1",
-        ("ignored", "partial"),
-        "creation",
-        "1",
-    );
-});
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_ignore_creation,
+    |prj, cmd| {
+        test_verify_bytecode_with_ignore(
+            prj,
+            cmd,
+            "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+            "SystemConfig",
+            Config {
+                evm_version: EvmVersion::London,
+                optimizer_runs: Some(999999),
+                optimizer: Some(true),
+                cbor_metadata: false,
+                bytecode_hash: BytecodeHash::None,
+                ..Default::default()
+            },
+            "etherscan",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            ("ignored", "partial"),
+            "creation",
+            "1",
+        );
+    }
+);
 
-forgetest_async!(can_ignore_runtime, |prj, cmd| {
-    test_verify_bytecode_with_ignore(
-        prj,
-        cmd,
-        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
-        "SystemConfig",
-        Config {
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_ignore_runtime,
+    |prj, cmd| {
+        test_verify_bytecode_with_ignore(
+            prj,
+            cmd,
+            "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+            "SystemConfig",
+            Config {
+                evm_version: EvmVersion::London,
+                optimizer_runs: Some(999999),
+                optimizer: Some(true),
+                cbor_metadata: false,
+                bytecode_hash: BytecodeHash::None,
+                ..Default::default()
+            },
+            "etherscan",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            ("partial", "ignored"),
+            "runtime",
+            "1",
+        );
+    }
+);
+
+// Test that verification fails when source code doesn't match deployed bytecode
+forgetest_async!(
+    #[ignore = "flaky due to rate limits"]
+    can_verify_bytecode_fails_on_source_mismatch,
+    |prj, cmd| {
+        let etherscan_key = next_etherscan_api_key();
+        let rpc_url = next_http_archive_rpc_url();
+
+        // Fetch real source code
+        let real_source = cmd
+            .cast_fuse()
+            .args([
+                "source",
+                "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+                "--flatten",
+                "--etherscan-api-key",
+                &etherscan_key,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+
+        prj.add_source("SystemConfig", &real_source);
+        prj.write_config(Config {
             evm_version: EvmVersion::London,
             optimizer_runs: Some(999999),
             optimizer: Some(true),
             cbor_metadata: false,
             bytecode_hash: BytecodeHash::None,
             ..Default::default()
-        },
-        "etherscan",
-        "https://api.etherscan.io/v2/api?chainid=1",
-        ("partial", "ignored"),
-        "runtime",
-        "1",
-    );
-});
+        });
+        // Build once with correct source (creates cache)
+        cmd.forge_fuse().arg("build").assert_success();
+
+        let source_code = r#"
+    contract SystemConfig {
+        uint256 public constant MODIFIED_VALUE = 999;
+
+        function someFunction() public pure returns (uint256) {
+            return MODIFIED_VALUE;
+        }
+    }
+    "#;
+
+        // Now replace with different incorrect source code
+        prj.add_source("SystemConfig", source_code);
+        let args = vec![
+            "verify-bytecode",
+            "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+            "SystemConfig",
+            "--etherscan-api-key",
+            &etherscan_key,
+            "--verifier",
+            "etherscan",
+            "--verifier-url",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            "--rpc-url",
+            &rpc_url,
+        ];
+        let output = cmd.forge_fuse().args(args).assert_success().get_output().stderr_lossy();
+
+        // Verify that bytecode does NOT match (recompiled with incorrect source)
+        assert!(output.contains("Error: Creation code did not match".to_string().as_str()));
+        assert!(output.contains("Error: Runtime code did not match".to_string().as_str()));
+    }
+);
 
 // Test predeploy contracts
 // TODO: Add test utils for base such as basescan keys and alchemy keys.

@@ -1,7 +1,7 @@
-use super::{call_after_invariant_function, call_invariant_function};
+use super::{call_after_invariant_function, call_invariant_function, execute_tx};
 use crate::executors::{EarlyExit, Executor, invariant::shrink::shrink_sequence};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Log, U256, map::HashMap};
+use alloy_primitives::{Log, map::HashMap};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
@@ -36,13 +36,7 @@ pub fn replay_run(
 
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs {
-        let call_result = executor.transact_raw(
-            tx.sender,
-            tx.call_details.target,
-            tx.call_details.calldata.clone(),
-            U256::ZERO,
-        )?;
-
+        let call_result = execute_tx(&mut executor, tx)?;
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
         HitMaps::merge_opt(line_coverage, call_result.line_coverage);
@@ -53,9 +47,7 @@ pub fn replay_run(
 
         // Create counter example to be used in failed case.
         counterexample_sequence.push(BaseCounterExample::from_invariant_call(
-            tx.sender,
-            tx.call_details.target,
-            &tx.call_details.calldata,
+            tx,
             &ided_contracts,
             call_result.traces,
             show_solidity,

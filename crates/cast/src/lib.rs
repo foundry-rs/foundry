@@ -3,8 +3,13 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use alloy_consensus::{Header, TxEnvelope};
+#[macro_use]
+extern crate foundry_common;
+#[macro_use]
+extern crate tracing;
+use alloy_consensus::{EthereumTxEnvelope, Header, TxEip4844Variant};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
@@ -18,7 +23,8 @@ use alloy_provider::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, TransactionRequest,
+    state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
 use base::{Base, NumberWithBase, ToBase};
@@ -26,12 +32,11 @@ use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
-    TransactionReceiptWithRevertReason,
     abi::{coerce_value, encode_function_args, encode_function_args_packed, get_event, get_func},
     compile::etherscan_project,
     flatten,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, shell,
+    fs, shell,
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
@@ -45,7 +50,6 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
 };
 use tokio::signal::ctrl_c;
 
@@ -63,19 +67,13 @@ pub mod tx;
 
 use rlp_converter::Item;
 
-#[macro_use]
-extern crate tracing;
-
-#[macro_use]
-extern crate foundry_common;
-
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
 pub struct Cast<P> {
     provider: P,
 }
 
-impl<P: Provider<AnyNetwork>> Cast<P> {
+impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
@@ -262,49 +260,6 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(self.provider.get_balance(who).block_id(block.unwrap_or_default()).await?)
     }
 
-    /// Sends a transaction to the specified address
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::{Cast};
-    /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_serde::WithOtherFields;
-    /// use alloy_rpc_types::{TransactionRequest};
-    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
-    /// use alloy_sol_types::{sol, SolCall};
-    ///
-    /// sol!(
-    ///     function greet(string greeting) public;
-    /// );
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
-    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
-    /// let bytes = Bytes::from_iter(greeting.iter());
-    /// let gas = U256::from_str("200000").unwrap();
-    /// let value = U256::from_str("1").unwrap();
-    /// let nonce = U256::from_str("1").unwrap();
-    /// let tx = TransactionRequest::default().to(to).input(bytes.into()).from(from);
-    /// let tx = WithOtherFields::new(tx);
-    /// let cast = Cast::new(provider);
-    /// let data = cast.send(tx).await?;
-    /// println!("{:#?}", data);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn send(
-        &self,
-        tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
-        let res = self.provider.send_transaction(tx).await?;
-
-        Ok(res)
-    }
-
     /// Publishes a raw transaction to the network
     ///
     /// # Example
@@ -339,7 +294,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None, false).await?;
+    /// let block = cast.block(5, true, vec![], false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -348,14 +303,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         &self,
         block: B,
         full: bool,
-        field: Option<String>,
+        fields: Vec<String>,
         raw: bool,
     ) -> Result<String> {
         let block = block.into();
-        if let Some(ref field) = field
-            && field == "transactions"
-            && !full
-        {
+        if fields.contains(&"transactions".into()) && !full {
             eyre::bail!("use --full to view transactions")
         }
 
@@ -369,9 +321,17 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(if raw {
             let header: Header = block.into_inner().header.inner.try_into_header()?;
             format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
-        } else if let Some(ref field) = field {
-            get_pretty_block_attr(&block, field)
-                .unwrap_or_else(|| format!("{field} is not a valid block field"))
+        } else if !fields.is_empty() {
+            let mut result = String::new();
+            for field in fields {
+                result.push_str(
+                    &get_pretty_block_attr(&block, &field)
+                        .unwrap_or_else(|| format!("{field} is not a valid block field")),
+                );
+
+                result.push('\n');
+            }
+            result.trim_end().to_string()
         } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
@@ -385,7 +345,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             block.into(),
             false,
             // Select only select field
-            Some(field),
+            vec![field],
             false,
         )
         .await?
@@ -414,14 +374,15 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             0,
             false,
             // Select only block hash
-            Some(String::from("hash")),
+            vec![String::from("hash")],
             false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                match &(Self::block(self, 1920000, false, vec![String::from("hash")], false)
+                    .await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
@@ -464,7 +425,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
+                match &(Self::block(self, 1, false, vec![String::from("hash")], false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -808,65 +769,6 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         })
     }
 
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
-    /// println!("{}", receipt);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn receipt(
-        &self,
-        tx_hash: String,
-        field: Option<String>,
-        confs: u64,
-        timeout: Option<u64>,
-        cast_async: bool,
-    ) -> Result<String> {
-        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-
-        let mut receipt: TransactionReceiptWithRevertReason =
-            match self.provider.get_transaction_receipt(tx_hash).await? {
-                Some(r) => r,
-                None => {
-                    // if the async flag is provided, immediately exit if no tx is found, otherwise
-                    // try to poll for it
-                    if cast_async {
-                        eyre::bail!("tx not found: {:?}", tx_hash)
-                    } else {
-                        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
-                            .with_required_confirmations(confs)
-                            .with_timeout(timeout.map(Duration::from_secs))
-                            .get_receipt()
-                            .await?
-                    }
-                }
-            }
-            .into();
-
-        // Allow to fail silently
-        let _ = receipt.update_revert_reason(&self.provider).await;
-
-        Ok(if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt, field)
-                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
-        } else if shell::is_json() {
-            // to_value first to sort json object keys
-            serde_json::to_value(&receipt)?.to_string()
-        } else {
-            receipt.pretty()
-        })
-    }
-
     /// Perform a raw JSON-RPC request
     ///
     /// # Example
@@ -937,7 +839,19 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
         let logs = self.provider.get_logs(&filter).await?;
+        Self::format_logs(logs)
+    }
 
+    /// Retrieves logs using chunked requests to handle large block ranges.
+    ///
+    /// Automatically divides large block ranges into smaller chunks to avoid provider limits
+    /// and processes them with controlled concurrency to prevent rate limiting.
+    pub async fn filter_logs_chunked(&self, filter: Filter, chunk_size: u64) -> Result<String> {
+        let logs = self.get_logs_chunked(&filter, chunk_size).await?;
+        Self::format_logs(logs)
+    }
+
+    fn format_logs(logs: Vec<Log>) -> Result<String> {
         let res = if shell::is_json() {
             serde_json::to_string(&logs)?
         } else {
@@ -952,6 +866,100 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             s.join("\n")
         };
         Ok(res)
+    }
+
+    fn extract_block_range(filter: &Filter) -> (Option<u64>, Option<u64>) {
+        let FilterBlockOption::Range { from_block, to_block } = &filter.block_option else {
+            return (None, None);
+        };
+
+        (from_block.and_then(|b| b.as_number()), to_block.and_then(|b| b.as_number()))
+    }
+
+    /// Retrieves logs with automatic chunking fallback.
+    ///
+    /// First tries to fetch logs for the entire range. If that fails,
+    /// falls back to concurrent chunked requests with rate limiting.
+    async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
+    where
+        P: Clone + Unpin,
+    {
+        // Try the full range first
+        if let Ok(logs) = self.provider.get_logs(filter).await {
+            return Ok(logs);
+        }
+
+        // Fallback: use concurrent chunked approach
+        self.get_logs_chunked_concurrent(filter, chunk_size).await
+    }
+
+    /// Retrieves logs using concurrent chunked requests with rate limiting.
+    ///
+    /// Divides the block range into chunks and processes them with a maximum of
+    /// 5 concurrent requests. Falls back to single-block queries if chunks fail.
+    async fn get_logs_chunked_concurrent(
+        &self,
+        filter: &Filter,
+        chunk_size: u64,
+    ) -> Result<Vec<Log>>
+    where
+        P: Clone + Unpin,
+    {
+        let (from_block, to_block) = Self::extract_block_range(filter);
+        let (Some(from), Some(to)) = (from_block, to_block) else {
+            return self.provider.get_logs(filter).await.map_err(Into::into);
+        };
+
+        if from >= to {
+            return Ok(vec![]);
+        }
+
+        // Create chunk ranges using iterator
+        let chunk_ranges: Vec<(u64, u64)> = (from..to)
+            .step_by(chunk_size as usize)
+            .map(|chunk_start| (chunk_start, (chunk_start + chunk_size).min(to)))
+            .collect();
+
+        // Process chunks with controlled concurrency using buffered stream
+        let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
+            .map(|(start_block, chunk_end)| {
+                let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end - 1);
+                let provider = self.provider.clone();
+
+                async move {
+                    // Try direct chunk request with simplified fallback
+                    match provider.get_logs(&chunk_filter).await {
+                        Ok(logs) => (start_block, logs),
+                        Err(_) => {
+                            // Simple fallback: try individual blocks in this chunk
+                            let mut fallback_logs = Vec::new();
+                            for single_block in start_block..chunk_end {
+                                let single_filter = chunk_filter
+                                    .clone()
+                                    .from_block(single_block)
+                                    .to_block(single_block);
+                                if let Ok(logs) = provider.get_logs(&single_filter).await {
+                                    fallback_logs.extend(logs);
+                                }
+                            }
+                            (start_block, fallback_logs)
+                        }
+                    }
+                }
+            })
+            .buffered(5) // Limit to 5 concurrent requests to avoid rate limits
+            .collect()
+            .await;
+
+        // Sort once at the end by block number and flatten
+        all_results.sort_by_key(|(block_num, _)| *block_num);
+
+        let mut all_logs = Vec::new();
+        for (_, logs) in all_results {
+            all_logs.extend(logs);
+        }
+
+        Ok(all_logs)
     }
 
     /// Converts a block identifier into a block number.
@@ -2310,9 +2318,11 @@ impl SimpleCast {
     /// let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
     /// let tx_envelope = Cast::decode_raw_transaction(&tx)?;
     /// # Ok::<(), eyre::Report>(())
-    pub fn decode_raw_transaction(tx: &str) -> Result<TxEnvelope> {
+    pub fn decode_raw_transaction(
+        tx: &str,
+    ) -> Result<EthereumTxEnvelope<TxEip4844Variant<BlobTransactionSidecarVariant>>> {
         let tx_hex = hex::decode(tx)?;
-        let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
+        let tx = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
     }
 }
