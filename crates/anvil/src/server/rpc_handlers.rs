@@ -1,7 +1,7 @@
 //! Contains RPC handlers
 use crate::{
     EthApi,
-    eth::error::to_rpc_result,
+    eth::{api::RpcCallLogContext, error::to_rpc_result},
     pubsub::{EthSubscription, LogsSubscription},
 };
 use alloy_rpc_types::{
@@ -9,8 +9,60 @@ use alloy_rpc_types::{
     pubsub::{Params, SubscriptionKind},
 };
 use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::RpcError,
+    request::RpcMethodCall,
+    response::{ResponseResult, RpcResponse},
+};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
+use chrono::Utc;
+use serde_json::json;
+use std::{fmt, net::SocketAddr};
+use tracing::{error, trace};
+
+#[derive(Clone)]
+pub struct JsonRpcRequest<T> {
+    parsed: T,
+    raw: serde_json::Value,
+    metadata: RpcCallLogContext,
+}
+
+impl<T> JsonRpcRequest<T> {
+    fn new(parsed: T, raw: serde_json::Value, metadata: RpcCallLogContext) -> Self {
+        Self { parsed, raw, metadata }
+    }
+
+    fn into_parts(self) -> (T, serde_json::Value, RpcCallLogContext) {
+        (self.parsed, self.raw, self.metadata)
+    }
+}
+
+impl<T> fmt::Debug for JsonRpcRequest<T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JsonRpcRequest")
+            .field("parsed", &self.parsed)
+            .field("raw", &self.raw)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
+}
+
+impl<'de, T> serde::Deserialize<'de> for JsonRpcRequest<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let parsed = serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+        Ok(Self { parsed, raw, metadata: RpcCallLogContext::default() })
+    }
+}
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
 #[derive(Clone)]
@@ -28,10 +80,65 @@ impl HttpEthRpcHandler {
 
 #[async_trait::async_trait]
 impl RpcHandler for HttpEthRpcHandler {
-    type Request = EthRequest;
+    type Request = JsonRpcRequest<EthRequest>;
 
     async fn on_request(&self, request: Self::Request) -> ResponseResult {
-        self.api.execute(request).await
+        let (request, raw, metadata) = request.into_parts();
+        self.api.execute_with_raw(request, Some(raw), metadata).await
+    }
+
+    async fn on_call(&self, call: RpcMethodCall, peer_addr: Option<SocketAddr>) -> RpcResponse {
+        trace!(
+            target: "rpc",
+            id = ?call.id,
+            method = ?call.method,
+            ?peer_addr,
+            "handling call"
+        );
+
+        let RpcMethodCall { jsonrpc, method, params, id } = call;
+        let params_value: serde_json::Value = params.clone().into();
+
+        let raw = json!({
+            "jsonrpc": jsonrpc,
+            "method": method.clone(),
+            "params": params_value.clone(),
+            "id": id.clone(),
+        });
+
+        let metadata = RpcCallLogContext {
+            id: Some(id.clone()),
+            method: Some(method.clone()),
+            peer_addr,
+            timestamp: Some(Utc::now()),
+        };
+
+        let call_value = json!({
+            "method": method.clone(),
+            "params": params_value,
+        });
+
+        match serde_json::from_value::<EthRequest>(call_value) {
+            Ok(parsed) => {
+                let request = JsonRpcRequest::new(parsed, raw, metadata);
+                let result = self.on_request(request).await;
+                RpcResponse::new(id, result)
+            }
+            Err(err) => {
+                let err = err.to_string();
+                if err.contains("unknown variant") {
+                    error!(
+                        target: "rpc",
+                        method = ?method,
+                        "failed to deserialize method due to unknown variant"
+                    );
+                    RpcResponse::new(id, RpcError::method_not_found())
+                } else {
+                    error!(target: "rpc", method = ?method, ?err, "failed to deserialize method");
+                    RpcResponse::new(id, RpcError::invalid_params(err))
+                }
+            }
+        }
     }
 }
 

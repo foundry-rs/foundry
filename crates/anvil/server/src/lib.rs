@@ -18,7 +18,7 @@ use axum::{
     routing::{MethodRouter, post},
 };
 use serde::de::DeserializeOwned;
-use std::fmt;
+use std::{fmt, net::SocketAddr};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 mod config;
@@ -96,8 +96,15 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     ///
     /// **Note**: override this function if the expected `Request` deviates from `{ "method" :
     /// "<name>", "params": "<params>" }`
-    async fn on_call(&self, call: RpcMethodCall) -> RpcResponse {
-        trace!(target: "rpc",  id = ?call.id , method = ?call.method, params = ?call.params, "received method call");
+    async fn on_call(&self, call: RpcMethodCall, peer_addr: Option<SocketAddr>) -> RpcResponse {
+        trace!(
+            target: "rpc",
+            id = ?call.id,
+            method = ?call.method,
+            params = ?call.params,
+            ?peer_addr,
+            "received method call"
+        );
         let RpcMethodCall { method, params, id, .. } = call;
 
         let params: serde_json::Value = params.into();
