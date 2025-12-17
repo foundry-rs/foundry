@@ -780,3 +780,32 @@ ParserError: Source "Missing.sol" not found: File not found. Searched the follow
 
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/12803
+forgetest_init!(issue_12803, |prj, cmd| {
+    prj.add_test(
+        "Issue12803.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Issue12803Test is Test {
+    uint a;
+    function test_negativeGas() public {
+        vm.pauseGasMetering();
+        a = 100;
+        vm.resumeGasMetering();
+        delete a;
+    }
+}
+"#,
+    );
+
+    // We expect success, but check for underflow in gas reporting if it fails or prints weird gas
+    cmd.args(["test", "--evm-version=cancun"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Issue12803.t.sol:Issue12803Test
+[PASS] test_negativeGas() (gas: 0)
+...
+"#]]);
+});
+
