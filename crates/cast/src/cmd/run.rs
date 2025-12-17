@@ -245,7 +245,9 @@ impl RunArgs {
                 };
 
                 for (index, tx) in txs.iter().enumerate() {
-                    // Replay system transactions only if running with `all` option.
+                    // Replay system transactions only if running with `sys` option.
+                    // System transactions such as on L2s don't contain any pricing info so it
+                    // could cause reverts.
                     if !self.replay_system_txes
                         && (is_known_system_sender(tx.from())
                             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
