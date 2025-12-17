@@ -5,8 +5,11 @@ use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
 };
-use alloy_provider::Provider;
-use alloy_rpc_types::BlockTransactions;
+use alloy_provider::{Provider, ext::DebugApi};
+use alloy_rpc_types::{
+    BlockTransactions,
+    trace::geth::{GethDebugTracingOptions, PreStateConfig},
+};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -68,6 +71,10 @@ pub struct RunArgs {
     /// Disables the labels in the traces.
     #[arg(long, default_value_t = false)]
     disable_labels: bool,
+
+    /// Disable the debug trace API.
+    #[arg(long, default_value_t = false)]
+    disable_debug_trace_api: bool,
 
     /// Label addresses in the trace.
     ///
@@ -229,9 +236,34 @@ impl RunArgs {
             env.tx.clone(),
             executor.spec_id(),
         );
+        let mut debug_trace_api_succeeded = false;
+        if !self.disable_debug_trace_api {
+            trace!(?tx_hash, "attempting to fetch prestate trace");
 
+            match provider
+                .debug_trace_transaction(
+                    tx_hash,
+                    GethDebugTracingOptions::prestate_tracer(PreStateConfig::default()),
+                )
+                .await
+            {
+                Ok(trace_state) => match trace_state.try_into_pre_state_frame() {
+                    Ok(pre_state_frame) => {
+                        executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
+                        debug_trace_api_succeeded = true;
+                        trace!("optimistic prestate trace applied successfully");
+                    }
+                    Err(err) => {
+                        trace!(%err, "failed to parse prestate trace response");
+                    }
+                },
+                Err(err) => {
+                    trace!(?err, "debug_traceTransaction failed, falling back to block replay");
+                }
+            }
+        }
         // Set the state to the moment right before the transaction
-        if !self.quick {
+        if !self.quick && !debug_trace_api_succeeded {
             if !shell::is_json() {
                 sh_println!("Executing previous transactions from the block.")?;
             }
