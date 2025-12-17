@@ -801,11 +801,12 @@ contract Issue12803Test is Test {
     );
 
     // We expect success, but check for underflow in gas reporting if it fails or prints weird gas
-    cmd.args(["test", "--evm-version=cancun"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--evm-version=cancun"]).with_no_redact().assert_success().stdout_eq(str![[
+        r#"
 ...
 Ran 1 test for test/Issue12803.t.sol:Issue12803Test
 [PASS] test_negativeGas() (gas: 0)
 ...
-"#]]);
+"#
+    ]]);
 });
-
