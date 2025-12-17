@@ -103,7 +103,9 @@ impl<'a> TUIContext<'a> {
 
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
-            BufferKind::Memory => self.current_step().memory.as_ref().unwrap().as_bytes(),
+            BufferKind::Memory => {
+                self.current_step().memory.as_ref().map_or(&[] as &[u8], |m| m.as_bytes())
+            }
             BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
         }
