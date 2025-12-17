@@ -61,9 +61,9 @@ pub struct RunArgs {
     #[arg(long)]
     quick: bool,
 
-    /// Whether to replay all transactions (including system transactions).
-    #[arg(long, short)]
-    all: bool,
+    /// Whether to replay system transactions.
+    #[arg(long, alias = "sys")]
+    replay_system_txes: bool,
 
     /// Disables the labels in the traces.
     #[arg(long, default_value_t = false)]
@@ -147,7 +147,7 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if !self.all
+        if !self.replay_system_txes
             && (is_known_system_sender(tx.from())
                 || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
         {
@@ -246,7 +246,7 @@ impl RunArgs {
 
                 for (index, tx) in txs.iter().enumerate() {
                     // Replay system transactions only if running with `all` option.
-                    if !self.all
+                    if !self.replay_system_txes
                         && (is_known_system_sender(tx.from())
                             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
                     {
