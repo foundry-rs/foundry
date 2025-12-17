@@ -124,14 +124,7 @@ impl TryFrom<FoundryTxEnvelope> for TxEnvelope {
     type Error = FoundryTxEnvelope;
 
     fn try_from(envelope: FoundryTxEnvelope) -> Result<Self, Self::Error> {
-        match envelope {
-            FoundryTxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-            FoundryTxEnvelope::Eip2930(tx) => Ok(Self::Eip2930(tx)),
-            FoundryTxEnvelope::Eip1559(tx) => Ok(Self::Eip1559(tx)),
-            FoundryTxEnvelope::Eip4844(tx) => Ok(Self::Eip4844(tx)),
-            FoundryTxEnvelope::Eip7702(tx) => Ok(Self::Eip7702(tx)),
-            FoundryTxEnvelope::Deposit(_) => Err(envelope),
-        }
+        envelope.try_into_eth()
     }
 }
 
