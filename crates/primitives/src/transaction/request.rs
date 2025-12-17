@@ -335,37 +335,41 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         let preferred_type = self.preferred_type();
         let inner = self.as_mut();
         inner.transaction_type = Some(preferred_type as u8);
-        inner.gas_limit().is_none().then(|| inner.set_gas_limit(Default::default()));
+       if inner.gas_limit().is_none() {
+            inner.set_gas_limit(Default::default());
+        }
         if preferred_type != FoundryTxType::Deposit {
             inner.trim_conflicting_keys();
             inner.populate_blob_hashes();
-            inner.nonce().is_none().then(|| inner.set_nonce(Default::default()));
+           if inner.nonce().is_none() {
+                inner.set_nonce(Default::default());
+            }
         }
         if matches!(preferred_type, FoundryTxType::Legacy | FoundryTxType::Eip2930) {
-            inner.gas_price().is_none().then(|| inner.set_gas_price(Default::default()));
+          if inner.gas_price().is_none() {
+                inner.set_gas_price(Default::default());
+            }
         }
         if preferred_type == FoundryTxType::Eip2930 {
-            inner.access_list().is_none().then(|| inner.set_access_list(Default::default()));
+           if inner.access_list().is_none() {
+                inner.set_access_list(Default::default());
+            }
         }
         if matches!(
             preferred_type,
             FoundryTxType::Eip1559 | FoundryTxType::Eip4844 | FoundryTxType::Eip7702
         ) {
-            inner
-                .max_priority_fee_per_gas()
-                .is_none()
-                .then(|| inner.set_max_priority_fee_per_gas(Default::default()));
-            inner
-                .max_fee_per_gas()
-                .is_none()
-                .then(|| inner.set_max_fee_per_gas(Default::default()));
+            if inner.max_priority_fee_per_gas().is_none() {
+                inner.set_max_priority_fee_per_gas(Default::default());
+            }
+            if inner.max_fee_per_gas().is_none() {
+                inner.set_max_fee_per_gas(Default::default());
+            }
         }
         if preferred_type == FoundryTxType::Eip4844 {
-            inner
-                .as_ref()
-                .max_fee_per_blob_gas()
-                .is_none()
-                .then(|| inner.as_mut().set_max_fee_per_blob_gas(Default::default()));
+           if inner.as_ref().max_fee_per_blob_gas().is_none() {
+                inner.as_mut().set_max_fee_per_blob_gas(Default::default());
+            }
         }
     }
 
