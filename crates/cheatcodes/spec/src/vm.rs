@@ -2686,6 +2686,22 @@ interface Vm {
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 
+    // ======== Configuration State Management ========
+
+    /// Checks if a configuration key exists in the runtime configuration storage.
+    /// Returns true if the key exists, false otherwise.
+    #[cheatcode(group = Config, safety = Safe)]
+    function configExists(string calldata key) external view returns (bool);
+
+    /// Gets a configuration value from the runtime configuration storage.
+    /// Reverts with NotInitialized if the key does not exist.
+    #[cheatcode(group = Config, safety = Safe)]
+    function getConfig(string calldata key) external view returns (string memory value);
+
+    /// Sets a configuration value in the runtime configuration storage.
+    #[cheatcode(group = Config, safety = Safe)]
+    function setConfig(string calldata key, string calldata value) external;
+
     // ======== Cryptography ========
 
     // -------- Key Management --------

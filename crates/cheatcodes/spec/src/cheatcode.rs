@@ -116,6 +116,12 @@ pub enum Group {
     ///
     /// Safety: safe.
     Toml,
+    /// Cheatcodes that manage runtime configuration state.
+    ///
+    /// Examples: `getConfig`, `setConfig`, `configExists`.
+    ///
+    /// Safety: safe.
+    Config,
     /// Cryptography-related cheatcodes.
     ///
     /// Examples: `sign*`.
@@ -144,6 +150,7 @@ impl Group {
             | Self::String
             | Self::Json
             | Self::Toml
+            | Self::Config
             | Self::Crypto
             | Self::Utilities => Some(Safety::Safe),
         }
@@ -160,6 +167,7 @@ impl Group {
             Self::String => "string",
             Self::Json => "json",
             Self::Toml => "toml",
+            Self::Config => "config",
             Self::Crypto => "crypto",
             Self::Utilities => "utilities",
         }

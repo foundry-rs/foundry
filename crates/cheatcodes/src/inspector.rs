@@ -474,6 +474,10 @@ pub struct Cheatcodes {
     // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
     pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
 
+    /// Runtime configuration storage.
+    // **Note**: must be a BTreeMap to ensure the order of the keys is deterministic.
+    pub config_storage: BTreeMap<String, String>,
+
     /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,
 
@@ -559,6 +563,7 @@ impl Cheatcodes {
             access_list: Default::default(),
             test_context: Default::default(),
             serialized_jsons: Default::default(),
+            config_storage: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
