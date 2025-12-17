@@ -3711,7 +3711,7 @@ impl TransactionValidator for Backend {
                             InvalidTransactionError::InsufficientFunds
                         })?;
                     if account.balance < U256::from(req_funds) {
-                        warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
+                        warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
                         return Err(InvalidTransactionError::InsufficientFunds);
                     }
                 }
