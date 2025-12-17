@@ -19,11 +19,13 @@ mod tests {
         eth::EthEvmContext,
         precompiles::{DynPrecompile, PrecompilesMap},
     };
+    use alloy_monad_evm::MonadEvm;
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm::core::either_evm::EitherEvm;
     use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
+    use monad_revm::{MonadContext, MonadSpecId, precompiles::MonadPrecompiles};
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
         Journal,
@@ -166,6 +168,57 @@ mod tests {
         (op_env, op_evm)
     }
 
+    /// Creates a new Monad EVM instance with the custom precompile factory.
+    fn create_monad_evm(
+        spec: SpecId,
+        monad_spec: MonadSpecId,
+    ) -> (
+        crate::eth::backend::env::Env,
+        EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>,
+    ) {
+        let monad_env = crate::eth::backend::env::Env {
+            evm_env: EvmEnv { block_env: Default::default(), cfg_env: CfgEnv::new_with_spec(spec) },
+            tx: OpTransaction::<TxEnv> {
+                base: TxEnv {
+                    kind: TxKind::Call(PRECOMPILE_ADDR),
+                    data: PAYLOAD.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            networks: NetworkConfigs::with_monad(),
+        };
+
+        let monad_cfg = monad_env.evm_env.cfg_env.clone().with_spec(monad_spec);
+        let monad_evm_context = MonadContext {
+            journaled_state: {
+                let mut journal = Journal::new(EmptyDB::default());
+                // Converting SpecId into MonadSpecId
+                journal.set_spec_id(monad_env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: monad_env.evm_env.block_env.clone(),
+            cfg: monad_cfg.clone(),
+            tx: monad_env.tx.base.clone(),
+            chain: (),
+            local: LocalContext::default(),
+            error: Ok(()),
+        };
+
+        let monad_precompiles = MonadPrecompiles::new_with_spec(monad_cfg.spec).precompiles();
+        let monad_evm = EitherEvm::Monad(MonadEvm::new(
+            monad_revm::MonadEvm(RevmEvm::new_with_inspector(
+                monad_evm_context,
+                NoOpInspector,
+                EthInstructions::<EthInterpreter, MonadContext<EmptyDB>>::default(),
+                PrecompilesMap::from_static(monad_precompiles),
+            )),
+            true,
+        ));
+
+        (monad_env, monad_evm)
+    }
+
     #[test]
     fn build_eth_evm_with_extra_precompiles_default_spec() {
         let (env, mut evm) = create_eth_evm(SpecId::default());
@@ -253,6 +306,28 @@ mod tests {
 
         let result = match &mut evm {
             EitherEvm::Op(op_evm) => op_evm.transact(env.tx).unwrap(),
+            _ => unreachable!(),
+        };
+
+        assert!(result.result.is_success());
+        assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
+    }
+
+    #[test]
+    fn build_monad_evm_with_extra_precompiles_default_spec() {
+        let (env, mut evm) = create_monad_evm(SpecId::default(), MonadSpecId::default());
+
+        // Check that the Prague precompile IS NOT present when using the London spec.
+        assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
+
+        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
+
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
+
+        let result = match &mut evm {
+            EitherEvm::Monad(monad_evm) => monad_evm.transact(env.tx.base.clone()).unwrap(),
             _ => unreachable!(),
         };
 
