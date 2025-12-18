@@ -1,9 +1,10 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
+    corpus::CorpusManager,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{map::HashMap, Address, Bytes, Log, U256, keccak256};
+use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
@@ -28,7 +29,7 @@ use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
-use crate::executors::corpus::CorpusManager;
+
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Contains data collected during fuzz test runs.
