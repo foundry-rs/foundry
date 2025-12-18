@@ -24,9 +24,9 @@ use proptest::{
     strategy::Strategy,
     test_runner::{TestCaseError, TestRunner},
 };
+use rand::RngCore;
 use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use rand::RngCore;
 
 mod types;
 use crate::executors::corpus::CorpusManager;
