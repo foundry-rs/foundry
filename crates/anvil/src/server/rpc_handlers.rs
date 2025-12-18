@@ -89,6 +89,42 @@ impl HttpEthRpcHandler {
     pub fn new(api: EthApi) -> Self {
         Self { api }
     }
+
+    /// Converts a `RpcMethodCall` into a `JsonRpcRequest<EthRequest>`.
+    ///
+    /// This helper captures the raw JSON request and creates logging metadata
+    /// (timestamp, peer address) that will be used for verbose RPC logging.
+    fn try_into_request(
+        call: &RpcMethodCall,
+        peer_addr: Option<SocketAddr>,
+    ) -> Result<JsonRpcRequest<EthRequest>, serde_json::Error> {
+        let params_value: serde_json::Value = call.params.clone().into();
+
+        // Construct the full raw JSON-RPC request for logging
+        let raw = json!({
+            "jsonrpc": &call.jsonrpc,
+            "method": &call.method,
+            "params": &params_value,
+            "id": &call.id,
+        });
+
+        // Build metadata context for logging
+        let metadata = RpcCallLogContext {
+            id: Some(call.id.clone()),
+            method: Some(call.method.clone()),
+            peer_addr,
+            timestamp: Some(Utc::now()),
+        };
+
+        // Deserialize into EthRequest
+        let call_value = json!({
+            "method": &call.method,
+            "params": params_value,
+        });
+        let parsed = serde_json::from_value::<EthRequest>(call_value)?;
+
+        Ok(JsonRpcRequest::new(parsed, raw, metadata))
+    }
 }
 
 #[async_trait::async_trait]
@@ -109,31 +145,11 @@ impl RpcHandler for HttpEthRpcHandler {
             "handling call"
         );
 
-        let RpcMethodCall { jsonrpc, method, params, id } = call;
-        let params_value: serde_json::Value = params.clone().into();
+        let method = &call.method;
+        let id = call.id.clone();
 
-        let raw = json!({
-            "jsonrpc": jsonrpc,
-            "method": method.clone(),
-            "params": params_value.clone(),
-            "id": id.clone(),
-        });
-
-        let metadata = RpcCallLogContext {
-            id: Some(id.clone()),
-            method: Some(method.clone()),
-            peer_addr,
-            timestamp: Some(Utc::now()),
-        };
-
-        let call_value = json!({
-            "method": method.clone(),
-            "params": params_value,
-        });
-
-        match serde_json::from_value::<EthRequest>(call_value) {
-            Ok(parsed) => {
-                let request = JsonRpcRequest::new(parsed, raw, metadata);
+        match Self::try_into_request(&call, peer_addr) {
+            Ok(request) => {
                 let result = self.on_request(request).await;
                 RpcResponse::new(id, result)
             }
