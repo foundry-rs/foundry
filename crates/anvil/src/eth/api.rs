@@ -267,6 +267,23 @@ impl EthApi {
         self.execute_with_raw(request, None, RpcCallLogContext::default()).await
     }
 
+    /// Executes the [EthRequest] with optional raw JSON request data and logging context.
+    ///
+    /// This method extends [execute] by accepting the raw JSON-RPC request payload and metadata
+    /// for verbose RPC logging. When verbose logging is enabled, both the request and response
+    /// payloads are logged with contextual information (RPC ID, method, peer address, timestamp).
+    ///
+    /// # Parameters
+    ///
+    /// * `request` - The parsed [EthRequest] to execute
+    /// * `raw_request` - Optional raw JSON value from the original RPC request for logging
+    /// * `context` - Metadata about the RPC call (ID, method, peer address, timestamp)
+    ///
+    /// # Usage
+    ///
+    /// This method should be called by RPC handlers that have access to the raw request payload
+    /// and want to enable verbose logging. For simple execution without logging context, use
+    /// [execute] instead.
     pub async fn execute_with_raw(
         &self,
         request: EthRequest,
@@ -664,6 +681,25 @@ impl EthApi {
         }
     }
 
+    /// Logs an RPC payload (request or response) with contextual information.
+    ///
+    /// This helper method is used for verbose RPC logging. It attempts to serialize the JSON
+    /// value if available, otherwise falls back to the debug representation. The log output
+    /// includes contextual metadata from [RpcCallLogContext] (RPC ID, method, peer, timestamp).
+    ///
+    /// # Parameters
+    ///
+    /// * `label` - Base label for the log entry (e.g., "RPC request", "RPC response")
+    /// * `json_value` - Optional JSON representation of the payload for clean serialization
+    /// * `debug_value` - The typed value to log if JSON serialization is not available
+    /// * `context` - Metadata about the RPC call for enriching the log output
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - The type of the debug_value, must implement [std::fmt::Debug]
+    ///
+    /// This method should only be called when verbose RPC logging is enabled
+    /// (checked via [should_log_rpc_payloads]).
     fn log_rpc_payload<T>(
         &self,
         label: &str,
