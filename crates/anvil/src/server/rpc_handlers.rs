@@ -21,9 +21,22 @@ use std::{fmt, net::SocketAddr};
 use tracing::{error, trace};
 
 #[derive(Clone)]
+/// Wrapper around a JSON-RPC request used by `RpcHandler`.
+///
+/// This type keeps together:
+/// - the parsed, strongly-typed representation of the request (`parsed`),
+/// - the original raw JSON value as it was received over the wire (`raw`), and
+/// - additional logging/telemetry metadata associated with the call (`metadata`).
+///
+/// Keeping both the parsed and raw forms allows handlers and logging code to
+/// inspect or record the exact request payload while still working with a
+/// typed representation.
 pub struct JsonRpcRequest<T> {
+    /// The strongly-typed, already-deserialized representation of the request.
     parsed: T,
+    /// The original JSON-RPC request payload as received from the client.
     raw: serde_json::Value,
+    /// Context metadata used for logging, tracing, and metrics for this call.
     metadata: RpcCallLogContext,
 }
 
