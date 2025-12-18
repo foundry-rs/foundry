@@ -59,7 +59,7 @@ where
         D: serde::Deserializer<'de>,
     {
         let raw = serde_json::Value::deserialize(deserializer)?;
-        let parsed = serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+        let parsed = T::deserialize(&raw).map_err(serde::de::Error::custom)?;
         Ok(Self { parsed, raw, metadata: RpcCallLogContext::default() })
     }
 }
