@@ -122,8 +122,26 @@ impl<'gcx> SourceVisitor<'gcx> {
         self.all_lines.dedup();
         let mut lines = Vec::new();
         for &line in &self.all_lines {
-            if let Some(reference_item) =
-                self.items.iter().find(|item| item.loc.lines.start == line)
+            if let Some(reference_item) = self
+                .items
+                .iter()
+                .filter(|item| item.loc.lines.start == line)
+                // Prefer statement/function anchors for line coverage; branch items can be
+                // synthetic (e.g. short-circuit condition branches) and should not skew line
+                // coverage anchoring.
+                //
+                // Within the same kind priority, pick the smallest byte-start so the line item
+                // anchors to the earliest code on that source line (typically the condition /
+                // entrypoint), and doesn't accidentally anchor to a later branch body.
+                .min_by_key(|item| {
+                    let prio = match item.kind {
+                        CoverageItemKind::Statement => 0u8,
+                        CoverageItemKind::Function { .. } => 1u8,
+                        CoverageItemKind::Branch { .. } => 2u8,
+                        CoverageItemKind::Line => 3u8,
+                    };
+                    (prio, item.loc.bytes.start)
+                })
             {
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
@@ -146,6 +164,42 @@ impl<'gcx> SourceVisitor<'gcx> {
 
         debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
         self.all_lines.push(item.loc.lines.start);
+
+        self.items.push(item);
+    }
+
+    /// Pushes a coverage item without affecting derived line coverage.
+    ///
+    /// This is intended for synthetic items (e.g. short-circuit condition branches) that should
+    /// influence branch coverage metrics and LCOV `BRDA`, but should not create additional `Line`
+    /// items (and therefore should not shift line coverage percentages).
+    fn push_item_kind_no_line(&mut self, kind: CoverageItemKind, span: Span) {
+        let item = CoverageItem { kind, loc: self.source_location_for(span), hits: 0 };
+        debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
+        self.items.push(item);
+    }
+
+    /// Creates a coverage item using `bytes_span` for byte-range mapping (anchors/source maps),
+    /// while using `lines_span` for line-range reporting (LCOV, summary).
+    ///
+    /// This is intentionally used for some branch items where the opcode anchor lives in the
+    /// branch body, but the reported line should be the condition line (e.g. multi-line `if`
+    /// conditions).
+    fn push_item_kind_split_spans(
+        &mut self,
+        kind: CoverageItemKind,
+        bytes_span: Span,
+        lines_span: Span,
+    ) {
+        let mut loc = self.source_location_for(bytes_span);
+        let bytes_lines = loc.lines.clone();
+        loc.lines = self.line_range(lines_span);
+        let item = CoverageItem { kind, loc, hits: 0 };
+
+        debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
+        // Preserve line-coverage behavior: line anchors should be derived from the byte span
+        // (where the corresponding opcodes live), not the reporting line span.
+        self.all_lines.push(bytes_lines.start);
 
         self.items.push(item);
     }
@@ -185,6 +239,63 @@ impl<'gcx> SourceVisitor<'gcx> {
         let id = self.branch_id;
         self.branch_id = id + 1;
         id
+    }
+
+    /// Adds branch coverage items for short-circuit boolean conditions (`&&` / `||`) in `if`
+    /// conditions.
+    ///
+    /// This models each intermediate condition (all operands except the last) as a branch point:
+    /// either we short-circuit at that operand, or we continue to evaluate the rest.
+    ///
+    /// This is crucial for LCOV: otherwise, inlined multi-condition `if` statements can look like
+    /// "100% covered" in LCOV even if some conditions were never evaluated.
+    ///
+    /// Related: <https://github.com/foundry-rs/foundry/issues/12508>,
+    ///          <https://github.com/foundry-rs/foundry/issues/12657>
+    fn push_short_circuit_condition_branches<'ast>(&mut self, cond: &'ast ast::Expr<'ast>) {
+        fn flatten<'ast>(
+            expr: &'ast ast::Expr<'ast>,
+            op: ast::BinOpKind,
+            out: &mut Vec<&'ast ast::Expr<'ast>>,
+        ) {
+            if let ExprKind::Binary(lhs, binop, rhs) = &expr.kind
+                && binop.kind == op
+            {
+                flatten(lhs, op, out);
+                flatten(rhs, op, out);
+            } else {
+                out.push(expr);
+            }
+        }
+
+        // Only top-level `&&` / `||` chains are relevant for short-circuit condition coverage.
+        let ExprKind::Binary(_lhs, binop, _rhs) = &cond.kind else { return };
+        let op = match binop.kind {
+            ast::BinOpKind::And | ast::BinOpKind::Or => binop.kind,
+            _ => return,
+        };
+
+        let mut operands = Vec::new();
+        flatten(cond, op, &mut operands);
+        if operands.len() < 2 {
+            return;
+        }
+
+        // For N operands, there are N-1 short-circuit branch points.
+        for operand in operands[..operands.len() - 1].iter().copied() {
+            let branch_id = self.next_branch_id();
+            // Anchor and report on the operand span; the compiler's short-circuit JUMPI is
+            // typically mapped into the operand's source range in the source map.
+            let span = operand.span;
+            self.push_item_kind_no_line(
+                CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: false },
+                span,
+            );
+            self.push_item_kind_no_line(
+                CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode: false },
+                span,
+            );
+        }
     }
 }
 
@@ -247,6 +358,9 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
             }
 
             StmtKind::If(_cond, then_stmt, else_stmt) => {
+                // Add short-circuit condition coverage for compound boolean conditions.
+                self.push_short_circuit_condition_branches(_cond);
+
                 let branch_id = self.next_branch_id();
 
                 // Add branch coverage items only if one of true/branch bodies contains statements.
@@ -255,9 +369,16 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 {
                     // The branch instruction is mapped to the first opcode within the true
                     // body source range.
-                    self.push_item_kind(
+                    //
+                    // NOTE: For multi-line conditions, `then_stmt.span` starts on the body line,
+                    // which causes LCOV to attribute branch coverage to the wrong line. We keep
+                    // the byte span as `then_stmt.span` (for accurate anchoring), but report the
+                    // line range from the full `if` span so LCOV attributes the branch to the
+                    // condition line.
+                    self.push_item_kind_split_spans(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         then_stmt.span,
+                        stmt.span,
                     );
                     if else_stmt.is_some() {
                         // We use `stmt.span`, which includes `else_stmt.span`, since we need to
@@ -297,15 +418,25 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 }
             }
 
+            StmtKind::While(cond, _body) => {
+                // Model short-circuit conditions in loop conditions for LCOV.
+                self.push_short_circuit_condition_branches(cond);
+            }
+            StmtKind::DoWhile(_body, cond) => {
+                self.push_short_circuit_condition_branches(cond);
+            }
+            StmtKind::For { init: _, cond, next: _, body: _ } => {
+                if let Some(cond) = cond {
+                    self.push_short_circuit_condition_branches(cond);
+                }
+            }
+
             // Skip placeholder statements as they are never referenced in source maps.
             StmtKind::Assembly(_)
             | StmtKind::Block(_)
             | StmtKind::UncheckedBlock(_)
             | StmtKind::Placeholder
-            | StmtKind::Expr(_)
-            | StmtKind::While(..)
-            | StmtKind::DoWhile(..)
-            | StmtKind::For { .. } => {}
+            | StmtKind::Expr(_) => {}
         }
         self.walk_stmt(stmt)
     }
@@ -321,7 +452,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     return self.walk_expr(expr);
                 }
             }
-            ExprKind::Call(callee, _args) => {
+            ExprKind::Call(callee, args) => {
                 // Resolve later.
                 self.function_calls.push(expr.span);
 
@@ -329,6 +460,14 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Might be a require call, add branch coverage.
                     // Asserts should not be considered branches: <https://github.com/foundry-rs/foundry/issues/9460>.
                     if ident.as_str() == "require" {
+                        // Also add short-circuit condition branches for the `require` condition,
+                        // so LCOV reflects condition coverage regardless of formatting.
+                        if let ast::CallArgsKind::Unnamed(exprs) = &args.kind
+                            && let Some(cond) = exprs.first()
+                        {
+                            self.push_short_circuit_condition_branches(cond);
+                        }
+
                         let branch_id = self.next_branch_id();
                         self.push_item_kind(
                             CoverageItemKind::Branch {
