@@ -198,7 +198,10 @@ pub struct NodeArgs {
     #[arg(long, value_name = "PATH")]
     pub cache_path: Option<PathBuf>,
 
-    /// Enable logging of RPC request and response payloads.
+    /// Enable verbose logging of all RPC request and response payloads, including parameters and results.
+    ///
+    /// This CLI flag controls payload-level logging at node startup and is independent of the
+    /// `anvil_setLoggingEnabled` RPC method, which can be used at runtime to toggle standard RPC logging.
     #[arg(long, help_heading = "Logging options")]
     pub rpc_log: bool,
 }
