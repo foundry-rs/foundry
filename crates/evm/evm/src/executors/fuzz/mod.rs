@@ -3,7 +3,7 @@ use crate::executors::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
+use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
@@ -24,7 +24,6 @@ use proptest::{
     strategy::Strategy,
     test_runner::{TestCaseError, TestRunner},
 };
-use rand::RngCore;
 use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -331,9 +330,8 @@ impl FuzzedExecutor {
     ) -> Result<FuzzOutcome, TestCaseError> {
         // Sets the random seed for the run
         if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
-            let mut seed = [0u8; 32];
-            self.runner.rng().fill_bytes(&mut seed);
-            cheats.set_seed(U256::from_be_bytes(seed));
+            let seed = keccak256(&calldata);
+            cheats.set_seed(seed.into());
         }
 
         let mut call = self
