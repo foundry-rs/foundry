@@ -208,7 +208,7 @@ pub struct NodeConfig {
     pub silent: bool,
     /// The path where states are cached.
     pub cache_path: Option<PathBuf>,
-    /// Whether RPC payload logging is enabled.
+    /// Whether RPC request/response payload logging (via `rpc_log`) is enabled.
     pub rpc_log: bool,
 }
 
