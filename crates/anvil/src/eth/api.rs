@@ -111,6 +111,26 @@ use tokio::{
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 
+/// Context information for RPC call logging.
+///
+/// This struct carries metadata about an RPC call to provide rich context when logging
+/// requests and responses. It is used by the RPC logging system to append contextual
+/// information to log messages, making it easier to trace and debug individual RPC calls.
+///
+/// # Fields
+///
+/// * `id` - The RPC request ID from the JSON-RPC request
+/// * `method` - The RPC method name being called (e.g., "eth_getBalance")
+/// * `peer_addr` - The socket address of the client making the request
+/// * `timestamp` - The timestamp when the request was received
+///
+/// # Usage
+///
+/// When verbose RPC logging is enabled, this context is used to format log labels with
+/// additional metadata. For example, a log message might be formatted as:
+/// ```text
+/// RPC request [id=1, method=eth_getBalance, peer=127.0.0.1:8545, ts=2024-01-01T00:00:00Z]: {...}
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct RpcCallLogContext {
     pub id: Option<RpcId>,
@@ -120,6 +140,15 @@ pub struct RpcCallLogContext {
 }
 
 impl RpcCallLogContext {
+    /// Creates a formatted suffix string containing available context information.
+    ///
+    /// This method builds a comma-separated string from the non-None fields in the context.
+    /// Each field is formatted as `key=value`. If no fields are present, returns `None`.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(String)` - A comma-separated list of context fields (e.g., "id=1, method=eth_call")
+    /// * `None` - If all context fields are empty
     fn label_suffix(&self) -> Option<String> {
         let mut parts = Vec::new();
 
@@ -142,6 +171,20 @@ impl RpcCallLogContext {
         (!parts.is_empty()).then(|| parts.join(", "))
     }
 
+    /// Formats a log label by appending context information in square brackets.
+    ///
+    /// If context information is available, it appends it to the base label in the format
+    /// `"base [context]"`. If no context is available, returns the base label unchanged.
+    ///
+    /// # Arguments
+    ///
+    /// * `base` - The base label string (e.g., "RPC request")
+    ///
+    /// # Returns
+    ///
+    /// A `Cow<str>` containing either:
+    /// * The base label with context appended (owned) - e.g., "RPC request [id=1, method=eth_call]"
+    /// * The base label unchanged (borrowed) - if no context is available
     fn format_label<'a>(&self, base: &'a str) -> Cow<'a, str> {
         match self.label_suffix() {
             Some(suffix) => Cow::Owned(format!("{base} [{suffix}]")),
