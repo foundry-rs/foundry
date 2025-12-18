@@ -164,9 +164,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                 };
 
                 let tx_type = tx.ty();
-                Err(ConversionError::Custom(format!(
-                    "Unknown transaction type: 0x{tx_type:02X}"
-                )))
+                Err(ConversionError::Custom(format!("Unknown transaction type: 0x{tx_type:02X}")))
             }
         }
     }
