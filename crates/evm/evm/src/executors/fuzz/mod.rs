@@ -26,6 +26,7 @@ use proptest::{
 };
 use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use rand::RngCore;
 
 mod types;
 use crate::executors::corpus::CorpusManager;
@@ -328,6 +329,13 @@ impl FuzzedExecutor {
         calldata: Bytes,
         coverage_metrics: &mut CorpusManager,
     ) -> Result<FuzzOutcome, TestCaseError> {
+        // Sets the random seed for the run
+        if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
+            let mut seed = [0u8; 32];
+            self.runner.rng().fill_bytes(&mut seed);
+            cheats.set_seed(U256::from_be_bytes(seed));
+        }
+
         let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
