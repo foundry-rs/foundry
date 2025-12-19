@@ -101,28 +101,26 @@ impl HttpEthRpcHandler {
         call: &RpcMethodCall,
         peer_addr: Option<SocketAddr>,
     ) -> Result<JsonRpcRequest<EthRequest>, serde_json::Error> {
-        // Clone and convert params to Value once - will be used for both deserialization
-        // and lazy raw JSON construction when logging is enabled.
+        // Convert params to Value for deserialization into EthRequest.
+        // EthRequest uses #[serde(tag = "method", content = "params")] which requires
+        // a JSON object with method and params fields.
         let params_value: serde_json::Value = call.params.clone().into();
+        let call_value = json!({
+            "method": &call.method,
+            "params": params_value,
+        });
+        let parsed = serde_json::from_value::<EthRequest>(call_value)?;
 
-        // Store params value in metadata for lazy raw JSON construction.
-        // Note: Cloning the Value here is cheaper than eagerly constructing the raw JSON,
-        // especially when logging is disabled (which is the common case).
+        // Store the original params in metadata for lazy raw JSON construction.
+        // This avoids converting to Value until actually needed for logging.
         let metadata = RpcCallLogContext {
             id: Some(call.id.clone()),
             method: Some(call.method.clone()),
             peer_addr,
             timestamp: Some(Utc::now()),
             jsonrpc_version: Some(call.jsonrpc.clone()),
-            params_value: Some(params_value.clone()),
+            params: Some(call.params.clone()),
         };
-
-        // Deserialize into EthRequest using the params value
-        let call_value = json!({
-            "method": &call.method,
-            "params": params_value,
-        });
-        let parsed = serde_json::from_value::<EthRequest>(call_value)?;
 
         // Pass None for raw JSON - it will be constructed lazily only if logging is enabled
         Ok(JsonRpcRequest::new(parsed, None, metadata))
