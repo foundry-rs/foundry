@@ -1,6 +1,7 @@
 use alloy_consensus::{
     Sealed, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxType,
     Typed2718,
+    crypto::RecoveryError,
     transaction::{
         TxEip7702,
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
@@ -114,22 +115,16 @@ impl FoundryTxEnvelope {
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
-    pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
-        match self {
-            Self::Legacy(tx) => tx.recover_signer(),
-            Self::Eip2930(tx) => tx.recover_signer(),
-            Self::Eip1559(tx) => tx.recover_signer(),
-            Self::Eip4844(tx) => tx.recover_signer(),
-            Self::Eip7702(tx) => tx.recover_signer(),
-            Self::Deposit(tx) => Ok(tx.from),
-            // TODO(onbjerg): this returns `RecoveryError`, so we should probably do the same for
-            // `recover` TODO(onbjerg): it's a bit iffy having to reach into signature
-            // and pass in the signature hash manually.
-            Self::Tempo(tx) => tx
-                .signature()
-                .recover_signer(&tx.signature_hash())
-                .map_err(|_| alloy_primitives::SignatureError::InvalidParity(0)),
-        }
+    pub fn recover(&self) -> Result<Address, RecoveryError> {
+        Ok(match self {
+            Self::Legacy(tx) => tx.recover_signer()?,
+            Self::Eip2930(tx) => tx.recover_signer()?,
+            Self::Eip1559(tx) => tx.recover_signer()?,
+            Self::Eip4844(tx) => tx.recover_signer()?,
+            Self::Eip7702(tx) => tx.recover_signer()?,
+            Self::Deposit(tx) => tx.from,
+            Self::Tempo(tx) => tx.signature().recover_signer(&tx.signature_hash())?,
+        })
     }
 }
 
