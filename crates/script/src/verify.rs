@@ -115,7 +115,7 @@ impl VerifyBundle {
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
             // of the transaction
             if data.split_at(create2_offset).1.starts_with(bytecode) {
-                let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
+                let constructor_args = &data[create2_offset + bytecode.len()..];
 
                 if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
