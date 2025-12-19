@@ -200,8 +200,9 @@ pub struct NodeArgs {
 
     /// Enable verbose logging of all RPC request and response payloads, including parameters and results.
     ///
-    /// This CLI flag controls payload-level logging at node startup and is independent of the
-    /// `anvil_setLoggingEnabled` RPC method, which can be used at runtime to toggle standard RPC logging.
+    /// This CLI flag controls the initial payload-level logging state at node startup. At runtime,
+    /// the `anvil_setLoggingEnabled` RPC method can be used to toggle both standard RPC logging and
+    /// RPC payload logging, overriding the initial CLI setting.
     #[arg(long, help_heading = "Logging options")]
     pub rpc_log: bool,
 }
