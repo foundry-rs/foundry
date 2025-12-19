@@ -141,7 +141,7 @@ pub struct RpcCallLogContext {
     pub method: Option<String>,
     pub peer_addr: Option<SocketAddr>,
     pub timestamp: Option<DateTime<Utc>>,
-    /// The JSON-RPC version and params value, stored for lazy raw JSON construction
+    /// The JSON-RPC version and params value used when constructing raw JSON for RPC logging.
     pub jsonrpc_version: Option<Version>,
     pub params_value: Option<serde_json::Value>,
 }
