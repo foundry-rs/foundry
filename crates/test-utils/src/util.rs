@@ -101,6 +101,9 @@ pub fn initialize(target: &Path) {
 
             // Remove source files.
             prj.wipe_contracts();
+            for file in ["Counter.sol", "Counter.s.sol", "Counter.t.sol"] {
+                let _ = fs::remove_dir_all(prj.paths().artifacts.join(file));
+            }
 
             // Remove the existing template, if any.
             let _ = fs::remove_dir_all(tpath);
