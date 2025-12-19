@@ -1228,7 +1228,7 @@ forgetest_init!(
             config.fuzz.seed = Some(U256::from(119u32));
             config.invariant.runs = 1;
             config.invariant.depth = 1000;
-            config.invariant.shrink_run_limit = 365;
+            config.invariant.shrink_run_limit = 425;
         });
 
         prj.add_test(

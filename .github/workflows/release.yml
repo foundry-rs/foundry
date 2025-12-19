@@ -21,7 +21,7 @@ env:
   RUST_PROFILE: maxperf
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
 
-  LAST_STABLE_VERSION: "v1.4.4"
+  LAST_STABLE_VERSION: "v1.5.0"
 
 jobs:
   prepare:
@@ -125,7 +125,7 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: alpine
             arch: arm64
-          - runner: macos-13-large
+          - runner: macos-14-large
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
