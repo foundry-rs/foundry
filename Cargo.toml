@@ -387,6 +387,9 @@ uuid = "1.19.0"
 flate2 = "1.1"
 ethereum_ssz = "0.10"
 
+# Tempo
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", tag = "v0.7.5" }
+
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # testing
