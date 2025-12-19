@@ -516,10 +516,6 @@ impl NodeConfig {
         self
     }
 
-    /// Returns true if RPC payload logging is enabled.
-    pub fn rpc_logging(&self) -> bool {
-        self.rpc_log
-    }
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> u64 {
         self.base_fee
