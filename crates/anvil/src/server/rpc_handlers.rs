@@ -154,17 +154,8 @@ impl RpcHandler for HttpEthRpcHandler {
             }
             Err(err) => {
                 let err = err.to_string();
-                if err.contains("unknown variant") {
-                    error!(
-                        target: "rpc",
-                        method = ?call.method,
-                        "failed to deserialize method due to unknown variant"
-                    );
-                    RpcResponse::new(call.id, RpcError::method_not_found())
-                } else {
-                    error!(target: "rpc", method = ?call.method, ?err, "failed to deserialize method");
-                    RpcResponse::new(call.id, RpcError::invalid_params(err))
-                }
+                error!(target: "rpc", method = ?call.method, ?err, "failed to deserialize method");
+                RpcResponse::new(call.id, RpcError::invalid_params(err))
             }
         }
     }
