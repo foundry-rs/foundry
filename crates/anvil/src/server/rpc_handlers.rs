@@ -74,7 +74,7 @@ where
     {
         let raw = serde_json::Value::deserialize(deserializer)?;
         let parsed = T::deserialize(&raw).map_err(serde::de::Error::custom)?;
-        Ok(Self { parsed: parsed, raw: Some(raw), metadata: RpcCallLogContext::default() })
+        Ok(Self { parsed, raw: Some(raw), metadata: RpcCallLogContext::default() })
     }
 }
 
@@ -101,26 +101,28 @@ impl HttpEthRpcHandler {
         call: &RpcMethodCall,
         peer_addr: Option<SocketAddr>,
     ) -> Result<JsonRpcRequest<EthRequest>, serde_json::Error> {
-        // Build metadata context with the original RPC call data
-        // The raw JSON will be constructed lazily only if verbose logging is enabled
+        // Clone and convert params to Value once - will be used for both deserialization
+        // and lazy raw JSON construction when logging is enabled
+        let params_value: serde_json::Value = call.params.clone().into();
+
+        // Build metadata context, storing the params value for lazy raw JSON construction
         let metadata = RpcCallLogContext {
             id: Some(call.id.clone()),
             method: Some(call.method.clone()),
             peer_addr,
             timestamp: Some(Utc::now()),
             jsonrpc_version: Some(call.jsonrpc.clone()),
-            params: Some(call.params.clone()),
+            params_value: Some(params_value.clone()),
         };
 
-        // Deserialize into EthRequest
-        let params_value: serde_json::Value = call.params.clone().into();
+        // Deserialize into EthRequest using the params value
         let call_value = json!({
             "method": &call.method,
             "params": params_value,
         });
         let parsed = serde_json::from_value::<EthRequest>(call_value)?;
 
-        // Pass None for raw JSON - it will be constructed lazily if needed
+        // Pass None for raw JSON - it will be constructed lazily only if logging is enabled
         Ok(JsonRpcRequest::new(parsed, None, metadata))
     }
 }
@@ -131,7 +133,7 @@ impl RpcHandler for HttpEthRpcHandler {
 
     async fn on_request(&self, request: Self::Request) -> ResponseResult {
         let (request, raw, metadata) = request.into_parts();
-        self.api.execute_with_raw(request, Some(raw), metadata).await
+        self.api.execute_with_raw(request, raw, metadata).await
     }
 
     async fn on_call_with_addr(&self, call: RpcMethodCall, peer_addr: Option<SocketAddr>) -> RpcResponse {
