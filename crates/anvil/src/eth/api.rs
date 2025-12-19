@@ -681,8 +681,7 @@ impl EthApi {
             }
         };
 
-        let response_json = serde_json::to_value(&response).ok();
-        self.log_rpc_payload("RPC response", response_json.as_ref(), &response, &context);
+        self.log_rpc_payload_with_serialization("RPC response", &response, &context);
 
         if let ResponseResult::Error(err) = &response {
             let label = context.format_label("\nRPC request failed");
@@ -757,6 +756,36 @@ impl EthApi {
         };
         let label = context.format_label(label);
         node_info!("{label}: {payload}");
+    }
+
+    /// Logs an RPC payload with automatic serialization.
+    ///
+    /// This is a convenience wrapper around [log_rpc_payload] that handles serialization
+    /// of the debug value to JSON. This is useful when you don't have a pre-serialized JSON
+    /// value and want the method to handle lazy serialization only when logging is enabled.
+    ///
+    /// # Parameters
+    ///
+    /// * `label` - Base label for the log entry (e.g., "RPC response")
+    /// * `debug_value` - The value to serialize and log
+    /// * `context` - Metadata about the RPC call for enriching the log output
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - The type of the debug_value, must implement both [std::fmt::Debug] and [serde::Serialize]
+    fn log_rpc_payload_with_serialization<T>(
+        &self,
+        label: &str,
+        debug_value: &T,
+        context: &RpcCallLogContext,
+    ) where
+        T: std::fmt::Debug + serde::Serialize,
+    {
+        if !self.should_log_rpc_payloads() {
+            return;
+        }
+        let json_value = serde_json::to_value(debug_value).ok();
+        self.log_rpc_payload(label, json_value.as_ref(), debug_value, context);
     }
 
     fn sign_request(&self, from: &Address, request: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
