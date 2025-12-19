@@ -637,7 +637,7 @@ mod tests {
         });
 
         // Map logs to a different type (just clone in this case)
-        let mapped = receipt.map_logs(|log| log.clone());
+        let mapped = receipt.map_logs(|log| log);
         assert_eq!(mapped.logs().len(), 1);
         assert_eq!(mapped.tx_type(), FoundryTxType::Tempo);
     }
