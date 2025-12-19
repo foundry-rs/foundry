@@ -839,7 +839,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 //
 // The issue was that `vm.randomUint()` would produce the same sequence of values
 // in every fuzz run because the RNG was seeded identically for each run.
-// This test verifies that with many fuzz runs and a small range (0-1), we eventually
+// This test verifies that with many fuzz runs and a small range, we eventually
 // hit value 0, which proves the RNG varies across runs.
 forgetest_init!(test_fuzz_random_uint_varies_across_runs, |prj, cmd| {
     prj.add_test(
