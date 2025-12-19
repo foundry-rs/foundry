@@ -74,7 +74,11 @@ use anvil_core::{
     },
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::{error::RpcError, request::Id as RpcId, response::ResponseResult};
+use anvil_rpc::{
+    error::RpcError,
+    request::{Id as RpcId, RequestParams, Version},
+    response::ResponseResult,
+};
 use chrono::{DateTime, Utc};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
@@ -137,6 +141,9 @@ pub struct RpcCallLogContext {
     pub method: Option<String>,
     pub peer_addr: Option<SocketAddr>,
     pub timestamp: Option<DateTime<Utc>>,
+    /// The JSON-RPC version and params, stored for lazy raw JSON construction
+    pub jsonrpc_version: Option<Version>,
+    pub params: Option<RequestParams>,
 }
 
 impl RpcCallLogContext {
@@ -190,6 +197,31 @@ impl RpcCallLogContext {
             Some(suffix) => Cow::Owned(format!("{base} [{suffix}]")),
             None => Cow::Borrowed(base),
         }
+    }
+
+    /// Constructs the raw JSON-RPC request from stored context data.
+    ///
+    /// This method lazily builds the full JSON-RPC request payload only when needed
+    /// (e.g., for verbose logging). It requires jsonrpc_version, method, params, and id
+    /// to be present in the context.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Value)` - The constructed JSON-RPC request object
+    /// * `None` - If any required field is missing
+    fn to_raw_json(&self) -> Option<Value> {
+        let jsonrpc = self.jsonrpc_version.as_ref()?;
+        let method = self.method.as_ref()?;
+        let params = self.params.as_ref()?;
+        let id = self.id.as_ref()?;
+
+        let params_value: serde_json::Value = params.clone().into();
+        Some(serde_json::json!({
+            "jsonrpc": jsonrpc,
+            "method": method,
+            "params": params_value,
+            "id": id,
+        }))
     }
 }
 
@@ -293,7 +325,9 @@ impl EthApi {
         trace!(target: "rpc::api", "executing eth request");
         let should_log_rpc_payloads = self.should_log_rpc_payloads();
         if should_log_rpc_payloads {
-            self.log_rpc_payload("RPC request", raw_request.as_ref(), &request, &context);
+            // Lazily construct raw JSON from context if not provided
+            let raw_json = raw_request.or_else(|| context.to_raw_json());
+            self.log_rpc_payload("RPC request", raw_json.as_ref(), &request, &context);
         }
         let response = match request.clone() {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),

@@ -35,17 +35,18 @@ pub struct JsonRpcRequest<T> {
     /// The strongly-typed, already-deserialized representation of the request.
     parsed: T,
     /// The original JSON-RPC request payload as received from the client.
-    raw: serde_json::Value,
+    /// This is optional and only constructed when needed for verbose logging.
+    raw: Option<serde_json::Value>,
     /// Context metadata used for logging, tracing, and metrics for this call.
     metadata: RpcCallLogContext,
 }
 
 impl<T> JsonRpcRequest<T> {
-    fn new(parsed: T, raw: serde_json::Value, metadata: RpcCallLogContext) -> Self {
+    fn new(parsed: T, raw: Option<serde_json::Value>, metadata: RpcCallLogContext) -> Self {
         Self { parsed, raw, metadata }
     }
 
-    fn into_parts(self) -> (T, serde_json::Value, RpcCallLogContext) {
+    fn into_parts(self) -> (T, Option<serde_json::Value>, RpcCallLogContext) {
         (self.parsed, self.raw, self.metadata)
     }
 }
@@ -73,7 +74,7 @@ where
     {
         let raw = serde_json::Value::deserialize(deserializer)?;
         let parsed = T::deserialize(&raw).map_err(serde::de::Error::custom)?;
-        Ok(Self { parsed, raw, metadata: RpcCallLogContext::default() })
+        Ok(Self { parsed: parsed, raw: Some(raw), metadata: RpcCallLogContext::default() })
     }
 }
 
@@ -92,38 +93,35 @@ impl HttpEthRpcHandler {
 
     /// Converts a `RpcMethodCall` into a `JsonRpcRequest<EthRequest>`.
     ///
-    /// This helper captures the raw JSON request and creates logging metadata
-    /// (timestamp, peer address) that will be used for verbose RPC logging.
+    /// This helper stores the JSON-RPC call metadata in the context for potential
+    /// lazy construction of the raw JSON request when verbose logging is enabled.
+    /// This optimization avoids unnecessary JSON construction and cloning when
+    /// logging is disabled.
     fn try_into_request(
         call: &RpcMethodCall,
         peer_addr: Option<SocketAddr>,
     ) -> Result<JsonRpcRequest<EthRequest>, serde_json::Error> {
-        let params_value: serde_json::Value = call.params.clone().into();
-
-        // Construct the full raw JSON-RPC request for logging
-        let raw = json!({
-            "jsonrpc": &call.jsonrpc,
-            "method": &call.method,
-            "params": &params_value,
-            "id": &call.id,
-        });
-
-        // Build metadata context for logging
+        // Build metadata context with the original RPC call data
+        // The raw JSON will be constructed lazily only if verbose logging is enabled
         let metadata = RpcCallLogContext {
             id: Some(call.id.clone()),
             method: Some(call.method.clone()),
             peer_addr,
             timestamp: Some(Utc::now()),
+            jsonrpc_version: Some(call.jsonrpc.clone()),
+            params: Some(call.params.clone()),
         };
 
         // Deserialize into EthRequest
+        let params_value: serde_json::Value = call.params.clone().into();
         let call_value = json!({
             "method": &call.method,
             "params": params_value,
         });
         let parsed = serde_json::from_value::<EthRequest>(call_value)?;
 
-        Ok(JsonRpcRequest::new(parsed, raw, metadata))
+        // Pass None for raw JSON - it will be constructed lazily if needed
+        Ok(JsonRpcRequest::new(parsed, None, metadata))
     }
 }
 
