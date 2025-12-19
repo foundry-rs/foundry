@@ -18,7 +18,10 @@ use op_revm::OpTransaction;
 use revm::context::TxEnv;
 use tempo_primitives::{AASigned, TempoTransaction};
 
+//
 /// Container type for signed, typed transactions.
+// NOTE(onbjerg): Boxing `Tempo(AASigned)` breaks `TransactionEnvelope` derive macro trait bounds.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, TransactionEnvelope)]
 #[envelope(
     tx_type_name = FoundryTxType,
@@ -458,5 +461,59 @@ mod tests {
         let op_tx = OpTransaction::<TxEnv>::from_recovered_tx(&typed_tx, sender);
         assert_eq!(op_tx.base.caller, sender);
         assert_eq!(op_tx.base.gas_limit, 0x5208);
+    }
+
+    // Test vector from Tempo testnet:
+    // https://explorer.testnet.tempo.xyz/tx/0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd
+    #[test]
+    fn test_decode_encode_tempo_tx() {
+        use alloy_primitives::address;
+        use tempo_primitives::TEMPO_TX_TYPE_ID;
+
+        let tx_hash: TxHash = "0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd"
+            .parse::<TxHash>()
+            .unwrap();
+
+        // Raw transaction from Tempo testnet via eth_getRawTransactionByHash
+        let raw_tx = hex::decode(
+            "76f9025e82a5bd808502cb4178008302d178f8fcf85c9420c000000000000000000000000000000000000080b844095ea7b3000000000000000000000000dec00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680f89c94dec000000000000000000000000000000000000080b884f8856c0f00000000000000000000000020c000000000000000000000000000000000000000000000000000000000000020c00000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000097d330c0808080809420c000000000000000000000000000000000000180c0b90133027b98b7a8e6c68d7eac741a52e6fdae0560ce3c16ef5427ad46d7a54d0ed86dd41d000000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2238453071464a7a50585167546e645473643649456659457776323173516e626966374c4741776e4b43626b222c226f726967696e223a2268747470733a2f2f74656d706f2d6465782e76657263656c2e617070222c2263726f73734f726967696e223a66616c73657dcfd45c3b19745a42f80b134dcb02a8ba099a0e4e7be1984da54734aa81d8f29f74bb9170ae6d25bd510c83fe35895ee5712efe13980a5edc8094c534e23af85eaacc80b21e45fb11f349424dce3a2f23547f60c0ff2f8bcaede2a247545ce8dd87abf0dbb7a5c9507efae2e43833356651b45ac576c2e61cec4e9c0f41fcbf6e",
+        )
+        .unwrap();
+
+        let tempo_tx = FoundryTxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
+
+        // Verify it's a Tempo transaction (type 0x76)
+        assert!(tempo_tx.is_type(TEMPO_TX_TYPE_ID));
+
+        let FoundryTxEnvelope::Tempo(ref aa_signed) = tempo_tx else {
+            panic!("Expected Tempo transaction");
+        };
+
+        // Verify the chain ID
+        assert_eq!(aa_signed.tx().chain_id, 42429);
+
+        // Verify the fee token
+        assert_eq!(
+            aa_signed.tx().fee_token,
+            Some(address!("0x20C0000000000000000000000000000000000001"))
+        );
+
+        // Verify gas limit
+        assert_eq!(aa_signed.tx().gas_limit, 184696);
+
+        // Verify we have 2 calls
+        assert_eq!(aa_signed.tx().calls.len(), 2);
+
+        // Verify the hash
+        assert_eq!(tx_hash, tempo_tx.hash());
+
+        // Verify round-trip encoding
+        let mut encoded = Vec::new();
+        tempo_tx.encode_2718(&mut encoded);
+        assert_eq!(raw_tx, encoded);
+
+        // Verify sender recovery (WebAuthn signature)
+        let sender = tempo_tx.recover().unwrap();
+        assert_eq!(sender, address!("0x566Ff0f4a6114F8072ecDC8A7A8A13d8d0C6B45F"));
     }
 }

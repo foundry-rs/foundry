@@ -10,7 +10,7 @@ use alloy_rlp::{BufMut, Decodable, Encodable, Header, bytes};
 use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 use serde::{Deserialize, Serialize};
-use tempo_primitives::{TEMPO_TX_TYPE_ID, TempoReceipt};
+use tempo_primitives::TEMPO_TX_TYPE_ID;
 
 use crate::FoundryTxType;
 
@@ -527,5 +527,118 @@ mod tests {
         let receipt = FoundryReceiptEnvelope::decode(&mut &data[..]).unwrap();
 
         assert_eq!(receipt, expected);
+    }
+
+    #[test]
+    fn encode_tempo_receipt() {
+        use alloy_network::eip2718::Encodable2718;
+        use tempo_primitives::TEMPO_TX_TYPE_ID;
+
+        let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
+            receipt: Receipt {
+                status: true.into(),
+                cumulative_gas_used: 157716,
+                logs: vec![Log {
+                    address: Address::from_str("20c0000000000000000000000000000000000000").unwrap(),
+                    data: LogData::new_unchecked(
+                        vec![
+                            B256::from_str(
+                                "8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925",
+                            )
+                            .unwrap(),
+                            B256::from_str(
+                                "000000000000000000000000566ff0f4a6114f8072ecdc8a7a8a13d8d0c6b45f",
+                            )
+                            .unwrap(),
+                            B256::from_str(
+                                "000000000000000000000000dec0000000000000000000000000000000000000",
+                            )
+                            .unwrap(),
+                        ],
+                        Bytes::from_str(
+                            "0000000000000000000000000000000000000000000000000000000000989680",
+                        )
+                        .unwrap(),
+                    ),
+                }],
+            },
+            logs_bloom: [0; 256].into(),
+        });
+
+        assert_eq!(receipt.tx_type(), FoundryTxType::Tempo);
+        assert_eq!(receipt.ty(), TEMPO_TX_TYPE_ID);
+        assert!(receipt.status());
+        assert_eq!(receipt.cumulative_gas_used(), 157716);
+        assert_eq!(receipt.logs().len(), 1);
+
+        // Encode and decode round-trip
+        let mut encoded = Vec::new();
+        receipt.encode_2718(&mut encoded);
+
+        // First byte should be the Tempo type ID
+        assert_eq!(encoded[0], TEMPO_TX_TYPE_ID);
+
+        // Decode it back
+        let decoded = FoundryReceiptEnvelope::decode(&mut &encoded[..]).unwrap();
+        assert_eq!(receipt, decoded);
+    }
+
+    #[test]
+    fn decode_tempo_receipt() {
+        use alloy_network::eip2718::Encodable2718;
+        use tempo_primitives::TEMPO_TX_TYPE_ID;
+
+        let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
+            receipt: Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![] },
+            logs_bloom: [0; 256].into(),
+        });
+
+        // Encode and decode via 2718
+        let mut encoded = Vec::new();
+        receipt.encode_2718(&mut encoded);
+        assert_eq!(encoded[0], TEMPO_TX_TYPE_ID);
+
+        use alloy_network::eip2718::Decodable2718;
+        let decoded = FoundryReceiptEnvelope::decode_2718(&mut &encoded[..]).unwrap();
+        assert_eq!(receipt, decoded);
+    }
+
+    #[test]
+    fn tempo_receipt_from_parts() {
+        let receipt = FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
+            true,
+            100000,
+            vec![],
+            FoundryTxType::Tempo,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.tx_type(), FoundryTxType::Tempo);
+        assert!(receipt.status());
+        assert_eq!(receipt.cumulative_gas_used(), 100000);
+        assert!(receipt.logs().is_empty());
+        assert!(receipt.deposit_nonce().is_none());
+        assert!(receipt.deposit_receipt_version().is_none());
+    }
+
+    #[test]
+    fn tempo_receipt_map_logs() {
+        let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
+            receipt: Receipt {
+                status: true.into(),
+                cumulative_gas_used: 21000,
+                logs: vec![Log {
+                    address: Address::from_str("20c0000000000000000000000000000000000000").unwrap(),
+                    data: LogData::new_unchecked(vec![], Bytes::default()),
+                }],
+            },
+            logs_bloom: [0; 256].into(),
+        });
+
+        // Map logs to a different type (just clone in this case)
+        let mapped = receipt.map_logs(|log| log.clone());
+        assert_eq!(mapped.logs().len(), 1);
+        assert_eq!(mapped.tx_type(), FoundryTxType::Tempo);
     }
 }
