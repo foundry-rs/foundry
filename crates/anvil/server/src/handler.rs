@@ -71,7 +71,7 @@ async fn handle_call<Handler: RpcHandler>(
                 ?peer_addr,
                 "handling call"
             );
-            Some(handler.on_call(call, peer_addr).await)
+            Some(handler.on_call_with_addr(call, peer_addr).await)
         }
         RpcCall::Notification(notification) => {
             trace!(target: "rpc", method = ?notification.method, "received rpc notification");
