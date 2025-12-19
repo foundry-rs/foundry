@@ -5,7 +5,7 @@ import "utils/Test.sol";
 
 contract Issue12817Test is Test {
     function test_fuzz_randomUintRange(uint256 seed) public {
-        vm.seed(seed);
+        try vm.setSeed(seed) {} catch {}
         uint256 randomUint = vm.randomUint(0, 3);
         if (randomUint != 1) {
             revert("Random value was not 1");
@@ -13,7 +13,7 @@ contract Issue12817Test is Test {
     }
 
     function test_fuzz_randomUint(uint256 seed) public {
-        vm.seed(seed);
+        try vm.setSeed(seed) {} catch {}
         uint256 randomUint = vm.randomUint() % 4;
         if (randomUint != 1) {
             revert("Random value was not 1");

@@ -441,10 +441,15 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
             version = parts.next();
         }
 
-        let version = if let Some(version) = version {
-            Some(Version::parse(version).map_err(|e| fmt_err!("failed parsing version: {e}"))?)
+        let (version, profile) = if let Some(version) = version {
+            match Version::parse(version) {
+                Ok(v) => (Some(v), None),
+                Err(_) => {
+                    (None, Some(version))
+                },
+            }
         } else {
-            None
+            (None, None)
         };
 
         // Use available artifacts list if present
@@ -469,6 +474,11 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         && (id.version.minor != version.minor
                             || id.version.major != version.major
                             || id.version.patch != version.patch)
+                    {
+                        return false;
+                    }
+                    if let Some(profile) = profile
+                        && id.profile != profile
                     {
                         return false;
                     }
