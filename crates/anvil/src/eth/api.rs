@@ -690,8 +690,10 @@ impl EthApi {
         if let ResponseResult::Error(err) = &response {
             let label = context.format_label("\nRPC request failed");
             node_info!("{label}:");
-            if let Some(raw) = &raw_request {
-                match serde_json::to_string(raw) {
+            // Try to use provided raw request, or lazily construct it from context
+            let resolved_raw = raw_request.or_else(|| context.to_raw_json());
+            if let Some(raw) = resolved_raw {
+                match serde_json::to_string(&raw) {
                     Ok(serialized) => node_info!("    Request: {serialized}"),
                     Err(_) => node_info!("    Request: {:?}", request),
                 }
