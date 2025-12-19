@@ -102,10 +102,12 @@ impl HttpEthRpcHandler {
         peer_addr: Option<SocketAddr>,
     ) -> Result<JsonRpcRequest<EthRequest>, serde_json::Error> {
         // Clone and convert params to Value once - will be used for both deserialization
-        // and lazy raw JSON construction when logging is enabled
+        // and lazy raw JSON construction when logging is enabled.
         let params_value: serde_json::Value = call.params.clone().into();
 
-        // Build metadata context, storing the params value for lazy raw JSON construction
+        // Store params value in metadata for lazy raw JSON construction.
+        // Note: Cloning the Value here is cheaper than eagerly constructing the raw JSON,
+        // especially when logging is disabled (which is the common case).
         let metadata = RpcCallLogContext {
             id: Some(call.id.clone()),
             method: Some(call.method.clone()),
