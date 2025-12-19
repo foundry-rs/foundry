@@ -325,7 +325,7 @@ impl EthApi {
         let should_log_rpc_payloads = self.should_log_rpc_payloads();
         if should_log_rpc_payloads {
             // Lazily construct raw JSON from context if not provided
-            let resolved_raw_json = raw_request.or_else(|| context.to_raw_json());
+            let resolved_raw_json = raw_request.as_ref().cloned().or_else(|| context.to_raw_json());
             self.log_rpc_payload("RPC request", resolved_raw_json.as_ref(), &request, &context);
         }
         let response = match request.clone() {
