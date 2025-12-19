@@ -238,8 +238,8 @@ pub fn check_and_encode_args(
 }
 
 pub fn check_explorer_args(source_code: ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
-    if let Some(args) = source_code.items.first() {
-        Ok(args.constructor_arguments.clone())
+    if let Some(args) = source_code.items.into_iter().next() {
+        Ok(args.constructor_arguments)
     } else {
         eyre::bail!("No constructor arguments found from block explorer");
     }
