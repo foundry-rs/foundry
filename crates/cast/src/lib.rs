@@ -3,6 +3,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[macro_use]
+extern crate foundry_common;
+#[macro_use]
+extern crate tracing;
 use alloy_consensus::{EthereumTxEnvelope, Header, TxEip4844Variant};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_eips::eip7594::BlobTransactionSidecarVariant;
@@ -28,12 +32,11 @@ use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
-    TransactionReceiptWithRevertReason,
     abi::{coerce_value, encode_function_args, encode_function_args_packed, get_event, get_func},
     compile::etherscan_project,
     flatten,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, shell,
+    fs, shell,
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
@@ -47,7 +50,6 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
 };
 use tokio::signal::ctrl_c;
 
@@ -64,12 +66,6 @@ mod rlp_converter;
 pub mod tx;
 
 use rlp_converter::Item;
-
-#[macro_use]
-extern crate tracing;
-
-#[macro_use]
-extern crate foundry_common;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -264,49 +260,6 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         Ok(self.provider.get_balance(who).block_id(block.unwrap_or_default()).await?)
     }
 
-    /// Sends a transaction to the specified address
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::{Cast};
-    /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_serde::WithOtherFields;
-    /// use alloy_rpc_types::{TransactionRequest};
-    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
-    /// use alloy_sol_types::{sol, SolCall};
-    ///
-    /// sol!(
-    ///     function greet(string greeting) public;
-    /// );
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
-    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
-    /// let bytes = Bytes::from_iter(greeting.iter());
-    /// let gas = U256::from_str("200000").unwrap();
-    /// let value = U256::from_str("1").unwrap();
-    /// let nonce = U256::from_str("1").unwrap();
-    /// let tx = TransactionRequest::default().to(to).input(bytes.into()).from(from);
-    /// let tx = WithOtherFields::new(tx);
-    /// let cast = Cast::new(provider);
-    /// let data = cast.send(tx).await?;
-    /// println!("{:#?}", data);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn send(
-        &self,
-        tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
-        let res = self.provider.send_transaction(tx).await?;
-
-        Ok(res)
-    }
-
     /// Publishes a raw transaction to the network
     ///
     /// # Example
@@ -329,34 +282,6 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         let res = self.provider.send_raw_transaction(&tx).await?;
 
         Ok(res)
-    }
-
-    /// Sends a transaction and waits for receipt synchronously
-    pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
-        let mut receipt: TransactionReceiptWithRevertReason =
-            self.provider.send_transaction_sync(tx).await?.into();
-
-        // Allow to fail silently
-        let _ = receipt.update_revert_reason(&self.provider).await;
-
-        self.format_receipt(receipt, None)
-    }
-
-    /// Helper method to format transaction receipts consistently
-    fn format_receipt(
-        &self,
-        receipt: TransactionReceiptWithRevertReason,
-        field: Option<String>,
-    ) -> Result<String> {
-        Ok(if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt, field)
-                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
-        } else if shell::is_json() {
-            // to_value first to sort json object keys
-            serde_json::to_value(&receipt)?.to_string()
-        } else {
-            receipt.pretty()
-        })
     }
 
     /// # Example
@@ -842,57 +767,6 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         } else {
             tx.pretty()
         })
-    }
-
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
-    /// println!("{}", receipt);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn receipt(
-        &self,
-        tx_hash: String,
-        field: Option<String>,
-        confs: u64,
-        timeout: Option<u64>,
-        cast_async: bool,
-    ) -> Result<String> {
-        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-
-        let mut receipt: TransactionReceiptWithRevertReason =
-            match self.provider.get_transaction_receipt(tx_hash).await? {
-                Some(r) => r,
-                None => {
-                    // if the async flag is provided, immediately exit if no tx is found, otherwise
-                    // try to poll for it
-                    if cast_async {
-                        eyre::bail!("tx not found: {:?}", tx_hash)
-                    } else {
-                        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
-                            .with_required_confirmations(confs)
-                            .with_timeout(timeout.map(Duration::from_secs))
-                            .get_receipt()
-                            .await?
-                    }
-                }
-            }
-            .into();
-
-        // Allow to fail silently
-        let _ = receipt.update_revert_reason(&self.provider).await;
-
-        self.format_receipt(receipt, field)
     }
 
     /// Perform a raw JSON-RPC request

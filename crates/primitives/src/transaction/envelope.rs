@@ -26,19 +26,29 @@ pub enum FoundryTxEnvelope {
     /// Legacy transaction type
     #[envelope(ty = 0)]
     Legacy(Signed<TxLegacy>),
-    /// EIP-2930 transaction
+    /// [EIP-2930] transaction.
+    ///
+    /// [EIP-2930]: https://eips.ethereum.org/EIPS/eip-2930
     #[envelope(ty = 1)]
     Eip2930(Signed<TxEip2930>),
-    /// EIP-1559 transaction
+    /// [EIP-1559] transaction.
+    ///
+    /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
     #[envelope(ty = 2)]
     Eip1559(Signed<TxEip1559>),
-    /// EIP-4844 transaction
+    /// [EIP-4844] transaction.
+    ///
+    /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[envelope(ty = 3)]
     Eip4844(Signed<TxEip4844Variant>),
-    /// EIP-7702 transaction
+    /// [EIP-7702] transaction.
+    ///
+    /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
     #[envelope(ty = 4)]
     Eip7702(Signed<TxEip7702>),
-    /// op-stack deposit transaction
+    /// OP stack deposit transaction.
+    ///
+    /// See <https://docs.optimism.io/op-stack/bridging/deposit-flow>.
     #[envelope(ty = 126)]
     Deposit(Sealed<TxDeposit>),
 }
@@ -124,14 +134,7 @@ impl TryFrom<FoundryTxEnvelope> for TxEnvelope {
     type Error = FoundryTxEnvelope;
 
     fn try_from(envelope: FoundryTxEnvelope) -> Result<Self, Self::Error> {
-        match envelope {
-            FoundryTxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-            FoundryTxEnvelope::Eip2930(tx) => Ok(Self::Eip2930(tx)),
-            FoundryTxEnvelope::Eip1559(tx) => Ok(Self::Eip1559(tx)),
-            FoundryTxEnvelope::Eip4844(tx) => Ok(Self::Eip4844(tx)),
-            FoundryTxEnvelope::Eip7702(tx) => Ok(Self::Eip7702(tx)),
-            FoundryTxEnvelope::Deposit(_) => Err(envelope),
-        }
+        envelope.try_into_eth()
     }
 }
 
