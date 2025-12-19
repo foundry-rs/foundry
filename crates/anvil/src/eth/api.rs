@@ -326,9 +326,7 @@ impl EthApi {
         context: RpcCallLogContext,
     ) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
-        // Lazily construct raw JSON from context if not provided
-        let resolved_raw_json = raw_request.as_ref().cloned().or_else(|| context.to_raw_json());
-        self.log_rpc_payload("RPC request", resolved_raw_json.as_ref(), &request, &context);
+        self.log_rpc_payload("RPC request", raw_request.as_ref(), &request, &context);
         let response = match request.clone() {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
@@ -718,16 +716,18 @@ impl EthApi {
     /// Logs an RPC payload (request or response) with contextual information.
     ///
     /// This helper method is used for verbose RPC logging. It checks whether verbose RPC logging
-    /// is enabled before proceeding. If enabled, it attempts to serialize the JSON value if
-    /// available, otherwise falls back to the debug representation. The log output includes
-    /// contextual metadata from [RpcCallLogContext] (RPC ID, method, peer, timestamp).
+    /// is enabled before proceeding. If enabled, it attempts to use the provided JSON value,
+    /// or lazily constructs it from the context. If neither is available, it falls back to the
+    /// debug representation. The log output includes contextual metadata from [RpcCallLogContext]
+    /// (RPC ID, method, peer, timestamp).
     ///
     /// # Parameters
     ///
     /// * `label` - Base label for the log entry (e.g., "RPC request", "RPC response")
     /// * `json_value` - Optional JSON representation of the payload for clean serialization
     /// * `debug_value` - The typed value to log if JSON serialization is not available
-    /// * `context` - Metadata about the RPC call for enriching the log output
+    /// * `context` - Metadata about the RPC call for enriching the log output (also used for
+    ///   lazy JSON construction if `json_value` is None)
     ///
     /// # Type Parameters
     ///
@@ -747,7 +747,9 @@ impl EthApi {
         if !self.should_log_rpc_payloads() {
             return;
         }
-        let payload = match json_value {
+        // Lazily construct raw JSON from context if not provided
+        let resolved_json = json_value.cloned().or_else(|| context.to_raw_json());
+        let payload = match resolved_json.as_ref() {
             Some(value) => {
                 serde_json::to_string(value).unwrap_or_else(|_| format!("{:?}", debug_value))
             }
