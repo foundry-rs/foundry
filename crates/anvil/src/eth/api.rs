@@ -133,7 +133,7 @@ pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 /// When verbose RPC logging is enabled, this context is used to format log labels with
 /// additional metadata. For example, a log message might be formatted as:
 /// ```text
-/// RPC request [id=1, method=eth_getBalance, peer=127.0.0.1:8545, ts=2024-01-01T00:00:00Z]: {...}
+/// RPC request [id=1, method=eth_getBalance, peer=127.0.0.1:8545, ts=2025-12-19T00:00:00Z]: {...}
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct RpcCallLogContext {
