@@ -128,15 +128,20 @@ impl ScriptTransactionBuilder {
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
         let values = constructor.abi_decode_input(constructor_args).inspect_err(|_| {
-                error!(
-                    contract=?self.transaction.contract_name,
-                    signature=%format!("constructor({})", constructor.inputs.iter().map(|p| &p.ty).format(",")),
-                    is_create2,
-                    constructor_args=%hex::encode(constructor_args),
-                    "Failed to decode constructor arguments",
-                );
-                debug!(full_data=%hex::encode(data), bytecode=%hex::encode(creation_code));
-            })?;
+            error!(
+                contract=?self.transaction.contract_name,
+                signature=%format!("constructor({})", constructor.inputs.iter().map(|p| &p.ty).format(",")),
+                is_create2,
+                constructor_args=%hex::encode(constructor_args),
+                "Failed to decode constructor arguments",
+            );
+            debug!(
+                full_data=%hex::encode(data),
+                creation_code=%hex::encode(creation_code),
+                bytecode=%hex::encode(bytecode.as_ref()),
+                "constructor decode context",
+            );
+        })?;
         self.transaction.arguments = Some(values.iter().map(format_token_raw).collect());
 
         Ok(())
