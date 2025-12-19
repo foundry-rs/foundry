@@ -326,12 +326,9 @@ impl EthApi {
         context: RpcCallLogContext,
     ) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
-        let should_log_rpc_payloads = self.should_log_rpc_payloads();
-        if should_log_rpc_payloads {
-            // Lazily construct raw JSON from context if not provided
-            let resolved_raw_json = raw_request.as_ref().cloned().or_else(|| context.to_raw_json());
-            self.log_rpc_payload("RPC request", resolved_raw_json.as_ref(), &request, &context);
-        }
+        // Lazily construct raw JSON from context if not provided
+        let resolved_raw_json = raw_request.as_ref().cloned().or_else(|| context.to_raw_json());
+        self.log_rpc_payload("RPC request", resolved_raw_json.as_ref(), &request, &context);
         let response = match request.clone() {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
@@ -686,10 +683,8 @@ impl EthApi {
             }
         };
 
-        if should_log_rpc_payloads {
-            let response_json = serde_json::to_value(&response).ok();
-            self.log_rpc_payload("RPC response", response_json.as_ref(), &response, &context);
-        }
+        let response_json = serde_json::to_value(&response).ok();
+        self.log_rpc_payload("RPC response", response_json.as_ref(), &response, &context);
 
         if let ResponseResult::Error(err) = &response {
             let label = context.format_label("\nRPC request failed");
@@ -722,9 +717,10 @@ impl EthApi {
 
     /// Logs an RPC payload (request or response) with contextual information.
     ///
-    /// This helper method is used for verbose RPC logging. It attempts to serialize the JSON
-    /// value if available, otherwise falls back to the debug representation. The log output
-    /// includes contextual metadata from [RpcCallLogContext] (RPC ID, method, peer, timestamp).
+    /// This helper method is used for verbose RPC logging. It checks whether verbose RPC logging
+    /// is enabled before proceeding. If enabled, it attempts to serialize the JSON value if
+    /// available, otherwise falls back to the debug representation. The log output includes
+    /// contextual metadata from [RpcCallLogContext] (RPC ID, method, peer, timestamp).
     ///
     /// # Parameters
     ///
@@ -737,8 +733,8 @@ impl EthApi {
     ///
     /// * `T` - The type of the debug_value, must implement [std::fmt::Debug]
     ///
-    /// This method should only be called when verbose RPC logging is enabled
-    /// (checked via [should_log_rpc_payloads]).
+    /// This method can be called unconditionally; it will only log if verbose RPC logging
+    /// is enabled (via [should_log_rpc_payloads]).
     fn log_rpc_payload<T>(
         &self,
         label: &str,
@@ -748,6 +744,9 @@ impl EthApi {
     ) where
         T: std::fmt::Debug,
     {
+        if !self.should_log_rpc_payloads() {
+            return;
+        }
         let payload = match json_value {
             Some(value) => {
                 serde_json::to_string(value).unwrap_or_else(|_| format!("{:?}", debug_value))
