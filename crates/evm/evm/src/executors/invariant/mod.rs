@@ -1053,5 +1053,3 @@ pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result
     }
     Ok(call_result)
 }
-
-
