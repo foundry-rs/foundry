@@ -241,6 +241,15 @@ impl InvariantTest {
         }
         self.test_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
 
+        // Prune older cases if we have too many.
+        // We keep a rolling window of full traces for the last 4096 runs to aid debugging,
+        // but prune older ones to avoid unbounded memory usage.
+        const MAX_KEPT_CALLDATA: usize = 4096;
+        if self.test_data.fuzz_cases.len() > MAX_KEPT_CALLDATA {
+            let prune_index = self.test_data.fuzz_cases.len() - MAX_KEPT_CALLDATA - 1;
+            self.test_data.fuzz_cases[prune_index].prune_calldata();
+        }
+
         // Revert state to not persist values between runs.
         self.fuzz_state.revert();
     }
@@ -1044,3 +1053,5 @@ pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result
     }
     Ok(call_result)
 }
+
+
