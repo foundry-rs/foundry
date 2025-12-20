@@ -318,10 +318,9 @@ impl TUIContext<'_> {
         }
 
         // Add after highlighted text.
-        while mid_len + after.len() > end_line {
-            after.pop_back();
-        }
-        for line in after {
+        // Calculate how many lines we need to show after the highlight.
+        let needed_after = end_line.saturating_sub(mid_len);
+        for line in after.iter().take(needed_after) {
             lines.push(u_num, line, u_text);
         }
 
