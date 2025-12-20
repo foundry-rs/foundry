@@ -68,13 +68,13 @@ impl RandomCallGenerator {
                 "to have same size as the number of (unsafe) external calls of the sequence.",
             )
         } else {
-            // TODO: Do we want it to be 80% chance only too ?
             let sender = original_target;
 
-            // Set which contract we mostly (80% chance) want to generate calldata from.
+            // Set which contract we mostly (90% chance) want to generate calldata from.
             *self.target_reference.write() = original_caller;
 
-            // `original_caller` has a 80% chance of being the `new_target`.
+            // Generate a call using the strategy, which has a 90% chance of returning
+            // `Some(CallDetails)` and 10% chance of returning `None`.
             let choice = self.strategy.new_tree(&mut self.runner.lock()).unwrap().current().map(
                 |call_details| BasicTxDetails { warp: None, roll: None, sender, call_details },
             );
