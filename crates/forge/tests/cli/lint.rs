@@ -821,3 +821,33 @@ contract OldContract {
 "#
     ]]);
 });
+
+forgetest!(can_lint_mixed_case_with_common_abbreviations, |prj, cmd| {
+    prj.add_source(
+        "MixedCaseAbbreviations",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract MixedCaseAbbreviations {
+    // Should be allowed with new defaults
+    uint256 public marketID;
+    uint256 public tokenURL;
+    uint256 public baseURI;
+    uint256 public userAPI;
+    string public dataJSON;
+    string public configXML;
+    string public pageHTML;
+    string public protocolHTTP;
+    string public secureHTTPS;
+
+    // Existing allowed patterns (default)
+    uint256 public tokenERC20;
+}
+"#,
+    );
+
+    // Run lint and expect NO output (success) because we allowed these abbreviations.
+    cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
+});
+
