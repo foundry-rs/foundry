@@ -95,6 +95,8 @@ impl FoundryTransactionRequest {
             FoundryTxType::Eip4844 => self.as_ref().complete_4844().ok(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702().ok(),
             FoundryTxType::Deposit => self.complete_deposit().ok(),
+            // TODO: implement Tempo transaction completeness check
+            FoundryTxType::Tempo => None,
         }?;
         Some(pref)
     }
@@ -114,6 +116,8 @@ impl FoundryTransactionRequest {
             FoundryTxType::Eip4844 => self.complete_4844(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
             FoundryTxType::Deposit => self.complete_deposit(),
+            // TODO: implement Tempo transaction completeness check
+            FoundryTxType::Tempo => Err(vec!["tempo transaction building not yet supported"]),
         } {
             Err((pref, missing))
         } else {
@@ -177,6 +181,8 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                 ]);
                 WithOtherFields { inner: Into::<TransactionRequest>::into(tx), other }.into()
             }
+            // TODO: implement conversion from Tempo transaction to request
+            FoundryTypedTx::Tempo(_) => unimplemented!("tempo transaction request conversion"),
         }
     }
 }
@@ -310,6 +316,8 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
             FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
             FoundryTxType::Deposit => self.complete_deposit(),
+            // TODO: implement Tempo transaction completeness check
+            FoundryTxType::Tempo => Err(vec!["tempo transaction building not yet supported"]),
         }
     }
 
