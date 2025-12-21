@@ -750,9 +750,9 @@ impl EthApi {
         let resolved_json = json_value.cloned().or_else(|| context.to_raw_json());
         let payload = match resolved_json.as_ref() {
             Some(value) => {
-                serde_json::to_string(value).unwrap_or_else(|_| format!("{:?}", debug_value))
+                serde_json::to_string(value).unwrap_or_else(|_| format!("{debug_value:?}"))
             }
-            None => format!("{:?}", debug_value),
+            None => format!("{debug_value:?}"),
         };
         let label = context.format_label(label);
         node_info!("{label}: {payload}");
