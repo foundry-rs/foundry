@@ -175,14 +175,11 @@ impl TraceIdentifier for ExternalIdentifier {
 
         let fetchers =
             self.fetchers.iter().map(|fetcher| ExternalFetcher::new(fetcher.clone(), &to_fetch));
-        
+
         // Use collect() and await the future.
         let fetched_identities = futures::stream::select_all(fetchers)
             .filter_map(|(address, value)| {
-                let addr = value
-                    .1
-                    .as_ref()
-                    .map(|metadata| self.identify_from_metadata(address, metadata));
+                let addr = value.1.as_ref().map(|metadata| self.identify_from_metadata(address, metadata));
                 match self.contracts.entry(address) {
                     Entry::Occupied(mut occupied_entry) => {
                         // Override if:
@@ -202,7 +199,7 @@ impl TraceIdentifier for ExternalIdentifier {
             })
             .collect::<Vec<IdentifiedAddress<'_>>>()
             .await;
-        
+
         trace!(target: "evm::traces::external", "fetched {} addresses: {fetched_identities:#?}", fetched_identities.len());
 
         identities.extend(fetched_identities);
