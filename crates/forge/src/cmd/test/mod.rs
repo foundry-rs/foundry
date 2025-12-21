@@ -632,11 +632,11 @@ impl TestArgs {
                 decoder.clear_addresses();
                 decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
 
-                // Identify addresses and decode traces.
+                    // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &mut result.traces {
                     if identify_addresses {
-                        decoder.identify(arena, &mut identifier);
+                        decoder.identify(arena, &mut identifier).await;
                     }
 
                     // verbosity:
@@ -707,12 +707,12 @@ impl TestArgs {
                         // setUp and constructor.
                         for (kind, arena) in &result.traces {
                             if !matches!(kind, TraceKind::Execution) {
-                                decoder.identify(arena, &mut identifier);
+                                decoder.identify(arena, &mut identifier).await;
                             }
                         }
 
                         for arena in trace {
-                            decoder.identify(arena, &mut identifier);
+                            decoder.identify(arena, &mut identifier).await;
                             gas_report.analyze([arena], &decoder).await;
                         }
                     }

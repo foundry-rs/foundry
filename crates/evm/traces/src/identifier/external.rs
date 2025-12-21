@@ -142,15 +142,16 @@ impl ExternalIdentifier {
     }
 }
 
+#[async_trait::async_trait]
 impl TraceIdentifier for ExternalIdentifier {
-    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+    async fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
         if nodes.is_empty() {
             return Vec::new();
         }
 
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
-        let mut identities = Vec::new();
+        let mut identities: Vec<IdentifiedAddress<'_>> = Vec::new();
         let mut to_fetch = Vec::new();
 
         // Check cache first.
@@ -174,41 +175,44 @@ impl TraceIdentifier for ExternalIdentifier {
 
         let fetchers =
             self.fetchers.iter().map(|fetcher| ExternalFetcher::new(fetcher.clone(), &to_fetch));
-        let fetched_identities = foundry_common::block_on(
-            futures::stream::select_all(fetchers)
-                .filter_map(|(address, value)| {
-                    let addr = value
-                        .1
-                        .as_ref()
-                        .map(|metadata| self.identify_from_metadata(address, metadata));
-                    match self.contracts.entry(address) {
-                        Entry::Occupied(mut occupied_entry) => {
-                            // Override if:
-                            // - new is from Etherscan and old is not
-                            // - new is Some and old is None, meaning verified only in one source
-                            if !matches!(occupied_entry.get().0, FetcherKind::Etherscan)
-                                || value.1.is_none()
-                            {
-                                occupied_entry.insert(value);
-                            }
-                        }
-                        Entry::Vacant(vacant_entry) => {
-                            vacant_entry.insert(value);
+        
+        // Use collect() and await the future.
+        let fetched_identities = futures::stream::select_all(fetchers)
+            .filter_map(|(address, value)| {
+                let addr = value
+                    .1
+                    .as_ref()
+                    .map(|metadata| self.identify_from_metadata(address, metadata));
+                match self.contracts.entry(address) {
+                    Entry::Occupied(mut occupied_entry) => {
+                        // Override if:
+                        // - new is from Etherscan and old is not
+                        // - new is Some and old is None, meaning verified only in one source
+                        if !matches!(occupied_entry.get().0, FetcherKind::Etherscan)
+                            || value.1.is_none()
+                        {
+                            occupied_entry.insert(value);
                         }
                     }
-                    async move { addr }
-                })
-                .collect::<Vec<IdentifiedAddress<'_>>>(),
-        );
+                    Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(value);
+                    }
+                }
+                async move { addr }
+            })
+            .collect::<Vec<IdentifiedAddress<'_>>>()
+            .await;
+        
         trace!(target: "evm::traces::external", "fetched {} addresses: {fetched_identities:#?}", fetched_identities.len());
 
         identities.extend(fetched_identities);
+
         identities
     }
 }
 
 type FetchFuture =
-    Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)>>>;
+    Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)> + Send>>;
 
 /// A rate limit aware fetcher.
 ///
