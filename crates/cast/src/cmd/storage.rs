@@ -140,14 +140,10 @@ impl StorageArgs {
             }
         }
 
-        if !self.etherscan.has_key() {
-            eyre::bail!(
-                "You must provide an Etherscan API key if you're fetching a remote contract's storage."
-            );
-        }
-
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+        let api_key = config.get_etherscan_api_key(Some(chain)).or_else(|| self.etherscan.key()).ok_or_else(|| {
+            eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
+        })?;
         let client = Client::new(chain, api_key)?;
         let source = if let Some(proxy) = self.proxy {
             find_source(client, proxy.resolve(&provider).await?).await?
