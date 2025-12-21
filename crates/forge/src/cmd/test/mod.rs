@@ -632,7 +632,7 @@ impl TestArgs {
                 decoder.clear_addresses();
                 decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
 
-                    // Identify addresses and decode traces.
+                // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &mut result.traces {
                     if identify_addresses {
