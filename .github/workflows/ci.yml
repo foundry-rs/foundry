@@ -14,6 +14,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
+  RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
   test:
