@@ -1,10 +1,13 @@
 name: release
 
+permissions: {}
+
 on:
   push:
     tags:
       - "stable"
       - "rc"
+      - "rc-*"
       - "v*.*.*"
   schedule:
     - cron: "0 6 * * *"
@@ -13,32 +16,40 @@ on:
 env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-  PROFILE: maxperf
-  STABLE_VERSION: "v0.3.0"
+
+  # Keep in sync with `docker-publish.yml`.
+  RUST_PROFILE: maxperf
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+
+  LAST_STABLE_VERSION: "v1.5.0"
 
 jobs:
   prepare:
     name: Prepare release
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: read
     outputs:
       tag_name: ${{ steps.release_info.outputs.tag_name }}
       release_name: ${{ steps.release_info.outputs.release_name }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Compute release name and tag
         id: release_info
         run: |
           if [[ ${IS_NIGHTLY} == 'true' ]]; then
-            echo "tag_name=nightly-${GITHUB_SHA}" >> $GITHUB_OUTPUT
-            echo "release_name=Nightly ($(date '+%Y-%m-%d'))" >> $GITHUB_OUTPUT
+            printf 'tag_name=%s\n' "nightly-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            printf 'release_name=%s\n' "Nightly ($(date '+%Y-%m-%d'))" >> "$GITHUB_OUTPUT"
           else
-            echo "tag_name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-            echo "release_name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+            printf 'tag_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            printf 'release_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       # Creates a `nightly-SHA` tag for this specific nightly
@@ -47,7 +58,7 @@ jobs:
       # the changelog.
       - name: Create build-specific nightly tag
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
         with:
@@ -57,7 +68,7 @@ jobs:
 
       - name: Build changelog
         id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@v4
+        uses: mikepenz/release-changelog-builder-action@439f79b5b5428107c7688c1d2b0e8bacc9b8792c # v6
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ env.IS_NIGHTLY == 'true' && 'nightly' || env.STABLE_VERSION }}
@@ -69,6 +80,10 @@ jobs:
     name: Release Docker
     needs: prepare
     uses: ./.github/workflows/docker-publish.yml
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
 
@@ -77,7 +92,7 @@ jobs:
       id-token: write
       contents: write
       attestations: write
-    name: ${{ matrix.target }} (${{ matrix.runner }})
+    name: release ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     needs: prepare
@@ -89,19 +104,28 @@ jobs:
           # `target`: Rust build target triple
           # `platform` and `arch`: Used in tarball names
           # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - runner: Linux-20.04
+          # These are pinned to the oldest runner versions to support old libc/SDK versions.
+          - runner: depot-ubuntu-22.04-16
             target: x86_64-unknown-linux-gnu
             svm_target_platform: linux-amd64
             platform: linux
             arch: amd64
-          - runner: Linux-20.04
+          - runner: depot-ubuntu-22.04-16
+            target: x86_64-unknown-linux-musl
+            svm_target_platform: linux-amd64
+            platform: alpine
+            arch: amd64
+          - runner: depot-ubuntu-22.04-arm-16
             target: aarch64-unknown-linux-gnu
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          # This is pinned to `macos-13-large` to support old SDK versions.
-          # If the runner is deprecated it should be pinned to the oldest available version of the runner.
-          - runner: macos-13-large
+          - runner: depot-ubuntu-22.04-16
+            target: aarch64-unknown-linux-musl
+            svm_target_platform: linux-aarch64
+            platform: alpine
+            arch: arm64
+          - runner: macos-14-large
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
@@ -111,33 +135,39 @@ jobs:
             svm_target_platform: macosx-aarch64
             platform: darwin
             arch: arm64
-          - runner: Windows
+          - runner: depot-windows-latest-16
             target: x86_64-pc-windows-msvc
             svm_target_platform: windows-amd64
             platform: win32
             arch: amd64
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v6
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-          cache-on-failure: true
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        if: ${{ contains(matrix.runner, 'depot') }}
+      - run: printf 'RUSTC_WRAPPER=sccache\n' >> "$GITHUB_ENV"
+        if: ${{ contains(matrix.runner, 'depot') }}
 
       - name: Apple M1 setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
-          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
-          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
+          printf 'SDKROOT=%s\n' "$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+          printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "$(xcrun -sdk macosx --show-sdk-platform-version)" >> "$GITHUB_ENV"
 
-      - name: Linux ARM setup
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+      - name: cross setup
+        if: contains(matrix.target, 'musl')
+        uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # v2
+        with:
+          git: https://github.com/cross-rs/cross
+          rev: baf457efc2555225af47963475bd70e8d2f5993f
+          tool: cross
 
       - name: Build binaries
         env:
@@ -145,12 +175,12 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--target $TARGET --profile $PROFILE --bins 
-            --no-default-features --features aws-kms,cli,asm-keccak)
+          flags=(--target $TARGET --profile $RUST_PROFILE --bins
+            --no-default-features --features "$RUST_FEATURES")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
@@ -159,48 +189,60 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          cargo build "${flags[@]}"
+          if [[ "$TARGET" == *-musl ]]; then
+            cross build "${flags[@]}"
+          else
+            cargo build "${flags[@]}"
+          fi
 
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
-            bin=$OUT_DIR/$name$ext
-            echo ""
+            bin="$OUT_DIR/$name$ext"
+            printf '\n'
             file "$bin" || true
             du -h "$bin" || true
             ldd "$bin" || true
             $bin --version || true
-            echo "${name}_bin_path=${bin}" >> $GITHUB_ENV
+            printf '%s_bin_path=%s\n' "$name" "$bin" >> "$GITHUB_ENV"
           done
 
       - name: Archive binaries
         id: artifacts
         env:
           PLATFORM_NAME: ${{ matrix.platform }}
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
-          if [ "$PLATFORM_NAME" == "linux" ]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
-            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+          if [[ "$PLATFORM_NAME" == "linux" || "$PLATFORM_NAME" == "alpine" ]]; then
+            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
+            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
-            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
+            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
           else
-            cd $OUT_DIR
+            cd "$OUT_DIR"
             7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
+            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> "$GITHUB_OUTPUT"
           fi
+          printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: ${{ steps.artifacts.outputs.file_name }}
+          path: ${{ steps.artifacts.outputs.file_name }}
 
       - name: Build man page
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         env:
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.RUST_PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
         shell: bash
         run: |
@@ -214,22 +256,11 @@ jobs:
           gzip anvil.1
           gzip chisel.1
           tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
-          echo "foundry_man=foundry_man_${VERSION_NAME}.tar.gz" >> $GITHUB_OUTPUT
-
-      # Creates the release for this specific version
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ needs.prepare.outputs.release_name }}
-          tag_name: ${{ needs.prepare.outputs.tag_name }}
-          prerelease: ${{ env.IS_NIGHTLY == 'true' }}
-          body: ${{ needs.prepare.outputs.changelog }}
-          files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.man.outputs.foundry_man }}
+          printf 'foundry_man=%s\n' "foundry_man_${VERSION_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Binaries attestation
-        uses: actions/attest-build-provenance@v2
+        id: attestation
+        uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
             ${{ env.anvil_bin_path }}
@@ -237,11 +268,33 @@ jobs:
             ${{ env.chisel_bin_path }}
             ${{ env.forge_bin_path }}
 
+      - name: Record attestation URL
+        env:
+          ATTESTATION_URL: ${{ steps.attestation.outputs.attestation-url }}
+          FOUNDRY_ATTESTATION: ${{ steps.artifacts.outputs.foundry_attestation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$ATTESTATION_URL" > "$FOUNDRY_ATTESTATION"
+
+      # Creates the release for this specific version
+      - name: Create release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          name: ${{ needs.prepare.outputs.release_name }}
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          prerelease: ${{ env.IS_NIGHTLY == 'true' }}
+          body: ${{ needs.prepare.outputs.changelog }}
+          files: |
+            ${{ steps.artifacts.outputs.file_name }}
+            ${{ steps.artifacts.outputs.foundry_attestation }}
+            ${{ steps.man.outputs.foundry_man }}
+
       # If this is a nightly release, it also updates the release
       # tagged `nightly` for compatibility with `foundryup`
       - name: Update nightly release
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           name: "Nightly"
           tag_name: "nightly"
@@ -249,28 +302,33 @@ jobs:
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
             ${{ steps.artifacts.outputs.file_name }}
+            ${{ steps.artifacts.outputs.foundry_attestation }}
             ${{ steps.man.outputs.foundry_man }}
 
   cleanup:
     name: Release cleanup
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     needs: release
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       # Moves the `nightly` tag to `HEAD`
       - name: Move nightly tag
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const moveTag = require('./.github/scripts/move-tag.js')
             await moveTag({ github, context }, 'nightly')
 
       - name: Delete old nightlies
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
@@ -280,11 +338,16 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [ prepare, release-docker, release, cleanup ]
+    needs: [prepare, release-docker, release, cleanup]
     if: failure()
+    permissions:
+      contents: read
+      issues: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: JasonEtco/create-an-issue@v2
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WORKFLOW_URL: |

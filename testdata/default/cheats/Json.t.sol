@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 library JsonStructs {
     address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
@@ -66,7 +64,7 @@ library JsonStructs {
     }
 }
 
-contract ParseJsonTest is DSTest {
+contract ParseJsonTest is Test {
     using JsonStructs for *;
 
     struct FlatJson {
@@ -88,7 +86,6 @@ contract ParseJsonTest is DSTest {
         string name;
     }
 
-    Vm constant vm = Vm(HEVM_ADDRESS);
     string json;
 
     function setUp() public {
@@ -328,9 +325,7 @@ contract ParseJsonTest is DSTest {
     }
 }
 
-contract WriteJsonTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract WriteJsonTest is Test {
     string json1;
     string json2;
 
@@ -490,5 +485,29 @@ contract WriteJsonTest is DSTest {
         data = vm.parseJson(json, ".b");
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
+    }
+
+    function test_writeJson_createKeys() public {
+        string memory path = "fixtures/Json/write_test.json";
+        string memory json = vm.readFile(path);
+
+        bool exists = vm.keyExistsJson(json, ".parent");
+        assertTrue(!exists);
+        exists = vm.keyExistsJson(json, ".parent.child");
+        assertTrue(!exists);
+        exists = vm.keyExistsJson(json, ".parent.child.value");
+        assertTrue(!exists);
+
+        // Write to nested path, creating intermediate keys
+        vm.writeJson(vm.toString(uint256(42)), path, ".parent.child.value");
+
+        // Verify the value was written and intermediate keys were created
+        json = vm.readFile(path);
+        uint256 value = abi.decode(vm.parseJson(json, ".parent.child.value"), (uint256));
+        assertEq(value, 42);
+
+        // Clean up the test file by removing the parent key we added
+        vm.removeFile(path);
+        vm.writeJson("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
     }
 }

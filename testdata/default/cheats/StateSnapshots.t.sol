@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 struct Storage {
     uint256 slot0;
     uint256 slot1;
 }
 
-contract StateSnapshotTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract StateSnapshotTest is Test {
     Storage store;
 
     function setUp() public {
@@ -105,9 +102,7 @@ contract StateSnapshotTest is DSTest {
 }
 
 // TODO: remove this test suite once `snapshot*` has been deprecated in favor of `snapshotState*`.
-contract DeprecatedStateSnapshotTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract DeprecatedStateSnapshotTest is Test {
     Storage store;
 
     function setUp() public {

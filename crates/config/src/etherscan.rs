@@ -1,15 +1,15 @@
 //! Support for multiple Etherscan keys.
 
 use crate::{
-    resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
     Chain, Config, NamedChain,
+    resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
 use figment::{
+    Error, Metadata, Profile, Provider,
     providers::Env,
     value::{Dict, Map},
-    Error, Metadata, Profile, Provider,
 };
-use inflector::Inflector;
+use heck::ToKebabCase;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::BTreeMap,
@@ -36,10 +36,10 @@ impl Provider for EtherscanEnvProvider {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = Dict::default();
         let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
-        if let Some((key, value)) = env_provider.iter().next() {
-            if !value.trim().is_empty() {
-                dict.insert(key.as_str().to_string(), value.into());
-            }
+        if let Some((key, value)) = env_provider.iter().next()
+            && !value.trim().is_empty()
+        {
+            dict.insert(key.as_str().to_string(), value.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -52,7 +52,11 @@ pub enum EtherscanConfigError {
     #[error(transparent)]
     Unresolved(#[from] UnresolvedEnvVarError),
 
-    #[error("No known Etherscan API URL for config{0} with chain `{1}`. Please specify a `url`")]
+    #[error(
+        "No known Etherscan API URL for chain `{1}`. To fix this, please:\n\
+        1. Specify a `url` {0}\n\
+        2. Verify the chain `{1}` is correct"
+    )]
     UnknownChain(String, Chain),
 
     #[error("At least one of `url` or `chain` must be present{0}")]
@@ -224,7 +228,7 @@ impl EtherscanConfig {
                 chain: Some(chain),
             }),
             (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain).ok_or_else(|| {
-                let msg = alias.map(|a| format!(" `{a}`")).unwrap_or_default();
+                let msg = alias.map(|a| format!("for `{a}`")).unwrap_or_default();
                 EtherscanConfigError::UnknownChain(msg, chain)
             }),
             (None, Some(api_url)) => {
@@ -295,12 +299,9 @@ impl ResolvedEtherscanConfig {
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
         let Self { api_url, browser_url, key: api_key, chain } = self;
-        let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
 
-        let cache = chain
-            // try to match against mainnet, which is usually the most common target
-            .or_else(|| (api_url == mainnet_api).then(Chain::mainnet))
-            .and_then(Config::foundry_etherscan_chain_cache_dir);
+        let chain = chain.unwrap_or_default();
+        let cache = Config::foundry_etherscan_chain_cache_dir(chain);
 
         if let Some(cache_path) = &cache {
             // we also create the `sources` sub dir here
@@ -314,15 +315,14 @@ impl ResolvedEtherscanConfig {
             .user_agent(ETHERSCAN_USER_AGENT)
             .tls_built_in_root_certs(api_url.scheme() == "https")
             .build()?;
-        foundry_block_explorers::Client::builder()
+        let mut client_builder = foundry_block_explorers::Client::builder()
             .with_client(client)
             .with_api_key(api_key)
-            .with_api_url(api_url)?
-            // the browser url is not used/required by the client so we can simply set the
-            // mainnet browser url here
-            .with_url(browser_url.as_deref().unwrap_or(mainnet_url))?
-            .with_cache(cache, Duration::from_secs(24 * 60 * 60))
-            .build()
+            .with_cache(cache, Duration::from_secs(24 * 60 * 60));
+        if let Some(browser_url) = browser_url {
+            client_builder = client_builder.with_url(browser_url)?;
+        }
+        client_builder.chain(chain)?.build()
     }
 }
 
@@ -428,7 +428,12 @@ mod tests {
 
         let mut resolved = configs.resolved();
         let config = resolved.remove("mainnet").unwrap().unwrap();
-        let _ = config.into_client().unwrap();
+
+        let client = config.into_client().unwrap();
+        assert_eq!(
+            client.etherscan_api_url().as_str(),
+            "https://api.etherscan.io/v2/api?chainid=1"
+        );
     }
 
     #[test]
@@ -465,14 +470,22 @@ mod tests {
         let config = resolved.remove("mainnet").unwrap();
         assert!(config.is_err());
 
-        std::env::set_var(env, "ABCDEFG");
+        unsafe {
+            std::env::set_var(env, "ABCDEFG");
+        }
 
         let mut resolved = configs.resolved();
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.key, "ABCDEFG");
-        let _ = config.into_client().unwrap();
+        let client = config.into_client().unwrap();
+        assert_eq!(
+            client.etherscan_api_url().as_str(),
+            "https://api.etherscan.io/v2/api?chainid=1"
+        );
 
-        std::env::remove_var(env);
+        unsafe {
+            std::env::remove_var(env);
+        }
     }
 
     #[test]

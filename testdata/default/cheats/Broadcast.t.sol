@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import {Test as ForgeTest} from "utils/Test.sol";
 
 library F {
     function t2() public pure returns (uint256) {
@@ -10,7 +9,7 @@ library F {
     }
 }
 
-contract Test is DSTest {
+contract Test is ForgeTest {
     uint256 public changed = 0;
 
     function t(uint256 a) public returns (uint256) {
@@ -22,7 +21,7 @@ contract Test is DSTest {
         return b;
     }
 
-    function inc() public returns (uint256) {
+    function inc() public {
         changed += 1;
     }
 
@@ -33,9 +32,7 @@ contract Test is DSTest {
     }
 }
 
-contract BroadcastTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BroadcastTest is ForgeTest {
     // 1st anvil account
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
     // 2nd anvil account
@@ -112,8 +109,6 @@ contract BroadcastTest is DSTest {
 
         vm.stopBroadcast();
 
-        require(test.echoSender() == address(this));
-
         vm.broadcast(ACCOUNT_B);
         Test tmptest2 = new Test();
 
@@ -162,7 +157,7 @@ contract BroadcastTest is DSTest {
     // }
 }
 
-contract NoLink is DSTest {
+contract NoLink is ForgeTest {
     function t(uint256 a) public returns (uint256) {
         uint256 b = 0;
         for (uint256 i; i < a; i++) {
@@ -181,9 +176,7 @@ interface INoLink {
     function t(uint256 a) external returns (uint256);
 }
 
-contract BroadcastTestNoLinking is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BroadcastTestNoLinking is ForgeTest {
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
@@ -256,9 +249,7 @@ contract BroadcastTestNoLinking is DSTest {
     }
 }
 
-contract BroadcastMix is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BroadcastMix is ForgeTest {
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
@@ -314,9 +305,7 @@ contract BroadcastMix is DSTest {
     }
 }
 
-contract BroadcastTestSetup is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BroadcastTestSetup is ForgeTest {
     function setUp() public {
         // It predeployed a library first
         assert(vm.getNonce(msg.sender) == 1);
@@ -340,9 +329,7 @@ contract BroadcastTestSetup is DSTest {
     }
 }
 
-contract BroadcastTestLog is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BroadcastTestLog is ForgeTest {
     function run() public {
         uint256[] memory arr = new uint256[](2);
         arr[0] = 3;
@@ -363,14 +350,12 @@ contract BroadcastTestLog is DSTest {
     }
 }
 
-contract TestInitialBalance is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract TestInitialBalance is ForgeTest {
     function runCustomSender() public {
         // Make sure we're testing a different caller than the default one.
         assert(msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
 
-        // NodeConfig::test() sets the balance of the address used in this test to 100 ether.
+        // NodeConfig::test() sets the balance of the address used in this ForgeTest to 100 ether.
         assert(msg.sender.balance == 100 ether);
 
         vm.broadcast();
@@ -388,9 +373,7 @@ contract TestInitialBalance is DSTest {
     }
 }
 
-contract MultiChainBroadcastNoLink is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract MultiChainBroadcastNoLink is ForgeTest {
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
@@ -433,9 +416,7 @@ contract MultiChainBroadcastNoLink is DSTest {
     }
 }
 
-contract MultiChainBroadcastLink is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract MultiChainBroadcastLink is ForgeTest {
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
@@ -456,9 +437,7 @@ contract MultiChainBroadcastLink is DSTest {
     }
 }
 
-contract BroadcastEmptySetUp is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BroadcastEmptySetUp is ForgeTest {
     function setUp() public {}
 
     function run() public {
@@ -497,9 +476,7 @@ contract ContractB {
     }
 }
 
-contract CheckOverrides is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract CheckOverrides is ForgeTest {
     function run() external {
         // `script_caller` can be set by `--private-key ...` or `--sender ...`
         // Otherwise it will take the default value of 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
@@ -548,9 +525,7 @@ contract Parent {
     }
 }
 
-contract ScriptAdditionalContracts is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ScriptAdditionalContracts is ForgeTest {
     function run() external {
         vm.startBroadcast();
         new Parent();
@@ -564,23 +539,17 @@ contract SignatureTester {
         owner = msg.sender;
     }
 
-    function verifySignature(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view returns (bool) {
+    function verifySignature(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
         require(ecrecover(digest, v, r, s) == owner, "Invalid signature");
     }
 }
 
-contract ScriptSign is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract ScriptSign is ForgeTest {
     bytes32 digest = keccak256("something");
 
     function run() external {
         vm.startBroadcast();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
-
-        vm._expectCheatcodeRevert(
-            bytes(string.concat("signer with address ", vm.toString(address(this)), " is not available"))
-        );
-        vm.sign(address(this), digest);
 
         SignatureTester tester = new SignatureTester();
         (, address caller,) = vm.readCallers();

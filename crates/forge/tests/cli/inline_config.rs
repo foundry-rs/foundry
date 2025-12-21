@@ -11,8 +11,7 @@ forgetest!(runs, |prj, cmd| {
             function test2(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -61,11 +60,10 @@ forgetest!(invalid_profile, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[r#"
-Error: Inline config error at test/inline.sol:80:123:0: invalid profile `unknown.fuzz.runs = 2`; valid profiles: default
+Error: Inline config error at test/inline.sol:4:9: invalid profile `unknown.fuzz.runs = 2`; valid profiles: default
 
 "#]]);
 });
@@ -81,8 +79,7 @@ forgetest!(invalid_key, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -113,8 +110,7 @@ forgetest!(invalid_key_2, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -146,8 +142,7 @@ forgetest!(invalid_value, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -165,6 +160,8 @@ Encountered 1 failing test in test/inline.sol:Inline
 [FAIL: invalid type: found sequence, expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -178,8 +175,7 @@ forgetest!(invalid_value_2, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -198,6 +194,8 @@ Encountered 1 failing test in test/inline.sol:Inline
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -206,7 +204,6 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
     use serde::{Deserialize, Deserializer};
     use std::{fs, path::Path};
 
-    prj.wipe_contracts();
     prj.add_test(
         "inline.sol",
         r#"
@@ -256,8 +253,7 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "-j1"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -333,7 +329,6 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 });
 
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "inline.sol",
         r#"
@@ -382,8 +377,7 @@ forgetest_init!(config_inline_evm_version, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--evm-version=cancun", "-j1"]).assert_success().stdout_eq(str![[r#"
 ...

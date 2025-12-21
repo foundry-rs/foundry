@@ -5,8 +5,10 @@
 version = 2
 yanked = "warn"
 ignore = [
-    # proc-macro-error is unmaintained
-    "RUSTSEC-2024-0370",
+    # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
+    "RUSTSEC-2024-0436",
+    # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
+    "RUSTSEC-2024-0437",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -36,20 +38,22 @@ confidence-threshold = 0.8
 # See https://spdx.org/licenses/ for list of possible licenses
 # [possible values: any SPDX 3.7 short identifier (+ optional exception)].
 allow = [
-    "MIT",
-    "Apache-2.0",
+    "0BSD",
     "Apache-2.0 WITH LLVM-exception",
+    "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDDL-1.0",
+    "CDLA-Permissive-2.0",
     "ISC",
-    "Unicode-3.0",
+    "MIT",
+    "MPL-2.0",
     "OpenSSL",
+    "Unicode-3.0",
     "Unlicense",
     "WTFPL",
-    "BSL-1.0",
-    "0BSD",
-    "MPL-2.0",
-    "CDDL-1.0",
     "Zlib",
 ]
 
@@ -65,7 +69,7 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
 ]
-#copyleft = "deny"
+# copyleft = "deny"
 
 # See note in unicode-ident's readme!
 [[licenses.clarify]]
@@ -92,6 +96,15 @@ unknown-registry = "warn"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
+    "https://github.com/foundry-rs/compilers",
+    "https://github.com/foundry-rs/foundry-fork-db",
     "https://github.com/paradigmxyz/revm-inspectors",
+    "https://github.com/paradigmxyz/solar",
     "https://github.com/bluealloy/revm",
+    # Only for tests.
+    "https://github.com/rust-cli/rexpect",
+    # Tempo
+    "https://github.com/tempoxyz/tempo",
+    # Transitive dependency of Tempo
+    "https://github.com/paradigmxyz/reth",
 ]

@@ -1,14 +1,15 @@
 use crate::{
-    document::{read_context, DocumentContent},
+    CONTRACT_INHERITANCE_ID, CommentTag, Comments, CommentsRef, DEPLOYMENTS_ID, Document,
+    GIT_SOURCE_ID, INHERITDOC_ID, Markdown, PreprocessorOutput,
+    document::{DocumentContent, read_context},
+    helpers::function_signature,
     parser::ParseSource,
+    solang_ext::SafeUnwrap,
     writer::BufWriter,
-    CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
-    CONTRACT_INHERITANCE_ID, DEPLOYMENTS_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
-use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::{Base, FunctionDefinition};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The result of [`AsDoc::as_doc`].
 pub type AsDocResult = Result<String, std::fmt::Error>;
@@ -36,6 +37,14 @@ impl AsDoc for CommentsRef<'_> {
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
 
+        // Write title tag(s)
+        let titles = self.include_tag(CommentTag::Title);
+        if !titles.is_empty() {
+            writer.write_bold(&format!("Title{}:", if titles.len() == 1 { "" } else { "s" }))?;
+            writer.writeln_raw(titles.iter().map(|t| &t.value).join(", "))?;
+            writer.writeln()?;
+        }
+
         // Write author tag(s)
         let authors = self.include_tag(CommentTag::Author);
         if !authors.is_empty() {
@@ -54,7 +63,7 @@ impl AsDoc for CommentsRef<'_> {
         // Write dev tags
         let devs = self.include_tag(CommentTag::Dev);
         for d in devs.iter() {
-            writer.write_italic(&d.value)?;
+            writer.write_dev_content(&d.value)?;
             writer.writeln()?;
         }
 
@@ -96,18 +105,9 @@ impl AsDoc for Document {
                     writer.writeln()?;
                 }
 
-                for item in items.iter() {
+                for item in items {
                     let func = item.as_function().unwrap();
-                    let mut heading = item.source.ident();
-                    if !func.params.is_empty() {
-                        heading.push_str(&format!(
-                            "({})",
-                            func.params
-                                .iter()
-                                .map(|p| p.1.as_ref().map(|p| p.ty.to_string()).unwrap_or_default())
-                                .join(", ")
-                        ));
-                    }
+                    let heading = function_signature(func).replace(',', ", ");
                     writer.write_heading(&heading)?;
                     writer.write_section(&item.comments, &item.code)?;
                 }
@@ -119,7 +119,7 @@ impl AsDoc for Document {
                     writer.writeln()?;
                 }
 
-                for item in items.iter() {
+                for item in items {
                     let var = item.as_variable().unwrap();
                     writer.write_heading(&var.name.safe_unwrap().name)?;
                     writer.write_section(&item.comments, &item.code)?;
@@ -141,13 +141,10 @@ impl AsDoc for Document {
                         if !contract.base.is_empty() {
                             writer.write_bold("Inherits:")?;
 
-                            // we need this to find the _relative_ paths
-                            let src_target_dir = self.target_src_dir();
-
                             let mut bases = vec![];
                             let linked =
                                 read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
-                            for base in contract.base.iter() {
+                            for base in &contract.base {
                                 let base_doc = base.as_doc()?;
                                 let base_ident = &base.name.identifiers.last().unwrap().name;
 
@@ -155,11 +152,11 @@ impl AsDoc for Document {
                                     .as_ref()
                                     .and_then(|link| {
                                         link.get(base_ident).map(|path| {
-                                            let path = Path::new("/").join(
-                                                path.strip_prefix(&src_target_dir)
-                                                    .ok()
-                                                    .unwrap_or(path),
-                                            );
+                                            let path = if cfg!(windows) {
+                                                Path::new("\\").join(path)
+                                            } else {
+                                                Path::new("/").join(path)
+                                            };
                                             Markdown::Link(&base_doc, &path.display().to_string())
                                                 .as_doc()
                                         })
@@ -193,7 +190,7 @@ impl AsDoc for Document {
                         if let Some(funcs) = item.functions() {
                             writer.write_subtitle("Functions")?;
 
-                            for (func, comments, code) in funcs.iter() {
+                            for (func, comments, code) in &funcs {
                                 self.write_function(&mut writer, func, comments, code)?;
                             }
                         }
@@ -229,7 +226,8 @@ impl AsDoc for Document {
                             writer.write_subtitle("Enums")?;
                             enums.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(comments, code)
+                                writer.write_section(comments, code)?;
+                                writer.try_write_variant_table(item, comments)
                             })?;
                         }
                     }
@@ -286,11 +284,6 @@ impl AsDoc for Document {
 }
 
 impl Document {
-    /// Where all the source files are written to
-    fn target_src_dir(&self) -> PathBuf {
-        self.out_target_dir.join("src")
-    }
-
     /// Writes a function to the buffer.
     fn write_function(
         &self,
@@ -299,9 +292,10 @@ impl Document {
         comments: &Comments,
         code: &str,
     ) -> Result<(), std::fmt::Error> {
+        let func_sign = function_signature(func);
         let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
         let comments =
-            comments.merge_inheritdoc(&func_name, read_context!(self, INHERITDOC_ID, Inheritdoc));
+            comments.merge_inheritdoc(&func_sign, read_context!(self, INHERITDOC_ID, Inheritdoc));
 
         // Write function name
         writer.write_heading(&func_name)?;

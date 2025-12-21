@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract GetFoundryVersionTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GetFoundryVersionTest is Test {
     function testGetFoundryVersion() public view {
         // (e.g. 0.3.0-nightly+3cb96bde9b.1737036656.debug)
         string memory fullVersionString = vm.getFoundryVersion();

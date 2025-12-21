@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 library TomlStructs {
     address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
@@ -58,7 +56,7 @@ library TomlStructs {
     }
 }
 
-contract ParseTomlTest is DSTest {
+contract ParseTomlTest is Test {
     using TomlStructs for *;
 
     struct FlatToml {
@@ -80,7 +78,6 @@ contract ParseTomlTest is DSTest {
         string name;
     }
 
-    Vm constant vm = Vm(HEVM_ADDRESS);
     string toml;
 
     function setUp() public {
@@ -329,11 +326,27 @@ contract ParseTomlTest is DSTest {
 
         assertEq(keccak256(abi.encode(members)), keccak256(abi.encode(data.members)));
     }
+
+    function test_floatNaN() public {
+        bytes memory data = vm.parseToml(toml, ".nanFloat");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("NaN", decodedData);
+    }
+
+    function test_floatInf() public {
+        bytes memory data = vm.parseToml(toml, ".infFloat");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("inf", decodedData);
+    }
+
+    function test_floatNegInf() public {
+        bytes memory data = vm.parseToml(toml, ".neginfFloat");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("-inf", decodedData);
+    }
 }
 
-contract WriteTomlTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract WriteTomlTest is Test {
     string json1;
     string json2;
 
@@ -420,5 +433,29 @@ contract WriteTomlTest is DSTest {
         data = vm.parseToml(toml, ".b");
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
+    }
+
+    function test_writeToml_createKeys() public {
+        string memory path = "fixtures/Toml/write_test.toml";
+        string memory toml = vm.readFile(path);
+
+        bool exists = vm.keyExistsToml(toml, ".parent");
+        assertTrue(!exists);
+        exists = vm.keyExistsToml(toml, ".parent.child");
+        assertTrue(!exists);
+        exists = vm.keyExistsToml(toml, ".parent.child.value");
+        assertTrue(!exists);
+
+        // Write to nested path, creating intermediate keys
+        vm.writeToml(vm.toString(uint256(42)), path, ".parent.child.value");
+
+        // Verify the value was written and intermediate keys were created
+        toml = vm.readFile(path);
+        uint256 value = abi.decode(vm.parseToml(toml, ".parent.child.value"), (uint256));
+        assertEq(value, 42);
+
+        // Clean up the test file by removing the parent key we added
+        vm.removeFile(path);
+        vm.writeToml("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
     }
 }

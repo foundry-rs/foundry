@@ -1,11 +1,12 @@
 use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
-    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
-    strategies::{fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
-    FuzzFixtures,
+    BasicTxDetails, CallDetails, FuzzFixtures,
+    invariant::{FuzzRunIdentifiedContracts, SenderFilters},
+    strategies::{EvmFuzzState, fuzz_calldata_from_state, fuzz_param},
 };
 use alloy_json_abi::Function;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
+use foundry_config::InvariantConfig;
 use parking_lot::RwLock;
 use proptest::prelude::*;
 use rand::seq::IteratorRandom;
@@ -34,7 +35,7 @@ pub fn override_call_strat(
                 // Choose a random contract if target selected by lazy strategy is not in fuzz run
                 // identified contracts. This can happen when contract is created in `setUp` call
                 // but is not included in targetContracts.
-                contracts.values().choose(&mut rand::thread_rng()).unwrap()
+                contracts.values().choose(&mut rand::rng()).unwrap()
             });
             let fuzzed_functions: Vec<_> = contract.abi_fuzzed_functions().cloned().collect();
             any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
@@ -60,25 +61,44 @@ pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
-    dictionary_weight: u32,
+    config: InvariantConfig,
     fuzz_fixtures: FuzzFixtures,
 ) -> impl Strategy<Value = BasicTxDetails> {
     let senders = Rc::new(senders);
+    let dictionary_weight = config.dictionary.dictionary_weight;
+
+    // Strategy to generate values for tx warp and roll.
+    let warp_roll_strat = |cond: bool| {
+        if cond { any::<U256>().prop_map(Some).boxed() } else { Just(None).boxed() }
+    };
+
     any::<prop::sample::Selector>()
         .prop_flat_map(move |selector| {
             let contracts = contracts.targets.lock();
             let functions = contracts.fuzzed_functions();
             let (target_address, target_function) = selector.select(functions);
+
             let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
+
             let call_details = fuzz_contract_with_calldata(
                 &fuzz_state,
                 &fuzz_fixtures,
                 *target_address,
                 target_function.clone(),
             );
-            (sender, call_details)
+
+            let warp = warp_roll_strat(config.max_time_delay.is_some());
+            let roll = warp_roll_strat(config.max_block_delay.is_some());
+
+            (warp, roll, sender, call_details)
         })
-        .prop_map(|(sender, call_details)| BasicTxDetails { sender, call_details })
+        .prop_map(move |(warp, roll, sender, call_details)| {
+            let warp =
+                warp.map(|time| time % U256::from(config.max_time_delay.unwrap_or_default()));
+            let roll =
+                roll.map(|block| block % U256::from(config.max_block_delay.unwrap_or_default()));
+            BasicTxDetails { warp, roll, sender, call_details }
+        })
 }
 
 /// Strategy to select a sender address:
@@ -88,7 +108,7 @@ fn select_random_sender(
     fuzz_state: &EvmFuzzState,
     senders: Rc<SenderFilters>,
     dictionary_weight: u32,
-) -> impl Strategy<Value = Address> {
+) -> impl Strategy<Value = Address> + use<> {
     if !senders.targeted.is_empty() {
         any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     } else {
@@ -97,9 +117,20 @@ fn select_random_sender(
             100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
             dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state),
         ]
-        .prop_map(move |addr| addr.as_address().unwrap())
-        // Too many exclusions can slow down testing.
-        .prop_filter("excluded sender", move |addr| !senders.excluded.contains(addr))
+        .prop_map(move |addr| {
+            let mut addr = addr.as_address().unwrap();
+            // Make sure the selected address is not in the list of excluded senders.
+            // We don't use proptest's filter to avoid reaching the `PROPTEST_MAX_LOCAL_REJECTS`
+            // max rejects and exiting test before all runs completes.
+            // See <https://github.com/foundry-rs/foundry/issues/11369>.
+            loop {
+                if !senders.excluded.contains(&addr) {
+                    break;
+                }
+                addr = Address::random();
+            }
+            addr
+        })
         .boxed()
     }
 }
@@ -111,11 +142,10 @@ pub fn fuzz_contract_with_calldata(
     fuzz_fixtures: &FuzzFixtures,
     target: Address,
     func: Function,
-) -> impl Strategy<Value = CallDetails> {
+) -> impl Strategy<Value = CallDetails> + use<> {
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
-    #[allow(clippy::arc_with_non_send_sync)]
     prop_oneof![
         60 => fuzz_calldata(func.clone(), fuzz_fixtures),
         40 => fuzz_calldata_from_state(func, fuzz_state),

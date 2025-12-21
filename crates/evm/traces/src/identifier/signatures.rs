@@ -1,180 +1,292 @@
-use alloy_json_abi::{Error, Event, Function};
-use alloy_primitives::{hex, map::HashSet};
+use alloy_json_abi::{Error, Event, Function, JsonAbi};
+use alloy_primitives::{B256, Selector, map::HashMap};
+use eyre::Result;
 use foundry_common::{
     abi::{get_error, get_event, get_func},
     fs,
-    selectors::{OpenChainClient, SelectorType},
+    selectors::{OpenChainClient, SelectorKind},
 };
+use foundry_config::Config;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 
-pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct CachedSignatures {
-    pub errors: BTreeMap<String, String>,
-    pub events: BTreeMap<String, String>,
-    pub functions: BTreeMap<String, String>,
+/// Cache for function, event and error signatures. Used by [`SignaturesIdentifier`].
+#[derive(Debug, Default, Deserialize)]
+#[serde(try_from = "SignaturesDiskCache")]
+pub struct SignaturesCache {
+    signatures: HashMap<SelectorKind, Option<String>>,
 }
 
-impl CachedSignatures {
-    #[instrument(target = "evm::traces")]
-    pub fn load(cache_path: PathBuf) -> Self {
-        let path = cache_path.join("signatures");
-        if path.is_file() {
-            fs::read_json_file(&path)
-                .map_err(
-                    |err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"),
-                )
-                .unwrap_or_default()
-        } else {
-            if let Err(err) = std::fs::create_dir_all(cache_path) {
-                warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
-            }
-            Self::default()
+/// Disk representation of the signatures cache.
+#[derive(Serialize, Deserialize)]
+struct SignaturesDiskCache {
+    functions: BTreeMap<Selector, String>,
+    errors: BTreeMap<Selector, String>,
+    events: BTreeMap<B256, String>,
+}
+
+impl From<SignaturesDiskCache> for SignaturesCache {
+    fn from(value: SignaturesDiskCache) -> Self {
+        let functions = value
+            .functions
+            .into_iter()
+            .map(|(selector, signature)| (SelectorKind::Function(selector), signature));
+        let errors = value
+            .errors
+            .into_iter()
+            .map(|(selector, signature)| (SelectorKind::Error(selector), signature));
+        let events = value
+            .events
+            .into_iter()
+            .map(|(selector, signature)| (SelectorKind::Event(selector), signature));
+        Self {
+            signatures: functions
+                .chain(errors)
+                .chain(events)
+                .map(|(sel, sig)| (sel, (!sig.is_empty()).then_some(sig)))
+                .collect(),
         }
     }
 }
+
+impl From<&SignaturesCache> for SignaturesDiskCache {
+    fn from(value: &SignaturesCache) -> Self {
+        let (functions, errors, events) = value.signatures.iter().fold(
+            (BTreeMap::new(), BTreeMap::new(), BTreeMap::new()),
+            |mut acc, (kind, signature)| {
+                let value = signature.clone().unwrap_or_default();
+                match *kind {
+                    SelectorKind::Function(selector) => _ = acc.0.insert(selector, value),
+                    SelectorKind::Error(selector) => _ = acc.1.insert(selector, value),
+                    SelectorKind::Event(selector) => _ = acc.2.insert(selector, value),
+                }
+                acc
+            },
+        );
+        Self { functions, errors, events }
+    }
+}
+
+impl Serialize for SignaturesCache {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        SignaturesDiskCache::from(self).serialize(serializer)
+    }
+}
+
+impl SignaturesCache {
+    /// Loads the cache from a file.
+    #[instrument(target = "evm::traces", name = "SignaturesCache::load")]
+    pub fn load(path: &Path) -> Self {
+        trace!(target: "evm::traces", ?path, "reading signature cache");
+        fs::read_json_file(path)
+            .inspect_err(
+                |err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"),
+            )
+            .unwrap_or_default()
+    }
+
+    /// Saves the cache to a file.
+    #[instrument(target = "evm::traces", name = "SignaturesCache::save", skip(self))]
+    pub fn save(&self, path: &Path) {
+        if let Some(parent) = path.parent()
+            && let Err(err) = std::fs::create_dir_all(parent)
+        {
+            warn!(target: "evm::traces", ?parent, %err, "failed to create cache");
+        }
+        if let Err(err) = fs::write_json_file(path, self) {
+            warn!(target: "evm::traces", %err, "failed to flush signature cache");
+        } else {
+            trace!(target: "evm::traces", "flushed signature cache")
+        }
+    }
+
+    /// Updates the cache from an ABI.
+    pub fn extend_from_abi(&mut self, abi: &JsonAbi) {
+        self.extend(abi.items().filter_map(|item| match item {
+            alloy_json_abi::AbiItem::Function(f) => {
+                Some((SelectorKind::Function(f.selector()), f.signature()))
+            }
+            alloy_json_abi::AbiItem::Error(e) => {
+                Some((SelectorKind::Error(e.selector()), e.signature()))
+            }
+            alloy_json_abi::AbiItem::Event(e) => {
+                Some((SelectorKind::Event(e.selector()), e.full_signature()))
+            }
+            _ => None,
+        }));
+    }
+
+    /// Inserts a single signature into the cache.
+    pub fn insert(&mut self, key: SelectorKind, value: String) {
+        self.extend(std::iter::once((key, value)));
+    }
+
+    /// Extends the cache with multiple signatures.
+    pub fn extend(&mut self, signatures: impl IntoIterator<Item = (SelectorKind, String)>) {
+        self.signatures
+            .extend(signatures.into_iter().map(|(k, v)| (k, (!v.is_empty()).then_some(v))));
+    }
+
+    /// Gets a signature from the cache.
+    pub fn get(&self, key: &SelectorKind) -> Option<Option<String>> {
+        self.signatures.get(key).cloned()
+    }
+
+    /// Returns true if the cache contains a signature.
+    pub fn contains_key(&self, key: &SelectorKind) -> bool {
+        self.signatures.contains_key(key)
+    }
+}
+
 /// An identifier that tries to identify functions and events using signatures found at
 /// `https://openchain.xyz` or a local cache.
+#[derive(Clone, Debug)]
+pub struct SignaturesIdentifier(Arc<SignaturesIdentifierInner>);
+
 #[derive(Debug)]
-pub struct SignaturesIdentifier {
+struct SignaturesIdentifierInner {
     /// Cached selectors for functions, events and custom errors.
-    cached: CachedSignatures,
-    /// Location where to save `CachedSignatures`.
-    cached_path: Option<PathBuf>,
-    /// Selectors that were unavailable during the session.
-    unavailable: HashSet<String>,
-    /// The OpenChain client to fetch signatures from.
+    cache: RwLock<SignaturesCache>,
+    /// Location where to save the signature cache.
+    cache_path: Option<PathBuf>,
+    /// The OpenChain client to fetch signatures from. `None` if disabled on construction.
     client: Option<OpenChainClient>,
 }
 
 impl SignaturesIdentifier {
-    #[instrument(target = "evm::traces")]
-    pub fn new(
-        cache_path: Option<PathBuf>,
-        offline: bool,
-    ) -> eyre::Result<SingleSignaturesIdentifier> {
+    /// Creates a new `SignaturesIdentifier` with the default cache directory.
+    pub fn new(offline: bool) -> Result<Self> {
+        Self::new_with(Config::foundry_cache_dir().as_deref(), offline)
+    }
+
+    /// Creates a new `SignaturesIdentifier` from the global configuration.
+    pub fn from_config(config: &Config) -> Result<Self> {
+        Self::new(config.offline)
+    }
+
+    /// Creates a new `SignaturesIdentifier`.
+    ///
+    /// - `cache_dir` is the cache directory to store the signatures.
+    /// - `offline` disables the OpenChain client.
+    pub fn new_with(cache_dir: Option<&Path>, offline: bool) -> Result<Self> {
         let client = if !offline { Some(OpenChainClient::new()?) } else { None };
-
-        let identifier = if let Some(cache_path) = cache_path {
-            let path = cache_path.join("signatures");
-            trace!(target: "evm::traces", ?path, "reading signature cache");
-            let cached = CachedSignatures::load(cache_path);
-            Self { cached, cached_path: Some(path), unavailable: HashSet::default(), client }
+        let (cache, cache_path) = if let Some(cache_dir) = cache_dir {
+            let path = cache_dir.join("signatures");
+            let cache = SignaturesCache::load(&path);
+            (cache, Some(path))
         } else {
-            Self {
-                cached: Default::default(),
-                cached_path: None,
-                unavailable: HashSet::default(),
-                client,
-            }
+            Default::default()
         };
-
-        Ok(Arc::new(RwLock::new(identifier)))
+        Ok(Self(Arc::new(SignaturesIdentifierInner {
+            cache: RwLock::new(cache),
+            cache_path,
+            client,
+        })))
     }
 
-    #[instrument(target = "evm::traces", skip(self))]
+    /// Saves the cache to the file system.
     pub fn save(&self) {
-        if let Some(cached_path) = &self.cached_path {
-            if let Some(parent) = cached_path.parent() {
-                if let Err(err) = std::fs::create_dir_all(parent) {
-                    warn!(target: "evm::traces", ?parent, ?err, "failed to create cache");
-                }
-            }
-            if let Err(err) = fs::write_json_file(cached_path, &self.cached) {
-                warn!(target: "evm::traces", ?cached_path, ?err, "failed to flush signature cache");
-            } else {
-                trace!(target: "evm::traces", ?cached_path, "flushed signature cache")
-            }
-        }
-    }
-}
-
-impl SignaturesIdentifier {
-    async fn identify<T>(
-        &mut self,
-        selector_type: SelectorType,
-        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
-        get_type: impl Fn(&str) -> eyre::Result<T>,
-    ) -> Vec<Option<T>> {
-        let cache = match selector_type {
-            SelectorType::Function => &mut self.cached.functions,
-            SelectorType::Event => &mut self.cached.events,
-            SelectorType::Error => &mut self.cached.errors,
-        };
-
-        let hex_identifiers: Vec<String> =
-            identifiers.into_iter().map(hex::encode_prefixed).collect();
-
-        if let Some(client) = &self.client {
-            let query: Vec<_> = hex_identifiers
-                .iter()
-                .filter(|v| !cache.contains_key(v.as_str()))
-                .filter(|v| !self.unavailable.contains(v.as_str()))
-                .collect();
-
-            if let Ok(res) = client.decode_selectors(selector_type, query.clone()).await {
-                for (hex_id, selector_result) in query.into_iter().zip(res.into_iter()) {
-                    let mut found = false;
-                    if let Some(decoded_results) = selector_result {
-                        if let Some(decoded_result) = decoded_results.into_iter().next() {
-                            cache.insert(hex_id.clone(), decoded_result);
-                            found = true;
-                        }
-                    }
-                    if !found {
-                        self.unavailable.insert(hex_id.clone());
-                    }
-                }
-            }
-        }
-
-        hex_identifiers.iter().map(|v| cache.get(v).and_then(|v| get_type(v).ok())).collect()
+        self.0.save();
     }
 
-    /// Identifies `Function`s from its cache or `https://api.openchain.xyz`
+    /// Identifies `Function`s.
     pub async fn identify_functions(
-        &mut self,
-        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+        &self,
+        identifiers: impl IntoIterator<Item = Selector>,
     ) -> Vec<Option<Function>> {
-        self.identify(SelectorType::Function, identifiers, get_func).await
+        self.identify_map(identifiers.into_iter().map(SelectorKind::Function), get_func).await
     }
 
-    /// Identifies `Function` from its cache or `https://api.openchain.xyz`
-    pub async fn identify_function(&mut self, identifier: &[u8]) -> Option<Function> {
-        self.identify_functions(&[identifier]).await.pop().unwrap()
+    /// Identifies a `Function`.
+    pub async fn identify_function(&self, identifier: Selector) -> Option<Function> {
+        self.identify_functions([identifier]).await.pop().unwrap()
     }
 
-    /// Identifies `Event`s from its cache or `https://api.openchain.xyz`
+    /// Identifies `Event`s.
     pub async fn identify_events(
-        &mut self,
-        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+        &self,
+        identifiers: impl IntoIterator<Item = B256>,
     ) -> Vec<Option<Event>> {
-        self.identify(SelectorType::Event, identifiers, get_event).await
+        self.identify_map(identifiers.into_iter().map(SelectorKind::Event), get_event).await
     }
 
-    /// Identifies `Event` from its cache or `https://api.openchain.xyz`
-    pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
-        self.identify_events(&[identifier]).await.pop().unwrap()
+    /// Identifies an `Event`.
+    pub async fn identify_event(&self, identifier: B256) -> Option<Event> {
+        self.identify_events([identifier]).await.pop().unwrap()
     }
 
-    /// Identifies `Error`s from its cache or `https://api.openchain.xyz`.
+    /// Identifies `Error`s.
     pub async fn identify_errors(
-        &mut self,
-        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+        &self,
+        identifiers: impl IntoIterator<Item = Selector>,
     ) -> Vec<Option<Error>> {
-        self.identify(SelectorType::Error, identifiers, get_error).await
+        self.identify_map(identifiers.into_iter().map(SelectorKind::Error), get_error).await
     }
 
-    /// Identifies `Error` from its cache or `https://api.openchain.xyz`.
-    pub async fn identify_error(&mut self, identifier: &[u8]) -> Option<Error> {
-        self.identify_errors(&[identifier]).await.pop().unwrap()
+    /// Identifies an `Error`.
+    pub async fn identify_error(&self, identifier: Selector) -> Option<Error> {
+        self.identify_errors([identifier]).await.pop().unwrap()
+    }
+
+    /// Identifies a list of selectors.
+    pub async fn identify(&self, selectors: &[SelectorKind]) -> Vec<Option<String>> {
+        if selectors.is_empty() {
+            return vec![];
+        }
+        trace!(target: "evm::traces", ?selectors, "identifying selectors");
+
+        let mut cache_r = self.0.cache.read().await;
+        if let Some(client) = &self.0.client {
+            let query =
+                selectors.iter().copied().filter(|v| !cache_r.contains_key(v)).collect::<Vec<_>>();
+            if !query.is_empty() {
+                drop(cache_r);
+                let mut cache_w = self.0.cache.write().await;
+                if let Ok(res) = client.decode_selectors(&query).await {
+                    for (selector, signatures) in std::iter::zip(query, res) {
+                        cache_w.signatures.insert(selector, signatures.into_iter().next());
+                    }
+                }
+                drop(cache_w);
+                cache_r = self.0.cache.read().await;
+            }
+        }
+        selectors.iter().map(|selector| cache_r.get(selector).unwrap_or_default()).collect()
+    }
+
+    async fn identify_map<T>(
+        &self,
+        selectors: impl IntoIterator<Item = SelectorKind>,
+        get_type: impl Fn(&str) -> Result<T>,
+    ) -> Vec<Option<T>> {
+        let results = self.identify(&Vec::from_iter(selectors)).await;
+        results.into_iter().map(|r| r.and_then(|r| get_type(&r).ok())).collect()
     }
 }
 
-impl Drop for SignaturesIdentifier {
+impl SignaturesIdentifierInner {
+    fn save(&self) {
+        // We only identify new signatures if the client is enabled.
+        if let Some(path) = &self.cache_path
+            && self.client.is_some()
+        {
+            self.cache
+                .try_read()
+                .expect("SignaturesIdentifier cache is locked while attempting to save")
+                .save(path);
+        }
+    }
+}
+
+impl Drop for SignaturesIdentifierInner {
     fn drop(&mut self) {
         self.save();
     }

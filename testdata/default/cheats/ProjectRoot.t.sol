@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract ProjectRootTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract ProjectRootTest is Test {
     bytes public manifestDirBytes;
 
     function testProjectRoot() public {
-        manifestDirBytes = bytes(vm.envString("CARGO_MANIFEST_DIR"));
+        // .../crates/forge
+        string memory manifestDir = vm.envOr("CARGO_MANIFEST_DIR", string(""));
+        if (bytes(manifestDir).length == 0) {
+            vm.skip(true, "CARGO_MANIFEST_DIR environment variable is not set");
+        }
+        manifestDirBytes = bytes(manifestDir);
+
         for (uint256 i = 0; i < 7; i++) {
             manifestDirBytes.pop();
         }
@@ -20,6 +24,10 @@ contract ProjectRootTest is DSTest {
         }
         bytes memory expectedRootDir = abi.encodePacked(manifestDirBytes, "ata");
 
-        assertEq(vm.projectRoot(), string(expectedRootDir));
+        assertEq(normalizePath(vm.projectRoot()), normalizePath(string(expectedRootDir)));
+    }
+
+    function normalizePath(string memory path) internal pure returns (string memory) {
+        return vm.replace(path, "\\", "/");
     }
 }

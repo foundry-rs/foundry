@@ -32,7 +32,9 @@ fn parse_version(version: &str) -> Result<Version> {
     let version =
         Version::parse(version).map_err(|e| fmt_err!("invalid version `{version}`: {e}"))?;
     if !version.pre.is_empty() {
-        return Err(fmt_err!("invalid version `{version}`: pre-release versions are not supported"));
+        return Err(fmt_err!(
+            "invalid version `{version}`: pre-release versions are not supported"
+        ));
     }
     if !version.build.is_empty() {
         return Err(fmt_err!("invalid version `{version}`: build metadata is not supported"));

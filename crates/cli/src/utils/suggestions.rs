@@ -1,5 +1,4 @@
 //! Helper functions for suggesting alternative values for a possibly erroneous user input.
-use std::cmp::Ordering;
 
 /// Filters multiple strings from a given list of possible values which are similar
 /// to the passed in value `v` within a certain confidence by least confidence.
@@ -17,7 +16,7 @@ where
         .map(|pv| (strsim::jaro_winkler(v, pv.as_ref()), pv.as_ref().to_owned()))
         .filter(|(similarity, _)| *similarity > 0.8)
         .collect();
-    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
     candidates.into_iter().map(|(_, pv)| pv).collect()
 }
 

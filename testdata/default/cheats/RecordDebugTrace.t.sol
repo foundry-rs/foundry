@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity 0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract MStoreAndMLoadCaller {
     uint256 public constant expectedValueInMemory = 999;
@@ -64,23 +63,21 @@ contract OutOfGas {
     }
 }
 
-contract RecordDebugTraceTest is DSTest {
-    Vm constant cheats = Vm(HEVM_ADDRESS);
+contract RecordDebugTraceTest is Test {
     /**
      * The goal of this test is to ensure the debug steps provide the correct OPCODE with its stack
      * and memory input used. The test checke MSTORE and MLOAD and ensure it records the expected
      * stack and memory inputs.
      */
-
     function testDebugTraceCanRecordOpcodeWithStackAndMemoryData() public {
         MStoreAndMLoadCaller testContract = new MStoreAndMLoadCaller();
 
-        cheats.startDebugTraceRecording();
+        vm.startDebugTraceRecording();
 
         uint256 val = testContract.storeAndLoadValueFromMemory();
         assertTrue(val == testContract.expectedValueInMemory());
 
-        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
+        Vm.DebugStep[] memory steps = vm.stopAndReturnDebugTraceRecording();
 
         bool mstoreCalled = false;
         bool mloadCalled = false;
@@ -88,14 +85,16 @@ contract RecordDebugTraceTest is DSTest {
         for (uint256 i = 0; i < steps.length; i++) {
             Vm.DebugStep memory step = steps[i];
             if (
-                step.opcode == 0x52 /*MSTORE*/ && step.stack[0] == testContract.memPtr() // MSTORE offset
+                step.opcode == 0x52 /*MSTORE*/
+                    && step.stack[0] == testContract.memPtr() // MSTORE offset
                     && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
             ) {
                 mstoreCalled = true;
             }
 
             if (
-                step.opcode == 0x51 /*MLOAD*/ && step.stack[0] == testContract.memPtr() // MLOAD offset
+                step.opcode == 0x51 /*MLOAD*/
+                    && step.stack[0] == testContract.memPtr() // MLOAD offset
                     && step.memoryInput.length == 32 // MLOAD should always load 32 bytes
                     && uint256(bytes32(step.memoryInput)) == testContract.expectedValueInMemory() // MLOAD value
             ) {
@@ -116,11 +115,11 @@ contract RecordDebugTraceTest is DSTest {
         SecondLayer second = new SecondLayer();
         FirstLayer first = new FirstLayer(second);
 
-        cheats.startDebugTraceRecording();
+        vm.startDebugTraceRecording();
 
         first.callSecondLayer();
 
-        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
+        Vm.DebugStep[] memory steps = vm.stopAndReturnDebugTraceRecording();
 
         bool goToDepthTwo = false;
         bool goToDepthThree = false;
@@ -147,11 +146,11 @@ contract RecordDebugTraceTest is DSTest {
     function testDebugTraceCanRecordOutOfGas() public {
         OutOfGas testContract = new OutOfGas();
 
-        cheats.startDebugTraceRecording();
+        vm.startDebugTraceRecording();
 
         testContract.triggerOOG();
 
-        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
+        Vm.DebugStep[] memory steps = vm.stopAndReturnDebugTraceRecording();
 
         bool isOOG = false;
         for (uint256 i = 0; i < steps.length; i++) {

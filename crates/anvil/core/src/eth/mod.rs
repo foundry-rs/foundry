@@ -1,469 +1,453 @@
 use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
-use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
+use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U256};
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
     anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
+    simulate::SimulatePayload,
     state::StateOverride,
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
     },
-    BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
 };
 use alloy_serde::WithOtherFields;
-
-pub mod block;
-pub mod proof;
-pub mod subscription;
-pub mod transaction;
-pub mod trie;
-pub mod wallet;
-
-#[cfg(feature = "serde")]
-pub mod serde_helpers;
-
-#[cfg(feature = "serde")]
-use self::serde_helpers::*;
-
-#[cfg(feature = "serde")]
 use foundry_common::serde_helpers::{
     deserialize_number, deserialize_number_opt, deserialize_number_seq,
 };
 
+pub mod block;
+pub mod subscription;
+pub mod transaction;
+pub mod wallet;
+
+pub mod serde_helpers;
+use self::serde_helpers::*;
+
 /// Wrapper type that ensures the type is named `params`
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
 pub struct Params<T: Default> {
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub params: T,
 }
 
 /// Represents ethereum JSON-RPC API
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(tag = "method", content = "params")]
 #[allow(clippy::large_enum_variant)]
 pub enum EthRequest {
-    #[cfg_attr(feature = "serde", serde(rename = "web3_clientVersion", with = "empty_params"))]
+    #[serde(rename = "web3_clientVersion", with = "empty_params")]
     Web3ClientVersion(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "web3_sha3", with = "sequence"))]
+    #[serde(rename = "web3_sha3", with = "sequence")]
     Web3Sha3(Bytes),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_chainId", with = "empty_params"))]
+    /// Returns the current Ethereum protocol version.
+    #[serde(rename = "eth_protocolVersion", with = "empty_params")]
+    EthProtocolVersion(()),
+
+    #[serde(rename = "eth_chainId", with = "empty_params")]
     EthChainId(()),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_networkId", alias = "net_version", with = "empty_params")
-    )]
+    #[serde(rename = "eth_networkId", alias = "net_version", with = "empty_params")]
     EthNetworkId(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "net_listening", with = "empty_params"))]
+    #[serde(rename = "net_listening", with = "empty_params")]
     NetListening(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_gasPrice", with = "empty_params"))]
+    /// Returns the number of hashes per second with which the node is mining.
+    #[serde(rename = "eth_hashrate", with = "empty_params")]
+    EthHashrate(()),
+
+    #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_maxPriorityFeePerGas", with = "empty_params")
-    )]
+    #[serde(rename = "eth_maxPriorityFeePerGas", with = "empty_params")]
     EthMaxPriorityFeePerGas(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_blobBaseFee", with = "empty_params"))]
+    #[serde(rename = "eth_blobBaseFee", with = "empty_params")]
     EthBlobBaseFee(()),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_accounts", alias = "eth_requestAccounts", with = "empty_params")
-    )]
+    #[serde(rename = "eth_accounts", alias = "eth_requestAccounts", with = "empty_params")]
     EthAccounts(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_blockNumber", with = "empty_params"))]
+    #[serde(rename = "eth_blockNumber", with = "empty_params")]
     EthBlockNumber(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getBalance"))]
+    /// Returns the client coinbase address.
+    #[serde(rename = "eth_coinbase", with = "empty_params")]
+    EthCoinbase(()),
+
+    #[serde(rename = "eth_getBalance")]
     EthGetBalance(Address, Option<BlockId>),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getAccount"))]
+    #[serde(rename = "eth_getAccount")]
     EthGetAccount(Address, Option<BlockId>),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getStorageAt"))]
+    #[serde(rename = "eth_getAccountInfo")]
+    EthGetAccountInfo(Address, Option<BlockId>),
+
+    #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockId>),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockByHash"))]
+    #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(B256, bool),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockByNumber"))]
+    #[serde(rename = "eth_getBlockByNumber")]
     EthGetBlockByNumber(
-        #[cfg_attr(
-            feature = "serde",
-            serde(deserialize_with = "lenient_block_number::lenient_block_number")
-        )]
-        BlockNumber,
+        #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
         bool,
     ),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionCount"))]
+    #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")
-    )]
+    #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
     EthGetTransactionCountByHash(B256),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "eth_getBlockTransactionCountByNumber",
-            deserialize_with = "lenient_block_number::lenient_block_number_seq"
-        )
+    #[serde(
+        rename = "eth_getBlockTransactionCountByNumber",
+        deserialize_with = "lenient_block_number::lenient_block_number_seq"
     )]
     EthGetTransactionCountByNumber(BlockNumber),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_getUncleCountByBlockHash", with = "sequence")
-    )]
+    #[serde(rename = "eth_getUncleCountByBlockHash", with = "sequence")]
     EthGetUnclesCountByHash(B256),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "eth_getUncleCountByBlockNumber",
-            deserialize_with = "lenient_block_number::lenient_block_number_seq"
-        )
+    #[serde(
+        rename = "eth_getUncleCountByBlockNumber",
+        deserialize_with = "lenient_block_number::lenient_block_number_seq"
     )]
     EthGetUnclesCountByNumber(BlockNumber),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getCode"))]
+    #[serde(rename = "eth_getCode")]
     EthGetCodeAt(Address, Option<BlockId>),
 
     /// Returns the account and storage values of the specified account including the Merkle-proof.
     /// This call can be used to verify that the data you are pulling from is not tampered with.
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getProof"))]
+    #[serde(rename = "eth_getProof")]
     EthGetProof(Address, Vec<B256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
-    #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
+    #[serde(rename = "eth_sign")]
     EthSign(Address, Bytes),
 
     /// The sign method calculates an Ethereum specific signature, equivalent to eth_sign:
     /// <https://docs.metamask.io/wallet/reference/personal_sign/>
-    #[cfg_attr(feature = "serde", serde(rename = "personal_sign"))]
+    #[serde(rename = "personal_sign")]
     PersonalSign(Bytes, Address),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction", with = "sequence"))]
+    #[serde(rename = "eth_signTransaction", with = "sequence")]
     EthSignTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
-    #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
+    #[serde(rename = "eth_signTypedData")]
     EthSignTypedData(Address, serde_json::Value),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
-    #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData_v3"))]
+    #[serde(rename = "eth_signTypedData_v3")]
     EthSignTypedDataV3(Address, serde_json::Value),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md), and includes full support of arrays and recursive data structures.
-    #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData_v4"))]
+    #[serde(rename = "eth_signTypedData_v4")]
     EthSignTypedDataV4(Address, alloy_dyn_abi::TypedData),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
+    #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
+    #[serde(rename = "eth_sendTransactionSync", with = "sequence")]
+    EthSendTransactionSync(Box<WithOtherFields<TransactionRequest>>),
+
+    #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_call"))]
+    #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
+    EthSendRawTransactionSync(Bytes),
+
+    #[serde(rename = "eth_call")]
     EthCall(
         WithOtherFields<TransactionRequest>,
-        #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
+        #[serde(default)] Option<BlockId>,
+        #[serde(default)] Option<StateOverride>,
+        #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
-    EthCreateAccessList(
-        WithOtherFields<TransactionRequest>,
-        #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-    ),
+    #[serde(rename = "eth_simulateV1")]
+    EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_estimateGas"))]
+    #[serde(rename = "eth_createAccessList")]
+    EthCreateAccessList(WithOtherFields<TransactionRequest>, #[serde(default)] Option<BlockId>),
+
+    #[serde(rename = "eth_estimateGas")]
     EthEstimateGas(
         WithOtherFields<TransactionRequest>,
-        #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
+        #[serde(default)] Option<BlockId>,
+        #[serde(default)] Option<StateOverride>,
+        #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByHash", with = "sequence"))]
+    #[serde(rename = "eth_fillTransaction", with = "sequence")]
+    EthFillTransaction(WithOtherFields<TransactionRequest>),
+
+    #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByBlockHashAndIndex"))]
+    /// Returns the blob for a given blob versioned hash.
+    #[serde(rename = "anvil_getBlobByHash", with = "sequence")]
+    GetBlobByHash(B256),
+
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
+    GetBlobByTransactionHash(TxHash),
+
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobSidecarsByBlockId", with = "sequence")]
+    GetBlobSidecarsByBlockId(BlockId),
+
+    /// Returns the genesis time for the chain
+    #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
+    GetGenesisTime(()),
+
+    #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByBlockNumberAndIndex"))]
+    #[serde(rename = "eth_getTransactionByBlockNumberAndIndex")]
     EthGetTransactionByBlockNumberAndIndex(BlockNumber, Index),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_getRawTransactionByHash", with = "sequence")
-    )]
+    #[serde(rename = "eth_getRawTransactionByHash", with = "sequence")]
     EthGetRawTransactionByHash(TxHash),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockHashAndIndex"))]
+    #[serde(rename = "eth_getRawTransactionByBlockHashAndIndex")]
     EthGetRawTransactionByBlockHashAndIndex(TxHash, Index),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockNumberAndIndex"))]
+    #[serde(rename = "eth_getRawTransactionByBlockNumberAndIndex")]
     EthGetRawTransactionByBlockNumberAndIndex(BlockNumber, Index),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionReceipt", with = "sequence"))]
+    #[serde(rename = "eth_getTransactionReceipt", with = "sequence")]
     EthGetTransactionReceipt(B256),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockReceipts", with = "sequence"))]
+    #[serde(rename = "eth_getBlockReceipts", with = "sequence")]
     EthGetBlockReceipts(BlockId),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockHashAndIndex"))]
+    #[serde(rename = "eth_getUncleByBlockHashAndIndex")]
     EthGetUncleByBlockHashAndIndex(B256, Index),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockNumberAndIndex"))]
+    #[serde(rename = "eth_getUncleByBlockNumberAndIndex")]
     EthGetUncleByBlockNumberAndIndex(
-        #[cfg_attr(
-            feature = "serde",
-            serde(deserialize_with = "lenient_block_number::lenient_block_number")
-        )]
-        BlockNumber,
+        #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
         Index,
     ),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getLogs", with = "sequence"))]
+    #[serde(rename = "eth_getLogs", with = "sequence")]
     EthGetLogs(Filter),
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
-    #[cfg_attr(feature = "serde", serde(rename = "eth_newFilter", with = "sequence"))]
+    #[serde(rename = "eth_newFilter", with = "sequence")]
     EthNewFilter(Filter),
 
     /// Polling method for a filter, which returns an array of logs which occurred since last poll.
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getFilterChanges", with = "sequence"))]
+    #[serde(rename = "eth_getFilterChanges", with = "sequence")]
     EthGetFilterChanges(String),
 
     /// Creates a filter in the node, to notify when a new block arrives.
     /// To check if the state has changed, call `eth_getFilterChanges`.
-    #[cfg_attr(feature = "serde", serde(rename = "eth_newBlockFilter", with = "empty_params"))]
+    #[serde(rename = "eth_newBlockFilter", with = "empty_params")]
     EthNewBlockFilter(()),
 
     /// Creates a filter in the node, to notify when new pending transactions arrive.
     /// To check if the state has changed, call `eth_getFilterChanges`.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_newPendingTransactionFilter", with = "empty_params")
-    )]
+    #[serde(rename = "eth_newPendingTransactionFilter", with = "empty_params")]
     EthNewPendingTransactionFilter(()),
 
     /// Returns an array of all logs matching filter with given id.
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getFilterLogs", with = "sequence"))]
+    #[serde(rename = "eth_getFilterLogs", with = "sequence")]
     EthGetFilterLogs(String),
 
     /// Removes the filter, returns true if the filter was installed
-    #[cfg_attr(feature = "serde", serde(rename = "eth_uninstallFilter", with = "sequence"))]
+    #[serde(rename = "eth_uninstallFilter", with = "sequence")]
     EthUninstallFilter(String),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getWork", with = "empty_params"))]
+    #[serde(rename = "eth_getWork", with = "empty_params")]
     EthGetWork(()),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_submitWork"))]
+    #[serde(rename = "eth_submitWork")]
     EthSubmitWork(B64, B256, B256),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_submitHashrate"))]
+    #[serde(rename = "eth_submitHashrate")]
     EthSubmitHashRate(U256, B256),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_feeHistory"))]
+    #[serde(rename = "eth_feeHistory")]
     EthFeeHistory(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
+        #[serde(deserialize_with = "deserialize_number")] U256,
         BlockNumber,
-        #[cfg_attr(feature = "serde", serde(default))] Vec<f64>,
+        #[serde(default)] Vec<f64>,
     ),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_syncing", with = "empty_params"))]
+    #[serde(rename = "eth_syncing", with = "empty_params")]
     EthSyncing(()),
 
+    #[serde(rename = "eth_config", with = "empty_params")]
+    EthConfig(()),
+
     /// geth's `debug_getRawTransaction`  endpoint
-    #[cfg_attr(feature = "serde", serde(rename = "debug_getRawTransaction", with = "sequence"))]
+    #[serde(rename = "debug_getRawTransaction", with = "sequence")]
     DebugGetRawTransaction(TxHash),
 
     /// geth's `debug_traceTransaction`  endpoint
-    #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
-    DebugTraceTransaction(
-        B256,
-        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
-    ),
+    #[serde(rename = "debug_traceTransaction")]
+    DebugTraceTransaction(B256, #[serde(default)] GethDebugTracingOptions),
 
     /// geth's `debug_traceCall`  endpoint
-    #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
+    #[serde(rename = "debug_traceCall")]
     DebugTraceCall(
         WithOtherFields<TransactionRequest>,
-        #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingCallOptions,
+        #[serde(default)] Option<BlockId>,
+        #[serde(default)] GethDebugTracingCallOptions,
     ),
 
+    /// reth's `debug_codeByHash` endpoint
+    #[serde(rename = "debug_codeByHash")]
+    DebugCodeByHash(B256, #[serde(default)] Option<BlockId>),
+
+    /// reth's `debug_dbGet` endpoint
+    #[serde(rename = "debug_dbGet")]
+    DebugDbGet(String),
+
     /// Trace transaction endpoint for parity's `trace_transaction`
-    #[cfg_attr(feature = "serde", serde(rename = "trace_transaction", with = "sequence"))]
+    #[serde(rename = "trace_transaction", with = "sequence")]
     TraceTransaction(B256),
 
     /// Trace transaction endpoint for parity's `trace_block`
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "trace_block",
-            deserialize_with = "lenient_block_number::lenient_block_number_seq"
-        )
+    #[serde(
+        rename = "trace_block",
+        deserialize_with = "lenient_block_number::lenient_block_number_seq"
     )]
     TraceBlock(BlockNumber),
 
     // Return filtered traces over blocks
-    #[cfg_attr(feature = "serde", serde(rename = "trace_filter", with = "sequence"))]
+    #[serde(rename = "trace_filter", with = "sequence")]
     TraceFilter(TraceFilter),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_impersonateAccount",
-            alias = "hardhat_impersonateAccount",
-            with = "sequence"
-        )
+    #[serde(
+        rename = "anvil_impersonateAccount",
+        alias = "hardhat_impersonateAccount",
+        with = "sequence"
     )]
     ImpersonateAccount(Address),
     /// Stops impersonating an account if previously set with `anvil_impersonateAccount`
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_stopImpersonatingAccount",
-            alias = "hardhat_stopImpersonatingAccount",
-            with = "sequence"
-        )
+    #[serde(
+        rename = "anvil_stopImpersonatingAccount",
+        alias = "hardhat_stopImpersonatingAccount",
+        with = "sequence"
     )]
     StopImpersonatingAccount(Address),
     /// Will make every account impersonated
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_autoImpersonateAccount",
-            alias = "hardhat_autoImpersonateAccount",
-            with = "sequence"
-        )
+    #[serde(
+        rename = "anvil_autoImpersonateAccount",
+        alias = "hardhat_autoImpersonateAccount",
+        with = "sequence"
     )]
     AutoImpersonateAccount(bool),
+
+    /// Registers a signature/address pair for faking `ecrecover` results
+    #[serde(rename = "anvil_impersonateSignature", with = "sequence")]
+    ImpersonateSignature(Bytes, Address),
+
     /// Returns true if automatic mining is enabled, and false.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine", with = "empty_params")
-    )]
+    #[serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine", with = "empty_params")]
     GetAutoMine(()),
     /// Mines a series of blocks
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_mine", alias = "hardhat_mine"))]
+    #[serde(rename = "anvil_mine", alias = "hardhat_mine")]
     Mine(
         /// Number of blocks to mine, if not set `1` block is mined
-        #[cfg_attr(feature = "serde", serde(default, deserialize_with = "deserialize_number_opt"))]
+        #[serde(default, deserialize_with = "deserialize_number_opt")]
         Option<U256>,
         /// The time interval between each block in seconds, defaults to `1` seconds
         /// The interval is applied only to blocks mined in the given method invocation, not to
         /// blocks mined afterwards. Set this to `0` to instantly mine _all_ blocks
-        #[cfg_attr(feature = "serde", serde(default, deserialize_with = "deserialize_number_opt"))]
+        #[serde(default, deserialize_with = "deserialize_number_opt")]
         Option<U256>,
     ),
 
     /// Enables or disables, based on the single boolean argument, the automatic mining of new
     /// blocks with each new transaction submitted to the network.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_setAutomine", alias = "evm_setAutomine", with = "sequence")
-    )]
+    #[serde(rename = "anvil_setAutomine", alias = "evm_setAutomine", with = "sequence")]
     SetAutomine(bool),
 
     /// Sets the mining behavior to interval with the given interval (seconds)
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setIntervalMining",
-            alias = "evm_setIntervalMining",
-            with = "sequence"
-        )
-    )]
+    #[serde(rename = "anvil_setIntervalMining", alias = "evm_setIntervalMining", with = "sequence")]
     SetIntervalMining(u64),
 
     /// Gets the current mining behavior
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_getIntervalMining", with = "empty_params")
-    )]
+    #[serde(rename = "anvil_getIntervalMining", with = "empty_params")]
     GetIntervalMining(()),
 
     /// Removes transactions from the pool
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_dropTransaction",
-            alias = "hardhat_dropTransaction",
-            with = "sequence"
-        )
-    )]
+    #[serde(rename = "anvil_dropTransaction", alias = "hardhat_dropTransaction", with = "sequence")]
     DropTransaction(B256),
 
     /// Removes transactions from the pool
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_dropAllTransactions",
-            alias = "hardhat_dropAllTransactions",
-            with = "empty_params"
-        )
+    #[serde(
+        rename = "anvil_dropAllTransactions",
+        alias = "hardhat_dropAllTransactions",
+        with = "empty_params"
     )]
     DropAllTransactions(),
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_reset", alias = "hardhat_reset"))]
-    Reset(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<Forking>>>),
+    #[serde(rename = "anvil_reset", alias = "hardhat_reset")]
+    Reset(#[serde(default)] Option<Params<Option<Forking>>>),
 
     /// Sets the backend rpc url
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_setRpcUrl", with = "sequence"))]
+    #[serde(rename = "anvil_setRpcUrl", with = "sequence")]
     SetRpcUrl(String),
 
     /// Modifies the balance of an account.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_setBalance", alias = "hardhat_setBalance")
+    #[serde(
+        rename = "anvil_setBalance",
+        alias = "hardhat_setBalance",
+        alias = "tenderly_setBalance"
     )]
-    SetBalance(
+    SetBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Increases the balance of an account.
+    #[serde(
+        rename = "anvil_addBalance",
+        alias = "hardhat_addBalance",
+        alias = "tenderly_addBalance"
+    )]
+    AddBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Modifies the ERC20 balance of an account.
+    #[serde(
+        rename = "anvil_dealERC20",
+        alias = "hardhat_dealERC20",
+        alias = "anvil_setERC20Balance"
+    )]
+    DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Sets the ERC20 allowance for a spender
+    #[serde(rename = "anvil_setERC20Allowance")]
+    SetERC20Allowance(
         Address,
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
+        Address,
+        Address,
+        #[serde(deserialize_with = "deserialize_number")] U256,
     ),
 
     /// Sets the code of a contract
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_setCode", alias = "hardhat_setCode"))]
+    #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]
     SetCode(Address, Bytes),
 
     /// Sets the nonce of an address
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setNonce",
-            alias = "hardhat_setNonce",
-            alias = "evm_setAccountNonce"
-        )
-    )]
-    SetNonce(
-        Address,
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
-    ),
+    #[serde(rename = "anvil_setNonce", alias = "hardhat_setNonce", alias = "evm_setAccountNonce")]
+    SetNonce(Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
     /// Writes a single slot of the account's storage
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_setStorageAt", alias = "hardhat_setStorageAt")
-    )]
+    #[serde(rename = "anvil_setStorageAt", alias = "hardhat_setStorageAt")]
     SetStorageAt(
         Address,
         /// slot
@@ -473,362 +457,289 @@ pub enum EthRequest {
     ),
 
     /// Sets the coinbase address
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_setCoinbase", alias = "hardhat_setCoinbase", with = "sequence")
-    )]
+    #[serde(rename = "anvil_setCoinbase", alias = "hardhat_setCoinbase", with = "sequence")]
     SetCoinbase(Address),
 
     /// Sets the chain id
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_setChainId", with = "sequence"))]
+    #[serde(rename = "anvil_setChainId", with = "sequence")]
     SetChainId(u64),
 
     /// Enable or disable logging
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setLoggingEnabled",
-            alias = "hardhat_setLoggingEnabled",
-            with = "sequence"
-        )
+    #[serde(
+        rename = "anvil_setLoggingEnabled",
+        alias = "hardhat_setLoggingEnabled",
+        with = "sequence"
     )]
     SetLogging(bool),
 
     /// Set the minimum gas price for the node
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setMinGasPrice",
-            alias = "hardhat_setMinGasPrice",
-            deserialize_with = "deserialize_number_seq"
-        )
+    #[serde(
+        rename = "anvil_setMinGasPrice",
+        alias = "hardhat_setMinGasPrice",
+        deserialize_with = "deserialize_number_seq"
     )]
     SetMinGasPrice(U256),
 
     /// Sets the base fee of the next block
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setNextBlockBaseFeePerGas",
-            alias = "hardhat_setNextBlockBaseFeePerGas",
-            deserialize_with = "deserialize_number_seq"
-        )
+    #[serde(
+        rename = "anvil_setNextBlockBaseFeePerGas",
+        alias = "hardhat_setNextBlockBaseFeePerGas",
+        deserialize_with = "deserialize_number_seq"
     )]
     SetNextBlockBaseFeePerGas(U256),
 
     /// Sets the specific timestamp
     /// Accepts timestamp (Unix epoch) with millisecond precision and returns the number of seconds
     /// between the given timestamp and the current time.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setTime",
-            alias = "evm_setTime",
-            deserialize_with = "deserialize_number_seq"
-        )
+    #[serde(
+        rename = "anvil_setTime",
+        alias = "evm_setTime",
+        deserialize_with = "deserialize_number_seq"
     )]
     EvmSetTime(U256),
 
     /// Serializes the current state (including contracts code, contract's storage, accounts
     /// properties, etc.) into a saveable data blob
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_dumpState", alias = "hardhat_dumpState"))]
-    DumpState(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<bool>>>),
+    #[serde(rename = "anvil_dumpState", alias = "hardhat_dumpState")]
+    DumpState(#[serde(default)] Option<Params<Option<bool>>>),
 
     /// Adds state previously dumped with `DumpState` to the current chain
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_loadState", alias = "hardhat_loadState", with = "sequence")
-    )]
+    #[serde(rename = "anvil_loadState", alias = "hardhat_loadState", with = "sequence")]
     LoadState(Bytes),
 
     /// Retrieves the Anvil node configuration params
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_nodeInfo", with = "empty_params"))]
+    #[serde(rename = "anvil_nodeInfo", with = "empty_params")]
     NodeInfo(()),
 
     /// Retrieves the Anvil node metadata.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_metadata", alias = "hardhat_metadata", with = "empty_params")
-    )]
+    #[serde(rename = "anvil_metadata", alias = "hardhat_metadata", with = "empty_params")]
     AnvilMetadata(()),
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
     ///
     /// Ref <https://github.com/trufflesuite/ganache/blob/ef1858d5d6f27e4baeb75cccd57fb3dc77a45ae8/src/chains/ethereum/ethereum/RPC-METHODS.md#evm_snapshot>
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_snapshot", alias = "evm_snapshot", with = "empty_params")
-    )]
+    #[serde(rename = "anvil_snapshot", alias = "evm_snapshot", with = "empty_params")]
     EvmSnapshot(()),
 
     /// Revert the state of the blockchain to a previous snapshot.
     /// Takes a single parameter, which is the snapshot id to revert to.
     ///
     /// Ref <https://github.com/trufflesuite/ganache/blob/ef1858d5d6f27e4baeb75cccd57fb3dc77a45ae8/src/chains/ethereum/ethereum/RPC-METHODS.md#evm_revert>
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_revert",
-            alias = "evm_revert",
-            deserialize_with = "deserialize_number_seq"
-        )
+    #[serde(
+        rename = "anvil_revert",
+        alias = "evm_revert",
+        deserialize_with = "deserialize_number_seq"
     )]
     EvmRevert(U256),
 
     /// Jump forward in time by the given amount of time, in seconds.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_increaseTime",
-            alias = "evm_increaseTime",
-            deserialize_with = "deserialize_number_seq"
-        )
+    #[serde(
+        rename = "anvil_increaseTime",
+        alias = "evm_increaseTime",
+        deserialize_with = "deserialize_number_seq"
     )]
     EvmIncreaseTime(U256),
 
     /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setNextBlockTimestamp",
-            alias = "evm_setNextBlockTimestamp",
-            deserialize_with = "deserialize_number_seq"
-        )
+    #[serde(
+        rename = "anvil_setNextBlockTimestamp",
+        alias = "evm_setNextBlockTimestamp",
+        deserialize_with = "deserialize_number_seq"
     )]
     EvmSetNextBlockTimeStamp(U256),
 
     /// Set the exact gas limit that you want in the next block
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "anvil_setBlockGasLimit",
-            alias = "evm_setBlockGasLimit",
-            deserialize_with = "deserialize_number_seq"
-        )
+    #[serde(
+        rename = "anvil_setBlockGasLimit",
+        alias = "evm_setBlockGasLimit",
+        deserialize_with = "deserialize_number_seq"
     )]
     EvmSetBlockGasLimit(U256),
 
     /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`.
     ///
     /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_setBlockTimestampInterval", with = "sequence")
-    )]
+    #[serde(rename = "anvil_setBlockTimestampInterval", with = "sequence")]
     EvmSetBlockTimeStampInterval(u64),
 
     /// Removes a `anvil_setBlockTimestampInterval` if it exists
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_removeBlockTimestampInterval", with = "empty_params")
-    )]
+    #[serde(rename = "anvil_removeBlockTimestampInterval", with = "empty_params")]
     EvmRemoveBlockTimeStampInterval(()),
 
     /// Mine a single block
-    #[cfg_attr(feature = "serde", serde(rename = "evm_mine"))]
-    EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>),
+    #[serde(rename = "evm_mine")]
+    EvmMine(#[serde(default)] Option<Params<Option<MineOptions>>>),
 
     /// Mine a single block and return detailed data
     ///
     /// This behaves exactly as `EvmMine` but returns different output, for compatibility reasons
     /// this is a separate call since `evm_mine` is not an anvil original.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_mine_detailed", alias = "evm_mine_detailed",)
-    )]
-    EvmMineDetailed(
-        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>,
-    ),
+    #[serde(rename = "anvil_mine_detailed", alias = "evm_mine_detailed")]
+    EvmMineDetailed(#[serde(default)] Option<Params<Option<MineOptions>>>),
 
     /// Execute a transaction regardless of signature status
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_sendUnsignedTransaction", with = "sequence")
-    )]
+    #[serde(rename = "eth_sendUnsignedTransaction", with = "sequence")]
     EthSendUnsignedTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_enableTraces", with = "empty_params"))]
+    #[serde(rename = "anvil_enableTraces", with = "empty_params")]
     EnableTraces(()),
 
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
     /// well as the ones that are being scheduled for future execution only.
     /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status>
-    #[cfg_attr(feature = "serde", serde(rename = "txpool_status", with = "empty_params"))]
+    #[serde(rename = "txpool_status", with = "empty_params")]
     TxPoolStatus(()),
 
     /// Returns a summary of all the transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
     /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect>
-    #[cfg_attr(feature = "serde", serde(rename = "txpool_inspect", with = "empty_params"))]
+    #[serde(rename = "txpool_inspect", with = "empty_params")]
     TxPoolInspect(()),
 
     /// Returns the details of all transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
     /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content>
-    #[cfg_attr(feature = "serde", serde(rename = "txpool_content", with = "empty_params"))]
+    #[serde(rename = "txpool_content", with = "empty_params")]
     TxPoolContent(()),
 
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
     /// <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
     /// Related upstream issue: <https://github.com/otterscan/otterscan/issues/1081>
-    #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
+    #[serde(rename = "erigon_getHeaderByNumber")]
     ErigonGetHeaderByNumber(
-        #[cfg_attr(
-            feature = "serde",
-            serde(deserialize_with = "lenient_block_number::lenient_block_number_seq")
-        )]
-        BlockNumber,
+        #[serde(deserialize_with = "lenient_block_number::lenient_block_number_seq")] BlockNumber,
     ),
 
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Used as a simple API versioning scheme for the ots_* namespace
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getApiLevel", with = "empty_params"))]
+    #[serde(rename = "ots_getApiLevel", with = "empty_params")]
     OtsGetApiLevel(()),
 
     /// Otterscan's `ots_getInternalOperations` endpoint
     /// Traces internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
     /// certain transaction.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getInternalOperations", with = "sequence"))]
+    #[serde(rename = "ots_getInternalOperations", with = "sequence")]
     OtsGetInternalOperations(B256),
 
     /// Otterscan's `ots_hasCode` endpoint
     /// Check if an ETH address contains code at a certain block number.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_hasCode"))]
+    #[serde(rename = "ots_hasCode")]
     OtsHasCode(
         Address,
-        #[cfg_attr(
-            feature = "serde",
-            serde(deserialize_with = "lenient_block_number::lenient_block_number", default)
-        )]
+        #[serde(deserialize_with = "lenient_block_number::lenient_block_number", default)]
         BlockNumber,
     ),
 
     /// Otterscan's `ots_traceTransaction` endpoint
     /// Trace a transaction and generate a trace call tree.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_traceTransaction", with = "sequence"))]
+    #[serde(rename = "ots_traceTransaction", with = "sequence")]
     OtsTraceTransaction(B256),
 
     /// Otterscan's `ots_getTransactionError` endpoint
     /// Given a transaction hash, returns its raw revert reason.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getTransactionError", with = "sequence"))]
+    #[serde(rename = "ots_getTransactionError", with = "sequence")]
     OtsGetTransactionError(B256),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
     /// Given a block number, return its data. Similar to the standard eth_getBlockByNumber/Hash
     /// method, but can be optimized by excluding unnecessary data such as transactions and
     /// logBloom
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetails"))]
+    #[serde(rename = "ots_getBlockDetails")]
     OtsGetBlockDetails(
-        #[cfg_attr(
-            feature = "serde",
-            serde(deserialize_with = "lenient_block_number::lenient_block_number_seq", default)
-        )]
+        #[serde(deserialize_with = "lenient_block_number::lenient_block_number_seq", default)]
         BlockNumber,
     ),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
     /// Same as `ots_getBlockDetails`, but receiving a block hash instead of number
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetailsByHash", with = "sequence"))]
+    #[serde(rename = "ots_getBlockDetailsByHash", with = "sequence")]
     OtsGetBlockDetailsByHash(B256),
 
     /// Otterscan's `ots_getBlockTransactions` endpoint
     /// Gets paginated transaction data for a certain block. Return data is similar to
     /// eth_getBlockBy* + eth_getTransactionReceipt.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockTransactions"))]
+    #[serde(rename = "ots_getBlockTransactions")]
     OtsGetBlockTransactions(u64, usize, usize),
 
     /// Otterscan's `ots_searchTransactionsBefore` endpoint
     /// Address history navigation. searches backwards from certain point in time.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_searchTransactionsBefore"))]
+    #[serde(rename = "ots_searchTransactionsBefore")]
     OtsSearchTransactionsBefore(Address, u64, usize),
 
     /// Otterscan's `ots_searchTransactionsAfter` endpoint
     /// Address history navigation. searches forward from certain point in time.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_searchTransactionsAfter"))]
+    #[serde(rename = "ots_searchTransactionsAfter")]
     OtsSearchTransactionsAfter(Address, u64, usize),
 
     /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
     /// Given a sender address and a nonce, returns the tx hash or null if not found. It returns
     /// only the tx hash on success, you can use the standard eth_getTransactionByHash after that
     /// to get the full transaction data.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getTransactionBySenderAndNonce",))]
+    #[serde(rename = "ots_getTransactionBySenderAndNonce")]
     OtsGetTransactionBySenderAndNonce(
         Address,
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
+        #[serde(deserialize_with = "deserialize_number")] U256,
+    ),
+
+    /// Returns the transaction by sender and nonce
+    /// Returns the full transaction data.
+    #[serde(rename = "eth_getTransactionBySenderAndNonce")]
+    EthGetTransactionBySenderAndNonce(
+        Address,
+        #[serde(deserialize_with = "deserialize_number")] U256,
     ),
 
     /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
     /// Given an ETH contract address, returns the tx hash and the direct address who created the
     /// contract.
-    #[cfg_attr(feature = "serde", serde(rename = "ots_getContractCreator", with = "sequence"))]
+    #[serde(rename = "ots_getContractCreator", with = "sequence")]
     OtsGetContractCreator(Address),
 
     /// Removes transactions from the pool by sender origin.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_removePoolTransactions", with = "sequence")
-    )]
+    #[serde(rename = "anvil_removePoolTransactions", with = "sequence")]
     RemovePoolTransactions(Address),
 
     /// Reorg the chain
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
+    #[serde(rename = "anvil_reorg")]
     Reorg(ReorgOptions),
 
     /// Rollback the chain
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_rollback", with = "sequence"))]
+    #[serde(rename = "anvil_rollback", with = "sequence")]
     Rollback(Option<u64>),
 
     /// Wallet
-    #[cfg_attr(feature = "serde", serde(rename = "wallet_getCapabilities", with = "empty_params"))]
+    #[serde(rename = "wallet_getCapabilities", with = "empty_params")]
     WalletGetCapabilities(()),
 
-    /// Wallet send_tx
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "wallet_sendTransaction",
-            alias = "odyssey_sendTransaction",
-            with = "sequence"
-        )
-    )]
-    WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
-
-    /// Add an address to the [`DelegationCapability`] of the wallet
-    ///
-    /// [`DelegationCapability`]: wallet::DelegationCapability  
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_addCapability", with = "sequence"))]
+    /// Add an address to the delegation capability of the wallet
+    #[serde(rename = "anvil_addCapability", with = "sequence")]
     AnvilAddCapability(Address),
 
     /// Set the executor (sponsor) wallet
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_setExecutor", with = "sequence"))]
+    #[serde(rename = "anvil_setExecutor", with = "sequence")]
     AnvilSetExecutor(String),
 }
 
 /// Represents ethereum JSON-RPC API
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "method", content = "params")]
 pub enum EthPubSub {
     /// Subscribe to an eth subscription
-    #[cfg_attr(feature = "serde", serde(rename = "eth_subscribe"))]
-    EthSubscribe(
-        SubscriptionKind,
-        #[cfg_attr(feature = "serde", serde(default))] Box<SubscriptionParams>,
-    ),
+    #[serde(rename = "eth_subscribe")]
+    EthSubscribe(SubscriptionKind, #[serde(default)] Box<SubscriptionParams>),
 
     /// Unsubscribe from an eth subscription
-    #[cfg_attr(feature = "serde", serde(rename = "eth_unsubscribe", with = "sequence"))]
+    #[serde(rename = "eth_unsubscribe", with = "sequence")]
     EthUnSubscribe(SubscriptionId),
 }
 
 /// Container type for either a request or a pub sub
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(untagged)]
 pub enum EthRpcCall {
     Request(Box<EthRequest>),
     PubSub(EthPubSub),

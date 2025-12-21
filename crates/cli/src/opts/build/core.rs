@@ -3,20 +3,19 @@ use crate::{opts::CompilerOpts, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, RevertStrings},
+    Project,
+    artifacts::{RevertStrings, remappings::Remapping},
     compilers::multi::MultiCompiler,
     utils::canonicalized,
-    Project,
 };
 use foundry_config::{
-    figment,
+    Config, DenyLevel, Remappings,
     figment::{
+        self, Figment, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
-    Config, Remappings,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -34,6 +33,11 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_cache: bool,
 
+    /// Enable dynamic test linking.
+    #[arg(long, conflicts_with = "no_cache")]
+    #[serde(skip)]
+    pub dynamic_test_linking: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -44,9 +48,26 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
-    /// Warnings will trigger a compiler error
-    #[arg(long, help_heading = "Compiler options")]
+    /// A compiler error will be triggered at the specified diagnostic level.
+    ///
+    /// Replaces the deprecated `--deny-warnings` flag.
+    ///
+    /// Possible values:
+    ///  - `never`: Do not treat any diagnostics as errors.
+    ///  - `warnings`: Treat warnings as errors.
+    ///  - `notes`: Treat both, warnings and notes, as errors.
+    #[arg(
+        long,
+        short = 'D',
+        help_heading = "Compiler options",
+        value_name = "LEVEL",
+        conflicts_with = "deny_warnings"
+    )]
     #[serde(skip)]
+    pub deny: Option<DenyLevel>,
+
+    /// Deprecated: use `--deny=warnings` instead.
+    #[arg(long = "deny-warnings", hide = true)]
     pub deny_warnings: bool,
 
     /// Do not auto-detect the `solc` version.
@@ -77,6 +98,11 @@ pub struct BuildOpts {
     #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub via_ir: bool,
+
+    /// Changes compilation to only use literal content and not URLs.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub use_literal_content: bool,
 
     /// Do not append any metadata to the bytecode.
     ///
@@ -120,15 +146,6 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    /// Use EOF-enabled solc binary. Enables via-ir and sets EVM version to Prague. Requires Docker
-    /// to be installed.
-    ///
-    /// Note that this is a temporary solution until the EOF support is merged into the main solc
-    /// release.
-    #[arg(long)]
-    #[serde(skip)]
-    pub eof: bool,
-
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
@@ -166,7 +183,7 @@ impl BuildOpts {
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a BuildOpts> for Figment {
     fn from(args: &'a BuildOpts) -> Self {
-        let mut figment = if let Some(ref config_path) = args.project_paths.config_path {
+        let root = if let Some(config_path) = &args.project_paths.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
             }
@@ -174,10 +191,11 @@ impl<'a> From<&'a BuildOpts> for Figment {
                 panic!("error: the config-path must be a path to a foundry.toml file")
             }
             let config_path = canonicalized(config_path);
-            Config::figment_with_root(config_path.parent().unwrap())
+            config_path.parent().unwrap().to_path_buf()
         } else {
-            Config::figment_with_root(args.project_paths.project_root())
+            args.project_paths.project_root()
         };
+        let mut figment = Config::figment_with_root(root);
 
         // remappings should stack
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
@@ -219,11 +237,18 @@ impl Provider for BuildOpts {
         }
 
         if self.deny_warnings {
-            dict.insert("deny_warnings".to_string(), true.into());
+            dict.insert("deny".to_string(), figment::value::Value::serialize(DenyLevel::Warnings)?);
+            _ = sh_warn!("`--deny-warnings` is being deprecated in favor of `--deny warnings`.");
+        } else if let Some(deny) = self.deny {
+            dict.insert("deny".to_string(), figment::value::Value::serialize(deny)?);
         }
 
         if self.via_ir {
             dict.insert("via_ir".to_string(), true.into());
+        }
+
+        if self.use_literal_content {
+            dict.insert("use_literal_content".to_string(), true.into());
         }
 
         if self.no_metadata {
@@ -238,6 +263,10 @@ impl Provider for BuildOpts {
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());
+        }
+
+        if self.dynamic_test_linking {
+            dict.insert("dynamic_test_linking".to_string(), true.into());
         }
 
         if self.build_info {
@@ -266,10 +295,6 @@ impl Provider for BuildOpts {
 
         if let Some(ref revert) = self.revert_strings {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
-        }
-
-        if self.eof {
-            dict.insert("eof".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

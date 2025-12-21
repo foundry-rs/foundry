@@ -1,7 +1,10 @@
 use alloy_primitives::U256;
+use foundry_evm_core::backend::DatabaseError;
 use revm::{
-    interpreter::{InstructionResult, Interpreter},
-    Database, EvmContext, Inspector,
+    Database, Inspector,
+    context::ContextTr,
+    inspector::JournalExt,
+    interpreter::{Interpreter, interpreter::EthInterpreter, interpreter_types::Jumps},
 };
 
 /// An inspector for Chisel
@@ -10,7 +13,7 @@ pub struct ChiselState {
     /// The PC of the final instruction
     pub final_pc: usize,
     /// The final state of the REPL contract call
-    pub state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub state: Option<(Vec<U256>, Vec<u8>)>,
 }
 
 impl ChiselState {
@@ -21,16 +24,20 @@ impl ChiselState {
     }
 }
 
-impl<DB: Database> Inspector<DB> for ChiselState {
+impl<CTX, D> Inspector<CTX, EthInterpreter> for ChiselState
+where
+    D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
+{
     #[cold]
-    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         // If we are at the final pc of the REPL contract execution, set the state.
         // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.
-        if self.final_pc == interp.program_counter() - 1 {
+        if self.final_pc == interpreter.bytecode.pc() - 1 {
             self.state = Some((
-                interp.stack.data().clone(),
-                interp.shared_memory.context_memory().to_vec(),
-                interp.instruction_result,
+                interpreter.stack.data().clone(),
+                interpreter.memory.context_memory().to_vec(),
             ))
         }
     }

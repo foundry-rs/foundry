@@ -4,27 +4,31 @@
 
 use crate::{abi::abi_decode_calldata, provider::runtime_transport::RuntimeTransportBuilder};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{B256, Selector, map::HashMap};
 use eyre::Context;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use itertools::Itertools;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fmt,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
-const BASE_URL: &str = "https://api.openchain.xyz";
-const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
-const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
+const BASE_URL: &str = "https://api.4byte.sourcify.dev";
+const SELECTOR_LOOKUP_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
+const SELECTOR_IMPORT_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/import";
 
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How many request can time out before we decide this is a spurious connection.
 const MAX_TIMEDOUT_REQ: usize = 4usize;
+
+/// List of signatures for a given [`SelectorKind`].
+pub type OpenChainSignatures = Vec<String>;
 
 /// A client that can request API data from OpenChain.
 #[derive(Clone, Debug)]
@@ -54,7 +58,7 @@ impl OpenChainClient {
         })
     }
 
-    async fn get_text(&self, url: &str) -> reqwest::Result<String> {
+    async fn get_text(&self, url: impl reqwest::IntoUrl + fmt::Display) -> reqwest::Result<String> {
         trace!(%url, "GET");
         self.inner
             .get(url)
@@ -102,7 +106,7 @@ impl OpenChainClient {
         if is_connectivity_err(err) {
             warn!("spurious network detected for OpenChain");
             let previous = self.timedout_requests.fetch_add(1, Ordering::SeqCst);
-            if previous >= self.max_timedout_requests {
+            if previous + 1 >= self.max_timedout_requests {
                 self.set_spurious();
             }
         }
@@ -128,108 +132,83 @@ impl OpenChainClient {
     /// Decodes the given function or event selector using OpenChain
     pub async fn decode_selector(
         &self,
-        selector: &str,
-        selector_type: SelectorType,
-    ) -> eyre::Result<Vec<String>> {
-        self.decode_selectors(selector_type, std::iter::once(selector))
-            .await?
-            .pop() // Not returning on the previous line ensures a vector with exactly 1 element
-            .unwrap()
-            .ok_or_else(|| eyre::eyre!("No signature found"))
+        selector: SelectorKind,
+    ) -> eyre::Result<OpenChainSignatures> {
+        Ok(self.decode_selectors(&[selector]).await?.pop().unwrap())
     }
 
     /// Decodes the given function, error or event selectors using OpenChain.
     pub async fn decode_selectors(
         &self,
-        selector_type: SelectorType,
-        selectors: impl IntoIterator<Item = impl Into<String>>,
-    ) -> eyre::Result<Vec<Option<Vec<String>>>> {
-        let selectors: Vec<String> = selectors
-            .into_iter()
-            .map(Into::into)
-            .map(|s| s.to_lowercase())
-            .map(|s| if s.starts_with("0x") { s } else { format!("0x{s}") })
-            .collect();
-
+        selectors: &[SelectorKind],
+    ) -> eyre::Result<Vec<OpenChainSignatures>> {
         if selectors.is_empty() {
             return Ok(vec![]);
         }
 
-        debug!(len = selectors.len(), "decoding selectors");
-        trace!(?selectors, "decoding selectors");
+        if enabled!(tracing::Level::TRACE) {
+            trace!(?selectors, "decoding selectors");
+        } else {
+            debug!(len = selectors.len(), "decoding selectors");
+        }
 
-        // exit early if spurious connection
+        // Exit early if spurious connection.
         self.ensure_not_spurious()?;
 
-        let expected_len = match selector_type {
-            SelectorType::Function | SelectorType::Error => 10, // 0x + hex(4bytes)
-            SelectorType::Event => 66,                          // 0x + hex(32bytes)
-        };
-        if let Some(s) = selectors.iter().find(|s| s.len() != expected_len) {
-            eyre::bail!(
-                "Invalid selector {s}: expected {expected_len} characters (including 0x prefix)."
-            )
-        }
-
-        #[derive(Deserialize)]
-        struct Decoded {
-            name: String,
-        }
-
-        #[derive(Deserialize)]
-        struct ApiResult {
-            event: HashMap<String, Option<Vec<Decoded>>>,
-            function: HashMap<String, Option<Vec<Decoded>>>,
-        }
-
-        #[derive(Deserialize)]
-        struct ApiResponse {
-            ok: bool,
-            result: ApiResult,
-        }
-
-        let url = format!(
-            "{SELECTOR_LOOKUP_URL}?{ltype}={selectors_str}",
-            ltype = match selector_type {
-                SelectorType::Function | SelectorType::Error => "function",
-                SelectorType::Event => "event",
-            },
-            selectors_str = selectors.join(",")
-        );
-
-        let res = self.get_text(&url).await?;
-        let api_response = match serde_json::from_str::<ApiResponse>(&res) {
-            Ok(inner) => inner,
-            Err(err) => {
-                eyre::bail!("Could not decode response:\n {res}.\nError: {err}")
+        // Build the URL with the query string.
+        let mut url: url::Url = SELECTOR_LOOKUP_URL.parse().unwrap();
+        {
+            let mut query = url.query_pairs_mut();
+            let functions = selectors.iter().filter_map(SelectorKind::as_function);
+            if functions.clone().next().is_some() {
+                query.append_pair("function", &functions.format(",").to_string());
             }
-        };
-
-        if !api_response.ok {
-            eyre::bail!("Failed to decode:\n {res}")
+            let events = selectors.iter().filter_map(SelectorKind::as_event);
+            if events.clone().next().is_some() {
+                query.append_pair("event", &events.format(",").to_string());
+            }
+            let _ = query.finish();
         }
 
-        let decoded = match selector_type {
-            SelectorType::Function | SelectorType::Error => api_response.result.function,
-            SelectorType::Event => api_response.result.event,
+        let text = self.get_text(url).await?;
+        let SignatureResponse { ok, result } = match serde_json::from_str(&text) {
+            Ok(response) => response,
+            Err(err) => eyre::bail!("could not decode response: {err}: {text}"),
         };
+        if !ok {
+            eyre::bail!("OpenChain returned an error: {text}");
+        }
 
         Ok(selectors
-            .into_iter()
-            .map(|selector| match decoded.get(&selector) {
-                Some(Some(r)) => Some(r.iter().map(|d| d.name.clone()).collect()),
-                _ => None,
+            .iter()
+            .map(|selector| {
+                let signatures = match selector {
+                    SelectorKind::Function(selector) | SelectorKind::Error(selector) => {
+                        result.function.get(selector)
+                    }
+                    SelectorKind::Event(hash) => result.event.get(hash),
+                };
+                signatures
+                    .map(Option::as_deref)
+                    .unwrap_or_default()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|sig| sig.name.clone())
+                    .collect()
             })
             .collect())
     }
 
     /// Fetches a function signature given the selector using OpenChain
-    pub async fn decode_function_selector(&self, selector: &str) -> eyre::Result<Vec<String>> {
-        self.decode_selector(selector, SelectorType::Function).await
+    pub async fn decode_function_selector(
+        &self,
+        selector: Selector,
+    ) -> eyre::Result<OpenChainSignatures> {
+        self.decode_selector(SelectorKind::Function(selector)).await
     }
 
     /// Fetches all possible signatures and attempts to abi decode the calldata
-    pub async fn decode_calldata(&self, calldata: &str) -> eyre::Result<Vec<String>> {
+    pub async fn decode_calldata(&self, calldata: &str) -> eyre::Result<OpenChainSignatures> {
         let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
         if calldata.len() < 8 {
             eyre::bail!(
@@ -238,19 +217,15 @@ impl OpenChainClient {
             )
         }
 
-        let sigs = self.decode_function_selector(&calldata[..8]).await?;
-
-        // filter for signatures that can be decoded
-        Ok(sigs
-            .iter()
-            .filter(|sig| abi_decode_calldata(sig, calldata, true, true).is_ok())
-            .cloned()
-            .collect::<Vec<String>>())
+        let mut sigs = self.decode_function_selector(calldata[..8].parse()?).await?;
+        // Retain only signatures that can be decoded.
+        sigs.retain(|sig| abi_decode_calldata(sig, calldata, true, true).is_ok());
+        Ok(sigs)
     }
 
-    /// Fetches an event signature given the 32 byte topic using OpenChain
-    pub async fn decode_event_topic(&self, topic: &str) -> eyre::Result<Vec<String>> {
-        self.decode_selector(topic, SelectorType::Event).await
+    /// Fetches an event signature given the 32 byte topic using OpenChain.
+    pub async fn decode_event_topic(&self, topic: B256) -> eyre::Result<OpenChainSignatures> {
+        self.decode_selector(SelectorKind::Event(topic)).await
     }
 
     /// Pretty print calldata and if available, fetch possible function signatures
@@ -284,11 +259,12 @@ impl OpenChainClient {
         let sigs = if offline {
             vec![]
         } else {
+            let selector = selector.parse()?;
             self.decode_function_selector(selector).await.unwrap_or_default().into_iter().collect()
         };
         let (_, data) = calldata.split_at(8);
 
-        if data.len() % 64 != 0 {
+        if !data.len().is_multiple_of(64) {
             eyre::bail!("\nInvalid calldata size")
         }
 
@@ -314,7 +290,7 @@ impl OpenChainClient {
 
         let request = match data {
             SelectorImportData::Abi(abis) => {
-                let functions_and_errors: Vec<String> = abis
+                let functions_and_errors: OpenChainSignatures = abis
                     .iter()
                     .flat_map(|abi| {
                         abi.functions()
@@ -344,12 +320,12 @@ impl OpenChainClient {
 
 pub enum SelectorOrSig {
     Selector(String),
-    Sig(Vec<String>),
+    Sig(OpenChainSignatures),
 }
 
 pub struct PossibleSigs {
     method: SelectorOrSig,
-    data: Vec<String>,
+    data: OpenChainSignatures,
 }
 
 impl PossibleSigs {
@@ -382,45 +358,59 @@ impl fmt::Display for PossibleSigs {
     }
 }
 
-/// The type of selector fetched from OpenChain.
-#[derive(Clone, Copy)]
-pub enum SelectorType {
+/// The kind of selector to fetch from OpenChain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SelectorKind {
     /// A function selector.
-    Function,
+    Function(Selector),
+    /// A custom error selector. Behaves the same as a function selector.
+    Error(Selector),
     /// An event selector.
-    Event,
-    /// An custom error selector.
-    Error,
+    Event(B256),
+}
+
+impl SelectorKind {
+    /// Returns the function selector if it is a function OR custom error.
+    pub fn as_function(&self) -> Option<Selector> {
+        match *self {
+            Self::Function(selector) | Self::Error(selector) => Some(selector),
+            _ => None,
+        }
+    }
+
+    /// Returns the event selector if it is an event.
+    pub fn as_event(&self) -> Option<B256> {
+        match *self {
+            Self::Event(hash) => Some(hash),
+            _ => None,
+        }
+    }
 }
 
 /// Decodes the given function or event selector using OpenChain.
-pub async fn decode_selector(
-    selector_type: SelectorType,
-    selector: &str,
-) -> eyre::Result<Vec<String>> {
-    OpenChainClient::new()?.decode_selector(selector, selector_type).await
+pub async fn decode_selector(selector: SelectorKind) -> eyre::Result<OpenChainSignatures> {
+    OpenChainClient::new()?.decode_selector(selector).await
 }
 
 /// Decodes the given function or event selectors using OpenChain.
 pub async fn decode_selectors(
-    selector_type: SelectorType,
-    selectors: impl IntoIterator<Item = impl Into<String>>,
-) -> eyre::Result<Vec<Option<Vec<String>>>> {
-    OpenChainClient::new()?.decode_selectors(selector_type, selectors).await
+    selectors: &[SelectorKind],
+) -> eyre::Result<Vec<OpenChainSignatures>> {
+    OpenChainClient::new()?.decode_selectors(selectors).await
 }
 
 /// Fetches a function signature given the selector using OpenChain.
-pub async fn decode_function_selector(selector: &str) -> eyre::Result<Vec<String>> {
+pub async fn decode_function_selector(selector: Selector) -> eyre::Result<OpenChainSignatures> {
     OpenChainClient::new()?.decode_function_selector(selector).await
 }
 
 /// Fetches all possible signatures and attempts to abi decode the calldata using OpenChain.
-pub async fn decode_calldata(calldata: &str) -> eyre::Result<Vec<String>> {
+pub async fn decode_calldata(calldata: &str) -> eyre::Result<OpenChainSignatures> {
     OpenChainClient::new()?.decode_calldata(calldata).await
 }
 
 /// Fetches an event signature given the 32 byte topic using OpenChain.
-pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
+pub async fn decode_event_topic(topic: B256) -> eyre::Result<OpenChainSignatures> {
     OpenChainClient::new()?.decode_event_topic(topic).await
 }
 
@@ -448,9 +438,9 @@ pub async fn pretty_calldata(
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RawSelectorImportData {
-    pub function: Vec<String>,
-    pub event: Vec<String>,
-    pub error: Vec<String>,
+    pub function: OpenChainSignatures,
+    pub event: OpenChainSignatures,
+    pub error: OpenChainSignatures,
 }
 
 impl RawSelectorImportData {
@@ -468,8 +458,8 @@ pub enum SelectorImportData {
 
 #[derive(Debug, Default, Serialize)]
 struct SelectorImportRequest {
-    function: Vec<String>,
-    event: Vec<String>,
+    function: OpenChainSignatures,
+    event: OpenChainSignatures,
 }
 
 #[derive(Debug, Deserialize)]
@@ -574,6 +564,24 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
     ParsedSignatures { signatures, abis }
 }
 
+/// [`SELECTOR_LOOKUP_URL`] response.
+#[derive(Deserialize)]
+struct SignatureResponse {
+    ok: bool,
+    result: SignatureResult,
+}
+
+#[derive(Deserialize)]
+struct SignatureResult {
+    event: HashMap<B256, Option<Vec<Signature>>>,
+    function: HashMap<Selector, Option<Vec<Signature>>>,
+}
+
+#[derive(Deserialize)]
+struct Signature {
+    name: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,5 +641,22 @@ mod tests {
             result,
             ParsedSignatures { signatures: Default::default(), ..Default::default() }
         );
+    }
+
+    #[tokio::test]
+    async fn spurious_marked_on_timeout_threshold() {
+        // Use an unreachable local port to trigger a quick connect error.
+        let client = OpenChainClient::new().expect("client must build");
+        let url = "http://127.0.0.1:9"; // Discard port; typically closed and fails fast.
+
+        // After MAX_TIMEDOUT_REQ - 1 failures we should NOT be spurious.
+        for i in 0..(MAX_TIMEDOUT_REQ - 1) {
+            let _ = client.get_text(url).await; // expect an error and internal counter increment
+            assert!(!client.is_spurious(), "unexpected spurious after {} failed attempts", i + 1);
+        }
+
+        // The Nth failure (N == MAX_TIMEDOUT_REQ) should flip the spurious flag.
+        let _ = client.get_text(url).await;
+        assert!(client.is_spurious(), "expected spurious after threshold failures");
     }
 }

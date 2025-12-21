@@ -3,9 +3,9 @@
 //! Common utilities for building and using foundry's tools.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[allow(unused_extern_crates)] // Used by `ConsoleFmt`.
+#[expect(unused_extern_crates)] // Used by `ConsoleFmt`.
 extern crate self as foundry_common;
 
 #[macro_use]
@@ -18,27 +18,30 @@ pub use foundry_common_fmt as fmt;
 
 pub mod abi;
 pub mod calc;
+pub mod comments;
 pub mod compile;
 pub mod constants;
 pub mod contracts;
-pub mod ens;
 pub mod errors;
-pub mod evm;
 pub mod fs;
+pub mod iter;
+pub mod mapping_slots;
+mod preprocessor;
 pub mod provider;
-pub mod reports;
 pub mod retry;
 pub mod selectors;
 pub mod serde_helpers;
+pub mod slot_identifier;
 pub mod term;
 pub mod traits;
 pub mod transactions;
 mod utils;
 pub mod version;
 
+pub use compile::Analysis;
 pub use constants::*;
 pub use contracts::*;
-pub use io::{shell, stdin, Shell};
+pub use io::{Shell, shell, stdin};
 pub use traits::*;
 pub use transactions::*;
 pub use utils::*;

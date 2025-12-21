@@ -6,7 +6,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_sign_typed_data() {
@@ -304,7 +304,10 @@ async fn can_sign_transaction() {
     // sign it via the eth_signTransaction API
     let signed_tx = api.sign_transaction(tx).await.unwrap();
 
-    assert_eq!(signed_tx, "0x02f866827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c001a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da");
+    assert_eq!(
+        signed_tx,
+        "0x02f866827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c001a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

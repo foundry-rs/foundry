@@ -1,5 +1,6 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
-//! WebSocket, or IPC transport and supports retries based on CUPS logic.
+//! WebSocket, or IPC transport. Retries are handled by a client layer (e.g.,
+//! `RetryBackoffLayer`) when used.
 
 use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
@@ -37,10 +38,6 @@ pub enum RuntimeTransportError {
     #[error("Internal transport error: {0} with {1}")]
     TransportError(TransportError, String),
 
-    /// Failed to lock the transport
-    #[error("Failed to lock the transport")]
-    LockError,
-
     /// Invalid URL scheme
     #[error("URL scheme is not supported: {0}")]
     BadScheme(String),
@@ -67,8 +64,9 @@ pub enum RuntimeTransportError {
 /// A runtime transport is a custom [`alloy_transport::Transport`] that only connects when the
 /// *first* request is made. When the first request is made, it will connect to the runtime using
 /// either an HTTP WebSocket, or IPC transport depending on the URL used.
-/// It also supports retries for rate-limiting and timeout-related errors.
-#[derive(Clone, Debug, Error)]
+/// Retries for rate-limiting and timeout-related errors are handled by an external
+/// client layer (e.g., `RetryBackoffLayer`) when configured.
+#[derive(Clone, Debug)]
 pub struct RuntimeTransport {
     /// The inner actual transport used.
     inner: Arc<RwLock<Option<InnerTransport>>>,
@@ -80,6 +78,8 @@ pub struct RuntimeTransport {
     jwt: Option<String>,
     /// The timeout for requests.
     timeout: std::time::Duration,
+    /// Whether to accept invalid certificates.
+    accept_invalid_certs: bool,
 }
 
 /// A builder for [RuntimeTransport].
@@ -89,12 +89,19 @@ pub struct RuntimeTransportBuilder {
     headers: Vec<String>,
     jwt: Option<String>,
     timeout: std::time::Duration,
+    accept_invalid_certs: bool,
 }
 
 impl RuntimeTransportBuilder {
     /// Create a new builder with the given URL.
     pub fn new(url: Url) -> Self {
-        Self { url, headers: vec![], jwt: None, timeout: REQUEST_TIMEOUT }
+        Self {
+            url,
+            headers: vec![],
+            jwt: None,
+            timeout: REQUEST_TIMEOUT,
+            accept_invalid_certs: false,
+        }
     }
 
     /// Set the URL for the transport.
@@ -115,6 +122,12 @@ impl RuntimeTransportBuilder {
         self
     }
 
+    /// Set whether to accept invalid certificates.
+    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+        self.accept_invalid_certs = accept_invalid_certs;
+        self
+    }
+
     /// Builds the [RuntimeTransport] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
@@ -124,6 +137,7 @@ impl RuntimeTransportBuilder {
             headers: self.headers,
             jwt: self.jwt,
             timeout: self.timeout,
+            accept_invalid_certs: self.accept_invalid_certs,
         }
     }
 }
@@ -138,7 +152,7 @@ impl RuntimeTransport {
     /// Connects the underlying transport, depending on the URL scheme.
     pub async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
-            "http" | "https" => self.connect_http().await,
+            "http" | "https" => self.connect_http(),
             "ws" | "wss" => self.connect_ws().await,
             "file" => self.connect_ipc().await,
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
@@ -149,7 +163,8 @@ impl RuntimeTransport {
     pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .tls_built_in_root_certs(self.url.scheme() == "https");
+            .tls_built_in_root_certs(self.url.scheme() == "https")
+            .danger_accept_invalid_certs(self.accept_invalid_certs);
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
@@ -165,7 +180,7 @@ impl RuntimeTransport {
         };
 
         // Add any custom headers.
-        for header in self.headers.iter() {
+        for header in &self.headers {
             let make_err = || RuntimeTransportError::BadHeader(header.to_string());
 
             let (key, val) = header.split_once(':').ok_or_else(make_err)?;
@@ -190,7 +205,7 @@ impl RuntimeTransport {
     }
 
     /// Connects to an HTTP [alloy_transport_http::Http] transport.
-    async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+    fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
     }
@@ -198,11 +213,15 @@ impl RuntimeTransport {
     /// Connects to a WS transport.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
-        let ws = WsConnect { url: self.url.to_string(), auth, config: None }
+        let mut ws = WsConnect::new(self.url.to_string());
+        if let Some(auth) = auth {
+            ws = ws.with_auth(auth);
+        };
+        let service = ws
             .into_service()
             .await
             .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?;
-        Ok(InnerTransport::Ws(ws))
+        Ok(InnerTransport::Ws(service))
     }
 
     /// Connects to an IPC transport.
@@ -218,8 +237,8 @@ impl RuntimeTransport {
 
     /// Sends a request using the underlying transport.
     /// If this is the first request, it will connect to the appropriate transport depending on the
-    /// URL scheme. When sending the request, retries will be automatically handled depending
-    /// on the parameters set on the [RuntimeTransport].
+    /// URL scheme. Retries are performed by an external client layer (e.g., `RetryBackoffLayer`),
+    /// if such a layer is configured by the caller.
     /// For sending the actual request, this action is delegated down to the
     /// underlying transport through Tower's [tower::Service::call]. See tower's [tower::Service]
     /// trait for more information.
@@ -313,9 +332,8 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 
     let url_str = url.as_str();
 
-    if url_str.starts_with(PREFIX) {
-        let pipe_name = &url_str[PREFIX.len()..];
-        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+    if let Some(pipe_name) = url_str.strip_prefix(PREFIX) {
+        let pipe_path = format!(r"\\.\pipe\{pipe_name}");
         return Ok(PathBuf::from(pipe_path));
     }
 
@@ -351,7 +369,7 @@ mod tests {
         let transport = RuntimeTransportBuilder::new(url.clone())
             .with_headers(vec!["User-Agent: test-agent".to_string()])
             .build();
-        let inner = transport.connect_http().await.unwrap();
+        let inner = transport.connect_http().unwrap();
 
         match inner {
             InnerTransport::Http(http) => {

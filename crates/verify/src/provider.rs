@@ -8,13 +8,13 @@ use async_trait::async_trait;
 use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
-    artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
-    multi::MultiCompilerSettings,
-    solc::Solc,
     Graph, Project,
+    artifacts::{Metadata, Source, output_selection::OutputSelection},
+    compilers::solc::SolcCompiler,
+    multi::{MultiCompilerParser, MultiCompilerSettings},
+    solc::Solc,
 };
-use foundry_config::Config;
+use foundry_config::{Chain, Config, EtherscanConfigError};
 use semver::Version;
 use std::{fmt, path::PathBuf, str::FromStr};
 
@@ -81,17 +81,16 @@ impl VerificationContext {
             .find(&self.target_path, &self.target_name)
             .ok_or_eyre("failed to find target artifact when compiling for metadata")?;
 
-        artifact.metadata.clone().ok_or_eyre("target artifact does not have an ABI")
+        artifact.metadata.clone().ok_or_eyre("target artifact does not have metadata")
     }
 
     /// Returns [Vec] containing imports of the target file.
     pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
         let mut sources = self.project.paths.read_input_files()?;
         sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph =
-            Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&self.project.paths, sources)?;
 
-        Ok(graph.imports(&self.target_path).into_iter().cloned().collect())
+        Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }
 }
 
@@ -169,26 +168,64 @@ pub enum VerificationProviderType {
 
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
-    pub fn client(&self, key: Option<&str>) -> Result<Box<dyn VerificationProvider>> {
-        if key.as_ref().is_some_and(|k| !k.is_empty()) && matches!(self, Self::Sourcify) {
+    pub fn client(
+        &self,
+        key: Option<&str>,
+        chain: Option<Chain>,
+        has_url: bool,
+    ) -> Result<Box<dyn VerificationProvider>> {
+        let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
+        // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
+        if !has_key && self.is_sourcify() {
+            sh_println!(
+                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
+            or use the --verifier flag to verify on another provider."
+            )?;
+            return Ok(Box::<SourcifyVerificationProvider>::default());
+        }
+
+        // 2. If `--verifier etherscan` is explicitly set, check if chain is supported and
+        // enforce the API key requirement.
+        if self.is_etherscan() {
+            if let Some(chain) = chain
+                && chain.etherscan_urls().is_none()
+            {
+                eyre::bail!(EtherscanConfigError::UnknownChain(
+                    "when using Etherscan verifier".to_string(),
+                    chain
+                ))
+            }
+            if !has_key {
+                eyre::bail!("ETHERSCAN_API_KEY must be set to use Etherscan as a verifier")
+            }
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
-        match self {
-            Self::Etherscan => {
-                if key.as_ref().is_none_or(|key| key.is_empty()) {
-                    eyre::bail!("ETHERSCAN_API_KEY must be set")
-                }
-                Ok(Box::<EtherscanVerificationProvider>::default())
+
+        // 3. If `--verifier blockscout | oklink | custom` is explicitly set, use the chosen
+        //    verifier and make sure an URL was specified.
+        if matches!(self, Self::Blockscout | Self::Oklink | Self::Custom) {
+            if !has_url {
+                eyre::bail!("No verifier URL specified for verifier {}", self);
             }
-            Self::Sourcify => {
-                sh_println!(
-                    "Attempting to verify on Sourcify, pass the --etherscan-api-key <API_KEY> to verify on Etherscan OR use the --verifier flag to verify on any other provider"
-                )?;
-                Ok(Box::<SourcifyVerificationProvider>::default())
-            }
-            Self::Blockscout => Ok(Box::<EtherscanVerificationProvider>::default()),
-            Self::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
-            Self::Custom => Ok(Box::<EtherscanVerificationProvider>::default()),
+            return Ok(Box::<EtherscanVerificationProvider>::default());
         }
+
+        // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
+        if has_key {
+            return Ok(Box::<EtherscanVerificationProvider>::default());
+        }
+
+        // 5. If no valid provider is specified, bail.
+        eyre::bail!(
+            "No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier."
+        )
+    }
+
+    pub fn is_sourcify(&self) -> bool {
+        matches!(self, Self::Sourcify)
+    }
+
+    pub fn is_etherscan(&self) -> bool {
+        matches!(self, Self::Etherscan)
     }
 }

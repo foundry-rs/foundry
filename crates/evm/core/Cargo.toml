@@ -18,9 +18,14 @@ foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm-abi.workspace = true
+foundry-evm-networks.workspace = true
 
+alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-evm.workspace = true
 alloy-genesis.workspace = true
+alloy-hardforks.workspace = true
+alloy-op-hardforks.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = [
     "serde",
@@ -43,11 +48,12 @@ revm = { workspace = true, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
-    "optimism",
     "c-kzg",
     "blst",
 ] }
 revm-inspectors.workspace = true
+op-revm.workspace = true
+alloy-op-evm.workspace = true
 
 auto_impl.workspace = true
 eyre.workspace = true

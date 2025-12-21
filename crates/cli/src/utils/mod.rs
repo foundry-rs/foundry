@@ -1,18 +1,22 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::U256;
-use alloy_provider::{network::AnyNetwork, Provider};
+use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
     shell,
 };
 use foundry_config::{Chain, Config};
+use itertools::Itertools;
+use path_slash::PathExt;
+use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
-    future::Future,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    str::FromStr,
+    sync::LazyLock,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing_subscriber::prelude::*;
@@ -26,6 +30,9 @@ pub use suggestions::*;
 mod abi;
 pub use abi::*;
 
+mod allocator;
+pub use allocator::*;
+
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;
@@ -37,6 +44,13 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
+
+/// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
+pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#).unwrap());
+/// Regex used to parse `git submodule status` output.
+pub static SUBMODULE_STATUS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$").unwrap());
 
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
@@ -70,17 +84,19 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 
 /// Initializes a tracing Subscriber for logging
 pub fn subscriber() {
-    let registry = tracing_subscriber::Registry::default()
-        .with(tracing_subscriber::EnvFilter::from_default_env());
+    let registry = tracing_subscriber::Registry::default().with(env_filter());
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
     registry.with(tracing_subscriber::fmt::layer()).init()
 }
 
-pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name, None);
-    let s = forge_fmt::format(&s)?;
-    Ok(s)
+fn env_filter() -> tracing_subscriber::EnvFilter {
+    const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    for &directive in DEFAULT_DIRECTIVES {
+        filter = filter.add_directive(directive.parse().unwrap());
+    }
+    filter
 }
 
 /// Returns a [RetryProvider] instantiated using [Config]'s
@@ -95,6 +111,8 @@ pub fn get_provider(config: &Config) -> Result<RetryProvider> {
 pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let mut builder = ProviderBuilder::new(url.as_ref());
+
+    builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
 
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);
@@ -169,10 +187,12 @@ pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
-/// Runs the `future` in a new [`tokio::runtime::Runtime`]
-pub fn block_on<F: Future>(future: F) -> F::Output {
-    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-    rt.block_on(future)
+/// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
+pub fn common_setup() {
+    install_crypto_provider();
+    crate::handler::install();
+    load_dotenv();
+    enable_paint();
 }
 
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
@@ -203,6 +223,35 @@ pub fn load_dotenv() {
 pub fn enable_paint() {
     let enable = yansi::Condition::os_support() && yansi::Condition::tty_and_color_live();
     yansi::whenever(yansi::Condition::cached(enable));
+}
+
+/// This force installs the default crypto provider.
+///
+/// This is necessary in case there are more than one available backends enabled in rustls (ring,
+/// aws-lc-rs).
+///
+/// This should be called high in the main fn.
+///
+/// See also:
+///   <https://github.com/snapview/tokio-tungstenite/issues/353#issuecomment-2455100010>
+///   <https://github.com/awslabs/aws-sdk-rust/discussions/1257>
+pub fn install_crypto_provider() {
+    // https://github.com/snapview/tokio-tungstenite/issues/353
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install default rustls crypto provider");
+}
+
+/// Fetches the ABI of a contract from Etherscan.
+pub async fn fetch_abi_from_etherscan(
+    address: Address,
+    config: &foundry_config::Config,
+) -> Result<Vec<(JsonAbi, String)>> {
+    let chain = config.chain.unwrap_or_default();
+    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let source = client.contract_source_code(address).await?;
+    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -277,12 +326,10 @@ pub struct Git<'a> {
 }
 
 impl<'a> Git<'a> {
-    #[inline]
     pub fn new(root: &'a Path) -> Self {
         Self { root, quiet: shell::is_quiet(), shallow: false }
     }
 
-    #[inline]
     pub fn from_config(config: &'a Config) -> Self {
         Self::new(config.root.as_path())
     }
@@ -347,18 +394,15 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    #[inline]
     pub fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    #[inline]
     pub fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    #[inline]
     pub fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
@@ -372,11 +416,27 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
+    /// Returns the current HEAD commit hash of the current branch.
+    pub fn head(self) -> Result<String> {
+        self.cmd().args(["rev-parse", "HEAD"]).get_stdout_lossy()
+    }
+
+    pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
+        self.cmd_at(at).arg("checkout").arg(tag).exec().map(drop)
+    }
+
     pub fn init(self) -> Result<()> {
         self.cmd().arg("init").exec().map(drop)
     }
 
-    #[allow(clippy::should_implement_trait)] // this is not std::ops::Add clippy
+    pub fn current_rev_branch(self, at: &Path) -> Result<(String, String)> {
+        let rev = self.cmd_at(at).args(["rev-parse", "HEAD"]).get_stdout_lossy()?;
+        let branch =
+            self.cmd_at(at).args(["rev-parse", "--abbrev-ref", "HEAD"]).get_stdout_lossy()?;
+        Ok((rev, branch))
+    }
+
+    #[expect(clippy::should_implement_trait)] // this is not std::ops::Add clippy
     pub fn add<I, S>(self, paths: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,
@@ -437,6 +497,10 @@ impl<'a> Git<'a> {
         self.cmd().args(["rev-parse", "--is-inside-work-tree"]).status().map(|s| s.success())
     }
 
+    pub fn is_repo_root(self) -> Result<bool> {
+        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
+    }
+
     pub fn is_clean(self) -> Result<bool> {
         self.cmd().args(["status", "--porcelain"]).exec().map(|out| out.stdout.is_empty())
     }
@@ -447,6 +511,26 @@ impl<'a> Git<'a> {
             .arg(branch)
             .get_stdout_lossy()
             .map(|stdout| !stdout.is_empty())
+    }
+
+    pub fn has_tag(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
+        self.cmd_at(at)
+            .args(["tag", "--list"])
+            .arg(tag)
+            .get_stdout_lossy()
+            .map(|stdout| !stdout.is_empty())
+    }
+
+    pub fn has_rev(self, rev: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
+        self.cmd_at(at)
+            .args(["cat-file", "-t"])
+            .arg(rev)
+            .get_stdout_lossy()
+            .map(|stdout| &stdout == "commit")
+    }
+
+    pub fn get_rev(self, tag_or_branch: impl AsRef<OsStr>, at: &Path) -> Result<String> {
+        self.cmd_at(at).args(["rev-list", "-n", "1"]).arg(tag_or_branch).get_stdout_lossy()
     }
 
     pub fn ensure_clean(self) -> Result<()> {
@@ -477,6 +561,63 @@ ignore them in the `.gitignore` file."
         self.cmd().arg("tag").get_stdout_lossy()
     }
 
+    /// Returns the tag the commit first appeared in.
+    ///
+    /// E.g Take rev = `abc1234`. This commit can be found in multiple releases (tags).
+    /// Consider releases: `v0.1.0`, `v0.2.0`, `v0.3.0` in chronological order, `rev` first appeared
+    /// in `v0.2.0`.
+    ///
+    /// Hence, `tag_for_commit("abc1234")` will return `v0.2.0`.
+    pub fn tag_for_commit(self, rev: &str, at: &Path) -> Result<Option<String>> {
+        self.cmd_at(at)
+            .args(["tag", "--contains"])
+            .arg(rev)
+            .get_stdout_lossy()
+            .map(|stdout| stdout.lines().next().map(str::to_string))
+    }
+
+    /// Returns a list of tuples of submodule paths and their respective branches.
+    ///
+    /// This function reads the `.gitmodules` file and returns the paths of all submodules that have
+    /// a branch. The paths are relative to the Git::root_of(git.root) and not lib/ directory.
+    ///
+    /// `at` is the dir in which the `.gitmodules` file is located, this is the git root.
+    /// `lib` is name of the directory where the submodules are located.
+    pub fn read_submodules_with_branch(
+        self,
+        at: &Path,
+        lib: &OsStr,
+    ) -> Result<HashMap<PathBuf, String>> {
+        // Read the .gitmodules file
+        let gitmodules = foundry_common::fs::read_to_string(at.join(".gitmodules"))?;
+
+        let paths = SUBMODULE_BRANCH_REGEX
+            .captures_iter(&gitmodules)
+            .map(|cap| {
+                let path_str = cap.get(1).unwrap().as_str();
+                let path = PathBuf::from_str(path_str).unwrap();
+                trace!(path = %path.display(), "unstripped path");
+
+                // Keep only the components that come after the lib directory.
+                // This needs to be done because the lockfile uses paths relative foundry project
+                // root whereas .gitmodules use paths relative to the git root which may not be the
+                // project root. e.g monorepo.
+                // Hence, if path is lib/solady, then `lib/solady` is kept. if path is
+                // packages/contract-bedrock/lib/solady, then `lib/solady` is kept.
+                let lib_pos = path.components().find_position(|c| c.as_os_str() == lib);
+                let path = path
+                    .components()
+                    .skip(lib_pos.map(|(i, _)| i).unwrap_or(0))
+                    .collect::<PathBuf>();
+
+                let branch = cap.get(2).unwrap().as_str().to_string();
+                (path, branch)
+            })
+            .collect::<HashMap<_, _>>();
+
+        Ok(paths)
+    }
+
     pub fn has_missing_dependencies<I, S>(self, paths: I) -> Result<bool>
     where
         I: IntoIterator<Item = S>,
@@ -489,7 +630,7 @@ ignore them in the `.gitignore` file."
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
     }
 
-    /// Returns true if the given path has no submodules by checking `git submodule status`
+    /// Returns true if the given path has submodules by checking `git submodule status`
     pub fn has_submodules<I, S>(self, paths: I) -> Result<bool>
     where
         I: IntoIterator<Item = S>,
@@ -554,8 +695,35 @@ ignore them in the `.gitignore` file."
             .map(drop)
     }
 
+    /// If the status is prefix with `-`, the submodule is not initialized.
+    ///
+    /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
+    pub fn submodules_uninitialized(self) -> Result<bool> {
+        self.cmd()
+            .args(["submodule", "status"])
+            .get_stdout_lossy()
+            .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
+    }
+
+    /// Initializes the git submodules.
     pub fn submodule_init(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
+    }
+
+    pub fn submodules(&self) -> Result<Submodules> {
+        self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
+    }
+
+    pub fn submodule_sync(self) -> Result<()> {
+        self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
+    }
+
+    /// Get the URL of a submodule from git config
+    pub fn submodule_url(self, path: &Path) -> Result<Option<String>> {
+        self.cmd()
+            .args(["config", "--get", &format!("submodule.{}.url", path.to_slash_lossy())])
+            .get_stdout_lossy()
+            .map(|url| Some(url.trim().to_string()))
     }
 
     pub fn cmd(self) -> Command {
@@ -578,20 +746,116 @@ ignore them in the `.gitignore` file."
 
     // don't set this in cmd() because it's not wanted for all commands
     fn stderr(self) -> Stdio {
-        if self.quiet {
-            Stdio::piped()
-        } else {
-            Stdio::inherit()
-        }
+        if self.quiet { Stdio::piped() } else { Stdio::inherit() }
     }
 }
 
+/// Deserialized `git submodule status lib/dep` output.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct Submodule {
+    /// Current commit hash the submodule is checked out at.
+    rev: String,
+    /// Relative path to the submodule.
+    path: PathBuf,
+}
+
+impl Submodule {
+    pub fn new(rev: String, path: PathBuf) -> Self {
+        Self { rev, path }
+    }
+
+    pub fn rev(&self) -> &str {
+        &self.rev
+    }
+
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl FromStr for Submodule {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let caps = SUBMODULE_STATUS_REGEX
+            .captures(s)
+            .ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
+
+        Ok(Self {
+            rev: caps.get(1).unwrap().as_str().to_string(),
+            path: PathBuf::from(caps.get(2).unwrap().as_str()),
+        })
+    }
+}
+
+/// Deserialized `git submodule status` output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Submodules(pub Vec<Submodule>);
+
+impl Submodules {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl FromStr for Submodules {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let subs = s.lines().map(str::parse).collect::<Result<Vec<Submodule>>>()?;
+        Ok(Self(subs))
+    }
+}
+
+impl<'a> IntoIterator for &'a Submodules {
+    type Item = &'a Submodule;
+    type IntoIter = std::slice::Iter<'a, Submodule>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn parse_submodule_status() {
+        let s = "+8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts (v4.8.0-791-g8829465a)";
+        let sub = Submodule::from_str(s).unwrap();
+        assert_eq!(sub.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(sub.path(), Path::new("lib/openzeppelin-contracts"));
+
+        let s = "-8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts";
+        let sub = Submodule::from_str(s).unwrap();
+        assert_eq!(sub.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(sub.path(), Path::new("lib/openzeppelin-contracts"));
+
+        let s = "8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts";
+        let sub = Submodule::from_str(s).unwrap();
+        assert_eq!(sub.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(sub.path(), Path::new("lib/openzeppelin-contracts"));
+    }
+
+    #[test]
+    fn parse_multiline_submodule_status() {
+        let s = r#"+d3db4ef90a72b7d24aa5a2e5c649593eaef7801d lib/forge-std (v1.9.4-6-gd3db4ef)
++8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts (v4.8.0-791-g8829465a)
+"#;
+        let subs = Submodules::from_str(s).unwrap().0;
+        assert_eq!(subs.len(), 2);
+        assert_eq!(subs[0].rev(), "d3db4ef90a72b7d24aa5a2e5c649593eaef7801d");
+        assert_eq!(subs[0].path(), Path::new("lib/forge-std"));
+        assert_eq!(subs[1].rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(subs[1].path(), Path::new("lib/openzeppelin-contracts"));
+    }
 
     #[test]
     fn foundry_path_ext_works() {
@@ -628,5 +892,90 @@ mod tests {
 
         assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
         assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
+    }
+
+    #[test]
+    fn test_read_gitmodules_regex() {
+        let gitmodules = r#"
+        [submodule "lib/solady"]
+        path = lib/solady
+        url = ""
+        branch = v0.1.0
+        [submodule "lib/openzeppelin-contracts"]
+        path = lib/openzeppelin-contracts
+        url = ""
+        branch = v4.8.0-791-g8829465a
+        [submodule "lib/forge-std"]
+        path = lib/forge-std
+        url = ""
+"#;
+
+        let paths = SUBMODULE_BRANCH_REGEX
+            .captures_iter(gitmodules)
+            .map(|cap| {
+                (
+                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
+                    String::from(cap.get(2).unwrap().as_str()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(paths.get(Path::new("lib/solady")).unwrap(), "v0.1.0");
+        assert_eq!(
+            paths.get(Path::new("lib/openzeppelin-contracts")).unwrap(),
+            "v4.8.0-791-g8829465a"
+        );
+
+        let no_branch_gitmodules = r#"
+        [submodule "lib/solady"]
+        path = lib/solady
+        url = ""
+        [submodule "lib/openzeppelin-contracts"]
+        path = lib/openzeppelin-contracts
+        url = ""
+        [submodule "lib/forge-std"]
+        path = lib/forge-std
+        url = ""
+"#;
+        let paths = SUBMODULE_BRANCH_REGEX
+            .captures_iter(no_branch_gitmodules)
+            .map(|cap| {
+                (
+                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
+                    String::from(cap.get(2).unwrap().as_str()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert!(paths.is_empty());
+
+        let branch_in_between = r#"
+        [submodule "lib/solady"]
+        path = lib/solady
+        url = ""
+        [submodule "lib/openzeppelin-contracts"]
+        path = lib/openzeppelin-contracts
+        url = ""
+        branch = v4.8.0-791-g8829465a
+        [submodule "lib/forge-std"]
+        path = lib/forge-std
+        url = ""
+        "#;
+
+        let paths = SUBMODULE_BRANCH_REGEX
+            .captures_iter(branch_in_between)
+            .map(|cap| {
+                (
+                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
+                    String::from(cap.get(2).unwrap().as_str()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths.get(Path::new("lib/openzeppelin-contracts")).unwrap(),
+            "v4.8.0-791-g8829465a"
+        );
     }
 }

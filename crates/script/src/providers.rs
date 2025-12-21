@@ -1,7 +1,7 @@
-use alloy_primitives::map::{hash_map::Entry, HashMap};
-use alloy_provider::{utils::Eip1559Estimation, Provider};
+use alloy_primitives::map::{HashMap, hash_map::Entry};
+use alloy_provider::{Provider, utils::Eip1559Estimation};
 use eyre::{Result, WrapErr};
-use foundry_common::provider::{get_http_provider, RetryProvider};
+use foundry_common::provider::{RetryProvider, get_http_provider};
 use foundry_config::Chain;
 use std::{ops::Deref, sync::Arc};
 
@@ -66,7 +66,7 @@ impl ProviderInfo {
             )
         } else {
             GasPrice::EIP1559(
-                provider.estimate_eip1559_fees(None).await.wrap_err("Failed to get EIP-1559 fees"),
+                provider.estimate_eip1559_fees().await.wrap_err("Failed to get EIP-1559 fees"),
             )
         };
 

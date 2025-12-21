@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract RandomUint is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract RandomUint is Test {
     function testRandomUint() public {
         vm.randomUint();
     }

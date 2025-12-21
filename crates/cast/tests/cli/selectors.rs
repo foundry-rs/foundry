@@ -20,7 +20,9 @@ transfer(address,uint256)
 
 casttest!(fourbyte_invalid, |_prj, cmd| {
     cmd.args(["4byte", "0xa9059c"]).assert_failure().stderr_eq(str![[r#"
-Error: Invalid selector 0xa9059c: expected 10 characters (including 0x prefix).
+error: invalid value '0xa9059c' for '[SELECTOR]': invalid string length
+
+For more information, try '--help'.
 
 "#]]);
 });
@@ -138,7 +140,7 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
 [
-  "78",
+  78,
   "0x0000000000000000000000000000000000D0004F"
 ]
 
@@ -166,7 +168,7 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
 [
-  "101",
+  101,
   "0x0000000000000000000000000000000000D0004F"
 ]
 
@@ -183,9 +185,9 @@ contract ContractWithCustomError {
     event MyUniqueEventWithinLocalProject(uint256 a, address b);
 }
    "#,
-    )
-    .unwrap();
-    // Store selectors in local cache.
+    );
+    // Build and cache project selectors.
+    cmd.forge_fuse().args(["build"]).assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     // Assert cast can decode custom error with local cache.
@@ -206,6 +208,41 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
+
+"#]]);
+});
+
+forgetest!(cache_selectors_from_extra_abis, |prj, cmd| {
+    // Create folder with ABI JSON files containing a unique error
+    let abis_dir = prj.root().join("external_abis");
+    std::fs::create_dir(&abis_dir).unwrap();
+    std::fs::write(
+        abis_dir.join("test.json"),
+        r#"[{
+          "type": "error",
+          "name": "MyUniqueExtraAbiError",
+          "inputs": [
+              {"name": "value", "type": "uint256"},
+              {"name": "flag", "type": "bool"}
+          ]
+      }]"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse()
+        .args(["selectors", "cache", "--extra-abis-path", abis_dir.to_str().unwrap()])
+        .assert_success();
+
+    // Verify with cast decode-error (uses local cache via SignaturesIdentifier)
+    // Selector for MyUniqueExtraAbiError(uint256,bool) is 0x7819b107
+    // Encoded: selector + uint256(42) + bool(true)
+    cmd.cast_fuse()
+        .args(["decode-error", "0x7819b107000000000000000000000000000000000000000000000000000000000000002a0000000000000000000000000000000000000000000000000000000000000001"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueExtraAbiError(uint256,bool)
+42
+true
 
 "#]]);
 });

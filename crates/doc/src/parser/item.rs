@@ -1,12 +1,9 @@
-use crate::{error::ParserResult, Comments};
-use forge_fmt::{
-    solang_ext::SafeUnwrap, Comments as FmtComments, Formatter, FormatterConfig, InlineConfig,
-    Visitor,
-};
+use crate::{Comments, helpers::function_signature, solang_ext::SafeUnwrap};
 use solang_parser::pt::{
     ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
     FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
 };
+use std::ops::Range;
 
 /// The parsed item.
 #[derive(Debug, PartialEq)]
@@ -16,7 +13,7 @@ pub struct ParseItem {
     /// Item comments.
     pub comments: Comments,
     /// Children items.
-    pub children: Vec<ParseItem>,
+    pub children: Vec<Self>,
     /// Formatted code string.
     pub code: String,
 }
@@ -80,37 +77,27 @@ impl ParseItem {
         self
     }
 
-    /// Set formatted code on the [ParseItem].
-    pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
-        let mut code = String::new();
-        let mut fmt = Formatter::new(
-            &mut code,
-            source,
-            FmtComments::default(),
-            InlineConfig::default(),
-            config,
-        );
+    /// Set the source code of this [ParseItem].
+    ///
+    /// The parameter should be the full source file where this parse item originated from.
+    pub fn with_code(mut self, source: &str, tab_width: usize) -> Self {
+        let mut code = source[self.source.range()].to_string();
 
-        match self.source.clone() {
-            ParseSource::Contract(mut contract) => {
-                contract.parts = vec![];
-                fmt.visit_contract(&mut contract)?
-            }
-            ParseSource::Function(mut func) => {
-                func.body = None;
-                fmt.visit_function(&mut func)?
-            }
-            ParseSource::Variable(mut var) => fmt.visit_var_definition(&mut var)?,
-            ParseSource::Event(mut event) => fmt.visit_event(&mut event)?,
-            ParseSource::Error(mut error) => fmt.visit_error(&mut error)?,
-            ParseSource::Struct(mut structure) => fmt.visit_struct(&mut structure)?,
-            ParseSource::Enum(mut enumeration) => fmt.visit_enum(&mut enumeration)?,
-            ParseSource::Type(mut ty) => fmt.visit_type_definition(&mut ty)?,
-        };
+        // Special function case, add `;` at the end of definition.
+        if let ParseSource::Function(_) | ParseSource::Error(_) | ParseSource::Event(_) =
+            self.source
+        {
+            code.push(';');
+        }
 
-        self.code = code;
-
-        Ok(self)
+        // Remove extra indent from source lines.
+        let prefix = &" ".repeat(tab_width);
+        self.code = code
+            .lines()
+            .map(|line| line.strip_prefix(prefix).unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self
     }
 
     /// Format the item's filename.
@@ -183,5 +170,28 @@ impl ParseSource {
             }
             Self::Type(ty) => ty.name.name.to_owned(),
         }
+    }
+
+    /// Get the signature of the source (for functions, includes parameter types)
+    pub fn signature(&self) -> String {
+        match self {
+            Self::Function(func) => function_signature(func),
+            _ => self.ident(),
+        }
+    }
+
+    /// Get the range of this item in the source file.
+    pub fn range(&self) -> Range<usize> {
+        match self {
+            Self::Contract(contract) => contract.loc,
+            Self::Variable(var) => var.loc,
+            Self::Event(event) => event.loc,
+            Self::Error(error) => error.loc,
+            Self::Struct(structure) => structure.loc,
+            Self::Enum(enumerable) => enumerable.loc,
+            Self::Function(func) => func.loc_prototype,
+            Self::Type(ty) => ty.loc,
+        }
+        .range()
     }
 }

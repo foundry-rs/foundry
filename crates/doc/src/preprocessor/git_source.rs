@@ -26,8 +26,8 @@ impl Preprocessor for GitSource {
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
         if let Some(ref repo) = self.repository {
             let repo = repo.trim_end_matches('/');
-            let commit = self.commit.clone().unwrap_or("master".to_owned());
-            for document in documents.iter() {
+            let commit = self.commit.as_deref().unwrap_or("master");
+            for document in &documents {
                 if document.from_library {
                     continue;
                 }

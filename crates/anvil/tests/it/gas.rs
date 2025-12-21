@@ -2,13 +2,13 @@
 
 use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{uint, Address, U256, U64};
+use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{eth::fees::INITIAL_BASE_FEE, spawn, NodeConfig};
+use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 
-const GAS_TRANSFER: u128 = 21_000;
+const GAS_TRANSFER: u64 = 21_000;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_limit_applied_from_config() {
@@ -43,7 +43,7 @@ async fn test_basefee_full_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -54,7 +54,7 @@ async fn test_basefee_full_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -93,7 +93,7 @@ async fn test_basefee_half_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -120,7 +120,7 @@ async fn test_basefee_empty_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -132,7 +132,7 @@ async fn test_basefee_empty_block() {
     api.mine_one().await;
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -181,10 +181,11 @@ async fn test_tip_above_fee_cap() {
 
     let res = provider.send_transaction(tx.clone()).await;
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("max priority fee per gas higher than max fee per gas"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("max priority fee per gas higher than max fee per gas")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -209,10 +210,52 @@ async fn test_can_use_fee_history() {
 
         let fee_history_after = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
         let latest_fee_history_fee = *fee_history_after.base_fee_per_gas.first().unwrap() as u64;
-        let latest_block =
-            provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+        let latest_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee as u64);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_empty_data() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let from = accounts[0];
+    let to = accounts[1];
+
+    let tx_without_data =
+        TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+
+    let gas_without_data = api
+        .estimate_gas(WithOtherFields::new(tx_without_data), None, Default::default())
+        .await
+        .unwrap();
+
+    let tx_with_empty_data = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1))
+        .with_input(vec![]);
+
+    let gas_with_empty_data = api
+        .estimate_gas(WithOtherFields::new(tx_with_empty_data), None, Default::default())
+        .await
+        .unwrap();
+
+    let tx_with_data = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1))
+        .with_input(vec![0x12, 0x34]);
+
+    let gas_with_data = api
+        .estimate_gas(WithOtherFields::new(tx_with_data), None, Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(gas_without_data, U256::from(GAS_TRANSFER));
+    assert_eq!(gas_with_empty_data, U256::from(GAS_TRANSFER));
+    assert!(gas_with_data > U256::from(GAS_TRANSFER));
+    assert_eq!(gas_without_data, gas_with_empty_data);
 }

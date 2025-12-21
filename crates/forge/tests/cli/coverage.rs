@@ -1,9 +1,14 @@
 use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
-    snapbox::{Data, IntoData},
     TestCommand, TestProject,
+    snapbox::{Data, IntoData},
 };
 use std::path::Path;
+
+#[track_caller]
+fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
+    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
+}
 
 fn basic_base(prj: TestProject, mut cmd: TestCommand) {
     cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
@@ -167,10 +172,12 @@ end_of_record
 }
 
 forgetest_init!(basic, |prj, cmd| {
+    prj.initialize_default_contracts();
     basic_base(prj, cmd);
 });
 
 forgetest_init!(basic_crlf, |prj, cmd| {
+    prj.initialize_default_contracts();
     // Manually replace `\n` with `\r\n` in the source file.
     let make_crlf = |path: &Path| {
         fs::write(path, fs::read_to_string(path).unwrap().replace('\n', "\r\n")).unwrap()
@@ -199,8 +206,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -221,8 +227,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 100% coverage (init function coverage called in setUp is accounted).
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
@@ -234,6 +239,57 @@ contract AContractTest is DSTest {
 |-------------------+---------------+---------------+---------------+---------------|
 | Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 ╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(setup_md, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    // Assert 100% coverage (init function coverage called in setUp is accounted).
+    cmd.arg("coverage").args(["--md"]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 
 "#]]);
 });
@@ -255,8 +311,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -277,8 +332,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "BContract.sol",
@@ -295,8 +349,7 @@ contract BContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "BContractTest.sol",
@@ -317,8 +370,7 @@ contract BContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert AContract is not included in report.
     cmd.arg("coverage").arg("--no-match-coverage=AContract").assert_success().stdout_eq(str![[
@@ -348,8 +400,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -363,21 +414,20 @@ interface Vm {
 
 contract AContractTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+    AContract a = new AContract();
+
     function testAssertBranch() external {
-        AContract a = new AContract();
         bool result = a.checkA(10);
         assertTrue(result);
     }
 
     function testAssertRevertBranch() external {
-        AContract a = new AContract();
         vm.expectRevert();
         a.checkA(1);
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% statement coverage for assert failure (assert not considered a branch).
     cmd.arg("coverage").args(["--mt", "testAssertRevertBranch"]).assert_success().stdout_eq(str![
@@ -421,8 +471,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -436,20 +485,19 @@ interface Vm {
 
 contract AContractTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+    AContract a = new AContract();
+
     function testRequireRevert() external {
-        AContract a = new AContract();
         vm.expectRevert(abi.encodePacked("reverted"));
         a.checkRequire(false);
     }
 
     function testRequireNoRevert() external {
-        AContract a = new AContract();
         a.checkRequire(true);
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% branch coverage if only revert tested.
     cmd.arg("coverage").args(["--mt", "testRequireRevert"]).assert_success().stdout_eq(str![[r#"
@@ -508,8 +556,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -518,14 +565,14 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testFoo() public {
-        AContract a = new AContract();
         a.foo();
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // We want to make sure DA:8,1 is added only once so line hit is not doubled.
     assert_lcov(
@@ -644,8 +691,7 @@ contract Foo {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -760,8 +806,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert no coverage for single path branch. 2 branches (parent and child) not covered.
     cmd.arg("coverage")
@@ -851,8 +896,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -861,14 +905,14 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTypeConversionCoverage() external {
-        AContract a = new AContract();
         a.coverMe();
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 100% coverage.
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
@@ -935,8 +979,7 @@ contract Bar {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -975,8 +1018,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert coverage not 100% for happy paths only.
     cmd.arg("coverage").args(["--mt", "happy"]).assert_success().stdout_eq(str![[r#"
@@ -1073,8 +1115,7 @@ contract Foo {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -1095,8 +1136,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1137,7 +1177,7 @@ contract B {
 contract C {
     function create() public {
         B b = new B{value: 1}(2);
-        b = (new B{value: 1})(2);
+        b = new B{value: 1}(2);
         b = (new B){value: 1}(2);
     }
 }
@@ -1152,8 +1192,7 @@ contract D {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -1188,8 +1227,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1214,17 +1252,20 @@ contract AContract {
     event IsTrue(bool isTrue);
     event IsFalse(bool isFalse);
 
-    function ifElseStatementIgnored(bool flag) external {
+    function ifElseStatementIgnored(bool flag) external returns (bool) {
         if (flag) emit IsTrue(true);
         else emit IsFalse(false);
 
-        if (flag) flag = true;
-        else flag = false;
+        bool flag2;
+        if (flag) flag2 = true;
+        else flag2 = false;
+
+        if (flag2) return true;
+        else return false;
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1233,19 +1274,18 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTrueCoverage() external {
-        AContract a = new AContract();
         a.ifElseStatementIgnored(true);
     }
 
     function testFalseCoverage() external {
-        AContract a = new AContract();
         a.ifElseStatementIgnored(false);
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% coverage for true branches.
     cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
@@ -1253,9 +1293,9 @@ contract AContractTest is DSTest {
 ╭-------------------+--------------+--------------+--------------+---------------╮
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 +================================================================================+
-| src/AContract.sol | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| src/AContract.sol | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 |-------------------+--------------+--------------+--------------+---------------|
-| Total             | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| Total             | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 ╰-------------------+--------------+--------------+--------------+---------------╯
 
 "#]]);
@@ -1270,9 +1310,9 @@ contract AContractTest is DSTest {
 ╭-------------------+--------------+--------------+--------------+---------------╮
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 +================================================================================+
-| src/AContract.sol | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| src/AContract.sol | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 |-------------------+--------------+--------------+--------------+---------------|
-| Total             | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| Total             | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 ╰-------------------+--------------+--------------+--------------+---------------╯
 
 "#]]);
@@ -1283,10 +1323,96 @@ contract AContractTest is DSTest {
 ╭-------------------+---------------+---------------+---------------+---------------╮
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 +===================================================================================+
-| src/AContract.sol | 100.00% (5/5) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
+| src/AContract.sol | 100.00% (8/8) | 100.00% (7/7) | 100.00% (6/6) | 100.00% (1/1) |
 |-------------------+---------------+---------------+---------------+---------------|
-| Total             | 100.00% (5/5) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
+| Total             | 100.00% (8/8) | 100.00% (7/7) | 100.00% (6/6) | 100.00% (1/1) |
 ╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(single_statement_loop, |prj, cmd| {
+    // TODO(dani): the specific case of `if (x) continue/break` is not properly covered.
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function ifBreakContinueIgnored(bool flag) external returns (uint256 sum) {
+        for (uint256 i = 0; i < 5; i++) {
+            if (flag) continue;
+            sum += i;
+        }
+
+        for (uint256 i = 0; i < 5; i++) {
+            if (flag) break;
+            sum += i;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testTrueCoverage() external {
+        a.ifBreakContinueIgnored(true);
+    }
+
+    function testFalseCoverage() external {
+        a.ifBreakContinueIgnored(false);
+    }
+}
+    "#,
+    );
+
+    // Assert 50% coverage for true branches.
+    cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+---------------+---------------+---------------╮
+| File              | % Lines      | % Statements  | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 71.43% (5/7) | 70.00% (7/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+--------------+---------------+---------------+---------------|
+| Total             | 71.43% (5/7) | 70.00% (7/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+--------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    // Assert 50% coverage for false branches.
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt", "testFalseCoverage"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+-----------------+---------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
++=====================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+---------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+---------------+---------------╯
+
+"#]]);
+
+    // Assert 100% coverage (true/false branches properly covered).
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+-----------------+---------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
++=====================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+---------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+---------------+---------------╯
 
 "#]]);
 });
@@ -1312,8 +1438,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1322,23 +1447,22 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTrueCoverage() external {
-        AContract a = new AContract();
         bool[] memory isTrue = new bool[](1);
         isTrue[0] = true;
         a.execute(isTrue);
     }
 
     function testFalseCoverage() external {
-        AContract a = new AContract();
         bool[] memory isFalse = new bool[](1);
         isFalse[0] = false;
         a.execute(isFalse);
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% coverage for true branches.
     cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
@@ -1417,8 +1541,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1440,8 +1563,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1477,8 +1599,7 @@ contract BContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1493,8 +1614,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1526,8 +1646,7 @@ contract AContract {
     function increment() public {}
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1544,8 +1663,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     assert_lcov(
         cmd.arg("coverage"),
@@ -1598,8 +1716,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1608,15 +1725,15 @@ import "./test.sol";
 import "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function test_constructors() public {
-        AContract a = new AContract();
         address(a).call{value: 5}("");
         require(a.counter() == 5);
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert both constructor and receive functions coverage reported and appear in LCOV.
     assert_lcov(
@@ -1676,8 +1793,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert coverage doesn't fail with `Error: Unknown key "inliner"`.
     cmd.arg("coverage").arg("--ir-minimum").assert_success().stdout_eq(str![[r#"
@@ -1710,8 +1826,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1732,8 +1847,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1753,7 +1867,339 @@ contract AContractTest is DSTest {
     assert!(files.is_empty());
 });
 
-#[track_caller]
-fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
-    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
+// <https://github.com/foundry-rs/foundry/issues/10172>
+forgetest!(constructor_with_args, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "ArrayCondition.sol",
+        r#"
+contract ArrayCondition {
+    uint8 public constant MAX_SIZE = 32;
+    error TooLarge();
+    error EmptyArray();
+    // Storage variable to ensure the constructor does something
+    uint256 private _arrayLength;
+
+    constructor(uint256[] memory values) {
+        // Check for empty array
+        if (values.length == 0) {
+            revert EmptyArray();
+        }
+
+        if (values.length > MAX_SIZE) {
+            revert TooLarge();
+        }
+
+        // Store the array length
+        _arrayLength = values.length;
+    }
+
+    function getArrayLength() external view returns (uint256) {
+        return _arrayLength;
+    }
 }
+    "#,
+    );
+
+    prj.add_source(
+        "ArrayConditionTest.sol",
+        r#"
+import "./test.sol";
+import {ArrayCondition} from "./ArrayCondition.sol";
+
+interface Vm {
+    function expectRevert(bytes4 revertData) external;
+}
+
+contract ArrayConditionTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testValidSize() public {
+        uint256[] memory values = new uint256[](10);
+        ArrayCondition condition = new ArrayCondition(values);
+        assertEq(condition.getArrayLength(), 10);
+    }
+
+    // Test with maximum array size (should NOT revert)
+    function testMaxSize() public {
+        uint256[] memory values = new uint256[](32);
+        ArrayCondition condition = new ArrayCondition(values);
+        assertEq(condition.getArrayLength(), 32);
+    }
+
+    // Test with too large array size (should revert)
+    function testTooLarge() public {
+        uint256[] memory values = new uint256[](33);
+        vm.expectRevert(ArrayCondition.TooLarge.selector);
+        new ArrayCondition(values);
+    }
+
+    // Test with empty array (should revert)
+    function testEmptyArray() public {
+        uint256[] memory values = new uint256[](0);
+        vm.expectRevert(ArrayCondition.EmptyArray.selector);
+        new ArrayCondition(values);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭------------------------+---------------+---------------+---------------+---------------╮
+| File                   | % Lines       | % Statements  | % Branches    | % Funcs       |
++========================================================================================+
+| src/ArrayCondition.sol | 100.00% (8/8) | 100.00% (6/6) | 100.00% (2/2) | 100.00% (2/2) |
+|------------------------+---------------+---------------+---------------+---------------|
+| Total                  | 100.00% (8/8) | 100.00% (6/6) | 100.00% (2/2) | 100.00% (2/2) |
+╰------------------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/11432
+// Test coverage for linked libraries.
+forgetest!(linked_library, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+library LibCounter {
+    function increment(uint256 number) external returns (uint256) {
+        return number + 1;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = LibCounter.increment(number);
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "CounterTest.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function testIncrement() public {
+        Counter counter = new Counter();
+        counter.increment();
+    }
+}
+    "#,
+    );
+
+    // Assert 100% coverage for linked libraries.
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-----------------+---------------+---------------+---------------+---------------╮
+| File            | % Lines       | % Statements  | % Branches    | % Funcs       |
++=================================================================================+
+| src/Counter.sol | 100.00% (4/4) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (2/2) |
+|-----------------+---------------+---------------+---------------+---------------|
+| Total           | 100.00% (4/4) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (2/2) |
+╰-----------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10422>
+// Test that line hits are properly recorded in lcov report.
+forgetest!(do_while_lcov, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number = 21;
+
+    function increment() public {
+        uint256 i = 0;
+        do {
+            number++;
+            if (number > 20) {
+                number -= 2;
+            }
+        } while (++i < 10);
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_do_while() public {
+        Counter counter = new Counter();
+        counter.increment();
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,1
+FN:7,Counter.increment
+FNDA:1,Counter.increment
+DA:8,1
+DA:10,10
+DA:11,10
+BRDA:11,0,0,6
+DA:12,6
+DA:14,10
+FNF:1
+FNH:1
+LF:6
+LH:6
+BRF:1
+BRH:1
+end_of_record
+
+"#]],
+    );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11183>
+// Test that overridden functions are disambiguated in the LCOV report.
+forgetest!(disambiguate_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+    function increment(uint256 amount) public {
+        number += amount;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_overridden() public {
+        Counter counter = new Counter();
+        counter.increment();
+        counter.increment(1);
+        counter.increment(2);
+        counter.increment(3);
+        assertEq(counter.number(), 7);
+    }
+}
+    "#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,1
+FN:7,Counter.increment.0
+FNDA:1,Counter.increment.0
+DA:8,1
+DA:10,3
+FN:10,Counter.increment.1
+FNDA:3,Counter.increment.1
+DA:11,3
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
+
+// Test that functions of abstract contracts and interfaces should not count in coverage report.
+forgetest!(abstract_contract_and_interface, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+interface ContractIf {
+    function setNumber(uint256 newNumber) external;
+}
+
+abstract contract AbstractCounter {
+    function _setNumber(uint256 newNumber) internal virtual;
+
+    function _incrementNumber(uint256 newNumber) internal virtual returns (uint256 inc) {
+        inc = newNumber + 1;
+    }
+}
+
+contract Counter is AbstractCounter, ContractIf {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        _setNumber(newNumber);
+    }
+
+    function _setNumber(uint256 newNumber) internal override {
+        number = _incrementNumber(newNumber);
+    }
+
+    function _incrementNumber(uint256 newNumber) internal override returns (uint256 inc) {
+        inc = super._incrementNumber(newNumber);
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "CounterTest.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function testCounter() public {
+        Counter counter = new Counter();
+        counter.setNumber(0);
+    }
+}
+    "#,
+    );
+
+    // Test there are 4 functions reported:
+    // - `setNumber`, `_setNumber` and `_incrementNumber` from `Counter` contract
+    // - `_incrementNumber` from `AbstractCounter` (virtual with implementation). `_setNumber` is
+    // excluded as it is not implemented.
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-----------------+---------------+---------------+---------------+---------------╮
+| File            | % Lines       | % Statements  | % Branches    | % Funcs       |
++=================================================================================+
+| src/Counter.sol | 100.00% (8/8) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+|-----------------+---------------+---------------+---------------+---------------|
+| Total           | 100.00% (8/8) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+╰-----------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+});

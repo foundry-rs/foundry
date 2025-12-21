@@ -15,39 +15,38 @@ workspace = true
 
 [[bin]]
 name = "anvil"
-path = "src/anvil.rs"
+path = "bin/main.rs"
 required-features = ["cli"]
 
 [dependencies]
 # foundry internal
-anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
+anvil-core = { path = "core" }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-evm-networks.workspace = true
+foundry-primitives.workspace = true
 
-# evm support
-bytes.workspace = true
-k256.workspace = true
-revm = { workspace = true, features = [
-    "std",
-    "serde",
-    "memory_limit",
-    "c-kzg",
-] }
+# alloy
+alloy-evm = { workspace = true, features = ["call-util"] }
+alloy-op-evm.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
+alloy-eip5792.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
+alloy-rpc-types-beacon.workspace = true
+alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",
@@ -62,10 +61,19 @@ alloy-genesis.workspace = true
 alloy-trie.workspace = true
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 
+# revm
+revm = { workspace = true, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "c-kzg",
+] }
+revm-inspectors.workspace = true
+op-revm.workspace = true
+
 # axum related
 axum.workspace = true
 hyper.workspace = true
-tower.workspace = true
 
 # tracing
 tracing.workspace = true
@@ -78,16 +86,16 @@ futures.workspace = true
 async-trait.workspace = true
 
 # misc
-flate2 = "1.0"
-serde_repr = "0.1"
+flate2.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
-rand.workspace = true
+rand_08.workspace = true
 eyre.workspace = true
+ethereum_ssz.workspace = true
 
 # cli
 clap = { version = "4", features = [
@@ -95,33 +103,35 @@ clap = { version = "4", features = [
     "env",
     "wrap_help",
 ], optional = true }
-clap_complete = { version = "4", optional = true }
+clap_complete = { workspace = true, optional = true }
 chrono.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
-clap_complete_fig = "4"
-
-[target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-alloy-json-abi.workspace = true
-alloy-rpc-client = { workspace = true, features = ["pubsub"] }
-alloy-transport-ipc = { workspace = true, features = ["mock"] }
 alloy-provider = { workspace = true, features = ["txpool-api"] }
-alloy-transport-ws.workspace = true
-alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
+alloy-eip5792.workspace = true
+rand.workspace = true
+reqwest.workspace = true
 foundry-test-utils.workspace = true
-similar-asserts.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 op-alloy-rpc-types.workspace = true
 
-
 [features]
 default = ["cli", "jemalloc"]
-cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
-cli = ["tokio/full", "cmd", "fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["foundry-cli/jemalloc"]
+mimalloc = ["foundry-cli/mimalloc"]
+tracy-allocator = ["foundry-cli/tracy-allocator"]
+cli = ["tokio/full", "cmd"]
+cmd = [
+    "clap",
+    "clap_complete",
+    "dep:fdlimit",
+    "dep:ctrlc",
+    "anvil-server/clap",
+    "tokio/signal",
+]
+js-tracer = ["revm-inspectors/js-tracer"]

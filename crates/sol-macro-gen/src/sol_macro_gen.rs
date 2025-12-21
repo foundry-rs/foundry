@@ -20,6 +20,8 @@ use std::{
     str::FromStr,
 };
 
+use heck::ToSnakeCase;
+
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
@@ -35,6 +37,7 @@ impl SolMacroGen {
         let path = self.path.to_string_lossy().into_owned();
         let name = proc_macro2::Ident::new(&self.name, Span::call_site());
         let tokens = quote::quote! {
+            #[sol(ignore_unlinked)]
             #name,
             #path
         };
@@ -46,18 +49,17 @@ impl SolMacroGen {
 }
 
 pub struct MultiSolMacroGen {
-    pub artifacts_path: PathBuf,
     pub instances: Vec<SolMacroGen>,
 }
 
 impl MultiSolMacroGen {
-    pub fn new(artifacts_path: &Path, instances: Vec<SolMacroGen>) -> Self {
-        Self { artifacts_path: artifacts_path.to_path_buf(), instances }
+    pub fn new(instances: Vec<SolMacroGen>) -> Self {
+        Self { instances }
     }
 
     pub fn populate_expansion(&mut self, bindings_path: &Path) -> Result<()> {
         for instance in &mut self.instances {
-            let path = bindings_path.join(format!("{}.rs", instance.name.to_lowercase()));
+            let path = bindings_path.join(format!("{}.rs", instance.name.to_snake_case()));
             let expansion = fs::read_to_string(path).wrap_err("Failed to read file")?;
 
             let tokens = TokenStream::from_str(&expansion)
@@ -67,9 +69,9 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    pub fn generate_bindings(&mut self) -> Result<()> {
+    pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
         for instance in &mut self.instances {
-            Self::generate_binding(instance).wrap_err_with(|| {
+            Self::generate_binding(instance, all_derives).wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
@@ -81,15 +83,21 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    fn generate_binding(instance: &mut SolMacroGen) -> Result<()> {
+    fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
         let input = instance.get_sol_input()?.normalize_json()?;
-
         let SolInput { attrs: _, path: _, kind } = input;
 
         let tokens = match kind {
             SolInputKind::Sol(mut file) => {
-                let sol_attr: syn::Attribute = syn::parse_quote! {
-                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract)]
+                let sol_attr: syn::Attribute = if all_derives {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract, all_derives = true, extra_derives(serde::Serialize,
+                    serde::Deserialize))]     }
+                } else {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract)]     }
                 };
                 file.attrs.push(sol_attr);
                 expand(file).wrap_err("failed to expand")?
@@ -101,20 +109,23 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn write_to_crate(
         &mut self,
         name: &str,
         version: &str,
+        description: &str,
+        license: &str,
         bindings_path: &Path,
         single_file: bool,
         alloy_version: Option<String>,
         alloy_rev: Option<String>,
+        all_derives: bool,
     ) -> Result<()> {
-        self.generate_bindings()?;
+        self.generate_bindings(all_derives)?;
 
         let src = bindings_path.join("src");
-
-        let _ = fs::create_dir_all(&src);
+        fs::create_dir_all(&src)?;
 
         // Write Cargo.toml
         let cargo_toml_path = bindings_path.join("Cargo.toml");
@@ -123,20 +134,37 @@ impl MultiSolMacroGen {
 name = "{name}"
 version = "{version}"
 edition = "2021"
-
-[dependencies]
 "#
         );
 
+        if !description.is_empty() {
+            toml_contents.push_str(&format!("description = \"{description}\"\n"));
+        }
+
+        if !license.is_empty() {
+            let formatted_licenses: Vec<String> =
+                license.split(',').map(Self::parse_license_alias).collect();
+
+            let formatted_license = formatted_licenses.join(" OR ");
+            toml_contents.push_str(&format!("license = \"{formatted_license}\"\n"));
+        }
+
+        toml_contents.push_str("\n[dependencies]\n");
+
         let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
+
+        if all_derives {
+            let serde_dep = r#"serde = { version = "1.0", features = ["derive"] }"#;
+            write!(toml_contents, "\n{serde_dep}")?;
+        }
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
 
         let mut lib_contents = String::new();
         write!(
             &mut lib_contents,
-            r#"#![allow(unused_imports, clippy::all, rustdoc::all)]
+            r#"#![allow(unused_imports, unused_attributes, clippy::all, rustdoc::all)]
         //! This module contains the sol! generated bindings for solidity contracts.
         //! This is autogenerated code.
         //! Do not manually edit these files.
@@ -151,7 +179,7 @@ edition = "2021"
         for instance in &self.instances {
             let contents = instance.expansion.as_ref().unwrap();
 
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_snake_case();
             let path = src.join(format!("{name}.rs"));
             let file = syn::parse2(contents.clone())
                 .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
@@ -172,21 +200,44 @@ edition = "2021"
         Ok(())
     }
 
-    pub fn write_to_module(&mut self, bindings_path: &Path, single_file: bool) -> Result<()> {
-        self.generate_bindings()?;
+    /// Attempts to detect the appropriate license.
+    pub fn parse_license_alias(license: &str) -> String {
+        match license.trim().to_lowercase().as_str() {
+            "mit" => "MIT".to_string(),
+            "apache" | "apache2" | "apache20" | "apache2.0" => "Apache-2.0".to_string(),
+            "gpl" | "gpl3" => "GPL-3.0".to_string(),
+            "lgpl" | "lgpl3" => "LGPL-3.0".to_string(),
+            "agpl" | "agpl3" => "AGPL-3.0".to_string(),
+            "bsd" | "bsd3" => "BSD-3-Clause".to_string(),
+            "bsd2" => "BSD-2-Clause".to_string(),
+            "mpl" | "mpl2" => "MPL-2.0".to_string(),
+            "isc" => "ISC".to_string(),
+            "unlicense" => "Unlicense".to_string(),
+            _ => license.trim().to_string(),
+        }
+    }
 
-        let _ = fs::create_dir_all(bindings_path);
+    pub fn write_to_module(
+        &mut self,
+        bindings_path: &Path,
+        single_file: bool,
+        all_derives: bool,
+    ) -> Result<()> {
+        self.generate_bindings(all_derives)?;
 
-        let mut mod_contents = r#"#![allow(unused_imports, clippy::all, rustdoc::all)]
+        fs::create_dir_all(bindings_path)?;
+
+        let mut mod_contents =
+            r#"#![allow(unused_imports, unused_attributes, clippy::all, rustdoc::all)]
         //! This module contains the sol! generated bindings for solidity contracts.
         //! This is autogenerated code.
         //! Do not manually edit these files.
         //! These files may be overwritten by the codegen system at any time.
         "#
-        .to_string();
+            .to_string();
 
         for instance in &self.instances {
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_snake_case();
             if !single_file {
                 // Module
                 write_mod_name(&mut mod_contents, &name)?;
@@ -220,7 +271,7 @@ edition = "2021"
     ///
     /// Returns `Ok(())` if the generated bindings are up to date, otherwise it returns
     /// `Err(_)`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn check_consistency(
         &self,
         name: &str,
@@ -232,14 +283,14 @@ edition = "2021"
         alloy_version: Option<String>,
         alloy_rev: Option<String>,
     ) -> Result<()> {
-        if check_cargo_toml {
+        if check_cargo_toml && !is_mod {
             self.check_cargo_toml(name, version, crate_path, alloy_version, alloy_rev)?;
         }
 
         let mut super_contents = String::new();
         write!(
             &mut super_contents,
-            r#"#![allow(unused_imports, clippy::all, rustdoc::all)]
+            r#"#![allow(unused_imports, unused_attributes, clippy::all, rustdoc::all)]
             //! This module contains the sol! generated bindings for solidity contracts.
             //! This is autogenerated code.
             //! Do not manually edit these files.
@@ -248,7 +299,7 @@ edition = "2021"
         )?;
         if !single_file {
             for instance in &self.instances {
-                let name = instance.name.to_lowercase();
+                let name = instance.name.to_snake_case();
                 let path = if is_mod {
                     crate_path.join(format!("{name}.rs"))
                 } else {
@@ -273,11 +324,7 @@ edition = "2021"
     }
 
     fn check_file_contents(&self, file_path: &Path, expected_contents: &str) -> Result<()> {
-        eyre::ensure!(
-            file_path.is_file() && file_path.exists(),
-            "{} is not a file",
-            file_path.display()
-        );
+        eyre::ensure!(file_path.is_file(), "{} is not a file", file_path.display());
         let file_contents = &fs::read_to_string(file_path).wrap_err("Failed to read file")?;
 
         // Format both
@@ -313,9 +360,9 @@ edition = "2021"
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
         let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
-        let toml_consistent = cargo_toml_contents.contains(&name_check) &&
-            cargo_toml_contents.contains(&version_check) &&
-            cargo_toml_contents.contains(&alloy_dep_check);
+        let toml_consistent = cargo_toml_contents.contains(&name_check)
+            && cargo_toml_contents.contains(&version_check)
+            && cargo_toml_contents.contains(&alloy_dep_check);
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.
@@ -338,7 +385,7 @@ edition = "2021"
                 r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_rev}", features = ["sol-types", "contract"] }}"#,
             )
         } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
+            r#"alloy = { version = "1.0", features = ["sol-types", "contract"] }"#.to_string()
         }
     }
 }

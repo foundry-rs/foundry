@@ -3,12 +3,12 @@ use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
 use foundry_config::{
+    Chain, Config, FigmentProviders,
     figment::{
-        self,
+        self, Figment, Metadata, Profile,
         value::{Dict, Map},
-        Metadata, Profile,
     },
-    impl_figment_convert_cast, Chain, Config,
+    find_project_root, impl_figment_convert_cast,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
@@ -17,10 +17,18 @@ use std::borrow::Cow;
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 
 #[derive(Clone, Debug, Default, Parser)]
+#[command(next_help_heading = "Rpc options")]
 pub struct RpcOpts {
     /// The RPC endpoint, default value is http://localhost:8545.
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
+
+    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
+    ///
+    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
+    /// client to accept invalid certificates.
+    #[arg(short = 'k', long = "insecure", default_value = "false")]
+    pub accept_invalid_certs: bool,
 
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
@@ -103,7 +111,17 @@ impl RpcOpts {
         if let Some(headers) = &self.rpc_headers {
             dict.insert("eth_rpc_headers".into(), headers.clone().into());
         }
+        if self.accept_invalid_certs {
+            dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
+        }
         dict
+    }
+
+    pub fn into_figment(self, all: bool) -> Figment {
+        let root = find_project_root(None).expect("could not determine project root");
+        Config::with_root(&root)
+            .to_figment(if all { FigmentProviders::All } else { FigmentProviders::Cast })
+            .merge(self)
     }
 }
 
@@ -154,6 +172,7 @@ impl EtherscanOpts {
         if let Some(key) = self.key() {
             dict.insert("etherscan_api_key".into(), key.into());
         }
+
         if let Some(chain) = self.chain {
             if let ChainKind::Id(id) = chain.kind() {
                 dict.insert("chain_id".into(), (*id).into());
