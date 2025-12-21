@@ -226,7 +226,11 @@ impl CallTraceDecoder {
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    pub async fn identify(&mut self, arena: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
+    pub async fn identify(
+        &mut self,
+        arena: &CallTraceArena,
+        identifier: &mut impl TraceIdentifier,
+    ) {
         self.collect_identified_addresses(self.identify_addresses(arena, identifier).await);
     }
 
