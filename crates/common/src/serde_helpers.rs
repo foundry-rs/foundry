@@ -63,7 +63,7 @@ impl NumberOrHexU256 {
     /// Tries to convert this into a [U256]].
     pub fn try_into_u256<E: de::Error>(self) -> Result<U256, E> {
         match self {
-            Self::Int(num) => U256::from_str(num.to_string().as_str()).map_err(E::custom),
+            Self::Int(num) => U256::from_str(&num.to_string()).map_err(E::custom),
             Self::Hex(val) => Ok(val),
         }
     }

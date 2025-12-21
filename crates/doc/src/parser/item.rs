@@ -1,4 +1,4 @@
-use crate::{Comments, solang_ext::SafeUnwrap};
+use crate::{Comments, helpers::function_signature, solang_ext::SafeUnwrap};
 use solang_parser::pt::{
     ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
     FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
@@ -13,7 +13,7 @@ pub struct ParseItem {
     /// Item comments.
     pub comments: Comments,
     /// Children items.
-    pub children: Vec<ParseItem>,
+    pub children: Vec<Self>,
     /// Formatted code string.
     pub code: String,
 }
@@ -80,18 +80,21 @@ impl ParseItem {
     /// Set the source code of this [ParseItem].
     ///
     /// The parameter should be the full source file where this parse item originated from.
-    pub fn with_code(mut self, source: &str) -> Self {
+    pub fn with_code(mut self, source: &str, tab_width: usize) -> Self {
         let mut code = source[self.source.range()].to_string();
 
         // Special function case, add `;` at the end of definition.
-        if let ParseSource::Function(_) = self.source {
+        if let ParseSource::Function(_) | ParseSource::Error(_) | ParseSource::Event(_) =
+            self.source
+        {
             code.push(';');
         }
 
         // Remove extra indent from source lines.
+        let prefix = &" ".repeat(tab_width);
         self.code = code
             .lines()
-            .map(|line| line.strip_prefix("    ").unwrap_or(line))
+            .map(|line| line.strip_prefix(prefix).unwrap_or(line))
             .collect::<Vec<_>>()
             .join("\n");
         self
@@ -166,6 +169,14 @@ impl ParseSource {
                 func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned())
             }
             Self::Type(ty) => ty.name.name.to_owned(),
+        }
+    }
+
+    /// Get the signature of the source (for functions, includes parameter types)
+    pub fn signature(&self) -> String {
+        match self {
+            Self::Function(func) => function_signature(func),
+            _ => self.ident(),
         }
     }
 

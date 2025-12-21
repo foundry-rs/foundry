@@ -21,9 +21,14 @@ pub mod fd_lock;
 mod filter;
 pub use filter::Filter;
 
+mod ext;
+pub use ext::ExtTester;
+
+mod prj;
+pub use prj::{TestCommand, TestProject};
+
 // Utilities for making it easier to handle tests.
 pub mod util;
-pub use util::{TestCommand, TestProject};
 
 mod script;
 pub use script::{ScriptOutcome, ScriptTester};
@@ -65,4 +70,9 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
 pub fn test_debug(args: std::fmt::Arguments<'_>) {
     init_tracing();
     debug!("{args}");
+}
+
+pub fn test_trace(args: std::fmt::Arguments<'_>) {
+    init_tracing();
+    trace!("{args}");
 }

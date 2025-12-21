@@ -4,6 +4,7 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
 use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
+use alloy_rlp::{Decodable, Encodable};
 use alloy_sol_types::SolValue;
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
 use foundry_config::fs_permissions::FsAccessKind;
@@ -259,8 +260,9 @@ impl Cheatcode for copyStorageCall {
 
         if let Ok(from_account) = ccx.ecx.journaled_state.load_account(*from) {
             let from_storage = from_account.storage.clone();
-            if let Ok(mut to_account) = ccx.ecx.journaled_state.load_account(*to) {
-                to_account.storage = from_storage;
+            if ccx.ecx.journaled_state.load_account(*to).is_ok() {
+                // SAFETY: We ensured the account was already loaded.
+                ccx.ecx.journaled_state.state.get_mut(to).unwrap().storage = from_storage;
                 if let Some(arbitrary_storage) = &mut ccx.state.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
                 }
@@ -490,4 +492,26 @@ fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -
     bytes_to_hash.extend_from_slice(&encoded_data);
 
     Ok(keccak256(&bytes_to_hash).to_vec())
+}
+
+impl Cheatcode for toRlpCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { data } = self;
+
+        let mut buf = Vec::new();
+        data.encode(&mut buf);
+
+        Ok(Bytes::from(buf).abi_encode())
+    }
+}
+
+impl Cheatcode for fromRlpCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { rlp } = self;
+
+        let decoded: Vec<Bytes> = Vec::<Bytes>::decode(&mut rlp.as_ref())
+            .map_err(|e| fmt_err!("Failed to decode RLP: {e}"))?;
+
+        Ok(decoded.abi_encode())
+    }
 }

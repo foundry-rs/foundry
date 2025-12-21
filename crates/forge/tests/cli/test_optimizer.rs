@@ -2,6 +2,7 @@
 
 // Test cache is invalidated when `forge build` if optimize test option toggled.
 forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -35,6 +36,7 @@ Compiling 23 files with [..]
 
 // Test cache is invalidated when `forge test` if optimize test option toggled.
 forgetest_init!(toggle_invalidate_cache_on_test, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -73,7 +75,6 @@ Compiling 21 files with [..]
 // └── test
 //     └── Counter.t.sol
 forgetest_init!(preprocess_contract_with_no_interface, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -196,7 +197,6 @@ Compiling 1 files with [..]
 // └── test
 //     └── Counter.t.sol
 forgetest_init!(preprocess_contract_with_interface, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -331,7 +331,6 @@ Compiling 1 files with [..]
 //     └── mock
 //         └── CounterMock.sol
 forgetest_init!(preprocess_mock_without_inheritance, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -483,7 +482,6 @@ Compiling 2 files with [..]
 //    └── mock
 //        └── CounterMock.sol
 forgetest_init!(preprocess_mock_with_inheritance, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -555,7 +553,7 @@ Compiling 22 files with [..]
 contract Counter {
     uint256 public number;
 
-    function setNumber(uint256 newNumber) public virtual {
+    function setNumber(uint256) public virtual {
         number = 12345;
     }
 
@@ -570,7 +568,7 @@ contract Counter {
     // compiled and both tests fail.
     cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 2 files with [..]
+Compiling 3 files with [..]
 ...
 [FAIL: assertion failed: 12347 != 1] test_Increment() (gas: [..])
 [FAIL: assertion failed: 12345 != 1] test_SetNumber() (gas: [..])
@@ -617,7 +615,6 @@ Compiling 2 files with [..]
 //    └── mock
 //        └── CounterMock.sol
 forgetest_init!(preprocess_mock_to_non_mock, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -719,6 +716,82 @@ Compiling 2 files with [..]
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/12452>
+// - CounterMock contract is Counter contract
+// - CounterMock declared in CounterTest
+//
+// ├── src
+// │ └── Counter.sol
+// └── test
+//    ├── Counter.t.sol
+forgetest_init!(preprocess_mock_declared_in_test_contract, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    function add(uint256 x, uint256 y) public pure returns (uint256) {
+        return x + y;
+    }
+}
+    "#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "src/Counter.sol";
+
+contract CounterMock is Counter {}
+
+contract CounterTest is Test {
+    function test_add() public {
+        CounterMock impl = new CounterMock();
+        assertEq(impl.add(2, 2), 4);
+    }
+}
+    "#,
+    );
+    // 20 files plus one mock file are compiled on first run.
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 21 files with [..]
+...
+
+"#]]);
+    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+No files changed, compilation skipped
+...
+
+"#]]);
+
+    // Change Counter implementation to fail tests.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    function add(uint256 x, uint256 y) public pure returns (uint256) {
+        return x + y + 1;
+    }
+}
+    "#,
+    );
+    // Assert that Counter and CounterTest files are compiled and tests fail.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 2 files with [..]
+...
+[FAIL: assertion failed: 5 != 4] test_add() (gas: [..])
+...
+
+"#]]);
+});
+
 // ├── src
 // │ ├── CounterA.sol
 // │ ├── CounterB.sol
@@ -728,7 +801,6 @@ Compiling 2 files with [..]
 // └── test
 // └── Counter.t.sol
 forgetest_init!(preprocess_multiple_contracts_with_constructors, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -986,7 +1058,6 @@ Compiling 1 files with [..]
 
 // Test preprocessing contracts with payable constructor, value and salt named args.
 forgetest_init!(preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1131,7 +1202,6 @@ Compiling 1 files with [..]
 
 // Counter contract with constructor reverts and emitted events.
 forgetest_init!(preprocess_contract_with_require_and_emit, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1261,7 +1331,6 @@ Compiling 1 files with [..]
 
 // <https://github.com/foundry-rs/foundry/issues/10312>
 forgetest_init!(preprocess_contract_with_constructor_args_struct, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1305,6 +1374,7 @@ Compiling 21 files with [..]
 // Test preprocessed contracts with decode internal fns.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(preprocess_contract_with_decode_internal, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1369,7 +1439,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // <https://github.com/foundry-rs/foundry/issues/10492>
 // Preprocess test contracts with try constructor statements.
 forgetest_init!(preprocess_contract_with_try_ctor_stmt, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1539,7 +1608,6 @@ Compiling 1 files with [..]
 // <https://github.com/foundry-rs/foundry/issues/11978>
 // Preprocess test contracts when active prank.
 forgetest_init!(preprocess_contract_with_active_prank, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1585,6 +1653,74 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// Preprocess test contracts with try constructor statements that bind return type.
+forgetest_init!(preprocess_contract_with_try_ctor_stmt_and_returns, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 number;
+    constructor(uint256 a) payable {
+        require(a > 0, "ctor failure");
+        number = a;
+    }
+}
+        "#,
+    );
+    prj.add_test(
+        "CounterReturns.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterReturnsTest is Test {
+    function test_try_counter_creation_returns_custom_type() public {
+        try new Counter(1) returns (Counter c) {
+            c;
+        } catch {
+            revert();
+        }
+    }
+}
+        "#,
+    );
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 21 files with [..]
+...
+[PASS] test_try_counter_creation_returns_custom_type() (gas: [..])
+...
+
+"#]]);
+
+    // Change Counter to fail test in try statement, only Counter contract should be compiled.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 number;
+    constructor(uint256 a) payable {
+        require(a == 0, "ctor failure");
+        number = a;
+    }
+}
+        "#,
+    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[FAIL: ctor failure] test_try_counter_creation_returns_custom_type() (gas: [..])
+...
 
 "#]]);
 });

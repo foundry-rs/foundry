@@ -12,14 +12,14 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    hardfork::{ChainHardfork, ethereum_hardfork_from_block_tag, spec_id_from_ethereum_hardfork},
     mem::{self, in_memory_db::MemDb},
 };
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip7840::BlobParams;
+use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, TransactionResponse};
-use alloy_op_hardforks::OpHardfork;
 use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockNumberOrTag};
@@ -40,6 +40,10 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::AsEnvMut,
+    hardfork::{
+        FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
+        spec_id_from_ethereum_hardfork,
+    },
     utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
 use itertools::Itertools;
@@ -65,7 +69,10 @@ use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
-use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_evm::{
+    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
+    utils::get_blob_params,
+};
 use foundry_evm_networks::NetworkConfigs;
 
 /// Default port the rpc will open
@@ -110,7 +117,7 @@ pub struct NodeConfig {
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
-    pub hardfork: Option<ChainHardfork>,
+    pub hardfork: Option<FoundryHardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<PrivateKeySigner>,
     /// Native token balance of every genesis account in the genesis block
@@ -533,12 +540,20 @@ impl NodeConfig {
         }
     }
 
+    /// Returns the [`BlobParams`] that should be used.
+    pub fn get_blob_params(&self) -> BlobParams {
+        get_blob_params(
+            self.chain_id.unwrap_or(Chain::mainnet().id()),
+            self.get_genesis_timestamp(),
+        )
+    }
+
     /// Returns the hardfork to use
-    pub fn get_hardfork(&self) -> ChainHardfork {
+    pub fn get_hardfork(&self) -> FoundryHardfork {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.networks.optimism {
+        if self.networks.is_optimism() {
             return OpHardfork::default().into();
         }
         EthereumHardfork::default().into()
@@ -715,7 +730,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Option<ChainHardfork>) -> Self {
+    pub fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -989,13 +1004,6 @@ impl NodeConfig {
         Config::foundry_block_cache_file(chain_id, block)
     }
 
-    /// Sets whether to enable optimism support
-    #[must_use]
-    pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
-        self.networks.optimism = enable_optimism;
-        self
-    }
-
     /// Sets whether to disable the default create2 deployer
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
@@ -1021,17 +1029,6 @@ impl NodeConfig {
     #[must_use]
     pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
-        self
-    }
-
-    /// Sets whether to enable Celo support
-    #[must_use]
-    pub fn with_celo(mut self, celo: bool) -> Self {
-        self.networks.celo = celo;
-        if celo {
-            // Celo requires Optimism support
-            self.networks.optimism = true;
-        }
         self
     }
 
@@ -1082,12 +1079,14 @@ impl NodeConfig {
 
         let spec_id = cfg.spec;
         let mut env = Env::new(
-            cfg,
-            BlockEnv {
-                gas_limit: self.gas_limit(),
-                basefee: self.get_base_fee(),
-                ..Default::default()
-            },
+            EvmEnv::new(
+                cfg,
+                BlockEnv {
+                    gas_limit: self.gas_limit(),
+                    basefee: self.get_base_fee(),
+                    ..Default::default()
+                },
+            ),
             OpTransaction {
                 base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
                 ..Default::default()
@@ -1101,6 +1100,7 @@ impl NodeConfig {
             !self.disable_min_priority_fee,
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
+            self.get_blob_params(),
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
@@ -1216,7 +1216,6 @@ impl NodeConfig {
                 .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(self.fork_request_retries)
-                .initial_backoff(1000)
                 .headers(self.fork_headers.clone())
                 .build()
                 .wrap_err("failed to establish provider to fork url")?,
@@ -1240,7 +1239,7 @@ impl NodeConfig {
                         ethereum_hardfork_from_block_tag(fork_block_number);
 
                     env.evm_env.cfg_env.spec = spec_id_from_ethereum_hardfork(hardfork);
-                    self.hardfork = Some(ChainHardfork::Ethereum(hardfork));
+                    self.hardfork = Some(FoundryHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
             } else {
@@ -1315,7 +1314,8 @@ latest block number: {latest_block}"
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
-                let blob_base_fee_update_fraction = get_blob_base_fee_update_fraction(
+                // derive the blobparams that are active at this timestamp
+                let blob_params = get_blob_params(
                     fork_chain_id
                         .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
                         .saturating_to(),
@@ -1324,15 +1324,16 @@ latest block number: {latest_block}"
 
                 env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                     blob_excess_gas,
-                    blob_base_fee_update_fraction,
+                    blob_params.update_fraction as u64,
                 ));
+
+                fees.set_blob_params(blob_params);
 
                 let next_block_blob_excess_gas =
                     fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
-
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
-                    blob_base_fee_update_fraction,
+                    blob_params.update_fraction as u64,
                 ));
             }
         }
@@ -1364,7 +1365,11 @@ latest block number: {latest_block}"
         };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), &block);
+        apply_chain_and_block_specific_env_changes::<AnyNetwork>(
+            env.as_env_mut(),
+            &block,
+            self.networks,
+        );
 
         let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {

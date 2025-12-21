@@ -1,9 +1,11 @@
 use crate::{
     Cast, SimpleCast,
+    cmd::erc20::IERC20,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
+    tx::CastTxSender,
 };
-use alloy_consensus::transaction::{Recovered, SignerRecoverable};
+use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
@@ -234,7 +236,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 let event = get_event(event_sig.as_str())?;
                 event.decode_log_parts(core::iter::once(event.selector()), &hex::decode(data)?)?
             } else {
-                let data = data.strip_prefix("0x").unwrap_or(data.as_str());
+                let data = crate::strip_0x(&data);
                 let selector = data.get(..64).unwrap_or_default();
                 let selector = selector.parse()?;
                 let identified_event =
@@ -254,7 +256,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let error = if let Some(err_sig) = sig {
                 get_error(err_sig.as_str())?
             } else {
-                let data = data.strip_prefix("0x").unwrap_or(data.as_str());
+                let data = crate::strip_0x(&data);
                 let selector = data.get(..8).unwrap_or_default();
                 let identified_error =
                     SignaturesIdentifier::new(false)?.identify_error(selector.parse()?).await;
@@ -310,8 +312,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
             match erc20 {
                 Some(token) => {
-                    let balance =
-                        Cast::new(&provider).erc20_balance(token, account_addr, block).await?;
+                    let balance = IERC20::new(token, &provider)
+                        .balanceOf(account_addr)
+                        .block(block.unwrap_or_default())
+                        .call()
+                        .await?;
+
+                    sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
                     sh_println!("{}", format_uint_exp(balance))?
                 }
                 None => {
@@ -332,17 +339,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, field, raw, rpc } => {
+        CastSubcommand::Block { block, full, fields, raw, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
-
             // Can use either --raw or specify raw as a field
-            let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+            let raw = raw || fields.contains(&"raw".into());
 
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, raw)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, fields, raw)
                     .await?
             )?
         }
@@ -518,7 +524,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
             sh_println!(
                 "{}",
-                Cast::new(provider)
+                CastTxSender::new(provider)
                     .receipt(tx_hash, field, confirmations, None, cast_async)
                     .await?
             )?
@@ -735,7 +741,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tx = stdin::unwrap_line(tx)?;
             let tx = SimpleCast::decode_raw_transaction(&tx)?;
 
-            if let Ok(signer) = tx.recover_signer() {
+            if let Ok(signer) = tx.recover() {
                 let recovered = Recovered::new_unchecked(tx, signer);
                 sh_println!("{}", serde_json::to_string_pretty(&recovered)?)?;
             } else {
@@ -747,6 +753,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             sh_println!("{}", auth.recover_authority()?)?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,
+        CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }

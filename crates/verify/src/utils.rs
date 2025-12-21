@@ -1,7 +1,10 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_provider::{Provider, network::AnyRpcBlock};
+use alloy_provider::{
+    Provider,
+    network::{AnyNetwork, AnyRpcBlock},
+};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -17,9 +20,10 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
-    traces::TraceMode,
+    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, executors::TracingExecutor,
+    opts::EvmOpts, traces::TraceMode, utils::apply_chain_and_block_specific_env_changes,
 };
+use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
 use semver::{BuildMetadata, Version};
@@ -91,51 +95,6 @@ pub fn build_project(
         .ok_or_eyre("Build Error: Contract artifact not found locally")?;
 
     Ok(artifact.into_contract_bytecode())
-}
-
-pub fn build_using_cache(
-    args: &VerifyBytecodeArgs,
-    etherscan_settings: &Metadata,
-    config: &Config,
-) -> Result<CompactContractBytecode> {
-    let project = config.project()?;
-    let cache = project.read_cache_file()?;
-    let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>()?;
-
-    for (key, value) in cached_artifacts {
-        let name = args.contract.name.to_owned() + ".sol";
-        let version = etherscan_settings.compiler_version.to_owned();
-        // Ignores vyper
-        if version.starts_with("vyper:") {
-            eyre::bail!("Vyper contracts are not supported")
-        }
-        // Parse etherscan version string
-        let version = version.split('+').next().unwrap_or("").trim_start_matches('v').to_string();
-
-        // Check if `out/directory` name matches the contract name
-        if key.ends_with(name.as_str()) {
-            let name = name.replace(".sol", ".json");
-            for artifact in value.into_values().flatten() {
-                // Check if ABI file matches the name
-                if !artifact.file.ends_with(&name) {
-                    continue;
-                }
-
-                // Check if Solidity version matches
-                if let Ok(version) = Version::parse(&version)
-                    && !(artifact.version.major == version.major
-                        && artifact.version.minor == version.minor
-                        && artifact.version.patch == version.patch)
-                {
-                    continue;
-                }
-
-                return Ok(artifact.artifact);
-            }
-        }
-    }
-
-    eyre::bail!("couldn't find cached artifact for contract {}", args.contract.name)
 }
 
 pub fn print_result(
@@ -328,13 +287,14 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
+pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock, config: NetworkConfigs) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
+    apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block, config);
 }
 
 pub fn deploy_contract(

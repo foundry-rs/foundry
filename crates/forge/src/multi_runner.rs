@@ -21,8 +21,9 @@ use foundry_evm::{
     Env,
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder, FailFast},
+    executors::{EarlyExit, Executor, ExecutorBuilder},
     fork::CreateFork,
+    fuzz::strategies::LiteralsDictionary,
     inspectors::CheatsConfig,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
@@ -64,6 +65,8 @@ pub struct MultiContractRunner {
     pub libraries: Libraries,
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
     pub analysis: Arc<solar::sema::Compiler>,
+    /// Literals dictionary for fuzzing.
+    pub fuzz_literals: LiteralsDictionary,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -307,8 +310,8 @@ pub struct TestRunnerConfig {
     pub isolation: bool,
     /// Networks with enabled features.
     pub networks: NetworkConfigs,
-    /// Whether to exit early on test failure.
-    pub fail_fast: FailFast,
+    /// Whether to exit early on test failure or if test run interrupted.
+    pub early_exit: EarlyExit,
 }
 
 impl TestRunnerConfig {
@@ -319,15 +322,18 @@ impl TestRunnerConfig {
 
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
-        self.networks.celo = config.celo;
+        self.networks = config.networks;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
-        // TODO: self.evm_opts
-        // TODO: self.env
-        // self.coverage = N/A;
+        // self.line_coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
+
+        // TODO: self.evm_opts
+        self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
+
+        // TODO: self.env
 
         self.config = config;
     }
@@ -572,12 +578,16 @@ impl MultiContractRunnerBuilder {
                 if files.is_empty() { None } else { Some(&files) },
             )?;
             pcx.parse();
-            // Check if any sources exist, to avoid logging `error: no files found`
-            if !compiler.sess().source_map().is_empty() {
-                let _ = compiler.lower_asts();
-            }
+            let _ = compiler.lower_asts();
             Ok(())
         })?;
+
+        let analysis = Arc::new(analysis);
+        let fuzz_literals = LiteralsDictionary::new(
+            Some(analysis.clone()),
+            Some(self.config.project_paths()),
+            self.config.fuzz.dictionary.max_fuzz_dictionary_literals,
+        );
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -585,7 +595,8 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             libs_to_deploy,
             libraries,
-            analysis: Arc::new(analysis),
+            analysis,
+            fuzz_literals,
 
             tcfg: TestRunnerConfig {
                 evm_opts,
@@ -598,8 +609,8 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 networks: self.networks,
+                early_exit: EarlyExit::new(self.fail_fast),
                 config: self.config,
-                fail_fast: FailFast::new(self.fail_fast),
             },
 
             fork: self.fork,

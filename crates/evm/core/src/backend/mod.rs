@@ -1019,7 +1019,7 @@ impl DatabaseExt for Backend {
         let mut env = self
             .forks
             .get_env(fork_id)?
-            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exist", id))?;
 
         // we still need to roll to the transaction, but we only need an empty dummy state since we
         // don't need to update the active journaled state yet
@@ -1062,7 +1062,7 @@ impl DatabaseExt for Backend {
         let fork_env = self
             .forks
             .get_env(fork_id)?
-            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exist", id))?;
 
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
@@ -1343,7 +1343,7 @@ impl DatabaseExt for Backend {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
                 return Ok(id);
             }
-            eyre::bail!("Requested fork `{}` does not exit", id)
+            eyre::bail!("Requested fork `{}` does not exist", id)
         }
         if let Some(id) = self.active_fork_id() { Ok(id) } else { eyre::bail!("No fork active") }
     }
@@ -1423,39 +1423,37 @@ impl DatabaseExt for Backend {
     ) -> Result<(), BackendError> {
         // Fetch the account from the journaled state. Will create a new account if it does
         // not already exist.
-        let mut state_acc = journaled_state.load_account(self, *target)?;
+        let mut state_acc = journaled_state.load_account_mut(self, *target)?;
 
         // Set the account's bytecode and code hash, if the `bytecode` field is present.
         if let Some(bytecode) = source.code.as_ref() {
-            state_acc.info.code_hash = keccak256(bytecode);
+            let bytecode_hash = keccak256(bytecode);
             let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
-            state_acc.info.code = Some(bytecode);
+            state_acc.set_code(bytecode_hash, bytecode);
         }
 
+        // Set the account's balance.
+        state_acc.set_balance(source.balance);
+
         // Set the account's storage, if the `storage` field is present.
-        if let Some(storage) = source.storage.as_ref() {
-            state_acc.storage = storage
-                .iter()
-                .map(|(slot, value)| {
+        if let Some(acc) = journaled_state.state.get_mut(target) {
+            if let Some(storage) = source.storage.as_ref() {
+                for (slot, value) in storage {
                     let slot = U256::from_be_bytes(slot.0);
-                    (
+                    acc.storage.insert(
                         slot,
                         EvmStorageSlot::new_changed(
-                            state_acc
-                                .storage
-                                .get(&slot)
-                                .map(|s| s.present_value)
-                                .unwrap_or_default(),
+                            acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
                             U256::from_be_bytes(value.0),
                             0,
                         ),
-                    )
-                })
-                .collect();
-        }
-        // Set the account's nonce and balance.
-        state_acc.info.nonce = source.nonce.unwrap_or_default();
-        state_acc.info.balance = source.balance;
+                    );
+                }
+            }
+
+            // Set the account's nonce.
+            acc.info.nonce = source.nonce.unwrap_or_default();
+        };
 
         // Touch the account to ensure the loaded information persists if called in `setUp`.
         journaled_state.touch(*target);
@@ -2031,19 +2029,16 @@ fn apply_state_changeset(
 #[cfg(test)]
 mod tests {
     use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{U256, address};
     use alloy_provider::Provider;
     use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
     use revm::database::DatabaseRef;
 
-    const ENDPOINT: Option<&str> = option_env!("ETH_RPC_URL");
-
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
-        let Some(endpoint) = ENDPOINT else { return };
-
+        let endpoint = &*foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(endpoint);
 
         let block_num = provider.get_block_number().await.unwrap();
@@ -2064,15 +2059,11 @@ mod tests {
         let backend = Backend::spawn(Some(fork)).unwrap();
 
         // some rng contract from etherscan
-        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+        let address = address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
 
-        let idx = U256::from(0u64);
-        let _value = backend.storage_ref(address, idx);
+        let num_slots = 5;
         let _account = backend.basic_ref(address);
-
-        // fill some slots
-        let num_slots = 10u64;
-        for idx in 1..num_slots {
+        for idx in 0..num_slots {
             let _ = backend.storage_ref(address, U256::from(idx));
         }
         drop(backend);

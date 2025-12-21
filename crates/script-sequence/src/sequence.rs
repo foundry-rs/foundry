@@ -51,8 +51,8 @@ pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }
 
-impl From<ScriptSequence> for SensitiveScriptSequence {
-    fn from(sequence: ScriptSequence) -> Self {
+impl From<&ScriptSequence> for SensitiveScriptSequence {
+    fn from(sequence: &ScriptSequence) -> Self {
         Self {
             transactions: sequence
                 .transactions
@@ -99,31 +99,31 @@ impl ScriptSequence {
             return Ok(());
         }
 
-        let Some((path, sensitive_path)) = self.paths.clone() else { return Ok(()) };
-
         self.timestamp = now().as_millis();
         let ts_name = format!("run-{}.json", self.timestamp);
 
-        let sensitive_script_sequence: SensitiveScriptSequence = self.clone().into();
+        let sensitive_script_sequence = SensitiveScriptSequence::from(&*self);
+
+        let Some((path, sensitive_path)) = self.paths.as_ref() else { return Ok(()) };
 
         // broadcast folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&path)?);
+        let mut writer = BufWriter::new(fs::create_file(path)?);
         serde_json::to_writer_pretty(&mut writer, &self)?;
         writer.flush()?;
         if save_ts {
             //../run-[timestamp].json
-            fs::copy(&path, path.with_file_name(&ts_name))?;
+            fs::copy(path, path.with_file_name(&ts_name))?;
         }
 
         // cache folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&sensitive_path)?);
+        let mut writer = BufWriter::new(fs::create_file(sensitive_path)?);
         serde_json::to_writer_pretty(&mut writer, &sensitive_script_sequence)?;
         writer.flush()?;
         if save_ts {
             //../run-[timestamp].json
-            fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
+            fs::copy(sensitive_path, sensitive_path.with_file_name(&ts_name))?;
         }
 
         if !silent {
@@ -194,9 +194,10 @@ impl ScriptSequence {
 
         // TODO: ideally we want the name of the function here if sig is calldata
         let filename = sig_to_file_name(sig);
+        let filename_with_ext = format!("{filename}-latest.json");
 
-        broadcast.push(format!("{filename}-latest.json"));
-        cache.push(format!("{filename}-latest.json"));
+        broadcast.push(&filename_with_ext);
+        cache.push(&filename_with_ext);
 
         Ok((broadcast, cache))
     }
@@ -237,7 +238,6 @@ pub fn sig_to_file_name(sig: &str) -> String {
         return sig.to_string();
     }
 
-    // return sig as is
     sig.to_string()
 }
 

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Reverter {
     error CustomError();
@@ -71,9 +70,7 @@ contract Dummy {
     }
 }
 
-contract ExpectRevertTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertTest is Test {
     function shouldRevert() internal {
         revert();
     }
@@ -263,9 +260,7 @@ contract DContract {
     }
 }
 
-contract ExpectRevertWithReverterTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertWithReverterTest is Test {
     error CContractError(string reason);
 
     AContract aContract;
@@ -312,9 +307,7 @@ contract ExpectRevertWithReverterTest is DSTest {
     }
 }
 
-contract ExpectRevertCount is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertCount is Test {
     function testRevertCountAny() public {
         uint64 count = 3;
         Reverter reverter = new Reverter();
@@ -395,9 +388,7 @@ contract ExpectRevertCount is DSTest {
     }
 }
 
-contract ExpectRevertCountWithReverter is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertCountWithReverter is Test {
     function testRevertCountWithReverter() public {
         uint64 count = 2;
         Reverter reverter = new Reverter();
@@ -419,5 +410,24 @@ contract ExpectRevertCountWithReverter is DSTest {
         vm.expectRevert("revert", address(reverter), count);
         reverter.revertWithMessage("revert");
         reverter.revertWithMessage("revert");
+    }
+}
+
+contract ExpectRevertWithErrorTest is Test {
+    /// Ref: <https://github.com/foundry-rs/foundry/issues/12511>
+    function test_f() external {
+        bytes memory v = abi.encodeWithSignature("Error(string)", "");
+        vm.expectRevert(v);
+        this.f(v);
+
+        bytes memory v1 = abi.encodeWithSignature("Error(string)", unicode"🙀");
+        vm.expectRevert(v1);
+        this.f(v1);
+    }
+
+    function f(bytes memory v) external pure {
+        assembly {
+            revert(add(v, 32), mload(v))
+        }
     }
 }

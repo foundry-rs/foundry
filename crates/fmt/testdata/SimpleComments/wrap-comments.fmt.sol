@@ -1,8 +1,21 @@
 // config: line_length = 60
 // config: wrap_comments = true
 contract SimpleComments {
+    uint40 constant PERIOD = uint40(12345); // ~578 days
+    // Represents the depletion timestamp
+    uint40 constant WARP_PERIOD = FEB_1_2025 + PERIOD;
+
+    //´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:
+    // VARIABLES
+    //.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•
+
     mapping(address /* asset */ => address /* router */)
         public router;
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                         FUNCTIONS
+    */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
     constructor() {
         // TODO: do this and that
@@ -37,8 +50,8 @@ contract SimpleComments {
 
     function test4() public view returns (uint256) {
         uint256 abc; // long postfix comment that exceeds
-            // line width. the comment should be split and
-            // carried over to the next line
+        // line width. the comment should be split and
+        // carried over to the next line
         uint256 abc2; // reallylongsinglewordcommentthatexceedslinewidththecommentshouldbesplitandcarriedovertothenextline
 
         // long prefix comment that exceeds line width. the
@@ -77,6 +90,19 @@ contract SimpleComments {
         ) = _swapPre(
             2, TOTAL_SUPPLY / 1_000, false, zeroForOne1
         );
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/12045
+    function test6() {
+        (
+            // uint80 roundID
+            ,
+            int256 dataFeedAnswer,
+            // uint startedAt
+            ,
+            uint256 updatedAt,
+            // uint80 answeredInRound
+        ) = dataFeedContract.latestRoundData();
     }
 }
 

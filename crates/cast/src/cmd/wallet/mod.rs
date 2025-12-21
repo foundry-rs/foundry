@@ -136,6 +136,12 @@ pub enum WalletSubcommands {
         #[arg(long)]
         chain: Option<Chain>,
 
+        /// If set, indicates the authorization will be broadcast by the signing account itself.
+        /// This means the nonce used will be the current nonce + 1 (to account for the
+        /// transaction that will include this authorization).
+        #[arg(long, conflicts_with = "nonce")]
+        self_broadcast: bool,
+
         #[command(flatten)]
         wallet: WalletOpts,
     },
@@ -542,13 +548,20 @@ impl WalletSubcommands {
                     sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
                 }
             }
-            Self::SignAuth { rpc, nonce, chain, wallet, address } => {
+            Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast } => {
                 let wallet = wallet.signer().await?;
                 let provider = utils::get_provider(&rpc.load_config()?)?;
                 let nonce = if let Some(nonce) = nonce {
                     nonce
                 } else {
-                    provider.get_transaction_count(wallet.address()).await?
+                    let current_nonce = provider.get_transaction_count(wallet.address()).await?;
+                    if self_broadcast {
+                        // When self-broadcasting, the authorization nonce needs to be +1
+                        // because the transaction itself will consume the current nonce
+                        current_nonce + 1
+                    } else {
+                        current_nonce
+                    }
                 };
                 let chain_id = if let Some(chain) = chain {
                     chain.id()
@@ -997,5 +1010,21 @@ mod tests {
             }
             _ => panic!("expected WalletSubcommands::ChangePassword"),
         }
+    }
+
+    #[test]
+    fn wallet_sign_auth_nonce_and_self_broadcast_conflict() {
+        let result = WalletSubcommands::try_parse_from([
+            "foundry-cli",
+            "sign-auth",
+            "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF",
+            "--nonce",
+            "42",
+            "--self-broadcast",
+        ]);
+        assert!(
+            result.is_err(),
+            "expected error when both --nonce and --self-broadcast are provided"
+        );
     }
 }

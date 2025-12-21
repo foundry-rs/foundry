@@ -199,6 +199,7 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
     prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests);
 
     cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...
@@ -230,8 +231,8 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
 [FAIL: log != expected Something] testShouldFailEmitSomethingElse() ([GAS])
-[FAIL: log emitted 1 time, expected 0] testShouldFailNoEmit() ([GAS])
-[FAIL: log emitted 1 time, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
+[FAIL: log emitted but expected 0 times] testShouldFailNoEmit() ([GAS])
+[FAIL: log emitted but expected 0 times] testShouldFailNoEmitFromAddress() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,
@@ -241,6 +242,9 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
+    prj.update_config(|config| {
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+    });
 
     let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
     let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
@@ -426,7 +430,7 @@ forgetest!(multiple_setups, |prj, cmd| {
     prj.add_source(
         "MultipleSetupsTest.t.sol",
         r#"
-    
+
 import "./test.sol";
 
 contract MultipleSetup is DSTest {

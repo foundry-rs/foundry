@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract SortTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract SortTest is Test {
     function testSortCheatcode() public {
         uint256[] memory numbers = new uint256[](3);
         numbers[0] = 3;

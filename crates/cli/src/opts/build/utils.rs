@@ -2,15 +2,15 @@ use eyre::Result;
 use foundry_compilers::{
     CompilerInput, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{Source, Sources},
-    multi::{MultiCompilerLanguage, MultiCompilerParsedSource, MultiCompilerParser},
-    solc::{SolcLanguage, SolcVersionedInput},
+    multi::{MultiCompilerLanguage, MultiCompilerParser},
+    solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
-use foundry_config::{Config, semver::Version};
+use foundry_config::Config;
 use rayon::prelude::*;
-use solar::sema::ParsingContext;
+use solar::{interface::MIN_SOLIDITY_VERSION, sema::ParsingContext};
 use std::{
     collections::{HashSet, VecDeque},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 /// Configures a [`ParsingContext`] from [`Config`].
@@ -49,7 +49,7 @@ pub fn configure_pcx(
 
     // Only process sources with latest Solidity version to avoid conflicts.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
-    let (version, sources, _) = graph
+    let (version, sources) = graph
         // Resolve graph into mapping language -> version -> sources
         .into_sources_by_version(project)?
         .sources
@@ -59,9 +59,15 @@ pub fn configure_pcx(
         .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
         .1
         .into_iter()
+        // Filter unsupported versions
+        .filter(|(v, _, _)| v >= &MIN_SOLIDITY_VERSION)
         // Always pick the latest version
         .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-        .unwrap();
+        .map_or((MIN_SOLIDITY_VERSION, Sources::default()), |(v, s, _)| (v, s));
+
+    if sources.is_empty() {
+        sh_warn!("no files found. Solar doesn't support Solidity versions prior to 0.8.0")?;
+    }
 
     let solc = SolcVersionedInput::build(
         sources,
@@ -75,104 +81,73 @@ pub fn configure_pcx(
     Ok(())
 }
 
-/// Configures a [`ParsingContext`] from a [`Project`] and [`SolcVersionedInput`].
+/// Extracts Solar-compatible sources from a [`ProjectCompileOutput`].
 ///
-/// - Configures include paths, remappings.
-/// - Source files are added if `add_source_file` is set
-pub fn configure_pcx_from_compile_output(
-    pcx: &mut ParsingContext<'_>,
+/// # Note:
+/// uses `output.graph().source_files()` and `output.artifact_ids()` rather than `output.sources()`
+/// because sources aren't populated when build is skipped when there are no changes in the source
+/// code. <https://github.com/foundry-rs/foundry/issues/12018>
+pub fn get_solar_sources_from_compile_output(
     config: &Config,
     output: &ProjectCompileOutput,
     target_paths: Option<&[PathBuf]>,
-) -> Result<()> {
-    // If targets are specified, find the max version among those files and their dependencies.
-    let (version, source_paths): (Version, Vec<PathBuf>) = if let Some(targets) = target_paths {
-        let mut scope = HashSet::new();
+) -> Result<SolcVersionedInput> {
+    let is_solidity_file = |path: &Path| -> bool {
+        path.extension().and_then(|s| s.to_str()).is_some_and(|ext| SOLC_EXTENSIONS.contains(&ext))
+    };
+
+    // Collect source path targets
+    let mut source_paths: HashSet<PathBuf> = if let Some(targets) = target_paths
+        && !targets.is_empty()
+    {
+        let mut source_paths = HashSet::new();
         let mut queue: VecDeque<PathBuf> = targets
             .iter()
             .filter_map(|path| {
-                if let Ok(full_path) = dunce::canonicalize(path)
-                    && output
-                        .graph()
-                        .get_parsed_source(full_path.as_path())
-                        .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
-                {
-                    Some(full_path)
-                } else {
-                    None
-                }
+                is_solidity_file(path).then(|| dunce::canonicalize(path).ok()).flatten()
             })
             .collect();
 
         while let Some(path) = queue.pop_front() {
-            if scope.insert(path.to_path_buf()) {
+            if source_paths.insert(path.clone()) {
                 for import in output.graph().imports(path.as_path()) {
                     queue.push_back(import.to_path_buf());
                 }
             }
         }
 
-        let version = output
-            .output()
-            .sources
-            .sources_with_version()
-            .filter_map(|(p, _, v)| {
-                if let Ok(full_path) = dunce::canonicalize(p)
-                    && scope.contains(&full_path)
-                {
-                    Some(v)
-                } else {
-                    None
-                }
+        source_paths
+    } else {
+        output
+            .graph()
+            .source_files()
+            .filter_map(|idx| {
+                let path = output.graph().node_path(idx).to_path_buf();
+                is_solidity_file(&path).then_some(path)
             })
-            .min()
-            .cloned()
-            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
+            .collect()
+    };
 
-        (version, scope.into_iter().collect())
-    }
-    // Otherwise, find the latest version among all compiled files.
-    else {
-        let (mut max_version, mut latest_paths) = (Version::new(0, 0, 0), Vec::new());
-        for (path, _, version) in output.output().sources.sources_with_version() {
-            // Only process Solidity files.
-            if !output
-                .graph()
-                .get_parsed_source(path)
-                .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
+    // Read all sources and find the latest version.
+    let (version, sources) = {
+        let (mut max_version, mut sources) = (MIN_SOLIDITY_VERSION, Sources::new());
+        for (id, _) in output.artifact_ids() {
+            if let Ok(path) = dunce::canonicalize(&id.source)
+                && source_paths.remove(&path)
             {
-                continue;
-            }
+                if id.version < MIN_SOLIDITY_VERSION {
+                    continue;
+                } else if max_version < id.version {
+                    max_version = id.version;
+                };
 
-            match version.cmp(&max_version) {
-                // A newer version was found --> reset the list of paths
-                std::cmp::Ordering::Greater => {
-                    max_version = version.clone();
-                    latest_paths.clear();
-                    if let Ok(canonical_path) = dunce::canonicalize(path) {
-                        latest_paths.push(canonical_path);
-                    }
-                }
-                // A file with the same version was found --> add it to the list
-                std::cmp::Ordering::Equal => {
-                    if let Ok(canonical_path) = dunce::canonicalize(path) {
-                        latest_paths.push(canonical_path);
-                    }
-                }
-                // A file with an older version was found --> ignore
-                std::cmp::Ordering::Less => {}
+                let source = Source::read(&path)?;
+                sources.insert(path, source);
             }
         }
 
-        (max_version, latest_paths)
+        (max_version, sources)
     };
-
-    // Read the file content for each of the determined paths.
-    let mut sources = Sources::new();
-    for path in source_paths.into_iter() {
-        let source = Source::read(&path)?;
-        sources.insert(path, source);
-    }
 
     let solc = SolcVersionedInput::build(
         sources,
@@ -181,8 +156,18 @@ pub fn configure_pcx_from_compile_output(
         version,
     );
 
-    configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
+    Ok(solc)
+}
 
+/// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`].
+pub fn configure_pcx_from_compile_output(
+    pcx: &mut ParsingContext<'_>,
+    config: &Config,
+    output: &ProjectCompileOutput,
+    target_paths: Option<&[PathBuf]>,
+) -> Result<()> {
+    let solc = get_solar_sources_from_compile_output(config, output, target_paths)?;
+    configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
     Ok(())
 }
 

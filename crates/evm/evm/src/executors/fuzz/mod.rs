@@ -1,5 +1,5 @@
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
+    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -46,7 +46,8 @@ struct FuzzTestData {
     breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
     coverage: Option<HitMaps>,
-    // Stores logs for all fuzz cases
+    // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs
+    // is false)
     logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
     deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
@@ -98,21 +99,23 @@ impl FuzzedExecutor {
         &mut self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
+        state: EvmFuzzState,
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
-        fail_fast: &FailFast,
+        early_exit: &EarlyExit,
     ) -> Result<FuzzTestResult> {
+        let state = &state;
         // Stores the fuzz test execution data.
         let mut test_data = FuzzTestData::default();
-        let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), state),
         ]
         .prop_map(move |calldata| BasicTxDetails {
+            warp: None,
+            roll: None,
             sender: Default::default(),
             call_details: CallDetails { target: Default::default(), calldata },
         });
@@ -132,7 +135,7 @@ impl FuzzedExecutor {
         let mut last_metrics_report = Instant::now();
         let max_runs = self.config.runs;
         let continue_campaign = |runs: u32| {
-            if fail_fast.should_stop() {
+            if early_exit.should_stop() {
                 return false;
             }
 
@@ -142,7 +145,7 @@ impl FuzzedExecutor {
         'stop: while continue_campaign(test_data.runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
             let input = if let Some(failure) = self.persisted_failure.take()
-                && func.selector() == failure.calldata[..4]
+                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
                 failure.calldata.clone()
             } else {
@@ -168,9 +171,14 @@ impl FuzzedExecutor {
                     last_metrics_report = Instant::now();
                 };
 
+                if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut()
+                    && let Some(seed) = self.config.seed
+                {
+                    cheats.set_seed(seed.wrapping_add(U256::from(test_data.runs)));
+                }
                 test_data.runs += 1;
 
-                match corpus_manager.new_input(&mut self.runner, &state, func) {
+                match corpus_manager.new_input(&mut self.runner, state, func) {
                     Ok(input) => input,
                     Err(err) => {
                         test_data.failure = Some(TestCaseError::fail(format!(
@@ -198,8 +206,13 @@ impl FuzzedExecutor {
                             test_data.breakpoints.replace(case.breakpoints);
                         }
 
+                        // Always store logs from the last run in test_data.logs for display at
+                        // verbosity >= 2. When show_logs is true,
+                        // accumulate all logs. When false, only keep the last run's logs.
                         if self.config.show_logs {
                             test_data.logs.extend(case.logs);
+                        } else {
+                            test_data.logs = case.logs;
                         }
 
                         HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
@@ -227,12 +240,21 @@ impl FuzzedExecutor {
                             // Discard run and apply max rejects if configured. Saturate to handle
                             // the case of replayed failure, which doesn't count as a run.
                             test_data.runs = test_data.runs.saturating_sub(1);
-                            if self.config.max_test_rejects > 0 {
-                                test_data.rejects += 1;
-                                if test_data.rejects >= self.config.max_test_rejects {
-                                    test_data.failure = Some(err);
-                                    break 'stop;
-                                }
+                            test_data.rejects += 1;
+
+                            // Update progress bar to reflect rejected runs.
+                            if let Some(progress) = progress {
+                                progress.set_message(format!("([{}] rejected)", test_data.rejects));
+                                progress.dec(1);
+                            }
+
+                            if self.config.max_test_rejects > 0
+                                && test_data.rejects >= self.config.max_test_rejects
+                            {
+                                test_data.failure = Some(TestCaseError::reject(
+                                    FuzzError::TooManyRejects(self.config.max_test_rejects),
+                                ));
+                                break 'stop;
                             }
                         }
                     }
@@ -248,6 +270,12 @@ impl FuzzedExecutor {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
+        // test_data.logs already contains the appropriate logs:
+        // - For failed tests: logs from the counterexample
+        // - For successful tests with show_logs=true: all logs from all runs
+        // - For successful tests with show_logs=false: logs from the last run only
+        let result_logs = test_data.logs;
+
         let mut result = FuzzTestResult {
             first_case: test_data.first_case.unwrap_or_default(),
             gas_by_case: test_data.gas_by_case,
@@ -255,7 +283,7 @@ impl FuzzedExecutor {
             skipped: false,
             reason: None,
             counterexample: None,
-            logs: test_data.logs,
+            logs: result_logs,
             labels: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
@@ -312,6 +340,8 @@ impl FuzzedExecutor {
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
+                warp: None,
+                roll: None,
                 sender: self.sender,
                 call_details: CallDetails { target: address, calldata: calldata.clone() },
             }],
@@ -320,9 +350,7 @@ impl FuzzedExecutor {
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::TooManyRejects(
-                self.config.max_test_rejects,
-            )));
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let (breakpoints, deprecated_cheatcodes) =
@@ -357,19 +385,6 @@ impl FuzzedExecutor {
                 counterexample: (calldata, call),
                 breakpoints,
             }))
-        }
-    }
-
-    /// Stores fuzz state for use with [fuzz_calldata_from_state]
-    pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
-        if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(fork_db, self.config.dictionary, deployed_libs)
-        } else {
-            EvmFuzzState::new(
-                self.executor.backend().mem_db(),
-                self.config.dictionary,
-                deployed_libs,
-            )
         }
     }
 }

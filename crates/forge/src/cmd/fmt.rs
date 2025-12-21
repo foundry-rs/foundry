@@ -51,21 +51,43 @@ impl_figment_convert_basic!(FmtArgs);
 impl FmtArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
+        let cwd = std::env::current_dir()?;
 
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
             .iter()
-            .flat_map(foundry_common::fs::canonicalize_path)
+            .flat_map(fs::canonicalize_path)
             .collect::<Vec<_>>();
 
-        let cwd = std::env::current_dir()?;
+        // Expand lib globs separately - we only exclude these during discovery, not explicit paths
+        let libs = expand_globs(&config.root, config.libs.iter().filter_map(|p| p.to_str()))?
+            .iter()
+            .flat_map(fs::canonicalize_path)
+            .collect::<Vec<_>>();
+
+        // Helper to check if a file path is under any ignored or lib directory
+        let is_under_ignored_dir = |file_path: &Path, include_libs: bool| -> bool {
+            let check_against_dir = |dir: &PathBuf| {
+                file_path.starts_with(dir)
+                    || cwd.join(file_path).starts_with(dir)
+                    || fs::canonicalize_path(file_path).is_ok_and(|p| p.starts_with(dir))
+            };
+
+            ignored.iter().any(&check_against_dir)
+                || (include_libs && libs.iter().any(&check_against_dir))
+        };
+
         let input = match &self.paths[..] {
             [] => {
-                // Retrieve the project paths, and filter out the ignored ones.
+                // Retrieve the project paths, and filter out the ignored ones and libs.
                 let project_paths: Vec<PathBuf> = config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
-                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
+                    .filter(|p| {
+                        !(ignored.contains(p)
+                            || ignored.contains(&cwd.join(p))
+                            || is_under_ignored_dir(p, true))
+                    })
                     .collect();
                 Input::Paths(project_paths)
             }
@@ -73,6 +95,7 @@ impl FmtArgs {
             paths => {
                 let mut inputs = Vec::with_capacity(paths.len());
                 for path in paths {
+                    // Check if path is in ignored directories
                     if !ignored.is_empty()
                         && ((path.is_absolute() && ignored.contains(path))
                             || ignored.contains(&cwd.join(path)))
@@ -81,11 +104,18 @@ impl FmtArgs {
                     }
 
                     if path.is_dir() {
-                        inputs.extend(foundry_compilers::utils::source_files_iter(
-                            path,
-                            SOLC_EXTENSIONS,
-                        ));
+                        // If the input directory is not a lib directory, make sure to ignore libs.
+                        let exclude_libs = !is_under_ignored_dir(path, true);
+                        inputs.extend(
+                            foundry_compilers::utils::source_files_iter(path, SOLC_EXTENSIONS)
+                                .filter(|p| {
+                                    !(ignored.contains(p)
+                                        || ignored.contains(&cwd.join(p))
+                                        || is_under_ignored_dir(p, exclude_libs))
+                                }),
+                        );
                     } else if path.is_sol() {
+                        // Explicit file paths are always included, even if in a lib
                         inputs.push(path.to_path_buf());
                     } else {
                         warn!("Cannot process path {}", path.display());

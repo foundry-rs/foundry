@@ -4067,7 +4067,7 @@
     {
       "func": {
         "id": "deployCode_0",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4087,7 +4087,7 @@
     {
       "func": {
         "id": "deployCode_1",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4107,7 +4107,7 @@
     {
       "func": {
         "id": "deployCode_2",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4127,7 +4127,7 @@
     {
       "func": {
         "id": "deployCode_3",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4147,7 +4147,7 @@
     {
       "func": {
         "id": "deployCode_4",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4167,7 +4167,7 @@
     {
       "func": {
         "id": "deployCode_5",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4187,7 +4187,7 @@
     {
       "func": {
         "id": "deployCode_6",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4207,7 +4207,7 @@
     {
       "func": {
         "id": "deployCode_7",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -5946,6 +5946,26 @@
     },
     {
       "func": {
+        "id": "fromRlp",
+        "description": "RLP decodes an RLP payload into a list of bytes.",
+        "declaration": "function fromRlp(bytes calldata rlp) external pure returns (bytes[] memory data);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "fromRlp(bytes)",
+        "selector": "0x1e1d8b63",
+        "selectorBytes": [
+          30,
+          29,
+          139,
+          99
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "fsMetadata",
         "description": "Given a path, query the file system to get information about a file, directory, etc.",
         "declaration": "function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);",
@@ -6301,6 +6321,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getEvmVersion",
+        "description": "Returns the test or script execution evm version.\n**Note:** The execution evm version is not the same as the compilation one.",
+        "declaration": "function getEvmVersion() external pure returns (string memory evm);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "getEvmVersion()",
+        "selector": "0xaa2bb222",
+        "selectorBytes": [
+          170,
+          43,
+          178,
+          34
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -9792,6 +9832,26 @@
     },
     {
       "func": {
+        "id": "setEvmVersion",
+        "description": "Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.\n**Note:** The execution evm version is not the same as the compilation one.",
+        "declaration": "function setEvmVersion(string calldata evm) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setEvmVersion(string)",
+        "selector": "0x43179f5a",
+        "selectorBytes": [
+          67,
+          23,
+          159,
+          90
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "setNonce",
         "description": "Sets the nonce of an account. Must be higher than the current nonce of the account.",
         "declaration": "function setNonce(address account, uint64 newNonce) external;",
@@ -10969,6 +11029,26 @@
         ]
       },
       "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toRlp",
+        "description": "RLP encodes a list of bytes into an RLP payload.",
+        "declaration": "function toRlp(bytes[] calldata data) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toRlp(bytes[])",
+        "selector": "0xa7ed3885",
+        "selectorBytes": [
+          167,
+          237,
+          56,
+          133
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },

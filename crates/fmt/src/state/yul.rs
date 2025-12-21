@@ -14,6 +14,10 @@ macro_rules! get_span {
 
 /// Language-specific pretty printing: Yul.
 impl<'ast> State<'_, 'ast> {
+    fn print_lit_yul(&mut self, lit: &'ast ast::Lit<'ast>) {
+        self.print_lit_inner(lit, true);
+    }
+
     pub(crate) fn print_yul_stmt(&mut self, stmt: &'ast yul::Stmt<'ast>) {
         let yul::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
@@ -22,11 +26,12 @@ impl<'ast> State<'_, 'ast> {
         }
 
         match kind {
-            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false),
+            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false, 0),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
                 self.word(" := ");
                 self.neverbreak();
+                self.cursor.advance_to(expr.span.lo(), self.cursor.enabled);
                 self.print_yul_expr(expr);
             }
             yul::StmtKind::AssignMulti(paths, expr_call) => {
@@ -49,30 +54,30 @@ impl<'ast> State<'_, 'ast> {
             }
             yul::StmtKind::Expr(expr_call) => self.print_yul_expr(expr_call),
             yul::StmtKind::If(expr, stmts) => {
-                self.word("if ");
+                self.print_word("if "); // 3 chars
                 self.print_yul_expr(expr);
-                self.nbsp();
-                self.print_yul_block(stmts, span, false);
+                self.nbsp(); // 1 char
+                self.print_yul_block(stmts, span, false, 4 + self.estimate_size(expr.span));
             }
             yul::StmtKind::For(yul::StmtFor { init, cond, step, body }) => {
                 self.ibox(0);
 
-                self.word("for ");
-                self.print_yul_block(init, init.span, false);
+                self.print_word("for "); // 4 chars
+                self.print_yul_block(init, init.span, false, 4);
 
                 self.space();
                 self.print_yul_expr(cond);
 
                 self.space();
-                self.print_yul_block(step, step.span, false);
+                self.print_yul_block(step, step.span, false, 0);
 
                 self.space();
-                self.print_yul_block(body, body.span, false);
+                self.print_yul_block(body, body.span, false, 0);
 
                 self.end();
             }
             yul::StmtKind::Switch(yul::StmtSwitch { selector, cases }) => {
-                self.word("switch ");
+                self.print_word("switch ");
                 self.print_yul_expr(selector);
 
                 self.print_trailing_comment(selector.span.hi(), None);
@@ -84,24 +89,24 @@ impl<'ast> State<'_, 'ast> {
                             constant.span.lo(),
                             CommentConfig::default().mixed_prev_space(),
                         );
-                        self.word("case ");
-                        self.print_lit(constant);
+                        self.print_word("case ");
+                        self.print_lit_yul(constant);
                         self.nbsp();
                     } else {
                         self.print_comments(
                             body.span.lo(),
                             CommentConfig::default().mixed_prev_space(),
                         );
-                        self.word("default ");
+                        self.print_word("default ");
                     }
-                    self.print_yul_block(body, *span, false);
+                    self.print_yul_block(body, *span, false, 0);
 
                     self.print_trailing_comment(selector.span.hi(), None);
                 }
             }
-            yul::StmtKind::Leave => self.word("leave"),
-            yul::StmtKind::Break => self.word("break"),
-            yul::StmtKind::Continue => self.word("continue"),
+            yul::StmtKind::Leave => self.print_word("leave"),
+            yul::StmtKind::Break => self.print_word("break"),
+            yul::StmtKind::Continue => self.print_word("continue"),
             yul::StmtKind::FunctionDef(func) => {
                 let yul::Function { name, parameters, returns, body } = func;
                 let params_hi = parameters
@@ -112,7 +117,7 @@ impl<'ast> State<'_, 'ast> {
 
                 self.cbox(0);
                 self.s.ibox(0);
-                self.word("function ");
+                self.print_word("function ");
                 self.print_ident(name);
                 self.print_tuple(
                     parameters,
@@ -139,12 +144,12 @@ impl<'ast> State<'_, 'ast> {
                     );
                 }
                 self.end();
-                self.print_yul_block(body, span, skip_opening_brace);
+                self.print_yul_block(body, span, skip_opening_brace, 0);
                 self.end();
             }
             yul::StmtKind::VarDecl(idents, expr) => {
                 self.s.ibox(self.ind);
-                self.word("let ");
+                self.print_word("let ");
                 self.commasep(
                     idents,
                     stmt.span.lo(),
@@ -154,7 +159,7 @@ impl<'ast> State<'_, 'ast> {
                     ListFormat::consistent(),
                 );
                 if let Some(expr) = expr {
-                    self.word(" :=");
+                    self.print_word(" :=");
                     self.space();
                     self.print_yul_expr(expr);
                 }
@@ -186,7 +191,7 @@ impl<'ast> State<'_, 'ast> {
                 if matches!(&lit.kind, ast::LitKind::Address(_)) {
                     self.print_span_cold(lit.span);
                 } else {
-                    self.print_lit(lit);
+                    self.print_lit_yul(lit);
                 }
             }
         }
@@ -197,6 +202,7 @@ impl<'ast> State<'_, 'ast> {
         block: &'ast yul::Block<'ast>,
         span: Span,
         skip_opening_brace: bool,
+        prefix_len: usize,
     ) {
         if self.handle_span(span, false) {
             return;
@@ -206,9 +212,15 @@ impl<'ast> State<'_, 'ast> {
             self.print_word("{");
         }
 
-        let can_inline_block = block.len() <= 1
-            && !self.is_multiline_yul_block(block)
-            && self.estimate_size(block.span) <= self.space_left();
+        let can_inline_block = if block.len() <= 1 && !self.is_multiline_yul_block(block) {
+            if self.max_space_left(prefix_len) == 0 {
+                self.estimate_size(block.span) + self.config.tab_width < self.space_left()
+            } else {
+                self.estimate_size(block.span) + prefix_len < self.space_left()
+            }
+        } else {
+            false
+        };
         if can_inline_block {
             self.neverbreak();
             self.print_block_inner(

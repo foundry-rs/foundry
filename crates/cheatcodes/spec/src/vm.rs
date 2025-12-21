@@ -609,6 +609,18 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function coolSlot(address target, bytes32 slot) external;
 
+    /// Returns the test or script execution evm version.
+    ///
+    /// **Note:** The execution evm version is not the same as the compilation one.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getEvmVersion() external pure returns (string memory evm);
+
+    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    ///
+    /// **Note:** The execution evm version is not the same as the compilation one.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function setEvmVersion(string calldata evm) external;
+
     // -------- Call Manipulation --------
     // --- Mocks ---
 
@@ -1913,11 +1925,13 @@ interface Vm {
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
     #[cheatcode(group = Filesystem)]
@@ -1925,6 +1939,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
     #[cheatcode(group = Filesystem)]
@@ -1932,6 +1947,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
     #[cheatcode(group = Filesystem)]
@@ -1939,11 +1955,13 @@ interface Vm {
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
     #[cheatcode(group = Filesystem)]
@@ -1951,6 +1969,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
     #[cheatcode(group = Filesystem)]
@@ -1958,6 +1977,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
     #[cheatcode(group = Filesystem)]
@@ -2985,6 +3005,13 @@ interface Vm {
     /// Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.
     #[cheatcode(group = Utilities)]
     function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
+
+    /// RLP encodes a list of bytes into an RLP payload.
+    #[cheatcode(group = Utilities)]
+    function toRlp(bytes[] calldata data) external pure returns (bytes memory);
+    /// RLP decodes an RLP payload into a list of bytes.
+    #[cheatcode(group = Utilities)]
+    function fromRlp(bytes calldata rlp) external pure returns (bytes[] memory data);
 }
 }
 

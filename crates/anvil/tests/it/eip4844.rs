@@ -4,13 +4,13 @@ use alloy_eips::{
     Typed2718,
     eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN},
 };
-use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, U256, b256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -70,6 +70,33 @@ async fn can_send_eip4844_transaction_fork() {
         .with_blob_sidecar(sidecar.clone());
 
     let pending_tx = provider.send_transaction(tx.into()).await.unwrap();
+    let receipt = pending_tx.get_receipt().await.unwrap();
+    let tx_hash = receipt.transaction_hash;
+
+    let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_eip4844_transaction_eth_send_transaction() {
+    let node_config = NodeConfig::test()
+        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+        .with_fork_block_number(Some(23552208u64))
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = ProviderBuilder::new().connect(handle.http_endpoint().as_str()).await.unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
+    let sidecar = sidecar.build().unwrap();
+
+    let tx = TransactionRequest::default()
+        .with_from(alice)
+        .with_to(bob)
+        .with_blob_sidecar(sidecar.clone());
+
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
     let receipt = pending_tx.get_receipt().await.unwrap();
     let tx_hash = receipt.transaction_hash;
 

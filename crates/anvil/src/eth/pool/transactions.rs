@@ -1,10 +1,12 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use alloy_consensus::{Transaction, Typed2718};
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
     Address, TxHash,
     map::{HashMap, HashSet},
 };
-use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
+use anvil_core::eth::transaction::PendingTransaction;
+use foundry_primitives::FoundryTxEnvelope;
 use parking_lot::RwLock;
 use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
 
@@ -36,10 +38,10 @@ pub enum TransactionOrder {
 
 impl TransactionOrder {
     /// Returns the priority of the transactions
-    pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+    pub fn priority(&self, tx: &FoundryTxEnvelope) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
-            Self::Fees => TransactionPriority(tx.gas_price()),
+            Self::Fees => TransactionPriority(tx.max_fee_per_gas()),
         }
     }
 }
@@ -94,14 +96,14 @@ impl PoolTransaction {
         *self.pending_transaction.hash()
     }
 
-    /// Returns the gas pric of this transaction
-    pub fn gas_price(&self) -> u128 {
-        self.pending_transaction.transaction.gas_price()
+    /// Returns the max fee per gas of this transaction
+    pub fn max_fee_per_gas(&self) -> u128 {
+        self.pending_transaction.transaction.max_fee_per_gas()
     }
 
     /// Returns the type of the transaction
     pub fn tx_type(&self) -> u8 {
-        self.pending_transaction.transaction.r#type().unwrap_or_default()
+        self.pending_transaction.transaction.ty()
     }
 }
 
@@ -120,7 +122,7 @@ impl fmt::Debug for PoolTransaction {
 impl TryFrom<AnyRpcTransaction> for PoolTransaction {
     type Error = eyre::Error;
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let typed_transaction = TypedTransaction::try_from(value)?;
+        let typed_transaction = FoundryTxEnvelope::try_from(value)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {
             pending_transaction,
@@ -181,7 +183,7 @@ impl PendingTransactions {
             .and_then(|hash| self.waiting_queue.get(hash))
         {
             // check if underpriced
-            if tx.transaction.gas_price() < replace.transaction.gas_price() {
+            if tx.transaction.max_fee_per_gas() < replace.transaction.max_fee_per_gas() {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(Box::new(
                     tx.transaction.as_ref().clone(),
@@ -417,6 +419,16 @@ impl ReadyTransactions {
         self.ready_tx.read().contains_key(hash)
     }
 
+    /// Returns the number of ready transactions without cloning the snapshot
+    pub fn len(&self) -> usize {
+        self.ready_tx.read().len()
+    }
+
+    /// Returns true if there are no ready transactions
+    pub fn is_empty(&self) -> bool {
+        self.ready_tx.read().is_empty()
+    }
+
     /// Returns the transaction for the hash if it's in the ready pool but not yet mined
     pub fn get(&self, hash: &TxHash) -> Option<ReadyTransaction> {
         self.ready_tx.read().get(hash).cloned()
@@ -513,7 +525,9 @@ impl ReadyTransactions {
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
+                    if tx.pending_transaction.transaction.max_fee_per_gas()
+                        <= to_remove.max_fee_per_gas()
+                    {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())));
                     } else {
@@ -711,8 +725,8 @@ impl ReadyTransaction {
         &self.transaction.transaction.provides
     }
 
-    pub fn gas_price(&self) -> u128 {
-        self.transaction.transaction.gas_price()
+    pub fn max_fee_per_gas(&self) -> u128 {
+        self.transaction.transaction.max_fee_per_gas()
     }
 }
 

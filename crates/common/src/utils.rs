@@ -82,8 +82,8 @@ pub fn strip_bytecode_placeholders(bytecode: &BytecodeObject) -> Option<Bytes> {
     match &bytecode {
         BytecodeObject::Bytecode(bytes) => Some(bytes.clone()),
         BytecodeObject::Unlinked(s) => {
-            // Replace all __$xxx$__ placeholders with 32 zero bytes
-            let s = (*BYTECODE_PLACEHOLDER_RE).replace_all(s, "00".repeat(40));
+            // Replace all __$xxx$__ placeholders with 20 zero bytes (40 hex chars)
+            let s = (*BYTECODE_PLACEHOLDER_RE).replace_all(s, "00".repeat(20));
             let bytes = hex::decode(s.as_bytes());
             Some(bytes.ok()?.into())
         }
@@ -94,10 +94,12 @@ pub fn strip_bytecode_placeholders(bytecode: &BytecodeObject) -> Option<Bytes> {
 /// if the target cannot be compiled successfully. This would be the case if the target has invalid
 /// syntax. (e.g. Solang)
 pub fn flatten(project: Project, target_path: &Path) -> eyre::Result<String> {
-    let flattened = match Flattener::new(project.clone(), target_path) {
+    // Save paths for fallback before Flattener::new takes ownership
+    let paths = project.paths.clone();
+    let flattened = match Flattener::new(project, target_path) {
         Ok(flattener) => Ok(flattener.flatten()),
         Err(FlattenerError::Compilation(_)) => {
-            project.paths.with_language::<SolcLanguage>().flatten(target_path)
+            paths.with_language::<SolcLanguage>().flatten(target_path)
         }
         Err(FlattenerError::Other(err)) => Err(err),
     }

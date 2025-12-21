@@ -367,7 +367,7 @@ impl Executor {
         // persistent across fork swaps in forking mode
         self.backend_mut().add_persistent_account(address);
 
-        debug!(%address, "deployed contract");
+        trace!(%address, "deployed contract");
 
         Ok(DeployResult { raw: result, address })
     }
@@ -1130,33 +1130,35 @@ impl FuzzTestTimer {
     }
 }
 
-/// Helper struct to enable fail fast behavior: when one test fails, all other tests stop early.
+/// Helper struct to enable early exit behavior: when one test fails or run is interrupted,
+/// all other tests stop early.
 #[derive(Clone, Debug)]
-pub struct FailFast {
-    /// Shared atomic flag set to `true` when a failure occurs.
-    /// None if fail-fast is disabled.
-    inner: Option<Arc<AtomicBool>>,
+pub struct EarlyExit {
+    /// Shared atomic flag set to `true` when a failure occurs or ctrl-c received.
+    inner: Arc<AtomicBool>,
+    /// Whether to exit early on test failure (fail-fast mode).
+    fail_fast: bool,
 }
 
-impl FailFast {
+impl EarlyExit {
     pub fn new(fail_fast: bool) -> Self {
-        Self { inner: fail_fast.then_some(Arc::new(AtomicBool::new(false))) }
+        Self { inner: Arc::new(AtomicBool::new(false)), fail_fast }
     }
 
-    /// Returns `true` if fail-fast is enabled.
-    pub fn is_enabled(&self) -> bool {
-        self.inner.is_some()
-    }
-
-    /// Sets the failure flag. Used by other tests to stop early.
-    pub fn record_fail(&self) {
-        if let Some(fail_fast) = &self.inner {
-            fail_fast.store(true, Ordering::Relaxed);
+    /// Records a test failure. Only triggers early exit if fail-fast mode is enabled.
+    pub fn record_failure(&self) {
+        if self.fail_fast {
+            self.inner.store(true, Ordering::Relaxed);
         }
     }
 
-    /// Whether a failure has been recorded and test should stop.
+    /// Records a Ctrl-C interrupt. Always triggers early exit.
+    pub fn record_ctrl_c(&self) {
+        self.inner.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether tests should stop and exit early.
     pub fn should_stop(&self) -> bool {
-        self.inner.as_ref().map(|flag| flag.load(Ordering::Relaxed)).unwrap_or(false)
+        self.inner.load(Ordering::Relaxed)
     }
 }

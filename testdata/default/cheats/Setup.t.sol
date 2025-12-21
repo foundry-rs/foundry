@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Victim {
     function assertSender(address sender) external {
@@ -10,8 +9,7 @@ contract Victim {
     }
 }
 
-contract VmSetupTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract VmSetupTest is Test {
     Victim victim;
 
     function setUp() public {
