@@ -304,7 +304,7 @@ impl EthApi {
 
     /// Executes the [EthRequest] with optional raw JSON request data and logging context.
     ///
-    /// This method extends [execute] by accepting the raw JSON-RPC request payload and metadata
+    /// This method extends [`Self::execute`] by accepting the raw JSON-RPC request payload and metadata
     /// for verbose RPC logging. When verbose logging is enabled, both the request and response
     /// payloads are logged with contextual information (RPC ID, method, peer address, timestamp).
     ///
@@ -318,7 +318,7 @@ impl EthApi {
     ///
     /// This method should be called by RPC handlers that have access to the raw request payload
     /// and want to enable verbose logging. For simple execution without logging context, use
-    /// [execute] instead.
+    /// [`Self::execute`] instead.
     pub async fn execute_with_raw(
         &self,
         request: EthRequest,
@@ -733,7 +733,7 @@ impl EthApi {
     /// * `T` - The type of the debug_value, must implement [std::fmt::Debug]
     ///
     /// This method can be called unconditionally; it will only log if verbose RPC logging
-    /// is enabled (via [should_log_rpc_payloads]).
+    /// is enabled (via [`Self::should_log_rpc_payloads`]).
     fn log_rpc_payload<T>(
         &self,
         label: &str,
@@ -760,7 +760,7 @@ impl EthApi {
 
     /// Logs an RPC payload with automatic serialization.
     ///
-    /// This is a convenience wrapper around [log_rpc_payload] that handles serialization
+    /// This is a convenience wrapper around [`Self::log_rpc_payload`] that handles serialization
     /// of the debug value to JSON. This is useful when you don't have a pre-serialized JSON
     /// value and want the method to handle lazy serialization only when logging is enabled.
     ///
