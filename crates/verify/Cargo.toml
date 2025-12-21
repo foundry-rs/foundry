@@ -40,6 +40,7 @@ semver.workspace = true
 regex = { workspace = true, default-features = false }
 yansi.workspace = true
 itertools.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }

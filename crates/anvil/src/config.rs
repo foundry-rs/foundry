@@ -12,15 +12,14 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    hardfork::{ChainHardfork, ethereum_hardfork_from_block_tag, spec_id_from_ethereum_hardfork},
     mem::{self, in_memory_db::MemDb},
 };
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip7840::BlobParams;
+use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, TransactionResponse};
-use alloy_op_hardforks::OpHardfork;
 use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockNumberOrTag};
@@ -41,6 +40,10 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::AsEnvMut,
+    hardfork::{
+        FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
+        spec_id_from_ethereum_hardfork,
+    },
     utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
 use itertools::Itertools;
@@ -114,7 +117,7 @@ pub struct NodeConfig {
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
-    pub hardfork: Option<ChainHardfork>,
+    pub hardfork: Option<FoundryHardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<PrivateKeySigner>,
     /// Native token balance of every genesis account in the genesis block
@@ -546,7 +549,7 @@ impl NodeConfig {
     }
 
     /// Returns the hardfork to use
-    pub fn get_hardfork(&self) -> ChainHardfork {
+    pub fn get_hardfork(&self) -> FoundryHardfork {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
@@ -727,7 +730,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Option<ChainHardfork>) -> Self {
+    pub fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -1076,12 +1079,14 @@ impl NodeConfig {
 
         let spec_id = cfg.spec;
         let mut env = Env::new(
-            cfg,
-            BlockEnv {
-                gas_limit: self.gas_limit(),
-                basefee: self.get_base_fee(),
-                ..Default::default()
-            },
+            EvmEnv::new(
+                cfg,
+                BlockEnv {
+                    gas_limit: self.gas_limit(),
+                    basefee: self.get_base_fee(),
+                    ..Default::default()
+                },
+            ),
             OpTransaction {
                 base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
                 ..Default::default()
@@ -1211,7 +1216,6 @@ impl NodeConfig {
                 .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(self.fork_request_retries)
-                .initial_backoff(1000)
                 .headers(self.fork_headers.clone())
                 .build()
                 .wrap_err("failed to establish provider to fork url")?,
@@ -1235,7 +1239,7 @@ impl NodeConfig {
                         ethereum_hardfork_from_block_tag(fork_block_number);
 
                     env.evm_env.cfg_env.spec = spec_id_from_ethereum_hardfork(hardfork);
-                    self.hardfork = Some(ChainHardfork::Ethereum(hardfork));
+                    self.hardfork = Some(FoundryHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
             } else {

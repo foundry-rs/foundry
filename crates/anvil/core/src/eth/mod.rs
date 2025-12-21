@@ -187,6 +187,9 @@ pub enum EthRequest {
         #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
+    #[serde(rename = "eth_fillTransaction", with = "sequence")]
+    EthFillTransaction(WithOtherFields<TransactionRequest>),
+
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
 
@@ -201,6 +204,10 @@ pub enum EthRequest {
     /// Returns the blobs for a given transaction hash.
     #[serde(rename = "anvil_getBlobSidecarsByBlockId", with = "sequence")]
     GetBlobSidecarsByBlockId(BlockId),
+
+    /// Returns the genesis time for the chain
+    #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
+    GetGenesisTime(()),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),
@@ -674,6 +681,14 @@ pub enum EthRequest {
     /// to get the full transaction data.
     #[serde(rename = "ots_getTransactionBySenderAndNonce")]
     OtsGetTransactionBySenderAndNonce(
+        Address,
+        #[serde(deserialize_with = "deserialize_number")] U256,
+    ),
+
+    /// Returns the transaction by sender and nonce
+    /// Returns the full transaction data.
+    #[serde(rename = "eth_getTransactionBySenderAndNonce")]
+    EthGetTransactionBySenderAndNonce(
         Address,
         #[serde(deserialize_with = "deserialize_number")] U256,
     ),

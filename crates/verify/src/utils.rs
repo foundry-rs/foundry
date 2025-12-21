@@ -97,51 +97,6 @@ pub fn build_project(
     Ok(artifact.into_contract_bytecode())
 }
 
-pub fn build_using_cache(
-    args: &VerifyBytecodeArgs,
-    etherscan_settings: &Metadata,
-    config: &Config,
-) -> Result<CompactContractBytecode> {
-    let project = config.project()?;
-    let cache = project.read_cache_file()?;
-    let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>()?;
-
-    for (key, value) in cached_artifacts {
-        let name = args.contract.name.to_owned() + ".sol";
-        let version = etherscan_settings.compiler_version.to_owned();
-        // Ignores vyper
-        if version.starts_with("vyper:") {
-            eyre::bail!("Vyper contracts are not supported")
-        }
-        // Parse etherscan version string
-        let version = version.split('+').next().unwrap_or("").trim_start_matches('v').to_string();
-
-        // Check if `out/directory` name matches the contract name
-        if key.ends_with(name.as_str()) {
-            let name = name.replace(".sol", ".json");
-            for artifact in value.into_values().flatten() {
-                // Check if ABI file matches the name
-                if !artifact.file.ends_with(&name) {
-                    continue;
-                }
-
-                // Check if Solidity version matches
-                if let Ok(version) = Version::parse(&version)
-                    && !(artifact.version.major == version.major
-                        && artifact.version.minor == version.minor
-                        && artifact.version.patch == version.patch)
-                {
-                    continue;
-                }
-
-                return Ok(artifact.artifact);
-            }
-        }
-    }
-
-    eyre::bail!("couldn't find cached artifact for contract {}", args.contract.name)
-}
-
 pub fn print_result(
     res: Option<VerificationType>,
     bytecode_type: BytecodeType,

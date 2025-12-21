@@ -1,0 +1,31 @@
+[package]
+name = "foundry-primitives"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-consensus.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-rlp.workspace = true
+alloy-rpc-types = { workspace = true, features = ["trace"] }
+alloy-rpc-types-eth.workspace = true
+alloy-serde.workspace = true
+alloy-evm = { workspace = true, features = ["op"] }
+op-alloy-consensus = { workspace = true, features = ["serde", "alloy-compat"] }
+op-alloy-rpc-types.workspace = true
+op-revm.workspace = true
+revm.workspace = true
+serde_json.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+derive_more.workspace = true
+tempo-primitives.workspace = true

@@ -8,10 +8,9 @@ use alloy_primitives::{
     map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
 };
 use foundry_common::{
-    compile::Analysis, ignore_metadata_hash, mapping_slots::MappingSlots,
-    slot_identifier::SlotIdentifier,
+    ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
 };
-use foundry_compilers::{ProjectPathsConfig, artifacts::StorageLayout};
+use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
@@ -43,12 +42,21 @@ pub struct EvmFuzzState {
 }
 
 impl EvmFuzzState {
+    #[cfg(test)]
+    pub(crate) fn test() -> Self {
+        Self::new(
+            &[],
+            &CacheDB::<revm::database::EmptyDB>::default(),
+            FuzzDictionaryConfig::default(),
+            None,
+        )
+    }
+
     pub fn new<DB: DatabaseRef>(
+        deployed_libs: &[Address],
         db: &CacheDB<DB>,
         config: FuzzDictionaryConfig,
-        deployed_libs: &[Address],
-        analysis: Option<&Analysis>,
-        paths_config: Option<&ProjectPathsConfig>,
+        literals: Option<&LiteralsDictionary>,
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
         let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
@@ -57,11 +65,9 @@ impl EvmFuzzState {
         // Create fuzz dictionary and insert values from db state.
         let mut dictionary = FuzzDictionary::new(config);
         dictionary.insert_db_values(accs);
-        dictionary.literal_values = LiteralsDictionary::new(
-            analysis.cloned(),
-            paths_config.cloned(),
-            config.max_fuzz_dictionary_literals,
-        );
+        if let Some(literals) = literals {
+            dictionary.literal_values = literals.clone();
+        }
 
         Self {
             inner: Arc::new(RwLock::new(dictionary)),
@@ -126,8 +132,8 @@ impl EvmFuzzState {
         self.inner.read().log_stats();
     }
 
-    #[cfg(test)]
     /// Test-only helper to seed the dictionary with literal values.
+    #[cfg(test)]
     pub(crate) fn seed_literals(&self, map: super::LiteralMaps) {
         self.inner.write().seed_literals(map);
     }
@@ -135,7 +141,6 @@ impl EvmFuzzState {
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
-#[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
     state_values: B256IndexSet,
@@ -173,9 +178,27 @@ impl fmt::Debug for FuzzDictionary {
     }
 }
 
+impl Default for FuzzDictionary {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
+
 impl FuzzDictionary {
     pub fn new(config: FuzzDictionaryConfig) -> Self {
-        let mut dictionary = Self { config, samples_seeded: false, ..Default::default() };
+        let mut dictionary = Self {
+            config,
+            samples_seeded: false,
+
+            state_values: Default::default(),
+            addresses: Default::default(),
+            db_state_values: Default::default(),
+            db_addresses: Default::default(),
+            sample_values: Default::default(),
+            literal_values: Default::default(),
+            misses: Default::default(),
+            hits: Default::default(),
+        };
         dictionary.prefill();
         dictionary
     }
@@ -190,7 +213,8 @@ impl FuzzDictionary {
     #[cold]
     fn seed_samples(&mut self) {
         trace!("seeding `sample_values` from literal dictionary");
-        self.sample_values.extend(self.literal_values.take_words());
+        self.sample_values
+            .extend(self.literal_values.get().words.iter().map(|(k, v)| (k.clone(), v.clone())));
         self.samples_seeded = true;
     }
 
