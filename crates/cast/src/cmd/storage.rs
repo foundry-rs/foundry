@@ -159,11 +159,22 @@ impl StorageArgs {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
         }
 
-        // Create a new temp project
-        // TODO: Cache instead of using a temp directory: metadata from Etherscan won't change
-        let root = tempfile::tempdir()?;
-        let root_path = root.path();
-        let mut project = etherscan_project(metadata, root_path)?;
+        // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir
+        let root_path = if let Some(cache_root) =
+            foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
+        {
+            let sources_root = cache_root.join("sources");
+            let contract_root = sources_root.join(format!("{address}"));
+            if let Err(err) = std::fs::create_dir_all(&contract_root) {
+                sh_warn!("Could not create etherscan cache dir, falling back to temp: {err}")?;
+                tempfile::tempdir()?.path().to_path_buf()
+            } else {
+                contract_root
+            }
+        } else {
+            tempfile::tempdir()?.keep()
+        };
+        let mut project = etherscan_project(metadata, &root_path)?;
         add_storage_layout_output(&mut project);
 
         // Decide on compiler to use (user override -> metadata -> autodetect)
@@ -213,9 +224,6 @@ impl StorageArgs {
 
             artifact
         };
-
-        // Clear temp directory
-        root.close()?;
 
         fetch_and_print_storage(provider, address, block, artifact).await
     }
