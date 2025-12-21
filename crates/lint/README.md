@@ -9,16 +9,25 @@ It helps enforce best practices and improve code quality within Foundry projects
 
 - **High Severity:**
   - `incorrect-shift`: Warns against shift operations where operands might be in the wrong order.
+  - `unchecked-call`: Low-level calls should check the success return value.
+  - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
 - **Medium Severity:**
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
+  - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Informational / Style Guide:**
   - `pascal-case-struct`: Flags for struct names not adhering to `PascalCase`.
   - `mixed-case-function`: Flags for function names not adhering to `mixedCase`.
   - `mixed-case-variable`: Flags for mutable variable names not adhering to `mixedCase`.
   - `screaming-snake-case-const`: Flags for `constant` variable names not adhering to `SCREAMING_SNAKE_CASE`.
   - `screaming-snake-case-immutable`: Flags for `immutable` variable names not adhering to `SCREAMING_SNAKE_CASE`.
+  - `unused-import`: Unused imports should be removed.
+  - `unaliased-plain-import`: Use named imports `{A, B}` or alias `import ".." as X`.
+  - `named-struct-fields`: Prefer initializing structs with named fields.
+  - `unsafe-cheatcode`: Usage of unsafe cheatcodes that can perform dangerous operations.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
+- **Code Size:**
+  - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
 
 ## Configuration
 
@@ -26,7 +35,7 @@ The behavior of the `SolidityLinter` can be customized with the following option
 
 | Option              | Default | Description                                                                                                |
 | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
-| `with_severity`     | `None`  | Filters active lints by their severity (`High`, `Med`, `Low`, `Info`, `Gas`). `None` means all severities. |
+| `with_severity`     | `None`  | Filters active lints by their severity (`High`, `Med`, `Low`, `Info`, `Gas`, `CodeSize`). `None` means all severities. |
 | `with_lints`        | `None`  | Specifies a list of `SolLint` instances to include. Overrides severity filter if a lint matches.           |
 | `without_lints`     | `None`  | Specifies a list of `SolLint` instances to exclude, even if they match other criteria.                     |
 | `with_description`  | `true`  | Whether to include the lint's description in the diagnostic output.                                        |

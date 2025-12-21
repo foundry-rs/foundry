@@ -106,6 +106,8 @@ impl Signer for DevSigner {
             FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
             }
+            // TODO(onbjerg): we should impl support for Tempo transactions
+            FoundryTypedTx::Tempo(_) => todo!(),
         }
     }
 }
@@ -126,6 +128,8 @@ pub fn build_typed_transaction(
         FoundryTypedTx::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
         FoundryTypedTx::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
         FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+        // TODO(onbjerg): we should impl support for Tempo transactions
+        FoundryTypedTx::Tempo(_) => todo!(),
     };
 
     Ok(tx)
