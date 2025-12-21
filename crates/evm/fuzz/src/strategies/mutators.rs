@@ -49,7 +49,7 @@ static INTERESTING_32: &[i32] = &[
 static THREE_SIGMA_MULTIPLIERS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0];
 
 /// Mutator that randomly increments or decrements an uint or int.
-pub(crate) trait IncrementDecrementMutator: Sized + Copy + Debug {
+pub(crate) trait IncrementDecrementMutator: Copy + Debug {
     fn validate(old: Self, new: Self, size: usize) -> Option<Self>;
 
     #[instrument(
@@ -96,7 +96,7 @@ impl_increment_decrement_mutator!(U256, validate_uint_mutation);
 impl_increment_decrement_mutator!(I256, validate_int_mutation);
 
 /// Mutator that changes the current value of an uint or int by applying gaussian noise.
-pub(crate) trait GaussianNoiseMutator: Sized + Copy + Debug {
+pub(crate) trait GaussianNoiseMutator: Copy + Debug {
     fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
 }
 
@@ -132,7 +132,7 @@ impl GaussianNoiseMutator for I256 {
 
 /// Mutator that bounds the current value of an uint or int in the given range.
 /// The mutated value is always different from the current value.
-pub trait BoundMutator: Sized + Copy + Debug {
+pub trait BoundMutator: Copy + Debug {
     fn bound(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self>;
 }
 
@@ -198,7 +198,7 @@ impl BoundMutator for I256 {
 }
 
 /// Mutator that changes the current value by flipping a random bit.
-pub(crate) trait BitMutator: Sized + Copy + Debug {
+pub(crate) trait BitMutator: Copy + Debug {
     fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
 }
 
@@ -241,7 +241,7 @@ impl BitMutator for Word {
 
 /// Mutator that changes the current value by randomly injecting interesting words (for uint, int,
 /// address and fixed bytes) - see <https://github.com/AFLplusplus/LibAFL/blob/90cb9a2919faf386e0678870e52784070cdac4b6/crates/libafl/src/mutators/mutations.rs#L88-L123>.
-pub(crate) trait InterestingWordMutator: Sized + Copy + Debug {
+pub(crate) trait InterestingWordMutator: Copy + Debug {
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
     fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
     fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
