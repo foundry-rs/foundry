@@ -116,6 +116,11 @@ solar-interface.opt-level = 3
 solar-parse.opt-level = 3
 solar-sema.opt-level = 3
 
+# CLI.
+clap.opt-level = 3
+clap_builder.opt-level = 3
+clap_lex.opt-level = 3
+
 # EVM.
 alloy-dyn-abi.opt-level = 3
 alloy-json-abi.opt-level = 3
