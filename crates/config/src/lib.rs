@@ -1603,8 +1603,8 @@ impl Config {
             .map_err(|e| {
                 // `sh_warn!` is a circular dependency, preventing us from using it here.
                 eprintln!(
-                    "{}",
-                    yansi::Paint::yellow(&format!("Error getting etherscan config: {}", e))
+                    "{}: failed getting etherscan config: {e}",
+                    yansi::Paint::yellow("Warning"),
                 );
             })
             .ok()
