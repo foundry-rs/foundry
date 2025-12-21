@@ -871,6 +871,41 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
 });
 
+// checks that `forge init --network tempo` works.
+forgetest!(can_init_tempo_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success().stdout_eq(str![[
+        r#"
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+    Installed forge-std[..]
+Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
+    Installed tempo-std[..]
+    Initialized forge project
+
+"#
+    ]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("lib/tempo-std").exists());
+
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("src").join("Mail.sol").exists());
+
+    assert!(prj.root().join("test").exists());
+    assert!(prj.root().join("test").join("Mail.t.sol").exists());
+
+    assert!(prj.root().join("script").exists());
+    assert!(prj.root().join("script").join("Mail.s.sol").exists());
+
+    assert!(prj.root().join(".github").join("workflows").exists());
+    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
+
+    assert!(prj.root().join("README.md").exists());
+});
+
 // checks that clone works with raw src containing `node_modules`
 // <https://github.com/foundry-rs/foundry/issues/10115>
 forgetest!(can_clone_with_node_modules, |prj, cmd| {

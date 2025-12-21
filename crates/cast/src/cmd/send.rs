@@ -11,10 +11,7 @@ use eyre::{Result, eyre};
 use foundry_cli::{opts::TransactionOpts, utils, utils::LoadConfig};
 use foundry_wallets::WalletSigner;
 
-use crate::{
-    Cast,
-    tx::{self, CastTxBuilder, SendTxOpts},
-};
+use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -191,7 +188,7 @@ impl SendTxArgs {
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;
                 } else {
-                    let receipt = Cast::new(&provider)
+                    let receipt = CastTxSender::new(&provider)
                         .receipt(
                             format!("{tx_hash:#x}"),
                             None,
@@ -234,7 +231,7 @@ pub(crate) async fn cast_send<P: Provider<AnyNetwork>>(
     confs: u64,
     timeout: u64,
 ) -> Result<()> {
-    let cast = Cast::new(&provider);
+    let cast = CastTxSender::new(&provider);
 
     if sync {
         // Send transaction and wait for receipt synchronously

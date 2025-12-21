@@ -1,5 +1,4 @@
 //! In-memory blockchain backend.
-
 use self::state::trie_storage;
 use super::executor::new_evm_with_inspector;
 use crate::{
@@ -34,14 +33,14 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Blob, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEnvelope, Typed2718,
+    Account, Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    TxEnvelope, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
 use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
-    Encodable2718,
+    BlockNumHash, Encodable2718,
     eip1559::BaseFeeParams,
     eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
     eip7840::BlobParams,
@@ -55,7 +54,8 @@ use alloy_evm::{
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
-    EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
+    EthereumWallet, ReceiptResponse, TransactionBuilder, UnknownTxEnvelope,
+    UnknownTypedTransaction,
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
@@ -85,10 +85,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
-    transaction::{
-        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceiptRpc, has_optimism_fields, transaction_request_to_typed,
-    },
+    transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
     wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
@@ -107,12 +104,13 @@ use foundry_evm::{
     },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{
+    FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt,
+    get_deposit_tx_parts,
+};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
-use op_revm::{
-    OpContext, OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts,
-};
+use op_revm::{OpContext, OpHaltReason, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
@@ -1555,7 +1553,6 @@ impl Backend {
                     nonce,
                     sidecar: _,
                     chain_id,
-                    transaction_type,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
@@ -1632,21 +1629,7 @@ impl Backend {
         }
 
         // Deposit transaction?
-        if transaction_type == Some(DEPOSIT_TX_TYPE_ID) && has_optimism_fields(&other) {
-            let deposit = DepositTransactionParts {
-                source_hash: other
-                    .get_deserialized::<B256>("sourceHash")
-                    .map(|sh| sh.unwrap_or_default())
-                    .unwrap_or_default(),
-                mint: other
-                    .get_deserialized::<u128>("mint")
-                    .map(|m| m.unwrap_or_default())
-                    .or(None),
-                is_system_transaction: other
-                    .get_deserialized::<bool>("isSystemTx")
-                    .map(|st| st.unwrap_or_default())
-                    .unwrap_or_default(),
-            };
+        if let Ok(deposit) = get_deposit_tx_parts(&other) {
             env.tx.deposit = deposit;
         }
 
@@ -1761,10 +1744,14 @@ impl Backend {
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
-                    let request = transaction_request_to_typed(WithOtherFields::new(request))
-                        .ok_or(BlockchainError::MissingRequiredFields)?;
+
+                    let mut request = Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    request.prep_for_submission();
+
+                    let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
+
                     let tx = build_typed_transaction(
-                        request,
+                        typed_tx,
                         Signature::new(Default::default(), Default::default(), false),
                     )?;
                     let tx_hash = tx.hash();
@@ -3012,7 +2999,7 @@ impl Backend {
     pub async fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> Result<Option<ReceiptResponse>, BlockchainError> {
+    ) -> Result<Option<FoundryTxReceipt>, BlockchainError> {
         if let Some(receipt) = self.mined_transaction_receipt(hash) {
             return Ok(Some(receipt.inner));
         }
@@ -3020,7 +3007,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let receipt = fork.transaction_receipt(hash).await?;
             let number = self.convert_block_number(
-                receipt.clone().and_then(|r| r.block_number).map(BlockNumber::from),
+                receipt.clone().and_then(|r| r.block_number()).map(BlockNumber::from),
             );
 
             if fork.predates_fork_inclusive(number) {
@@ -3093,7 +3080,7 @@ impl Backend {
     }
 
     /// Returns all transaction receipts of the block
-    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<ReceiptResponse>> {
+    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
         let mut receipts = Vec::new();
         let block = self.get_block(id)?;
 
@@ -3125,60 +3112,16 @@ impl Backend {
         let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        // TODO: refactor MinedTransactionReceipt building
-        // Build a ReceiptWithBloom<rpc_types::Log> from the FoundryReceiptEnvelope
-        let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
-            status: tx_receipt.as_receipt().status,
-            cumulative_gas_used: tx_receipt.cumulative_gas_used(),
-            logs: tx_receipt
-                .logs()
-                .to_vec()
-                .into_iter()
-                .enumerate()
-                .map(|(index, log)| alloy_rpc_types::Log {
-                    inner: log,
-                    block_hash: Some(block_hash),
-                    block_number: Some(block.header.number),
-                    block_timestamp: Some(block.header.timestamp),
-                    transaction_hash: Some(info.transaction_hash),
-                    transaction_index: Some(info.transaction_index),
-                    log_index: Some((next_log_index + index) as u64),
-                    removed: false,
-                })
-                .collect(),
-        };
-        let logs_bloom = tx_receipt.logs_bloom().to_owned();
-        let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom };
+        let tx_receipt = tx_receipt.convert_logs_rpc(
+            BlockNumHash::new(block.header.number, block_hash),
+            block.header.timestamp,
+            info.transaction_hash,
+            info.transaction_index,
+            next_log_index,
+        );
 
-        let inner = match tx_receipt {
-            FoundryReceiptEnvelope::Legacy(_) => TypedReceiptRpc::Legacy(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip2930(_) => TypedReceiptRpc::Eip2930(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip1559(_) => TypedReceiptRpc::Eip1559(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip4844(_) => TypedReceiptRpc::Eip4844(receipt_with_bloom),
-            FoundryReceiptEnvelope::Eip7702(_) => TypedReceiptRpc::Eip7702(receipt_with_bloom),
-            FoundryReceiptEnvelope::Deposit(r) => {
-                TypedReceiptRpc::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                    receipt: op_alloy_consensus::OpDepositReceipt {
-                        inner: Receipt {
-                            status: receipt_with_bloom.receipt.status,
-                            cumulative_gas_used: receipt_with_bloom.receipt.cumulative_gas_used,
-                            logs: receipt_with_bloom
-                                .receipt
-                                .logs
-                                .into_iter()
-                                .map(|l| l.inner)
-                                .collect(),
-                        },
-                        deposit_nonce: r.receipt.deposit_nonce,
-                        deposit_receipt_version: r.receipt.deposit_receipt_version,
-                    },
-                    logs_bloom: receipt_with_bloom.logs_bloom,
-                })
-            }
-        };
-
-        let inner = TransactionReceipt {
-            inner,
+        let receipt = TransactionReceipt {
+            inner: tx_receipt,
             transaction_hash: info.transaction_hash,
             transaction_index: Some(info.transaction_index),
             block_number: Some(block.header.number),
@@ -3192,7 +3135,7 @@ impl Backend {
             blob_gas_used,
         };
 
-        let inner = WithOtherFields { inner, other: Default::default() };
+        let inner = FoundryTxReceipt::new(receipt);
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
@@ -3200,7 +3143,7 @@ impl Backend {
     pub async fn block_receipts(
         &self,
         number: BlockId,
-    ) -> Result<Option<Vec<ReceiptResponse>>, BlockchainError> {
+    ) -> Result<Option<Vec<FoundryTxReceipt>>, BlockchainError> {
         if let Some(receipts) = self.mined_block_receipts(number) {
             return Ok(Some(receipts));
         }
@@ -3768,7 +3711,7 @@ impl TransactionValidator for Backend {
                             InvalidTransactionError::InsufficientFunds
                         })?;
                     if account.balance < U256::from(req_funds) {
-                        warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
+                        warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
                         return Err(InvalidTransactionError::InsufficientFunds);
                     }
                 }

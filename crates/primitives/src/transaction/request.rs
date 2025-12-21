@@ -1,16 +1,13 @@
-use alloy_consensus::{
-    EthereumTypedTransaction,
-    constants::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        LEGACY_TX_TYPE_ID,
-    },
+use alloy_consensus::EthereumTypedTransaction;
+use alloy_network::{
+    BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
 };
-use alloy_network::{BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilderError};
 use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
 use alloy_serde::{OtherFields, WithOtherFields};
 use derive_more::{AsMut, AsRef, From, Into};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use op_revm::transaction::deposit::DepositTransactionParts;
 use serde::{Deserialize, Serialize};
 
 use super::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
@@ -55,9 +52,77 @@ impl FoundryTransactionRequest {
         self.as_ref().transaction_type == Some(DEPOSIT_TX_TYPE_ID)
     }
 
-    /// Helper to access [`FoundryTransactionRequest`] custom fields
-    pub fn get_other_field<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.as_ref().other.get_deserialized::<T>(key).transpose().ok().flatten()
+    /// Returns the minimal transaction type this request can be converted into based on the fields
+    /// that are set. See [`TransactionRequest::preferred_type`].
+    pub fn preferred_type(&self) -> FoundryTxType {
+        if self.is_deposit() {
+            FoundryTxType::Deposit
+        } else {
+            self.as_ref().preferred_type().into()
+        }
+    }
+
+    /// Check if all necessary keys are present to build a 4844 transaction,
+    /// returning a list of keys that are missing.
+    ///
+    /// **NOTE:** Inner [`TransactionRequest::complete_4844`] method but "sidecar" key is filtered
+    /// from error.
+    pub fn complete_4844(&self) -> Result<(), Vec<&'static str>> {
+        match self.as_ref().complete_4844() {
+            Ok(()) => Ok(()),
+            Err(missing) => {
+                let filtered: Vec<_> =
+                    missing.into_iter().filter(|&key| key != "sidecar").collect();
+                if filtered.is_empty() { Ok(()) } else { Err(filtered) }
+            }
+        }
+    }
+
+    /// Check if all necessary keys are present to build a Deposit transaction, returning a list of
+    /// keys that are missing.
+    pub fn complete_deposit(&self) -> Result<(), Vec<&'static str>> {
+        get_deposit_tx_parts(&self.as_ref().other).map(|_| ())
+    }
+
+    /// Return the tx type this request can be built as. Computed by checking
+    /// the preferred type, and then checking for completeness.
+    pub fn buildable_type(&self) -> Option<FoundryTxType> {
+        let pref = self.preferred_type();
+        match pref {
+            FoundryTxType::Legacy => self.as_ref().complete_legacy().ok(),
+            FoundryTxType::Eip2930 => self.as_ref().complete_2930().ok(),
+            FoundryTxType::Eip1559 => self.as_ref().complete_1559().ok(),
+            FoundryTxType::Eip4844 => self.as_ref().complete_4844().ok(),
+            FoundryTxType::Eip7702 => self.as_ref().complete_7702().ok(),
+            FoundryTxType::Deposit => self.complete_deposit().ok(),
+            // TODO: implement Tempo transaction completeness check
+            FoundryTxType::Tempo => None,
+        }?;
+        Some(pref)
+    }
+
+    /// Check if all necessary keys are present to build a transaction.
+    ///
+    /// # Returns
+    ///
+    /// - Ok(type) if all necessary keys are present to build the preferred type.
+    /// - Err((type, missing)) if some keys are missing to build the preferred type.
+    pub fn missing_keys(&self) -> Result<FoundryTxType, (FoundryTxType, Vec<&'static str>)> {
+        let pref = self.preferred_type();
+        if let Err(missing) = match pref {
+            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
+            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
+            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
+            FoundryTxType::Eip4844 => self.complete_4844(),
+            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
+            FoundryTxType::Deposit => self.complete_deposit(),
+            // TODO: implement Tempo transaction completeness check
+            FoundryTxType::Tempo => Err(vec!["tempo transaction building not yet supported"]),
+        } {
+            Err((pref, missing))
+        } else {
+            Ok(pref)
+        }
     }
 
     /// Build a typed transaction from this request.
@@ -66,23 +131,25 @@ impl FoundryTransactionRequest {
     /// types.
     pub fn build_typed_tx(self) -> Result<FoundryTypedTx, Self> {
         // Handle deposit transactions
-        if self.is_deposit()
-            && let (Some(mint), Some(source_hash), Some(is_system_transaction)) = (
-                self.get_other_field::<u128>("mint"),
-                self.get_other_field::<B256>("sourceHash"),
-                self.get_other_field::<bool>("isSystemTx"),
-            )
-        {
+        if let Ok(deposit_tx_parts) = get_deposit_tx_parts(&self.as_ref().other) {
             Ok(FoundryTypedTx::Deposit(TxDeposit {
                 from: self.from().unwrap_or_default(),
-                source_hash,
+                source_hash: deposit_tx_parts.source_hash,
                 to: self.kind().unwrap_or_default(),
-                mint,
+                mint: deposit_tx_parts.mint.unwrap_or_default(),
                 value: self.value().unwrap_or_default(),
                 gas_limit: self.gas_limit().unwrap_or_default(),
-                is_system_transaction,
+                is_system_transaction: deposit_tx_parts.is_system_transaction,
                 input: self.input().cloned().unwrap_or_default(),
             }))
+        } else if self.as_ref().has_eip4844_fields() && self.as_ref().blob_sidecar().is_none() {
+            // if request has eip4844 fields but no blob sidecar, try to build to eip4844 without
+            // sidecar
+            self.0
+                .into_inner()
+                .build_4844_without_sidecar()
+                .map_err(|e| Self(e.into_value().into()))
+                .map(|tx| FoundryTypedTx::Eip4844(tx.into()))
         } else {
             // Use the inner transaction request to build EthereumTypedTransaction
             let typed_tx = self.0.into_inner().build_typed_tx().map_err(|tx| Self(tx.into()))?;
@@ -114,6 +181,8 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                 ]);
                 WithOtherFields { inner: Into::<TransactionRequest>::into(tx), other }.into()
             }
+            // TODO: implement conversion from Tempo transaction to request
+            FoundryTypedTx::Tempo(_) => unimplemented!("tempo transaction request conversion"),
         }
     }
 }
@@ -241,105 +310,14 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
 
     fn complete_type(&self, ty: FoundryTxType) -> Result<(), Vec<&'static str>> {
         match ty {
-            FoundryTxType::Legacy => {
-                let mut missing = Vec::new();
-                if self.from().is_none() {
-                    missing.push("from");
-                }
-                if self.gas_limit().is_none() {
-                    missing.push("gas");
-                }
-                if self.gas_price().is_none() {
-                    missing.push("gasPrice");
-                }
-                if missing.is_empty() { Ok(()) } else { Err(missing) }
-            }
-            FoundryTxType::Eip2930 => {
-                let mut missing = Vec::new();
-                if self.from().is_none() {
-                    missing.push("from");
-                }
-                if self.gas_limit().is_none() {
-                    missing.push("gas");
-                }
-                if self.gas_price().is_none() {
-                    missing.push("gasPrice");
-                }
-                if self.access_list().is_none() {
-                    missing.push("accessList");
-                }
-                if missing.is_empty() { Ok(()) } else { Err(missing) }
-            }
-            FoundryTxType::Eip1559 => {
-                let mut missing = Vec::new();
-                if self.from().is_none() {
-                    missing.push("from");
-                }
-                if self.gas_limit().is_none() {
-                    missing.push("gas");
-                }
-                if self.max_fee_per_gas().is_none() {
-                    missing.push("maxFeePerGas");
-                }
-                if self.max_priority_fee_per_gas().is_none() {
-                    missing.push("maxPriorityFeePerGas");
-                }
-                if missing.is_empty() { Ok(()) } else { Err(missing) }
-            }
-            FoundryTxType::Eip4844 => {
-                let mut missing = Vec::new();
-                if self.from().is_none() {
-                    missing.push("from");
-                }
-                if self.kind().is_none() {
-                    missing.push("to");
-                }
-                if self.gas_limit().is_none() {
-                    missing.push("gas");
-                }
-                if self.max_fee_per_gas().is_none() {
-                    missing.push("maxFeePerGas");
-                }
-                if self.max_priority_fee_per_gas().is_none() {
-                    missing.push("maxPriorityFeePerGas");
-                }
-                if self.as_ref().sidecar.is_none() {
-                    missing.push("blobVersionedHashes or sidecar");
-                }
-                if missing.is_empty() { Ok(()) } else { Err(missing) }
-            }
-            FoundryTxType::Eip7702 => {
-                let mut missing = Vec::new();
-                if self.from().is_none() {
-                    missing.push("from");
-                }
-                if self.kind().is_none() {
-                    missing.push("to");
-                }
-                if self.gas_limit().is_none() {
-                    missing.push("gas");
-                }
-                if self.max_fee_per_gas().is_none() {
-                    missing.push("maxFeePerGas");
-                }
-                if self.max_priority_fee_per_gas().is_none() {
-                    missing.push("maxPriorityFeePerGas");
-                }
-                if self.as_ref().authorization_list.is_none() {
-                    missing.push("authorizationList");
-                }
-                if missing.is_empty() { Ok(()) } else { Err(missing) }
-            }
-            FoundryTxType::Deposit => {
-                let mut missing = Vec::new();
-                if self.from().is_none() {
-                    missing.push("from");
-                }
-                if self.kind().is_none() {
-                    missing.push("to");
-                }
-                if missing.is_empty() { Ok(()) } else { Err(missing) }
-            }
+            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
+            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
+            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
+            FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
+            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
+            FoundryTxType::Deposit => self.complete_deposit(),
+            // TODO: implement Tempo transaction completeness check
+            FoundryTxType::Tempo => Err(vec!["tempo transaction building not yet supported"]),
         }
     }
 
@@ -348,77 +326,63 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     }
 
     fn can_build(&self) -> bool {
-        let common = self.gas_limit().is_some() && self.nonce().is_some();
-
-        let legacy = self.gas_price().is_some();
-        let eip2930 = legacy && self.access_list().is_some();
-        let eip1559 = self.max_fee_per_gas().is_some() && self.max_priority_fee_per_gas().is_some();
-        let eip4844 = eip1559 && self.as_ref().sidecar.is_some() && self.kind().is_some();
-        let eip7702 = eip1559 && self.as_ref().authorization_list.is_some();
-
-        let deposit = self.is_deposit() && self.from().is_some() && self.kind().is_some();
-
-        (common && (legacy || eip2930 || eip1559 || eip4844 || eip7702)) || deposit
+        self.as_ref().can_build() || get_deposit_tx_parts(&self.as_ref().other).is_ok()
     }
 
     fn output_tx_type(&self) -> FoundryTxType {
-        if self.is_deposit() {
-            return FoundryTxType::Deposit;
-        }
-
-        // Default to EIP1559 if the transaction type is not explicitly set
-        if let Some(transaction_type) = self.as_ref().transaction_type {
-            match transaction_type {
-                LEGACY_TX_TYPE_ID => FoundryTxType::Legacy,
-                EIP2930_TX_TYPE_ID => FoundryTxType::Eip2930,
-                EIP1559_TX_TYPE_ID => FoundryTxType::Eip1559,
-                EIP4844_TX_TYPE_ID => FoundryTxType::Eip4844,
-                EIP7702_TX_TYPE_ID => FoundryTxType::Eip7702,
-                _ => FoundryTxType::Eip1559,
-            }
-        } else if self.max_fee_per_gas().is_some() {
-            FoundryTxType::Eip1559
-        } else if self.gas_price().is_some() {
-            FoundryTxType::Legacy
-        } else {
-            FoundryTxType::Eip1559
-        }
+        self.preferred_type()
     }
 
     fn output_tx_type_checked(&self) -> Option<FoundryTxType> {
-        if self.can_build() { Some(self.output_tx_type()) } else { None }
+        self.buildable_type()
     }
 
+    /// Prepares [`FoundryTransactionRequest`] by trimming conflicting fields, and filling with
+    /// default values the mandatory fields.
     fn prep_for_submission(&mut self) {
-        // Set transaction type if not already set
-        if self.as_ref().transaction_type.is_none() {
-            self.as_mut().transaction_type = Some(match self.output_tx_type() {
-                FoundryTxType::Legacy => LEGACY_TX_TYPE_ID,
-                FoundryTxType::Eip2930 => EIP2930_TX_TYPE_ID,
-                FoundryTxType::Eip1559 => EIP1559_TX_TYPE_ID,
-                FoundryTxType::Eip4844 => EIP4844_TX_TYPE_ID,
-                FoundryTxType::Eip7702 => EIP7702_TX_TYPE_ID,
-                FoundryTxType::Deposit => DEPOSIT_TX_TYPE_ID,
-            });
+        let preferred_type = self.preferred_type();
+        let inner = self.as_mut();
+        inner.transaction_type = Some(preferred_type as u8);
+        inner.gas_limit().is_none().then(|| inner.set_gas_limit(Default::default()));
+        if preferred_type != FoundryTxType::Deposit {
+            inner.trim_conflicting_keys();
+            inner.populate_blob_hashes();
+            inner.nonce().is_none().then(|| inner.set_nonce(Default::default()));
+        }
+        if matches!(preferred_type, FoundryTxType::Legacy | FoundryTxType::Eip2930) {
+            inner.gas_price().is_none().then(|| inner.set_gas_price(Default::default()));
+        }
+        if preferred_type == FoundryTxType::Eip2930 {
+            inner.access_list().is_none().then(|| inner.set_access_list(Default::default()));
+        }
+        if matches!(
+            preferred_type,
+            FoundryTxType::Eip1559 | FoundryTxType::Eip4844 | FoundryTxType::Eip7702
+        ) {
+            inner
+                .max_priority_fee_per_gas()
+                .is_none()
+                .then(|| inner.set_max_priority_fee_per_gas(Default::default()));
+            inner
+                .max_fee_per_gas()
+                .is_none()
+                .then(|| inner.set_max_fee_per_gas(Default::default()));
+        }
+        if preferred_type == FoundryTxType::Eip4844 {
+            inner
+                .as_ref()
+                .max_fee_per_blob_gas()
+                .is_none()
+                .then(|| inner.as_mut().set_max_fee_per_blob_gas(Default::default()));
         }
     }
 
     fn build_unsigned(self) -> BuildResult<FoundryTypedTx, FoundryNetwork> {
-        // Try to build the transaction
-        match self.build_typed_tx() {
-            Ok(tx) => Ok(tx),
-            Err(err_self) => {
-                // If build_typed_tx fails, it's likely missing required fields
-                let tx_type = err_self.output_tx_type();
-                let mut missing = Vec::new();
-                if let Err(m) = err_self.complete_type(tx_type) {
-                    missing.extend(m);
-                }
-                // Return a generic error with missing field information
-                Err(TransactionBuilderError::InvalidTransactionRequest(tx_type, missing)
-                    .into_unbuilt(err_self))
-            }
+        if let Err((tx_type, missing)) = self.missing_keys() {
+            return Err(TransactionBuilderError::InvalidTransactionRequest(tx_type, missing)
+                .into_unbuilt(self));
         }
+        Ok(self.build_typed_tx().expect("checked by missing_keys"))
     }
 
     async fn build<W: NetworkWallet<FoundryNetwork>>(
@@ -426,5 +390,39 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         wallet: &W,
     ) -> Result<FoundryTxEnvelope, TransactionBuilderError<FoundryNetwork>> {
         Ok(wallet.sign_request(self).await?)
+    }
+}
+
+/// Converts `OtherFields` to `DepositTransactionParts`, produces error with missing fields
+pub fn get_deposit_tx_parts(
+    other: &OtherFields,
+) -> Result<DepositTransactionParts, Vec<&'static str>> {
+    let mut missing = Vec::new();
+    let source_hash =
+        other.get_deserialized::<B256>("sourceHash").transpose().ok().flatten().unwrap_or_else(
+            || {
+                missing.push("sourceHash");
+                Default::default()
+            },
+        );
+    let mint = other
+        .get_deserialized::<U256>("mint")
+        .transpose()
+        .unwrap_or_else(|_| {
+            missing.push("mint");
+            Default::default()
+        })
+        .map(|value| value.to::<u128>());
+    let is_system_transaction =
+        other.get_deserialized::<bool>("isSystemTx").transpose().ok().flatten().unwrap_or_else(
+            || {
+                missing.push("isSystemTx");
+                Default::default()
+            },
+        );
+    if missing.is_empty() {
+        Ok(DepositTransactionParts { source_hash, mint, is_system_transaction })
+    } else {
+        Err(missing)
     }
 }
