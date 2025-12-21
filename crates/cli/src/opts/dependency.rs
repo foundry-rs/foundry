@@ -65,10 +65,10 @@ impl FromStr for Dependency {
             let mut dependency = dependency.to_string();
             // this will autocorrect wrong conventional aliases for tag, but only autocorrect if
             // it's not used as alias
-            for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
+            for (alias, real_org) in COMMON_ORG_ALIASES {
                 if dependency.starts_with(alias) {
                     dependency = dependency.replacen(alias, real_org, 1);
-                    break
+                    break;
                 }
             }
 
@@ -87,6 +87,8 @@ impl FromStr for Dependency {
                     token.as_str(),
                     project.trim_end_matches(".git")
                 ))
+            } else if dependency.starts_with("git@") {
+                Some(format!("git@{brand}.{tld}:{}", project.trim_end_matches(".git")))
             } else {
                 Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")))
             }
@@ -117,11 +119,11 @@ impl FromStr for Dependency {
 
             if tag_or_branch.is_none() {
                 let maybe_tag_or_branch = split.next().unwrap();
-                if let Some(actual_url) = split.next() {
-                    if !maybe_tag_or_branch.contains('/') {
-                        tag_or_branch = Some(maybe_tag_or_branch.to_string());
-                        url = actual_url;
-                    }
+                if let Some(actual_url) = split.next()
+                    && !maybe_tag_or_branch.contains('/')
+                {
+                    tag_or_branch = Some(maybe_tag_or_branch.to_string());
+                    url = actual_url;
                 }
             }
 
@@ -176,17 +178,12 @@ mod tests {
                 None,
             ),
             (
-                "git@github.com:gakonst/lootloose@v1",
-                "https://github.com/gakonst/lootloose",
+                "git@github.com:gakonst/lootloose@tag=v1",
+                "git@github.com:gakonst/lootloose",
                 Some("v1"),
                 None,
             ),
-            (
-                "git@github.com:gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                None,
-            ),
+            ("git@github.com:gakonst/lootloose", "git@github.com:gakonst/lootloose", None, None),
             (
                 "https://gitlab.com/gakonst/lootloose",
                 "https://gitlab.com/gakonst/lootloose",
@@ -237,8 +234,8 @@ mod tests {
                 Some("loot"),
             ),
             (
-                "loot=git@github.com:gakonst/lootloose@v1",
-                "https://github.com/gakonst/lootloose",
+                "loot=git@github.com:gakonst/lootloose@tag=v1",
+                "git@github.com:gakonst/lootloose",
                 Some("v1"),
                 Some("loot"),
             ),

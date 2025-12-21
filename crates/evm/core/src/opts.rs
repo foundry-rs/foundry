@@ -1,11 +1,20 @@
 use super::fork::environment;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork};
+use crate::{
+    EvmEnv,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{CreateFork, configure_env},
+};
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_provider::{Provider, network::AnyRpcBlock};
 use eyre::WrapErr;
-use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
+use foundry_common::{
+    ALCHEMY_FREE_TIER_CUPS,
+    provider::{ProviderBuilder, RetryProvider},
+};
 use foundry_config::{Chain, Config, GasLimit};
-use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
+use foundry_evm_networks::NetworkConfigs;
+use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;
@@ -68,8 +77,12 @@ pub struct EvmOpts {
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// whether to enable Odyssey features.
-    pub odyssey: bool,
+    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825).
+    pub enable_tx_gas_limit: bool,
+
+    #[serde(flatten)]
+    /// Networks with enabled features.
+    pub networks: NetworkConfigs,
 
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
@@ -95,18 +108,29 @@ impl Default for EvmOpts {
             memory_limit: 0,
             isolate: false,
             disable_block_gas_limit: false,
-            odyssey: false,
+            enable_tx_gas_limit: false,
+            networks: NetworkConfigs::default(),
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }
 }
 
 impl EvmOpts {
+    /// Returns a `RetryProvider` for the given fork URL configured with options in `self`.
+    pub fn fork_provider_with_url(&self, fork_url: &str) -> eyre::Result<RetryProvider> {
+        ProviderBuilder::new(fork_url)
+            .maybe_max_retry(self.fork_retries)
+            .maybe_initial_backoff(self.fork_retry_backoff)
+            .maybe_headers(self.fork_headers.clone())
+            .compute_units_per_second(self.get_compute_units_per_second())
+            .build()
+    }
+
     /// Configures a new `revm::Env`
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
     /// id, )
-    pub async fn evm_env(&self) -> eyre::Result<revm::primitives::Env> {
+    pub async fn evm_env(&self) -> eyre::Result<crate::Env> {
         if let Some(ref fork_url) = self.fork_url {
             Ok(self.fork_evm_env(fork_url).await?.0)
         } else {
@@ -114,62 +138,68 @@ impl EvmOpts {
         }
     }
 
-    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
-    /// And the block that was used to configure the environment.
-    pub async fn fork_evm_env(
+    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint,
+    /// and the block that was used to configure the environment.
+    pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, AnyRpcBlock)> {
+        let provider = self.fork_provider_with_url(fork_url)?;
+        self.fork_evm_env_with_provider(fork_url, &provider).await
+    }
+
+    /// Returns the `revm::Env` that is configured with settings retrieved from the provider,
+    /// and the block that was used to configure the environment.
+    pub async fn fork_evm_env_with_provider<P: Provider<N>, N: Network>(
         &self,
         fork_url: &str,
-    ) -> eyre::Result<(revm::primitives::Env, AnyRpcBlock)> {
-        let provider = ProviderBuilder::new(fork_url)
-            .compute_units_per_second(self.get_compute_units_per_second())
-            .build()?;
+        provider: &P,
+    ) -> eyre::Result<(crate::Env, N::BlockResponse)> {
         environment(
-            &provider,
+            provider,
             self.memory_limit,
             self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
             self.fork_block_number,
             self.sender,
             self.disable_block_gas_limit,
+            self.enable_tx_gas_limit,
+            self.networks,
         )
         .await
         .wrap_err_with(|| {
             let mut msg = "could not instantiate forked environment".to_string();
-            if let Ok(url) = Url::parse(fork_url) {
-                if let Some(provider) = url.host() {
-                    write!(msg, " with provider {provider}").unwrap();
-                }
+            if let Ok(url) = Url::parse(fork_url)
+                && let Some(provider) = url.host()
+            {
+                write!(msg, " with provider {provider}").unwrap();
             }
             msg
         })
     }
 
     /// Returns the `revm::Env` configured with only local settings
-    pub fn local_evm_env(&self) -> revm::primitives::Env {
-        let mut cfg = CfgEnv::default();
-        cfg.chain_id = self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID);
-        cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
-        cfg.memory_limit = self.memory_limit;
-        // EIP-3607 rejects transactions from senders with deployed code.
-        // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
-        // caller is a contract. So we disable the check by default.
-        cfg.disable_eip3607 = true;
-        cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+    fn local_evm_env(&self) -> crate::Env {
+        let cfg = configure_env(
+            self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID),
+            self.memory_limit,
+            self.disable_block_gas_limit,
+            self.enable_tx_gas_limit,
+        );
 
-        revm::primitives::Env {
-            block: BlockEnv {
-                number: U256::from(self.env.block_number),
-                coinbase: self.env.block_coinbase,
-                timestamp: U256::from(self.env.block_timestamp),
-                difficulty: U256::from(self.env.block_difficulty),
-                prevrandao: Some(self.env.block_prevrandao),
-                basefee: U256::from(self.env.block_base_fee_per_gas),
-                gas_limit: U256::from(self.gas_limit()),
-                ..Default::default()
+        crate::Env {
+            evm_env: EvmEnv {
+                cfg_env: cfg,
+                block_env: BlockEnv {
+                    number: self.env.block_number,
+                    beneficiary: self.env.block_coinbase,
+                    timestamp: self.env.block_timestamp,
+                    difficulty: U256::from(self.env.block_difficulty),
+                    prevrandao: Some(self.env.block_prevrandao),
+                    basefee: self.env.block_base_fee_per_gas,
+                    gas_limit: self.gas_limit(),
+                    ..Default::default()
+                },
             },
-            cfg,
             tx: TxEnv {
-                gas_price: U256::from(self.env.gas_price.unwrap_or_default()),
+                gas_price: self.env.gas_price.unwrap_or_default().into(),
                 gas_limit: self.gas_limit(),
                 caller: self.sender,
                 ..Default::default()
@@ -190,9 +220,9 @@ impl EvmOpts {
     ///
     /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
     /// be at `~/.foundry/cache/mainnet/14435000/storage.json`.
-    pub fn get_fork(&self, config: &Config, env: revm::primitives::Env) -> Option<CreateFork> {
+    pub fn get_fork(&self, config: &Config, env: crate::Env) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
-        let enable_caching = config.enable_caching(&url, env.cfg.chain_id);
+        let enable_caching = config.enable_caching(&url, env.evm_env.cfg_env.chain_id);
         Some(CreateFork { url, enable_caching, env, evm_opts: self.clone() })
     }
 
@@ -201,27 +231,15 @@ impl EvmOpts {
         self.env.block_gas_limit.unwrap_or(self.env.gas_limit).0
     }
 
-    /// Returns the configured chain id, which will be
-    ///   - the value of `chain_id` if set
-    ///   - mainnet if `fork_url` contains "mainnet"
-    ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
-    ///   - mainnet otherwise
-    pub async fn get_chain_id(&self) -> u64 {
-        if let Some(id) = self.env.chain_id {
-            return id;
-        }
-        self.get_remote_chain_id().await.unwrap_or(Chain::mainnet()).id()
-    }
-
     /// Returns the available compute units per second, which will be
     /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
     /// - the assigned compute units, if `compute_units_per_second` is set
     /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
-    pub fn get_compute_units_per_second(&self) -> u64 {
+    fn get_compute_units_per_second(&self) -> u64 {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
-            return cups;
+            cups
         } else {
             ALCHEMY_FREE_TIER_CUPS
         }
@@ -229,13 +247,10 @@ impl EvmOpts {
 
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
-        if let Some(ref url) = self.fork_url {
+        if let Some(url) = &self.fork_url
+            && let Ok(provider) = self.fork_provider_with_url(url)
+        {
             trace!(?url, "retrieving chain via eth_chainId");
-            let provider = ProviderBuilder::new(url.as_str())
-                .compute_units_per_second(self.get_compute_units_per_second())
-                .build()
-                .ok()
-                .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
@@ -279,10 +294,18 @@ pub struct Env {
     pub block_coinbase: Address,
 
     /// the block.timestamp value during EVM execution
-    pub block_timestamp: u64,
+    #[serde(
+        deserialize_with = "foundry_config::deserialize_u64_to_u256",
+        serialize_with = "foundry_config::serialize_u64_or_u256"
+    )]
+    pub block_timestamp: U256,
 
     /// the block.number value during EVM execution"
-    pub block_number: u64,
+    #[serde(
+        deserialize_with = "foundry_config::deserialize_u64_to_u256",
+        serialize_with = "foundry_config::serialize_u64_or_u256"
+    )]
+    pub block_number: U256,
 
     /// the block.difficulty value during EVM execution
     pub block_difficulty: u64,

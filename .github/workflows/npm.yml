@@ -1,0 +1,291 @@
+name: npm
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        type: string
+        required: false
+        description: The run id of the release to publish
+  workflow_run:
+    types: [completed]
+    workflows: [release]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NPM_CONFIG_PROVENANCE: true
+  NPM_REGISTRY_URL: "https://registry.npmjs.org"
+
+jobs:
+  publish-arch:
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    name: ${{ matrix.tool }}-${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 3
+      fail-fast: false
+      matrix:
+        include:
+          - tool: forge
+            os: linux
+            arch: amd64
+          - tool: forge
+            os: linux
+            arch: arm64
+          - tool: forge
+            os: darwin
+            arch: amd64
+          - tool: forge
+            os: darwin
+            arch: arm64
+          - tool: forge
+            os: win32
+            arch: amd64
+          - tool: cast
+            os: linux
+            arch: amd64
+          - tool: cast
+            os: linux
+            arch: arm64
+          - tool: cast
+            os: darwin
+            arch: amd64
+          - tool: cast
+            os: darwin
+            arch: arm64
+          - tool: cast
+            os: win32
+            arch: amd64
+          - tool: anvil
+            os: linux
+            arch: amd64
+          - tool: anvil
+            os: linux
+            arch: arm64
+          - tool: anvil
+            os: darwin
+            arch: amd64
+          - tool: anvil
+            os: darwin
+            arch: arm64
+          - tool: anvil
+            os: win32
+            arch: amd64
+          - tool: chisel
+            os: linux
+            arch: amd64
+          - tool: chisel
+            os: linux
+            arch: arm64
+          - tool: chisel
+            os: darwin
+            arch: amd64
+          - tool: chisel
+            os: darwin
+            arch: arm64
+          - tool: chisel
+            os: win32
+            arch: amd64
+    # Run automatically after a successful 'release' workflow, or manually if a run_id is provided
+    if: >-
+      ${{
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+        (github.event_name == 'workflow_dispatch' && inputs.run_id != '')
+      }}
+    outputs:
+      RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set Isolated Artifact Directory
+        id: paths
+        run: |
+          set -euo pipefail
+          printf 'artifact_dir=%s\n' "$RUNNER_TEMP/foundry_artifacts" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Isolated Artifact Directory
+        env:
+          ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        run: |
+          mkdir -p "$ARTIFACT_DIR"
+          ls -la "$ARTIFACT_DIR" || true
+
+      - name: Download Release Assets
+        uses: actions/download-artifact@v7
+        with:
+          merge-multiple: true
+          # Download all foundry artifacts from the triggering release run
+          pattern: "foundry_*"
+          # Extract artifacts into an isolated temp directory, not the workspace
+          path: ${{ steps.paths.outputs.artifact_dir }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node (for npm publish auth)
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Derive RELEASE_VERSION
+        id: release-version
+        working-directory: ./npm
+        env:
+          PROVENANCE: true
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}
+          ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        run: |
+          set -euo pipefail
+
+          echo "Artifacts in $ARTIFACT_DIR:"
+          ls -la "$ARTIFACT_DIR" || true
+
+          # Derive RELEASE_VERSION from any foundry artifact we downloaded
+          # Expected names: foundry_<VERSION>_<platform>_<arch>.{tar.gz,zip}
+          first_file=$(ls "$ARTIFACT_DIR"/foundry_* 2>/dev/null | head -n1 || true)
+          if [[ -z "${first_file}" ]]; then
+            echo "No foundry artifacts found to publish" >&2
+            exit 1
+          fi
+          version_part=$(basename "$first_file")
+          version_part=${version_part#foundry_}
+          export RELEASE_VERSION=${version_part%%_*}
+          echo "Detected RELEASE_VERSION=$RELEASE_VERSION"
+
+          printf 'RELEASE_VERSION=%s\n' "$RELEASE_VERSION" >>"$GITHUB_OUTPUT"
+
+      - name: Stage Binary Into Package
+        working-directory: ./npm
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
+          ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        run: |
+          set -euo pipefail
+
+          bun ./scripts/stage-from-artifact.mjs \
+            --tool '${{ matrix.tool }}' \
+            --platform '${{ matrix.os }}' \
+            --arch '${{ matrix.arch }}' \
+            --release-version "$RELEASE_VERSION" \
+            --artifact-dir "$ARTIFACT_DIR"
+
+      - name: Sanity Check Binary
+        working-directory: ./npm
+        run: |
+          set -euo pipefail
+          TOOL='${{ matrix.tool }}'
+          PLATFORM='${{ matrix.os }}'
+          ARCH='${{ matrix.arch }}'
+
+          PKG_DIR="./@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+          BIN="$PKG_DIR/bin/${TOOL}"
+          if [[ "$PLATFORM" == "win32" ]]; then
+            BIN="$PKG_DIR/bin/${TOOL}.exe"
+          fi
+          echo "Verifying binary at: $BIN"
+          ls -la "$BIN"
+          if [[ ! -f "$BIN" ]]; then
+            echo "ERROR: Binary not found at $BIN" >&2
+            exit 1
+          fi
+
+          if [[ "${{ matrix.os }}" != "win32" ]]; then
+            if [[ ! -x "$BIN" ]]; then
+              echo "ERROR: Binary not marked executable" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Publish ${{ matrix.os }}-${{ matrix.arch }} Binary
+        working-directory: ./npm
+        env:
+          PROVENANCE: true
+          VERSION_NAME: ${{ steps.release-version.outputs.RELEASE_VERSION }}
+          RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TOOL='${{ matrix.tool }}'
+          PLATFORM='${{ matrix.os }}'
+          ARCH='${{ matrix.arch }}'
+
+          PACKAGE_DIR="./@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+          ls -la "$PACKAGE_DIR"
+
+          bun ./scripts/publish.mjs "$PACKAGE_DIR"
+
+          echo "Published @foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+
+  publish-meta:
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    needs: publish-arch
+    name: Publish Meta Package
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node (for npm publish auth)
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install Dependencies
+        working-directory: ./npm
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: ./npm
+        run: bun tsc --project tsconfig.json --noEmit
+
+      - name: Publish Meta Packages
+        working-directory: ./npm
+        run: |
+          set -euo pipefail
+          bun ./scripts/publish-meta.mjs --release-version "$RELEASE_VERSION"
+        env:
+          PROVENANCE: true
+          VERSION_NAME: ${{ env.RELEASE_VERSION }}
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          NPM_TOKEN: ${{ env.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ env.NODE_AUTH_TOKEN }}
+          NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}

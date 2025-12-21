@@ -1,6 +1,6 @@
 use crate::executors::RawCallResult;
-use alloy_primitives::{map::HashMap, Bytes, Log};
-use foundry_common::evm::Breakpoints;
+use alloy_primitives::{Bytes, Log, map::HashMap};
+use foundry_evm_core::Breakpoints;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::FuzzCase;
 use foundry_evm_traces::SparsedTraceArena;
@@ -29,13 +29,14 @@ pub struct CounterExampleOutcome {
     /// Minimal reproduction test case for failing test.
     pub counterexample: (Bytes, RawCallResult),
     /// The status of the call.
-    pub exit_reason: InstructionResult,
+    pub exit_reason: Option<InstructionResult>,
     /// Breakpoints char pc map.
     pub breakpoints: Breakpoints,
 }
 
 /// Outcome of a single fuzz
 #[derive(Debug)]
+#[expect(clippy::large_enum_variant)]
 pub enum FuzzOutcome {
     Case(CaseOutcome),
     CounterExample(CounterExampleOutcome),

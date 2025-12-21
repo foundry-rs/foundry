@@ -10,11 +10,11 @@ use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     ops::DerefMut,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Mutex, OnceLock, PoisonError,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -43,41 +43,13 @@ pub fn is_json() -> bool {
     Shell::get().is_json()
 }
 
+/// Returns whether the output format is [`OutputFormat::Markdown`].
+pub fn is_markdown() -> bool {
+    Shell::get().is_markdown()
+}
+
 /// The global shell instance.
 static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
-
-/// Terminal width.
-pub enum TtyWidth {
-    /// Not a terminal, or could not determine size.
-    NoTty,
-    /// A known width.
-    Known(usize),
-    /// A guess at the width.
-    Guess(usize),
-}
-
-impl TtyWidth {
-    /// Returns the width of the terminal from the environment, if known.
-    pub fn get() -> Self {
-        // use stderr
-        #[cfg(unix)]
-        let opt = terminal_size::terminal_size_of(std::io::stderr());
-        #[cfg(not(unix))]
-        let opt = terminal_size::terminal_size();
-        match opt {
-            Some((w, _)) => Self::Known(w.0 as usize),
-            None => Self::NoTty,
-        }
-    }
-
-    /// Returns the width used by progress bars for the tty.
-    pub fn progress_max_width(&self) -> Option<usize> {
-        match *self {
-            Self::NoTty => None,
-            Self::Known(width) | Self::Guess(width) => Some(width),
-        }
-    }
-}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 /// The requested output mode.
@@ -91,13 +63,11 @@ pub enum OutputMode {
 
 impl OutputMode {
     /// Returns true if the output mode is `Normal`.
-    #[inline]
     pub fn is_normal(self) -> bool {
         self == Self::Normal
     }
 
     /// Returns true if the output mode is `Quiet`.
-    #[inline]
     pub fn is_quiet(self) -> bool {
         self == Self::Quiet
     }
@@ -111,19 +81,24 @@ pub enum OutputFormat {
     Text,
     /// JSON output.
     Json,
+    /// Plain text with markdown tables.
+    Markdown,
 }
 
 impl OutputFormat {
     /// Returns true if the output format is `Text`.
-    #[inline]
     pub fn is_text(self) -> bool {
         self == Self::Text
     }
 
     /// Returns true if the output format is `Json`.
-    #[inline]
     pub fn is_json(self) -> bool {
         self == Self::Json
+    }
+
+    /// Returns true if the output format is `Markdown`.
+    pub fn is_markdown(self) -> bool {
+        self == Self::Markdown
     }
 }
 
@@ -190,7 +165,6 @@ pub enum ColorChoice {
 }
 
 impl Default for Shell {
-    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -199,7 +173,6 @@ impl Default for Shell {
 impl Shell {
     /// Creates a new shell (color choice and verbosity), defaulting to 'auto' color and verbose
     /// output.
-    #[inline]
     pub fn new() -> Self {
         Self::new_with(
             OutputFormat::Text,
@@ -210,7 +183,6 @@ impl Shell {
     }
 
     /// Creates a new shell with the given color choice and verbosity.
-    #[inline]
     pub fn new_with(
         format: OutputFormat,
         mode: OutputMode,
@@ -232,7 +204,6 @@ impl Shell {
     }
 
     /// Creates a shell that ignores all output.
-    #[inline]
     pub fn empty() -> Self {
         Self {
             output: ShellOut::Empty(std::io::empty()),
@@ -263,7 +234,6 @@ impl Shell {
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.
-    #[inline]
     pub fn set_needs_clear(&self, needs_clear: bool) -> bool {
         self.needs_clear.swap(needs_clear, Ordering::Relaxed)
     }
@@ -273,46 +243,37 @@ impl Shell {
         self.output_format.is_json()
     }
 
+    /// Returns `true` if the output format is Markdown.
+    pub fn is_markdown(&self) -> bool {
+        self.output_format.is_markdown()
+    }
+
     /// Returns `true` if the verbosity level is `Quiet`.
     pub fn is_quiet(&self) -> bool {
         self.output_mode.is_quiet()
     }
 
     /// Returns `true` if the `needs_clear` flag is set.
-    #[inline]
     pub fn needs_clear(&self) -> bool {
         self.needs_clear.load(Ordering::Relaxed)
     }
 
     /// Returns `true` if the `needs_clear` flag is unset.
-    #[inline]
     pub fn is_cleared(&self) -> bool {
         !self.needs_clear()
     }
 
-    /// Returns the width of the terminal in spaces, if any.
-    #[inline]
-    pub fn err_width(&self) -> TtyWidth {
-        match self.output {
-            ShellOut::Stream { stderr_tty: true, .. } => TtyWidth::get(),
-            _ => TtyWidth::NoTty,
-        }
-    }
-
     /// Gets the output format of the shell.
-    #[inline]
     pub fn output_format(&self) -> OutputFormat {
         self.output_format
     }
 
     /// Gets the output mode of the shell.
-    #[inline]
     pub fn output_mode(&self) -> OutputMode {
         self.output_mode
     }
 
     /// Gets the verbosity of the shell when [`OutputMode::Normal`] is set.
-    #[inline]
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity
     }
@@ -326,7 +287,6 @@ impl Shell {
     ///
     /// If we are not using a color stream, this will always return `Never`, even if the color
     /// choice has been set to something else.
-    #[inline]
     pub fn color_choice(&self) -> ColorChoice {
         match self.output {
             ShellOut::Stream { color_choice, .. } => color_choice,
@@ -335,7 +295,6 @@ impl Shell {
     }
 
     /// Returns `true` if stderr is a tty.
-    #[inline]
     pub fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
@@ -344,7 +303,6 @@ impl Shell {
     }
 
     /// Whether `stderr` supports color.
-    #[inline]
     pub fn err_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stderr, .. } => supports_color(stderr.current_choice()),
@@ -353,7 +311,6 @@ impl Shell {
     }
 
     /// Whether `stdout` supports color.
-    #[inline]
     pub fn out_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stdout, .. } => supports_color(stdout.current_choice()),
@@ -489,7 +446,6 @@ impl ShellOut {
     }
 
     /// Gets stdout as a [`io::Write`](Write) trait object.
-    #[inline]
     fn stdout(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stdout, .. } => stdout,
@@ -498,7 +454,6 @@ impl ShellOut {
     }
 
     /// Gets stderr as a [`io::Write`](Write) trait object.
-    #[inline]
     fn stderr(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stderr, .. } => stderr,
@@ -534,7 +489,6 @@ impl ShellOut {
 
 impl ColorChoice {
     /// Converts our color choice to [`anstream`]'s version.
-    #[inline]
     fn to_anstream_color_choice(self) -> anstream::ColorChoice {
         match self {
             Self::Always => anstream::ColorChoice::Always,
@@ -544,12 +498,11 @@ impl ColorChoice {
     }
 }
 
-#[inline]
 fn supports_color(choice: anstream::ColorChoice) -> bool {
     match choice {
-        anstream::ColorChoice::Always |
-        anstream::ColorChoice::AlwaysAnsi |
-        anstream::ColorChoice::Auto => true,
+        anstream::ColorChoice::Always
+        | anstream::ColorChoice::AlwaysAnsi
+        | anstream::ColorChoice::Auto => true,
         anstream::ColorChoice::Never => false,
     }
 }

@@ -1,0 +1,84 @@
+FROM ubuntu:22.04
+
+ARG USERNAME=foundry
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+ARG PYTHON_VERSION=3.14
+ARG NODE_MAJOR=20
+ARG VYPER_VERSION=0.4.3
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CARGO_TERM_COLOR=always \
+    RUST_BACKTRACE=full
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build tools
+    build-essential \
+    clang \
+    lld \
+    pkg-config \
+    # Network/SSL
+    curl \
+    ca-certificates \
+    gnupg \
+    libssl-dev \
+    # Version control & utils
+    git \
+    sudo \
+    unzip \
+    # Python
+    python${PYTHON_VERSION} \
+    python3-pip \
+    python${PYTHON_VERSION}-venv \
+    # Add Node.js repo
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    # Update again after adding repo and install Node.js
+    && apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    # Clean up apt cache
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Ensure python points to the installed python version
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
+    ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
+
+# Create non-root user with sudo privileges
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME -s /bin/bash \
+    # Setup sudo without password prompt
+    && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME \
+    # Add user to the sudo group (standard practice)
+    && usermod -aG sudo $USERNAME
+
+# Switch to the non-root user
+USER $USERNAME
+WORKDIR /home/$USERNAME
+
+# --- User-specific installations ---
+
+# Install Bun
+ENV BUN_INSTALL="/home/$USERNAME/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+RUN curl -fsSL https://bun.sh/install | bash
+
+# Install Rust & cargo-nextest
+ENV CARGO_HOME="/home/$USERNAME/.cargo"
+ENV RUSTUP_HOME="/home/$USERNAME/.rustup"
+ENV PATH="$CARGO_HOME/bin:$PATH"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && cargo install cargo-nextest --locked
+
+# Install Vyper using pip
+# Ensure pip user install directory is in PATH
+ENV PYTHONUSERBASE="/home/$USERNAME/.local"
+ENV PATH="$PYTHONUSERBASE/bin:$PATH"
+RUN pip3 install --user vyper==${VYPER_VERSION}
+
+# Switch back to the main workspace directory
+WORKDIR /workspace
+

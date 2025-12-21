@@ -16,16 +16,14 @@ workspace = true
 [dependencies]
 foundry-config.workspace = true
 foundry-common.workspace = true
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
-tracing.workspace = true
 walkdir.workspace = true
 
 revm-inspectors.workspace = true
 
-alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
 alloy-network.workspace = true

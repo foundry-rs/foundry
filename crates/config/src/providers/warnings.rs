@@ -1,8 +1,9 @@
-use crate::{Config, Warning, DEPRECATIONS};
+use crate::{Config, DEPRECATIONS, Warning};
 use figment::{
-    value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
+    value::{Dict, Map, Value},
 };
+use heck::ToSnakeCase;
 use std::collections::BTreeMap;
 
 /// Generate warnings for unknown sections and deprecated keys
@@ -47,8 +48,9 @@ impl<P: Provider> WarningsProvider<P> {
         out.extend(
             data.keys()
                 .filter(|k| {
-                    **k != Config::PROFILE_SECTION &&
-                        !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+                    **k != Config::PROFILE_SECTION
+                        && **k != Config::EXTERNAL_SECTION
+                        && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
                 })
                 .map(|unknown_section| {
                     let source = self.provider.metadata().source.map(|s| s.to_string());
@@ -73,14 +75,58 @@ impl<P: Provider> WarningsProvider<P> {
             .iter()
             .filter(|(profile, _)| **profile == Config::PROFILE_SECTION)
             .map(|(_, dict)| dict);
+
         out.extend(profiles.clone().flat_map(BTreeMap::keys).filter_map(deprecated_key_warning));
         out.extend(
             profiles
+                .clone()
                 .filter_map(|dict| dict.get(self.profile.as_str().as_str()))
                 .filter_map(Value::as_dict)
                 .flat_map(BTreeMap::keys)
                 .filter_map(deprecated_key_warning),
         );
+
+        // Add warning for unknown keys within profiles (root keys only here).
+        if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
+            && let Some(default_dict) = default_map.get(&Config::DEFAULT_PROFILE)
+        {
+            let allowed_keys: std::collections::BTreeSet<String> =
+                default_dict.keys().cloned().collect();
+            for profile_map in profiles {
+                for (profile, value) in profile_map {
+                    let Some(profile_dict) = value.as_dict() else {
+                        continue;
+                    };
+
+                    let source = self
+                        .provider
+                        .metadata()
+                        .source
+                        .map(|s| s.to_string())
+                        .unwrap_or(Config::FILE_NAME.to_string());
+                    for key in profile_dict.keys() {
+                        let is_not_deprecated =
+                            !DEPRECATIONS.iter().any(|(deprecated_key, _)| *deprecated_key == key);
+                        let is_not_allowed = !allowed_keys.contains(key)
+                            && !allowed_keys.contains(&key.to_snake_case());
+                        let is_not_reserved = key != "extends" && key != Self::WARNINGS_KEY;
+                        let is_not_backward_compatible = key != "solc_version";
+
+                        if is_not_deprecated
+                            && is_not_allowed
+                            && is_not_reserved
+                            && is_not_backward_compatible
+                        {
+                            out.push(Warning::UnknownKey {
+                                key: key.clone(),
+                                profile: profile.clone(),
+                                source: source.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(out)
     }

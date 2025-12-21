@@ -89,23 +89,63 @@ impl EnvExternalities {
         })
     }
 
-    pub fn mumbai() -> Option<Self> {
+    pub fn amoy() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::PolygonMumbai,
-            rpc: network_rpc_key("mumbai")?,
-            pk: network_private_key("mumbai")?,
-            etherscan: etherscan_key(NamedChain::PolygonMumbai)?,
+            chain: NamedChain::PolygonAmoy,
+            rpc: network_rpc_key("amoy")?,
+            pk: network_private_key("amoy")?,
+            etherscan: etherscan_key(NamedChain::PolygonAmoy)?,
             verifier: "etherscan".to_string(),
         })
     }
 
-    pub fn sepolia() -> Option<Self> {
+    pub fn sepolia_etherscan() -> Option<Self> {
         Some(Self {
             chain: NamedChain::Sepolia,
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
             verifier: "etherscan".to_string(),
+        })
+    }
+
+    pub fn sepolia_sourcify() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: String::new(),
+            verifier: "sourcify".to_string(),
+        })
+    }
+
+    pub fn sepolia_sourcify_with_etherscan_api_key_set() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: etherscan_key(NamedChain::Sepolia)?,
+            verifier: "sourcify".to_string(),
+        })
+    }
+
+    pub fn sepolia_blockscout() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: String::new(),
+            verifier: "blockscout".to_string(),
+        })
+    }
+
+    pub fn sepolia_blockscout_with_etherscan_api_key_set() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: etherscan_key(NamedChain::Sepolia)?,
+            verifier: "blockscout".to_string(),
         })
     }
 

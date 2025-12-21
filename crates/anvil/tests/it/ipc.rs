@@ -3,7 +3,7 @@
 use crate::{init_tracing, utils::connect_pubsub};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use futures::StreamExt;
 use tempfile::TempDir;
 
@@ -23,7 +23,6 @@ fn ipc_config() -> (Option<TempDir>, NodeConfig) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(windows, ignore = "TODO")]
 async fn can_get_block_number_ipc() {
     init_tracing();
 
@@ -40,7 +39,6 @@ async fn can_get_block_number_ipc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(windows, ignore = "TODO")]
 async fn test_sub_new_heads_ipc() {
     init_tracing();
 

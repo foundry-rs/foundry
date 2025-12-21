@@ -12,7 +12,7 @@ forgetest!(
             .assert_success()
             .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -51,8 +51,7 @@ contract A {
         a = _a;
     }
 }"#,
-        )
-        .unwrap();
+        );
 
         let script = prj.add_script("Counter.s.sol", r#"
 import "../src/Counter2.sol";
@@ -84,8 +83,7 @@ contract Script0 is Script, Test {
         bytes32 _d2 = b.other().d();
     }
 }"#,
-        )
-        .unwrap();
+        );
 
         cmd.forge_fuse().args(["build"]).assert_success();
 

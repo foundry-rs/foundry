@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract GetBlockTimestampTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GetBlockTimestampTest is Test {
     function testGetTimestamp() public {
         uint256 timestamp = vm.getBlockTimestamp();
         assertEq(timestamp, 1, "timestamp should be 1");
@@ -18,7 +15,7 @@ contract GetBlockTimestampTest is DSTest {
         assertEq(vm.getBlockTimestamp(), 10, "warp failed");
     }
 
-    function testGetTimestampWithWarpFuzzed(uint128 jump) public {
+    function testGetTimestampWithWarpFuzzed(uint32 jump) public {
         uint256 pre = vm.getBlockTimestamp();
         vm.warp(pre + jump);
         assertEq(vm.getBlockTimestamp(), pre + jump, "warp failed");

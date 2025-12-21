@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract EtchTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract EtchTest is Test {
     function testEtch() public {
-        address target = address(11);
+        address target = address(7070707);
         bytes memory code = hex"1010";
         vm.etch(target, code);
         assertEq(string(code), string(target.code));

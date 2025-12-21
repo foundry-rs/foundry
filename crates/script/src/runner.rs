@@ -1,4 +1,4 @@
-use super::ScriptResult;
+use super::{ScriptConfig, ScriptResult};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -10,7 +10,7 @@ use foundry_evm::{
     constants::CALLER,
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
-    revm::interpreter::{return_ok, InstructionResult},
+    revm::interpreter::{InstructionResult, return_ok},
     traces::{TraceKind, Traces},
 };
 use std::collections::VecDeque;
@@ -33,9 +33,8 @@ impl ScriptRunner {
         libraries: &ScriptPredeployLibraries,
         code: Bytes,
         setup: bool,
-        sender_nonce: u64,
+        script_config: &ScriptConfig,
         is_broadcast: bool,
-        need_create2_deployer: bool,
     ) -> Result<(Address, ScriptResult)> {
         trace!(target: "script", "executing setUP()");
 
@@ -45,11 +44,12 @@ impl ScriptRunner {
                 self.executor.set_balance(self.evm_opts.sender, U256::MAX)?;
             }
 
-            if need_create2_deployer {
+            if script_config.evm_opts.fork_url.is_none() {
                 self.executor.deploy_create2_deployer()?;
             }
         }
 
+        let sender_nonce = script_config.sender_nonce;
         self.executor.set_nonce(self.evm_opts.sender, sender_nonce)?;
 
         // We max out their balance so that they can deploy and make calls.
@@ -157,6 +157,11 @@ impl ScriptRunner {
             self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
         }
 
+        // set script address to be used by execution inspector
+        if script_config.config.script_execution_protection {
+            self.executor.set_script_execution(address);
+        }
+
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
         // Optionally call the `setUp` function
@@ -245,7 +250,7 @@ impl ScriptRunner {
                 authorization_list,
                 true,
             )
-        } else if to.is_none() {
+        } else {
             let res = self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction"),
@@ -274,8 +279,6 @@ impl ScriptRunner {
                 address: Some(address),
                 ..Default::default()
             })
-        } else {
-            eyre::bail!("ENS not supported.");
         }
     }
 
@@ -294,13 +297,13 @@ impl ScriptRunner {
         authorization_list: Option<Vec<SignedAuthorization>>,
         commit: bool,
     ) -> Result<ScriptResult> {
-        let mut res = if let Some(authorization_list) = authorization_list {
+        let mut res = if let Some(authorization_list) = &authorization_list {
             self.executor.call_raw_with_authorization(
                 from,
                 to,
                 calldata.clone(),
                 value,
-                authorization_list,
+                authorization_list.clone(),
             )?
         } else {
             self.executor.call_raw(from, to, calldata.clone(), value)?
@@ -314,7 +317,17 @@ impl ScriptRunner {
         // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
         if commit {
             gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
-            res = self.executor.transact_raw(from, to, calldata, value)?;
+            res = if let Some(authorization_list) = authorization_list {
+                self.executor.transact_raw_with_authorization(
+                    from,
+                    to,
+                    calldata,
+                    value,
+                    authorization_list,
+                )?
+            } else {
+                self.executor.transact_raw(from, to, calldata, value)?
+            }
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, transactions, .. } = res;
@@ -354,7 +367,7 @@ impl ScriptRunner {
         value: U256,
     ) -> Result<u64> {
         let mut gas_used = res.gas_used;
-        if matches!(res.exit_reason, return_ok!()) {
+        if matches!(res.exit_reason, Some(return_ok!())) {
             // Store the current gas limit and reset it later.
             let init_gas_limit = self.executor.env().tx.gas_limit;
 
@@ -366,9 +379,9 @@ impl ScriptRunner {
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
                 match res.exit_reason {
-                    InstructionResult::Revert |
-                    InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFunds => {
+                    Some(InstructionResult::Revert)
+                    | Some(InstructionResult::OutOfGas)
+                    | Some(InstructionResult::OutOfFunds) => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {
@@ -376,9 +389,9 @@ impl ScriptRunner {
                         // if last two successful estimations only vary by 10%, we consider this to
                         // sufficiently accurate
                         const ACCURACY: u64 = 10;
-                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
-                            last_highest_gas_limit <
-                            1
+                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
+                            / last_highest_gas_limit
+                            < 1
                         {
                             // update the gas
                             gas_used = highest_gas_limit;

@@ -35,7 +35,9 @@ contract FunctionCallArgsStatement {
             gas: veryAndVeryLongNameOfSomeGasEstimateFunction()
         }();
 
-        target.run{ /* comment 1 */ value: /* comment2 */ 1};
+        target.run{ /* comment 1 */
+            value: /* comment2 */ 1
+        };
 
         target.run{ /* comment3 */
             value: 1, // comment4
@@ -50,5 +52,12 @@ contract FunctionCallArgsStatement {
         };
 
         vm.expectEmit({checkTopic1: false, checkTopic2: false});
+
+        lockup.withdraw{value: LOCKUP_MIN_FEE_WEI}({
+            streamId: streamId, to: users.recipient, amount: withdrawAmount
+        });
+        portal.xcall{value: msg.value}(
+            id, ConfLevel.Finalized, Predeploys.NominaBridgeNative, xcalldata
+        );
     }
 }

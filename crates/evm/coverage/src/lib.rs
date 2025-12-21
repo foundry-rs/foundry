@@ -3,14 +3,14 @@
 //! EVM bytecode coverage analysis.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate tracing;
 
 use alloy_primitives::{
-    map::{B256HashMap, HashMap},
     Bytes,
+    map::{B256HashMap, HashMap, rustc_hash::FxHashMap},
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
@@ -18,7 +18,7 @@ use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
 use std::{
     collections::BTreeMap,
-    fmt::Display,
+    fmt,
     num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
@@ -29,7 +29,7 @@ pub mod analysis;
 pub mod anchors;
 
 mod inspector;
-pub use inspector::CoverageCollector;
+pub use inspector::LineCoverageCollector;
 
 /// A coverage report.
 ///
@@ -44,6 +44,8 @@ pub struct CoverageReport {
     /// All coverage items for the codebase, keyed by the compiler version.
     pub analyses: HashMap<Version, SourceAnalysis>,
     /// All item anchors for the codebase, keyed by their contract ID.
+    ///
+    /// `(id, (creation, runtime))`
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
     /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
@@ -77,6 +79,8 @@ impl CoverageReport {
     }
 
     /// Add anchors to this report.
+    ///
+    /// `(id, (creation, runtime))`
     pub fn add_anchors(
         &mut self,
         anchors: impl IntoIterator<Item = (ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>))>,
@@ -208,8 +212,8 @@ impl DerefMut for HitMaps {
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
 #[derive(Clone, Debug)]
 pub struct HitMap {
+    hits: FxHashMap<u32, u32>,
     bytecode: Bytes,
-    hits: HashMap<u32, u32>,
 }
 
 impl HitMap {
@@ -243,9 +247,15 @@ impl HitMap {
         *self.hits.entry(pc).or_default() += hits;
     }
 
+    /// Reserve space for additional hits.
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.hits.reserve(additional);
+    }
+
     /// Merge another hitmap into this, assuming the bytecode is consistent
     pub fn merge(&mut self, other: &Self) {
-        self.hits.reserve(other.len());
+        self.reserve(other.len());
         for (pc, hits) in other.iter() {
             self.hits(pc, hits);
         }
@@ -278,8 +288,8 @@ pub struct ContractId {
     pub contract_name: Arc<str>,
 }
 
-impl Display for ContractId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ContractId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "Contract \"{}\" (solc {}, source ID {})",
@@ -297,8 +307,8 @@ pub struct ItemAnchor {
     pub item_id: u32,
 }
 
-impl Display for ItemAnchor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ItemAnchor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "IC {} -> Item {}", self.instruction, self.item_id)
     }
 }
@@ -326,8 +336,39 @@ pub enum CoverageItemKind {
     /// A function in the code.
     Function {
         /// The name of the function.
-        name: String,
+        name: Box<str>,
     },
+}
+
+impl PartialEq for CoverageItemKind {
+    fn eq(&self, other: &Self) -> bool {
+        self.ord_key() == other.ord_key()
+    }
+}
+
+impl Eq for CoverageItemKind {}
+
+impl PartialOrd for CoverageItemKind {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CoverageItemKind {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ord_key().cmp(&other.ord_key())
+    }
+}
+
+impl CoverageItemKind {
+    fn ord_key(&self) -> impl Ord + use<> {
+        match *self {
+            Self::Line => 0,
+            Self::Statement => 1,
+            Self::Branch { .. } => 2,
+            Self::Function { .. } => 3,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -340,23 +381,81 @@ pub struct CoverageItem {
     pub hits: u32,
 }
 
-impl Display for CoverageItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.kind {
-            CoverageItemKind::Line => {
-                write!(f, "Line")?;
+impl PartialEq for CoverageItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.ord_key() == other.ord_key()
+    }
+}
+
+impl Eq for CoverageItem {}
+
+impl PartialOrd for CoverageItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CoverageItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ord_key().cmp(&other.ord_key())
+    }
+}
+
+impl fmt::Display for CoverageItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_with_source(None).fmt(f)
+    }
+}
+
+impl CoverageItem {
+    fn ord_key(&self) -> impl Ord + use<> {
+        (
+            self.loc.source_id,
+            self.loc.lines.start,
+            self.loc.lines.end,
+            self.kind.ord_key(),
+            self.loc.bytes.start,
+            self.loc.bytes.end,
+        )
+    }
+
+    pub fn fmt_with_source(&self, src: Option<&str>) -> impl fmt::Display {
+        solar::data_structures::fmt::from_fn(move |f| {
+            match &self.kind {
+                CoverageItemKind::Line => {
+                    write!(f, "Line")?;
+                }
+                CoverageItemKind::Statement => {
+                    write!(f, "Statement")?;
+                }
+                CoverageItemKind::Branch { branch_id, path_id, .. } => {
+                    write!(f, "Branch (branch: {branch_id}, path: {path_id})")?;
+                }
+                CoverageItemKind::Function { name } => {
+                    write!(f, r#"Function "{name}""#)?;
+                }
             }
-            CoverageItemKind::Statement => {
-                write!(f, "Statement")?;
+            write!(f, " (location: ({}), hits: {})", self.loc, self.hits)?;
+
+            if let Some(src) = src
+                && let Some(src) = src.get(self.loc.bytes())
+            {
+                write!(f, " -> ")?;
+
+                let max_len = 64;
+                let max_half = max_len / 2;
+
+                if src.len() > max_len {
+                    write!(f, "\"{}", src[..max_half].escape_debug())?;
+                    write!(f, "...")?;
+                    write!(f, "{}\"", src[src.len() - max_half..].escape_debug())?;
+                } else {
+                    write!(f, "{src:?}")?;
+                }
             }
-            CoverageItemKind::Branch { branch_id, path_id, .. } => {
-                write!(f, "Branch (branch: {branch_id}, path: {path_id})")?;
-            }
-            CoverageItemKind::Function { name } => {
-                write!(f, r#"Function "{name}""#)?;
-            }
-        }
-        write!(f, " (location: {}, hits: {})", self.loc, self.hits)
+
+            Ok(())
+        })
     }
 }
 
@@ -373,13 +472,18 @@ pub struct SourceLocation {
     pub lines: Range<u32>,
 }
 
-impl Display for SourceLocation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "source ID {}, lines {:?}, bytes {:?}", self.source_id, self.lines, self.bytes)
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "source ID: {}, lines: {:?}, bytes: {:?}", self.source_id, self.lines, self.bytes)
     }
 }
 
 impl SourceLocation {
+    /// Returns the byte range as usize.
+    pub fn bytes(&self) -> Range<usize> {
+        self.bytes.start as usize..self.bytes.end as usize
+    }
+
     /// Returns the length of the byte range.
     pub fn len(&self) -> u32 {
         self.bytes.len() as u32

@@ -67,7 +67,7 @@ contract Yul {
             }
 
             // ************
-            /* 
+            /*
                 calls pair.swap(
                     tokenOutNo == 0 ? amountOut : 0,
                     tokenOutNo == 1 ? amountOut : 0,
@@ -93,7 +93,7 @@ contract Yul {
             // empty bytes
             mstore(0xe0, 0x80)
 
-            let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
+            let s2 := call(sub(gas(), 5_000), pair, 0, 0x7c, 0xa4, 0, 0)
             if iszero(s2) {
                 revert(3, 3)
             }
@@ -128,8 +128,8 @@ contract Yul {
 
             function functionThatReturnsSevenValuesAndCanBeUsedInAssignment() -> v1, v2, v3, v4, v5, v6, v7 {}
 
-            let zero:u32 := 0:u32
-            let v:u256, t:u32 := sample(1, 2)
+            let zero := 0
+            let v, t := sample(1, 2)
             let x, y := sample2(2, 1)
 
             let val1, val2, val3, val4, val5, val6, val7
@@ -137,5 +137,59 @@ contract Yul {
         }
 
         assembly { a := 1 /* some really really really long comment that should not fit in one line */  }
+
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            // do something
+        }
+
+        assembly {
+            let addrSlot :=
+                or(
+                    mul(eq(0x8f283970, fnSel), adminSlot), // `changeAdmin(address)`.
+                    mul(eq(0x0900f010, fnSel), adminSlot) // `upgrade(address)`.
+                )
+
+            for {} 1 {} {
+                if iszero(not(mload(i))) { break } // Break if all limbs are zero.
+            }
+
+            switch mode
+            // Get value.
+            case 0 { result := getStr(input, _BITPOS_VALUE, _BITPOS_VALUE_LENGTH, _VALUE_INITED) }
+            // Get children.
+            case 3 { result := children(input) }
+            // Parse.
+            default {
+                let p := add(input, 0x20)
+                let e := add(p, mload(input))
+                if iszero(eq(p, e)) {
+                    let c := chr(e)
+                    mstore8(e, 34) // Place a '"' at the end to speed up parsing.
+                    // The `34 << 248` makes `mallocItem` preserve '"' at the end.
+                    mstore(0x00, setP(shl(248, 34), _BITPOS_STRING, input))
+                    result, p := parseValue(input, 0, p, e)
+                    mstore8(e, c) // Restore the original char at the end.
+                }
+            }
+        }
+
+        assembly {
+            function parseNumber(s_, packed_, pIn_, end_) -> _item, _pOut {
+                _pOut := pIn_
+                if eq(chr(_pOut), 45) { _pOut := add(_pOut, 1) } // '-'.
+                if iszero(lt(sub(chr(_pOut), 48), 10)) { fail() } // Not '0'..'9'.
+                let c_ := chr(_pOut)
+                _pOut := add(_pOut, 1)
+                if iszero(eq(c_, 48)) { _pOut := skip0To9s(_pOut, end_, 0) } // Not '0'.
+                if eq(chr(_pOut), 46) { _pOut := skip0To9s(add(_pOut, 1), end_, 1) } // '.'.
+                let t_ := mload(_pOut)
+                if eq(or(0x20, byte(0, t_)), 101) {
+                    // forgefmt: disable-next-item
+                    _pOut := skip0To9s(add(byte(sub(byte(1, t_), 14), 0x010001), // '+', '-'.
+                        add(_pOut, 1)), end_, 1)
+                }
+            }
+        }
     }
 }

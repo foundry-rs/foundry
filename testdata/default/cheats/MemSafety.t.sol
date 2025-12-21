@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract MemSafetyTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract MemSafetyTest is Test {
     ////////////////////////////////////////////////////////////////
     //                           MSTORE                           //
     ////////////////////////////////////////////////////////////////
@@ -440,7 +437,7 @@ contract MemSafetyTest is DSTest {
         vm.stopExpectSafeMemory();
 
         assembly {
-            // write ouside allowed range, this should be fine
+            // write outside allowed range, this should be fine
             mstore(add(initPtr, 0x20), 0x01)
         }
     }

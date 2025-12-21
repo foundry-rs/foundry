@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract AssertionsTest is DSTest {
+contract AssertionsTest is Test {
     string constant errorMessage = "User provided message";
     uint256 constant maxDecimals = 77;
-
-    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function _abs(int256 a) internal pure returns (uint256) {
         // Required or it will fail when `a = type(int256).min`
@@ -804,22 +801,21 @@ contract AssertionsTest is DSTest {
     }
 
     function testAssertApproxEqRel() public {
-        vm._expectCheatcodeRevert(bytes("assertion failed: overflow in delta calculation"));
-        vm.assertApproxEqRel(type(int256).min, type(int256).max, 0);
-
         vm._expectCheatcodeRevert(
             bytes(string.concat(errorMessage, ": 1 !~= 0 (max delta: 0.0000000000000000%, real delta: undefined)"))
         );
         vm.assertApproxEqRel(int256(1), int256(0), 0, errorMessage);
-
-        vm._expectCheatcodeRevert(bytes(string.concat(errorMessage, ": overflow in delta calculation")));
-        vm.assertApproxEqRel(uint256(0), type(uint256).max, 0, errorMessage);
 
         vm._expectCheatcodeRevert(
             bytes("assertion failed: 1 !~= 0 (max delta: 0.0000000000000000%, real delta: undefined)")
         );
         vm.assertApproxEqRel(uint256(1), uint256(0), uint256(0));
 
+        vm._expectCheatcodeRevert(bytes("assertion failed: overflow in delta calculation"));
+        vm.assertApproxEqRel(type(uint256).max, 1, 1);
+
+        vm.assertApproxEqRel(type(int256).min, type(int256).max, 2e18);
+        vm.assertApproxEqRel(uint256(0), type(uint256).max, 1e18);
         vm.assertApproxEqRel(uint256(0), uint256(0), uint256(0));
     }
 }

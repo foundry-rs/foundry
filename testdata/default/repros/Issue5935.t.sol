@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract SimpleStorage {
     uint256 public value;
@@ -12,9 +11,7 @@ contract SimpleStorage {
     }
 }
 
-contract Issue5935Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue5935Test is Test {
     function testFork() public {
         uint256 forkId1 = vm.createFork("mainnet", 18234083);
         uint256 forkId2 = vm.createFork("mainnet", 18234083);

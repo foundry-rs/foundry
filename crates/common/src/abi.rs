@@ -1,25 +1,31 @@
 //! ABI related helper functions.
 
+use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, Param};
-use alloy_primitives::{hex, Address, LogData};
+use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
-use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
-use foundry_config::Chain;
-use std::{future::Future, pin::Pin};
+use foundry_block_explorers::{Client, contract::ContractMetadata, errors::EtherscanError};
+use std::pin::Pin;
 
 pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let args: Vec<S> = args.into_iter().collect();
+
+    if inputs.len() != args.len() {
+        eyre::bail!("encode length mismatch: expected {} types, got {}", inputs.len(), args.len())
+    }
+
     std::iter::zip(inputs, args)
         .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
         .collect()
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
-/// [DynSolValue]s and then ABI encode them.
+/// [DynSolValue]s and then ABI encode them, prefixes the encoded data with the function selector.
 pub fn encode_function_args<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
 where
     I: IntoIterator<Item = S>,
@@ -29,12 +35,32 @@ where
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
+/// [DynSolValue]s and then ABI encode them. Doesn't prefix the function selector.
+pub fn encode_function_args_raw<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    Ok(func.abi_encode_input_raw(&encode_args(&func.inputs, args)?)?)
+}
+
+/// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
 /// [DynSolValue]s and encode them using the packed encoding.
 pub fn encode_function_args_packed<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let args: Vec<S> = args.into_iter().collect();
+
+    if func.inputs.len() != args.len() {
+        eyre::bail!(
+            "encode length mismatch: expected {} types, got {}",
+            func.inputs.len(),
+            args.len(),
+        );
+    }
+
     let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
         .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
         .collect::<Result<Vec<_>>>()?
@@ -61,11 +87,8 @@ pub fn abi_decode_calldata(
         calldata = &calldata[4..];
     }
 
-    let res = if input {
-        func.abi_decode_input(calldata, false)
-    } else {
-        func.abi_decode_output(calldata, false)
-    }?;
+    let res =
+        if input { func.abi_decode_input(calldata) } else { func.abi_decode_output(calldata) }?;
 
     // in case the decoding worked but nothing was decoded
     if res.is_empty() {
@@ -87,7 +110,7 @@ pub fn get_event(sig: &str) -> Result<Event> {
 
 /// Given an error signature string, it tries to parse it as a `Error`
 pub fn get_error(sig: &str) -> Result<Error> {
-    Error::parse(sig).wrap_err("could not parse event signature")
+    Error::parse(sig).wrap_err("could not parse error signature")
 }
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
@@ -102,8 +125,8 @@ pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
             if param.name.is_empty() {
                 param.name = format!("param{index}");
             }
-            if num_inputs == indexed_params ||
-                (num_address_params == indexed_params && param.ty == "address")
+            if num_inputs == indexed_params
+                || (num_address_params == indexed_params && param.ty == "address")
             {
                 param.indexed = true;
             }
@@ -131,7 +154,7 @@ pub async fn get_func_etherscan(
     for func in funcs {
         let res = encode_function_args(&func, args);
         if res.is_ok() {
-            return Ok(func)
+            return Ok(func);
         }
     }
 
@@ -216,7 +239,7 @@ mod tests {
         assert_eq!(event.inputs.len(), 3);
 
         // Only the address fields get indexed since total_params > num_indexed_params
-        let parsed = event.decode_log(&log, false).unwrap();
+        let parsed = event.decode_log(&log).unwrap();
 
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 2);
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
@@ -241,10 +264,49 @@ mod tests {
 
         // All parameters get indexed since num_indexed_params == total_params
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 3);
-        let parsed = event.decode_log(&log, false).unwrap();
+        let parsed = event.decode_log(&log).unwrap();
 
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
         assert_eq!(parsed.indexed[2], DynSolValue::Address(Address::from_word(param2)));
+    }
+
+    #[test]
+    fn test_encode_args_length_validation() {
+        use alloy_json_abi::Param;
+
+        let params = vec![
+            Param {
+                name: "a".to_string(),
+                ty: "uint256".to_string(),
+                internal_type: None,
+                components: vec![],
+            },
+            Param {
+                name: "b".to_string(),
+                ty: "address".to_string(),
+                internal_type: None,
+                components: vec![],
+            },
+        ];
+
+        // Less arguments than parameters
+        let args = vec!["1"];
+        let res = encode_args(&params, &args);
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("encode length mismatch"));
+
+        // Exact number of arguments and parameters
+        let args = vec!["1", "0x0000000000000000000000000000000000000001"];
+        let res = encode_args(&params, &args);
+        assert!(res.is_ok());
+        let values = res.unwrap();
+        assert_eq!(values.len(), 2);
+
+        // More arguments than parameters
+        let args = vec!["1", "0x0000000000000000000000000000000000000001", "extra"];
+        let res = encode_args(&params, &args);
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("encode length mismatch"));
     }
 }

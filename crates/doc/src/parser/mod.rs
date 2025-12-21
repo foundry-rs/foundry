@@ -1,9 +1,9 @@
 //! The parser module.
 
-use forge_fmt::{FormatterConfig, Visitable, Visitor};
+use crate::solang_ext::{Visitable, Visitor};
 use itertools::Itertools;
 use solang_parser::{
-    doccomment::{parse_doccomments, DocComment},
+    doccomment::{DocComment, parse_doccomments},
     pt::{
         Comment as SolangComment, EnumDefinition, ErrorDefinition, EventDefinition,
         FunctionDefinition, Identifier, Loc, SourceUnit, SourceUnitPart, StructDefinition,
@@ -37,8 +37,8 @@ pub struct Parser {
     items: Vec<ParseItem>,
     /// Source file.
     source: String,
-    /// The formatter config.
-    fmt: FormatterConfig,
+    /// Tab width used to format code.
+    tab_width: usize,
 }
 
 /// [Parser] context.
@@ -52,14 +52,8 @@ struct ParserContext {
 
 impl Parser {
     /// Create a new instance of [Parser].
-    pub fn new(comments: Vec<SolangComment>, source: String) -> Self {
-        Self { comments, source, ..Default::default() }
-    }
-
-    /// Set formatter config on the [Parser]
-    pub fn with_fmt(mut self, fmt: FormatterConfig) -> Self {
-        self.fmt = fmt;
-        self
+    pub fn new(comments: Vec<SolangComment>, source: String, tab_width: usize) -> Self {
+        Self { comments, source, tab_width, ..Default::default() }
     }
 
     /// Return the parsed items. Consumes the parser.
@@ -101,7 +95,7 @@ impl Parser {
     /// Create new [ParseItem] with comments and formatted code.
     fn new_item(&mut self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
         let docs = self.parse_docs(loc_start)?;
-        ParseItem::new(source).with_comments(docs).with_code(&self.source, self.fmt.clone())
+        Ok(ParseItem::new(source).with_comments(docs).with_code(&self.source, self.tab_width))
     }
 
     /// Parse the doc comments from the current start location.
@@ -133,7 +127,7 @@ impl Visitor for Parser {
     type Error = ParserError;
 
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> ParserResult<()> {
-        for source in source_unit.0.iter_mut() {
+        for source in &mut source_unit.0 {
             match source {
                 SourceUnitPart::ContractDefinition(def) => {
                     // Create new contract parse item.
@@ -184,18 +178,16 @@ impl Visitor for Parser {
         // If the function parameter doesn't have a name, try to set it with
         // `@custom:name` tag if any was provided
         let mut start_loc = func.loc.start();
-        for (loc, param) in func.params.iter_mut() {
-            if let Some(param) = param {
-                if param.name.is_none() {
-                    let docs = self.parse_docs_range(start_loc, loc.end())?;
-                    let name_tag =
-                        docs.iter().find(|c| c.tag == CommentTag::Custom("name".to_owned()));
-                    if let Some(name_tag) = name_tag {
-                        if let Some(name) = name_tag.value.trim().split(' ').next() {
-                            param.name =
-                                Some(Identifier { loc: Loc::Implicit, name: name.to_owned() })
-                        }
-                    }
+        for (loc, param) in &mut func.params {
+            if let Some(param) = param
+                && param.name.is_none()
+            {
+                let docs = self.parse_docs_range(start_loc, loc.end())?;
+                let name_tag = docs.iter().find(|c| c.tag == CommentTag::Custom("name".to_owned()));
+                if let Some(name_tag) = name_tag
+                    && let Some(name) = name_tag.value.trim().split(' ').next()
+                {
+                    param.name = Some(Identifier { loc: Loc::Implicit, name: name.to_owned() })
                 }
             }
             start_loc = loc.end();
@@ -226,10 +218,9 @@ mod tests {
     use super::*;
     use solang_parser::parse;
 
-    #[inline]
     fn parse_source(src: &str) -> Vec<ParseItem> {
         let (mut source, comments) = parse(src, 0).expect("failed to parse source");
-        let mut doc = Parser::new(comments, src.to_owned());
+        let mut doc = Parser::new(comments, src.to_owned(), 4);
         source.visit(&mut doc).expect("failed to visit source");
         doc.items()
     }
@@ -298,7 +289,7 @@ mod tests {
                 struct ContractStruct { }
                 enum ContractEnum { }
 
-                uint256 constant CONTRACT_CONSTANT;
+                uint256 constant CONTRACT_CONSTANT = 0;
                 bool contractVar;
 
                 function contractFunction(uint256) external returns (uint256) {
@@ -348,5 +339,45 @@ mod tests {
         assert!(matches!(fallback.source, ParseSource::Function(_)));
     }
 
-    // TODO: test regular doc comments & natspec
+    #[test]
+    fn contract_with_doc_comments() {
+        let items = parse_source(
+            r"
+            pragma solidity ^0.8.19;
+            /// @name Test
+            ///  no tag
+            ///@notice    Cool contract
+            ///   @  dev     This is not a dev tag
+            /**
+             * @dev line one
+             *    line 2
+             */
+            contract Test {
+                /** my function
+                      i like whitespace
+            */
+                function test() {}
+            }
+        ",
+        );
+
+        assert_eq!(items.len(), 1);
+
+        let contract = items.first().unwrap();
+        assert_eq!(contract.comments.len(), 2);
+        assert_eq!(
+            *contract.comments.first().unwrap(),
+            Comment::new(CommentTag::Notice, "Cool contract".to_owned())
+        );
+        assert_eq!(
+            *contract.comments.get(1).unwrap(),
+            Comment::new(CommentTag::Dev, "line one\nline 2".to_owned())
+        );
+
+        let function = contract.children.first().unwrap();
+        assert_eq!(
+            *function.comments.first().unwrap(),
+            Comment::new(CommentTag::Notice, "my function\ni like whitespace".to_owned())
+        );
+    }
 }

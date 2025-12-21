@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dprint/dprint/refs/heads/main/website/src/assets/schemas/v0.json",
+  "indentWidth": 2,
+  "useTabs": false,
+  "excludes": [
+    "!dprint.json",
+    "!npm/**/*.{json,md,toml}",
+    "!npm/**/*.{js,cjs,mjs,d.ts,d.cts,d.mts,ts,tsx,jsx}",
+    "**/_",
+    "**/abi",
+    "**/build",
+    "**/target",
+    "**/test/**",
+    "**/*.min.*",
+    "**/dist/**",
+    "testdata/**",
+    "**/tests/**",
+    "node_modules",
+    "changelog.json",
+    "**/test-data/**",
+    "**/cheatcodes/**",
+    "**/node_modules/**",
+    ".github/scripts/**",
+    ".github/ISSUE_TEMPLATE/**"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/toml-0.7.0.wasm",
+    "https://plugins.dprint.dev/json-0.21.0.wasm",
+    "https://plugins.dprint.dev/markdown-0.20.0.wasm",
+    "https://plugins.dprint.dev/dockerfile-0.3.3.wasm",
+    "https://plugins.dprint.dev/typescript-0.95.11.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.5.1.wasm"
+  ],
+  "markdown": {
+    "lineWidth": 100,
+    "textWrap": "maintain"
+  },
+  "toml": {
+    "lineWidth": 100
+  },
+  "json": {
+    "lineWidth": 1,
+    "indentWidth": 2,
+    "useTabs": false,
+    "trailingCommas": "never",
+    "preferSingleLine": false,
+    "array.preferSingleLine": false
+  },
+  "typescript": {
+    "useTabs": false,
+    "semiColons": "asi",
+    "quoteProps": "asNeeded",
+    "useBraces": "preferNone",
+    "trailingCommas": "never",
+    "quoteStyle": "alwaysSingle",
+    "arrowFunction.useParentheses": "preferNone",
+    "exportDeclaration.sortTypeOnlyExports": "none",
+    "importDeclaration.sortTypeOnlyImports": "none"
+  }
+}

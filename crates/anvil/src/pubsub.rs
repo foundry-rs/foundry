@@ -1,18 +1,21 @@
 use crate::{
-    eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
     StorageInfo,
+    eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
 };
-use alloy_primitives::{TxHash, B256};
-use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log, Transaction};
-use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
+use alloy_network::AnyRpcTransaction;
+use alloy_primitives::{B256, TxHash};
+use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
+use anvil_core::eth::{block::Block, subscription::SubscriptionId};
 use anvil_rpc::{request::Version, response::ResponseResult};
-use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
+use foundry_primitives::FoundryReceiptEnvelope;
+use futures::{Stream, StreamExt, channel::mpsc::Receiver, ready};
 use serde::Serialize;
 use std::{
     collections::VecDeque,
     pin::Pin,
     task::{Context, Poll},
 };
+use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Listens for new blocks and matching logs emitted in that block
 #[derive(Debug)]
@@ -86,6 +89,7 @@ pub enum EthSubscription {
     Logs(Box<LogsSubscription>),
     Header(NewBlockNotifications, StorageInfo, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
+    FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
 }
 
 impl EthSubscription {
@@ -120,6 +124,13 @@ impl EthSubscription {
                     });
                 Poll::Ready(res)
             }
+            Self::FullPendingTransactions(tx, id) => {
+                let res = ready!(tx.poll_recv(cx)).map(to_rpc_result).map(|result| {
+                    let params = EthSubscriptionParams { subscription: id.clone(), result };
+                    EthSubscriptionResponse::new(params)
+                });
+                Poll::Ready(res)
+            }
         }
     }
 }
@@ -137,7 +148,11 @@ impl Stream for EthSubscription {
 }
 
 /// Returns all the logs that match the given filter
-pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredParams) -> Vec<Log> {
+pub fn filter_logs(
+    block: Block,
+    receipts: Vec<FoundryReceiptEnvelope>,
+    filter: &FilteredParams,
+) -> Vec<Log> {
     /// Determines whether to add this log
     fn add_log(
         block_hash: B256,
@@ -147,10 +162,10 @@ pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredP
     ) -> bool {
         if params.filter.is_some() {
             let block_number = block.header.number;
-            if !params.filter_block_range(block_number) ||
-                !params.filter_block_hash(block_hash) ||
-                !params.filter_address(&l.address) ||
-                !params.filter_topics(l.topics())
+            if !params.filter_block_range(block_number)
+                || !params.filter_block_hash(block_hash)
+                || !params.filter_address(&l.address)
+                || !params.filter_topics(l.topics())
             {
                 return false;
             }
@@ -162,7 +177,7 @@ pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredP
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
-        let transaction_hash = block.transactions[receipt_index].hash();
+        let transaction_hash = block.body.transactions[receipt_index].hash();
         for log in receipt.logs() {
             if add_log(block_hash, log, &block, filter) {
                 logs.push(Log {

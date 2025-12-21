@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract BroadcastRawTransactionTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BroadcastRawTransactionTest is Test {
     function test_revert_not_a_tx() public {
         vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: unexpected string");
         vm.broadcastRawTransaction(hex"0102");
     }
 
     function test_revert_missing_signature() public {
-        vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: input too short");
+        vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: Unexpected type flag");
         vm.broadcastRawTransaction(hex"dd806483030d40940993863c19b0defb183ca2b502db7d1b331ded757b80");
     }
 
@@ -277,9 +274,7 @@ contract MyERC20 {
     }
 }
 
-contract ScriptBroadcastRawTransactionBroadcast is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ScriptBroadcastRawTransactionBroadcast is Test {
     function runSignedTxBroadcast() public {
         uint256 pk_to = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
         vm.startBroadcast(pk_to);

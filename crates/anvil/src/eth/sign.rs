@@ -1,14 +1,11 @@
 use crate::eth::error::BlockchainError;
-use alloy_consensus::SignableTransaction;
+use alloy_consensus::{Sealed, SignableTransaction};
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
-use alloy_primitives::{map::AddressHashMap, Address, PrimitiveSignature as Signature, B256, U256};
+use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
-use anvil_core::eth::transaction::{
-    optimism::DepositTransaction, TypedTransaction, TypedTransactionRequest,
-};
-use op_alloy_consensus::TxDeposit;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -38,7 +35,7 @@ pub trait Signer: Send + Sync {
     /// signs a transaction request using the given account in request
     fn sign_transaction(
         &self,
-        request: TypedTransactionRequest,
+        request: FoundryTypedTx,
         address: &Address,
     ) -> Result<Signature, BlockchainError>;
 }
@@ -52,7 +49,7 @@ pub struct DevSigner {
 impl DevSigner {
     pub fn new(accounts: Vec<PrivateKeySigner>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
-        let accounts = addresses.iter().cloned().zip(accounts).collect();
+        let accounts = addresses.iter().copied().zip(accounts).collect();
         Self { addresses, accounts }
     }
 }
@@ -96,66 +93,43 @@ impl Signer for DevSigner {
 
     fn sign_transaction(
         &self,
-        request: TypedTransactionRequest,
+        request: FoundryTypedTx,
         address: &Address,
     ) -> Result<Signature, BlockchainError> {
         let signer = self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
         match request {
-            TypedTransactionRequest::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::Deposit(_) => {
+            FoundryTypedTx::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip7702(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
             }
+            // TODO(onbjerg): we should impl support for Tempo transactions
+            FoundryTypedTx::Tempo(_) => todo!(),
         }
     }
 }
 
-/// converts the `request` into a [`TypedTransactionRequest`] with the given signature
+/// converts the `request` into a [`FoundryTypedTx`] with the given signature
 ///
 /// # Errors
 ///
 /// This will fail if the `signature` contains an erroneous recovery id.
 pub fn build_typed_transaction(
-    request: TypedTransactionRequest,
+    request: FoundryTypedTx,
     signature: Signature,
-) -> Result<TypedTransaction, BlockchainError> {
+) -> Result<FoundryTxEnvelope, BlockchainError> {
     let tx = match request {
-        TypedTransactionRequest::Legacy(tx) => TypedTransaction::Legacy(tx.into_signed(signature)),
-        TypedTransactionRequest::EIP2930(tx) => {
-            TypedTransaction::EIP2930(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP1559(tx) => {
-            TypedTransaction::EIP1559(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP4844(tx) => {
-            TypedTransaction::EIP4844(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::Deposit(tx) => {
-            let TxDeposit {
-                from,
-                gas_limit,
-                to,
-                value,
-                input,
-                source_hash,
-                mint,
-                is_system_transaction,
-                ..
-            } = tx;
-            TypedTransaction::Deposit(DepositTransaction {
-                from,
-                gas_limit,
-                kind: to,
-                value,
-                input,
-                source_hash,
-                mint: mint.map_or(U256::ZERO, U256::from),
-                is_system_tx: is_system_transaction,
-                nonce: 0,
-            })
-        }
+        FoundryTypedTx::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
+        FoundryTypedTx::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
+        FoundryTypedTx::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
+        FoundryTypedTx::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
+        FoundryTypedTx::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
+        FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+        // TODO(onbjerg): we should impl support for Tempo transactions
+        FoundryTypedTx::Tempo(_) => todo!(),
     };
 
     Ok(tx)

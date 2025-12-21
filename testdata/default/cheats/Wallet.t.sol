@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Foo {}
 
-contract WalletTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract WalletTest is Test {
     uint256 internal constant Q = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
     uint256 private constant UINT256_MAX =
         115792089237316195423570985008687907853269984665640564039457584007913129639935;

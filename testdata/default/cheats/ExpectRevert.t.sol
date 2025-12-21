@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Reverter {
     error CustomError();
@@ -71,9 +70,7 @@ contract Dummy {
     }
 }
 
-contract ExpectRevertTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertTest is Test {
     function shouldRevert() internal {
         revert();
     }
@@ -84,10 +81,16 @@ contract ExpectRevertTest is DSTest {
         reverter.revertWithMessage("revert");
     }
 
-    function testShouldFailIfExpectRevertWrongString() public {
+    function testExpectRevertWithEncodedErrorPrefix() public {
         Reverter reverter = new Reverter();
-        vm.expectRevert("my not so cool error", 0);
-        reverter.revertWithMessage("my cool error");
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "my revert reason"));
+        reverter.revertWithMessage("my revert reason");
+
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "A"));
+        reverter.revertWithMessage("A");
+
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "revert: A"));
+        reverter.revertWithMessage("revert: A");
     }
 
     function testExpectRevertConstructor() public {
@@ -257,9 +260,7 @@ contract DContract {
     }
 }
 
-contract ExpectRevertWithReverterTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertWithReverterTest is Test {
     error CContractError(string reason);
 
     AContract aContract;
@@ -306,9 +307,7 @@ contract ExpectRevertWithReverterTest is DSTest {
     }
 }
 
-contract ExpectRevertCount is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertCount is Test {
     function testRevertCountAny() public {
         uint64 count = 3;
         Reverter reverter = new Reverter();
@@ -341,13 +340,6 @@ contract ExpectRevertCount is DSTest {
         Reverter reverter = new Reverter();
         vm.expectRevert("revert", count);
         reverter.doNotRevert();
-    }
-
-    function testNoRevertSpecificButDiffRevert() public {
-        uint64 count = 0;
-        Reverter reverter = new Reverter();
-        vm.expectRevert("revert", count);
-        reverter.revertWithMessage("revert2");
     }
 
     function testRevertCountWithConstructor() public {
@@ -396,9 +388,7 @@ contract ExpectRevertCount is DSTest {
     }
 }
 
-contract ExpectRevertCountWithReverter is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectRevertCountWithReverter is Test {
     function testRevertCountWithReverter() public {
         uint64 count = 2;
         Reverter reverter = new Reverter();
@@ -414,14 +404,6 @@ contract ExpectRevertCountWithReverter is DSTest {
         reverter.doNotRevert();
     }
 
-    function testNoRevertWithWrongReverter() public {
-        uint64 count = 0;
-        Reverter reverter = new Reverter();
-        Reverter reverter2 = new Reverter();
-        vm.expectRevert(address(reverter), count);
-        reverter2.revertWithMessage("revert"); // revert from wrong reverter
-    }
-
     function testReverterCountWithData() public {
         uint64 count = 2;
         Reverter reverter = new Reverter();
@@ -429,14 +411,23 @@ contract ExpectRevertCountWithReverter is DSTest {
         reverter.revertWithMessage("revert");
         reverter.revertWithMessage("revert");
     }
+}
 
-    function testNoReverterCountWithData() public {
-        uint64 count = 0;
-        Reverter reverter = new Reverter();
-        vm.expectRevert("revert", address(reverter), count);
-        reverter.doNotRevert();
+contract ExpectRevertWithErrorTest is Test {
+    /// Ref: <https://github.com/foundry-rs/foundry/issues/12511>
+    function test_f() external {
+        bytes memory v = abi.encodeWithSignature("Error(string)", "");
+        vm.expectRevert(v);
+        this.f(v);
 
-        vm.expectRevert("revert", address(reverter), count);
-        reverter.revertWithMessage("revert2");
+        bytes memory v1 = abi.encodeWithSignature("Error(string)", unicode"🙀");
+        vm.expectRevert(v1);
+        this.f(v1);
+    }
+
+    function f(bytes memory v) external pure {
+        assembly {
+            revert(add(v, 32), mload(v))
+        }
     }
 }

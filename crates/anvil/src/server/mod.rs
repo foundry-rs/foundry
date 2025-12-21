@@ -1,15 +1,16 @@
-//! Contains the code to launch an Ethereum RPC server.
+//! This module provides the infrastructure to launch an Ethereum JSON-RPC server
+//! (via HTTP, WebSocket, and IPC) and Beacon Node REST API.
 
 use crate::{EthApi, IpcTask};
-use anvil_server::{ipc::IpcEndpoint, ServerConfig};
+use anvil_server::{ServerConfig, ipc::IpcEndpoint};
 use axum::Router;
 use futures::StreamExt;
-use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
-use std::{future::Future, io, net::SocketAddr, pin::pin};
+use rpc_handlers::{HttpEthRpcHandler, PubSubEthRpcHandler};
+use std::{io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
-pub mod error;
-mod handler;
+mod beacon;
+mod rpc_handlers;
 
 /// Configures a server that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
 ///
@@ -33,11 +34,20 @@ pub async fn serve_on(
     axum::serve(tcp_listener, router(api, config).into_make_service()).await
 }
 
-/// Configures an [`axum::Router`] that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
+/// Configures an [`axum::Router`] that handles [`EthApi`] related JSON-RPC calls via HTTP and WS,
+/// and Beacon REST API calls.
 pub fn router(api: EthApi, config: ServerConfig) -> Router {
     let http = HttpEthRpcHandler::new(api.clone());
-    let ws = PubSubEthRpcHandler::new(api);
-    anvil_server::http_ws_router(config, http, ws)
+    let ws = PubSubEthRpcHandler::new(api.clone());
+
+    // JSON-RPC router
+    let rpc_router = anvil_server::http_ws_router(config, http, ws);
+
+    // Beacon REST API router
+    let beacon_router = beacon::router(api);
+
+    // Merge the routers
+    rpc_router.merge(beacon_router)
 }
 
 /// Launches an ipc server at the given path in a new task

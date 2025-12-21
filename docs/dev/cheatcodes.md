@@ -123,16 +123,18 @@ These are all the attributes that can be specified on cheatcode functions:
 - `#[cheatcode(status = <ident>)]`: The current status of the cheatcode. E.g. whether it is stable or experimental, etc. Defaults to `Stable`.
 - `#[cheatcode(safety = <ident>)]`: Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an unexpected way. Defaults to the group's safety if unspecified. If the group is ambiguous, then it must be specified manually.
 
-Multiple attributes can be specified by separating them with commas, e.g. `#[cheatcode(group = "evm", status = "unstable")]`.
+Multiple attributes can be specified by separating them with commas, e.g. `#[cheatcode(group = Evm, status = Experimental)]`.
 
 ### `Cheatcode` trait
 
 This trait defines the interface that all cheatcode implementations must implement.
-There are two methods that can be implemented:
+There are three methods that can be implemented:
 
-- `apply`: implemented when the cheatcode is pure and does not need to access EVM data
-- `apply_stateful`: implemented when the cheatcode needs to access EVM data
-- `apply_full`: implemented when the cheatcode needs to access EVM data and the EVM executor itself, for example to recursively call back into the EVM to execute an arbitrary transaction
+| Method | Purpose | When to use |
+|--------|---------|-------------|
+| `apply` | Pure cheatcodes that don't need EVM data access | For simple state manipulations |
+| `apply_stateful` | Cheatcodes that need EVM data access | For operations requiring current EVM state |
+| `apply_full` | Cheatcodes that need EVM executor access | For operations requiring recursive EVM calls |
 
 Only one of these methods can be implemented.
 
@@ -155,7 +157,7 @@ update of the files.
 2. Implement the cheatcode in [`cheatcodes`] in its category's respective module. Follow the existing implementations as a guide.
 3. If a struct, enum, error, or event was added to `Vm`, update [`spec::Cheatcodes::new`]
 4. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
-5. Write an integration test for the cheatcode in [`testdata/cheats/`]
+5. Write an integration test for the cheatcode in [`testdata/default/cheats/`]
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs

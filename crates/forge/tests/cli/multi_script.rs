@@ -1,5 +1,5 @@
 //! Contains various tests related to forge script
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 use foundry_test_utils::{ScriptOutcome, ScriptTester};
 

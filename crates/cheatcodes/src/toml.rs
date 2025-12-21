@@ -1,16 +1,16 @@
 //! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
-    json::{
-        canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
-        parse_json_keys, resolve_type,
-    },
     Cheatcode, Cheatcodes, Result,
     Vm::*,
+    json::{
+        check_json_key_exists, parse_json, parse_json_coerce, parse_json_keys, resolve_type,
+        upsert_json_value,
+    },
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
-use foundry_common::fs;
+use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
@@ -23,16 +23,24 @@ impl Cheatcode for keyExistsTomlCall {
 }
 
 impl Cheatcode for parseToml_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml } = self;
-        parse_toml(toml, "$")
+        parse_toml(
+            toml,
+            "$",
+            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+        )
     }
 }
 
 impl Cheatcode for parseToml_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml(toml, key)
+        parse_toml(
+            toml,
+            key,
+            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+        )
     }
 }
 
@@ -135,23 +143,42 @@ impl Cheatcode for parseTomlBytes32ArrayCall {
 }
 
 impl Cheatcode for parseTomlType_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, typeDescription } = self;
-        parse_toml_coerce(toml, "$", &resolve_type(typeDescription)?).map(|v| v.abi_encode())
+        parse_toml_coerce(
+            toml,
+            "$",
+            &resolve_type(
+                typeDescription,
+                state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+            )?,
+        )
+        .map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseTomlType_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key, typeDescription } = self;
-        parse_toml_coerce(toml, key, &resolve_type(typeDescription)?).map(|v| v.abi_encode())
+        parse_toml_coerce(
+            toml,
+            key,
+            &resolve_type(
+                typeDescription,
+                state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+            )?,
+        )
+        .map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseTomlTypeArrayCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key, typeDescription } = self;
-        let ty = resolve_type(typeDescription)?;
+        let ty = resolve_type(
+            typeDescription,
+            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+        )?;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
@@ -176,20 +203,19 @@ impl Cheatcode for writeToml_0Call {
 
 impl Cheatcode for writeToml_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { json, path, valueKey } = self;
-        let json =
-            serde_json::from_str(json).unwrap_or_else(|_| JsonValue::String(json.to_owned()));
+        let Self { json: value, path, valueKey } = self;
 
+        // Read and parse the TOML file
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let toml_data = fs::read_to_string(data_path)?;
-        let json_data: JsonValue =
-            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
-        let value =
-            jsonpath_lib::replace_with(json_data, &canonicalize_json_path(valueKey), &mut |_| {
-                Some(json.clone())
-            })?;
+        let toml_data = fs::locked_read_to_string(&data_path)?;
 
-        let toml_string = format_json_to_toml(value)?;
+        // Convert to JSON and update the object
+        let mut json_data: JsonValue =
+            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
+        upsert_json_value(&mut json_data, value, valueKey)?;
+
+        // Serialize back to TOML and write the updated content back to the file
+        let toml_string = format_json_to_toml(json_data)?;
         super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }
 }
@@ -200,8 +226,8 @@ fn parse_toml_str(toml: &str) -> Result<TomlValue> {
 }
 
 /// Parse a TOML string and return the value at the given path.
-fn parse_toml(toml: &str, key: &str) -> Result {
-    parse_json(&toml_to_json_string(toml)?, key)
+fn parse_toml(toml: &str, key: &str, struct_defs: Option<&StructDefinitions>) -> Result {
+    parse_json(&toml_to_json_string(toml)?, key, struct_defs)
 }
 
 /// Parse a TOML string and return the value at the given path, coercing it to the given type.
@@ -228,14 +254,17 @@ fn format_json_to_toml(json: JsonValue) -> Result<String> {
 }
 
 /// Convert a TOML value to a JSON value.
-fn toml_to_json_value(toml: TomlValue) -> JsonValue {
+pub(super) fn toml_to_json_value(toml: TomlValue) -> JsonValue {
     match toml {
         TomlValue::String(s) => match s.as_str() {
             "null" => JsonValue::Null,
             _ => JsonValue::String(s),
         },
         TomlValue::Integer(i) => JsonValue::Number(i.into()),
-        TomlValue::Float(f) => JsonValue::Number(serde_json::Number::from_f64(f).unwrap()),
+        TomlValue::Float(f) => match serde_json::Number::from_f64(f) {
+            Some(n) => JsonValue::Number(n),
+            None => JsonValue::String(f.to_string()),
+        },
         TomlValue::Boolean(b) => JsonValue::Bool(b),
         TomlValue::Array(a) => JsonValue::Array(a.into_iter().map(toml_to_json_value).collect()),
         TomlValue::Table(t) => {

@@ -23,7 +23,7 @@ contract BindJsonTest is Test {
         address addrParam;
     }
 
-    function testTopLevel() public {
+    function testTopLevel() public pure {
         string memory json = '{"param1": 1, "param2": -1}';
         TopLevelStruct memory topLevel = json.deserializeTopLevelStruct();
         assertEq(topLevel.param1, 1);
@@ -34,7 +34,7 @@ contract BindJsonTest is Test {
         assertEq(keccak256(abi.encode(deserialized)), keccak256(abi.encode(topLevel)));
     }
 
-    function testContractLevel() public {
+    function testContractLevel() public pure {
         ContractLevelStruct memory contractLevel = ContractLevelStruct({
             param1: new address[][](2),
             addrParam: address(0xBEEF)
@@ -48,8 +48,7 @@ contract BindJsonTest is Test {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("bind-json").assert_success();
 
@@ -70,7 +69,7 @@ interface Vm {
     function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);
     function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);
 }
-        
+...
 library JsonBindings {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 

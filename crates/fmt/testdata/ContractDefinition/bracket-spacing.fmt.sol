@@ -13,7 +13,11 @@ contract SampleContract {
     constructor() { /* comment 9 */ } // comment 10
 
     // comment 11
-    function max( /* comment 13 */ uint256 arg1, uint256 /* comment 14 */ arg2, uint256 /* comment 15 */ )
+    function max( /* comment 13 */
+        uint256 arg1,
+        uint256 /* comment 14 */ arg2,
+        uint256 /* comment 15 */
+    )
         // comment 16
         external /* comment 17 */
         pure
@@ -35,3 +39,15 @@ contract ERC20DecimalsMock is ERC20 {
         _decimals = decimals_;
     }
 }
+
+contract SomeContract is
+    ERC165Upgradeable, // 1 inherited component
+    ISomeContract // 4 inherited components
+{ }
+
+contract AnotherContract is
+    Adminable, /* 1 inherited components */
+    UUPSUpgradeable /* 1 inherited component */
+{ }
+
+contract WithLayoutAndBase layout at 69 is Base { }

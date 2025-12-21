@@ -1,34 +1,36 @@
 //! Anvil is a fast local Ethereum development node.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::{
+    error::{NodeError, NodeResult},
     eth::{
+        EthApi,
         backend::{info::StorageInfo, mem},
         fees::{FeeHistoryService, FeeManager},
         miner::{Miner, MiningMode},
         pool::Pool,
         sign::{DevSigner, Signer as EthSigner},
-        EthApi,
     },
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
-    server::error::{NodeError, NodeResult},
     service::NodeService,
     shutdown::Signal,
     tasks::TaskManager,
 };
+use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
-use foundry_evm::revm;
+pub use foundry_evm::hardfork::EthereumHardfork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
+use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
-    future::Future,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -38,23 +40,23 @@ use tokio::{
     runtime::Handle,
     task::{JoinError, JoinHandle},
 };
+use tracing_subscriber::EnvFilter;
 
 /// contains the background service that drives the node
 mod service;
 
 mod config;
 pub use config::{
-    AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, DEFAULT_GAS_LIMIT, VERSION_MESSAGE,
+    AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, ForkChoice, NodeConfig, VERSION_MESSAGE,
 };
 
-mod hardfork;
-pub use hardfork::EthereumHardfork;
-
+mod error;
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
 mod evm;
-pub use evm::{inject_precompiles, PrecompileFactory};
+pub use evm::PrecompileFactory;
+
 /// support for polling filters
 pub mod filter;
 /// commandline output
@@ -71,6 +73,12 @@ mod tasks;
 /// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
+
+#[cfg(feature = "cmd")]
+pub mod args;
+
+#[cfg(feature = "cmd")]
+pub mod opts;
 
 #[macro_use]
 extern crate foundry_common;
@@ -192,6 +200,11 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
+        match backend.spec_id() {
+            SpecId::OSAKA => BlobParams::osaka(),
+            SpecId::PRAGUE => BlobParams::prague(),
+            _ => BlobParams::cancun(),
+        },
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),
@@ -428,7 +441,7 @@ impl Future for NodeHandle {
         }
 
         // poll the axum server handles
-        for server in pin.servers.iter_mut() {
+        for server in &mut pin.servers {
             if let Poll::Ready(res) = server.poll_unpin(cx) {
                 return Poll::Ready(res);
             }
@@ -443,10 +456,23 @@ pub fn init_tracing() -> LoggingManager {
     use tracing_subscriber::prelude::*;
 
     let manager = LoggingManager::default();
-    // check whether `RUST_LOG` is explicitly set
-    let _ = if std::env::var("RUST_LOG").is_ok() {
-        tracing_subscriber::Registry::default()
-            .with(tracing_subscriber::EnvFilter::from_default_env())
+
+    let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")
+        && !rust_log_val.contains("=")
+    {
+        // Mutate the given filter to include `node` logs if it is not already present.
+        // This prevents the unexpected behaviour of not seeing any node logs if a RUST_LOG
+        // is already present that doesn't set it.
+        let rust_log_val = if !rust_log_val.contains("node") {
+            format!("{rust_log_val},node=info")
+        } else {
+            rust_log_val
+        };
+
+        let env_filter: EnvFilter =
+            rust_log_val.parse().expect("failed to parse modified RUST_LOG");
+        tracing_subscriber::registry()
+            .with(env_filter)
             .with(tracing_subscriber::fmt::layer())
             .try_init()
     } else {

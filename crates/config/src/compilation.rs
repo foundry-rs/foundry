@@ -1,10 +1,10 @@
 use crate::{filter::GlobMatcher, serde_helpers};
 use foundry_compilers::{
+    RestrictionsWithVersion,
     artifacts::{BytecodeHash, EvmVersion},
     multi::{MultiCompilerRestrictions, MultiCompilerSettings},
     settings::VyperRestrictions,
     solc::{Restriction, SolcRestrictions},
-    RestrictionsWithVersion,
 };
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,10 @@ impl SettingsOverrides {
 
         if let Some(optimizer_runs) = self.optimizer_runs {
             settings.solc.optimizer.runs = Some(optimizer_runs);
+            // Enable optimizer in optimizer runs set to a higher value than 0.
+            if optimizer_runs > 0 && self.optimizer.is_none() {
+                settings.solc.optimizer.enabled = Some(true);
+            }
         }
 
         if let Some(bytecode_hash) = self.bytecode_hash {

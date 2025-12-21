@@ -3,16 +3,15 @@ use foundry_compilers::{
     artifacts::remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter},
 };
-use foundry_config::find_project_root;
 use itertools::Itertools;
 use semver::Version;
 use std::{
     io,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     path::{Path, PathBuf},
     sync::{
-        mpsc::{self, TryRecvError},
         LazyLock,
+        mpsc::{self, TryRecvError},
     },
     thread,
     time::Duration,
@@ -45,7 +44,7 @@ impl TermSettings {
     }
 }
 
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub struct Spinner {
     indicator: &'static [&'static str],
     no_progress: bool,
@@ -53,8 +52,7 @@ pub struct Spinner {
     idx: usize,
 }
 
-#[allow(unused)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 impl Spinner {
     pub fn new(msg: impl Into<String>) -> Self {
         Self::with_indicator(SPINNERS[0], msg)
@@ -71,12 +69,12 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return
+            return;
         }
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        let _ = sh_print!("\r\x33[2K\r{indicator} {}", self.message);
+        let _ = sh_print!("\r\x1B[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
@@ -95,6 +93,8 @@ impl Spinner {
 pub struct SpinnerReporter {
     /// The sender to the spinner thread.
     sender: mpsc::Sender<SpinnerMsg>,
+    /// The project root path for trimming file paths in verbose output.
+    project_root: Option<PathBuf>,
 }
 
 impl SpinnerReporter {
@@ -103,7 +103,7 @@ impl SpinnerReporter {
     /// The spinner's message will be updated via the `reporter` events
     ///
     /// On drop the channel will disconnect and the thread will terminate
-    pub fn spawn() -> Self {
+    pub fn spawn(project_root: Option<PathBuf>) -> Self {
         let (sender, rx) = mpsc::channel::<SpinnerMsg>();
 
         std::thread::Builder::new()
@@ -122,7 +122,7 @@ impl SpinnerReporter {
                             // end with a newline
                             let _ = sh_println!();
                             let _ = ack.send(());
-                            break
+                            break;
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
@@ -131,7 +131,7 @@ impl SpinnerReporter {
             })
             .expect("failed to spawn thread");
 
-        Self { sender }
+        Self { sender, project_root }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -158,14 +158,12 @@ impl Reporter for SpinnerReporter {
         // Verbose message with dirty files displays first to avoid being overlapped
         // by the spinner in .tick() which prints repeatedly over the same line.
         if shell::verbosity() >= 5 {
-            let project_root = find_project_root(None);
-
             self.send_msg(format!(
                 "Files to compile:\n{}",
                 dirty_files
                     .iter()
                     .map(|path| {
-                        let trimmed_path = if let Ok(project_root) = &project_root {
+                        let trimmed_path = if let Some(project_root) = &self.project_root {
                             path.strip_prefix(project_root).unwrap_or(path)
                         } else {
                             path
@@ -215,9 +213,9 @@ impl Reporter for SpinnerReporter {
 /// spinning cursor to display solc progress.
 ///
 /// If no terminal is available this falls back to common `println!` in [`BasicStdoutReporter`].
-pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
+pub fn with_spinner_reporter<T>(project_root: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
     let reporter = if TERM_SETTINGS.indicate_progress {
-        report::Report::new(SpinnerReporter::spawn())
+        report::Report::new(SpinnerReporter::spawn(project_root))
     } else {
         report::Report::new(BasicStdoutReporter::default())
     };
@@ -241,7 +239,7 @@ mod tests {
 
     #[test]
     fn can_format_properly() {
-        let r = SpinnerReporter::spawn();
+        let r = SpinnerReporter::spawn(None);
         let remappings: Vec<Remapping> = vec![
             "library/=library/src/".parse().unwrap(),
             "weird-erc20/=lib/weird-erc20/src/".parse().unwrap(),

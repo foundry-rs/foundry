@@ -1,6 +1,3 @@
-use alloy_primitives::Bytes;
-use revm::interpreter::opcode;
-
 /// Named parameter of an EVM opcode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OpcodeParam {
@@ -14,32 +11,8 @@ impl OpcodeParam {
     /// Returns the list of named parameters for the given opcode, accounts for special opcodes
     /// requiring immediate bytes to determine stack items.
     #[inline]
-    pub(crate) fn of(op: u8, immediate: Option<&Bytes>) -> Option<Vec<Self>> {
-        match op {
-            // Handle special cases requiring immediate bytes
-            opcode::DUPN => immediate
-                .and_then(|i| i.first().copied())
-                .map(|i| vec![Self { name: "dup_value", index: i as usize }]),
-            opcode::SWAPN => immediate.and_then(|i| {
-                i.first().map(|i| {
-                    vec![
-                        Self { name: "a", index: 1 },
-                        Self { name: "swap_value", index: *i as usize },
-                    ]
-                })
-            }),
-            opcode::EXCHANGE => immediate.and_then(|i| {
-                i.first().map(|imm| {
-                    let n = (imm >> 4) + 1;
-                    let m = (imm & 0xf) + 1;
-                    vec![
-                        Self { name: "value1", index: n as usize },
-                        Self { name: "value2", index: m as usize },
-                    ]
-                })
-            }),
-            _ => Some(MAP[op as usize].to_vec()),
-        }
+    pub(crate) fn of(op: u8) -> &'static [Self] {
+        MAP[op as usize]
     }
 }
 
@@ -68,16 +41,21 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
     }
 
     // https://www.evm.codes
-    // https://github.com/smlxl/evm.codes
-    // https://github.com/klkvr/evm.codes
-    // https://github.com/klkvr/evm.codes/blob/HEAD/opcodes.json
-    // jq -rf opcodes.jq opcodes.json
-    /*
-    def mkargs(input):
-        input | split(" | ") | to_entries | map("\(.key): \"\(.value)\"") | join(", ");
-
-    to_entries[] | "0x\(.key)(\(mkargs(.value.input))),"
-    */
+    // https://raw.githubusercontent.com/duneanalytics/evm.codes/refs/heads/main/opcodes.json
+    //
+    // jq -r '
+    //   def mkargs(input):
+    //     input
+    //     | split(" | ")
+    //     | to_entries
+    //     | map("\(.key): \"\(.value)\"")
+    //     | join(", ");
+    //   to_entries[]
+    //   | "0x\(.key)(\(mkargs(.value.input))),"
+    // ' opcodes.json
+    //
+    // NOTE: the labels generated for `DUPN` and `SWAPN` have incorrect indices and have been
+    // manually adjusted in the `map!` macro below.
     map! {
         0x00(),
         0x01(0: "a", 1: "b"),
@@ -152,7 +130,7 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0x46(),
         0x47(),
         0x48(),
-        0x49(),
+        0x49(0: "index"),
         0x4a(),
         0x4b(),
         0x4c(),
@@ -171,11 +149,9 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0x59(),
         0x5a(),
         0x5b(),
-        0x5c(),
-        0x5d(),
-        0x5e(),
-
-        // PUSHN
+        0x5c(0: "key"),
+        0x5d(0: "key", 1: "value"),
+        0x5e(0: "destOffset", 1: "offset", 2: "size"),
         0x5f(),
         0x60(),
         0x61(),
@@ -297,7 +273,7 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xd0(0: "offset"),
         0xd1(),
         0xd2(),
-        0xd3(0: "memOffset", 1: "offset", 2: "size"),
+        0xd3(0: "mem_offset", 1: "offset", 2: "size"),
         0xd4(),
         0xd5(),
         0xd6(),
@@ -322,9 +298,9 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xe9(),
         0xea(),
         0xeb(),
-        0xec(0: "value", 1: "salt", 2: "offset", 3: "size"),
+        0xec(0: "value", 1: "salt", 2: "input_offset", 3: "input_size"),
         0xed(),
-        0xee(0: "offset", 1: "size"),
+        0xee(0: "aux_data_offset", 1: "aux_data_size"),
         0xef(),
         0xf0(0: "value", 1: "offset", 2: "size"),
         0xf1(0: "gas", 1: "address", 2: "value", 3: "argsOffset", 4: "argsSize", 5: "retOffset", 6: "retSize"),
@@ -334,10 +310,10 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xf5(0: "value", 1: "offset", 2: "size", 3: "salt"),
         0xf6(),
         0xf7(0: "offset"),
-        0xf8(0: "address", 1: "argsOffset", 2: "argsSize", 3: "value"),
-        0xf9(0: "address", 1: "argsOffset", 2: "argsSize"),
+        0xf8(0: "target_address", 1: "input_offset", 2: "input_size", 3: "value"),
+        0xf9(0: "target_address", 1: "input_offset", 2: "input_size"),
         0xfa(0: "gas", 1: "address", 2: "argsOffset", 3: "argsSize", 4: "retOffset", 5: "retSize"),
-        0xfb(0: "address", 1: "argsOffset", 2: "argsSize"),
+        0xfb(0: "target_address", 1: "input_offset", 2: "input_size"),
         0xfc(),
         0xfd(0: "offset", 1: "size"),
         0xfe(),

@@ -80,6 +80,7 @@ impl Document {
 
 /// The content of the document.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum DocumentContent {
     Empty,
     Single(ParseItem),
@@ -148,10 +149,10 @@ impl<'a> Iterator for ParseItemIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.next.take() {
-            return Some(next)
+            return Some(next);
         }
         if let Some(other) = self.other.as_mut() {
-            return other.next()
+            return other.next();
         }
 
         None
@@ -169,10 +170,10 @@ impl<'a> Iterator for ParseItemIterMut<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.next.take() {
-            return Some(next)
+            return Some(next);
         }
         if let Some(other) = self.other.as_mut() {
-            return other.next()
+            return other.next();
         }
 
         None
@@ -182,7 +183,7 @@ impl<'a> Iterator for ParseItemIterMut<'a> {
 /// Read the preprocessor output variant from document context.
 /// Returns [None] if there is no output.
 macro_rules! read_context {
-    ($doc: expr, $id: expr, $variant: ident) => {
+    ($doc:expr, $id:expr, $variant:ident) => {
         $doc.get_from_context($id).and_then(|out| match out {
             // Only a single variant is matched. Otherwise the code is invalid.
             PreprocessorOutput::$variant(inner) => Some(inner),

@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{hex, U256};
+use alloy_primitives::{U256, hex};
 use alloy_sol_types::SolValue;
 
 // address
@@ -166,7 +166,6 @@ where
     }
 }
 
-#[instrument(target = "cheatcodes", level = "debug", skip(ty), fields(%ty), ret)]
 pub(super) fn parse_value(s: &str, ty: &DynSolType) -> Result<DynSolValue> {
     match ty.coerce_str(s) {
         Ok(value) => Ok(value),
@@ -191,10 +190,10 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
             };
             return Some(Ok(DynSolValue::Bool(b)));
         }
-        DynSolType::Int(_) |
-        DynSolType::Uint(_) |
-        DynSolType::FixedBytes(_) |
-        DynSolType::Bytes => {
+        DynSolType::Int(_)
+        | DynSolType::Uint(_)
+        | DynSolType::FixedBytes(_)
+        | DynSolType::Bytes => {
             if !s.starts_with("0x") && hex::check_raw(s) {
                 return Some(Err("missing hex prefix (\"0x\") for hex string"));
             }

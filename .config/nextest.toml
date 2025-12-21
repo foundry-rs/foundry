@@ -1,11 +1,14 @@
+[test-groups]
+
 [profile.default]
-retries = { backoff = "exponential", count = 2, delay = "3s", jitter = true }
-slow-timeout = { period = "1m", terminate-after = 3 }
+retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
+slow-timeout = { period = "30s", terminate-after = 3 }
 
 [[profile.default.overrides]]
-filter = "test(/ext_integration|can_test_forge_std/)"
+filter = "test(/ext_integration/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
 
+# Do not re-run so that `cargo cheats` is ran locally.
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0

@@ -1,0 +1,24 @@
+[files]
+extend-exclude = [
+    ".git",
+    "target",
+    "testdata",
+    "Cargo.toml",
+    "Cargo.lock",
+    "*.json",
+    "*.js",
+    "*.css",
+    "*.html",
+    "**/tests/**",
+    "**/test/**",
+    "**/*_test.*",
+    "**/*_tests.*",
+]
+
+[default.extend-words]
+ser = "ser"
+ratatui = "ratatui"
+Caf = "Caf"
+froms = "froms"
+strat = "strat"
+ba = "ba"

@@ -1,7 +1,7 @@
 //! Bootstrap [axum] RPC servers.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -12,10 +12,10 @@ use anvil_rpc::{
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
-    extract::DefaultBodyLimit,
-    http::{header, HeaderValue, Method},
-    routing::{post, MethodRouter},
     Router,
+    extract::DefaultBodyLimit,
+    http::{HeaderValue, Method, header},
+    routing::{MethodRouter, post},
 };
 use serde::de::DeserializeOwned;
 use std::fmt;

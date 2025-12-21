@@ -1,19 +1,21 @@
 //! Test outcomes.
 
 use crate::{
+    MultiContractRunner,
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    map::{AddressHashMap, HashMap},
     Address, Log,
+    map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_common::{get_contract_name, get_file_name, shell};
 use foundry_evm::{
+    core::Breakpoints,
     coverage::HitMaps,
     decode::SkipReason,
-    executors::{invariant::InvariantMetrics, RawCallResult},
+    executors::{RawCallResult, invariant::InvariantMetrics},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
@@ -42,17 +44,23 @@ pub struct TestOutcome {
     pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
+    /// The runner used to execute the tests.
+    pub runner: Option<MultiContractRunner>,
 }
 
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
-    pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, last_run_decoder: None, gas_report: None }
+    pub fn new(
+        runner: Option<MultiContractRunner>,
+        results: BTreeMap<String, SuiteResult>,
+        allow_failure: bool,
+    ) -> Self {
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None, runner }
     }
 
     /// Creates a new empty test outcome.
-    pub fn empty(allow_failure: bool) -> Self {
-        Self::new(BTreeMap::new(), allow_failure)
+    pub fn empty(runner: Option<MultiContractRunner>, allow_failure: bool) -> Self {
+        Self::new(runner, BTreeMap::new(), allow_failure)
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -159,12 +167,11 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            // TODO: Avoid process::exit
             std::process::exit(1);
         }
 
         sh_println!("\nFailing tests:")?;
-        for (suite_name, suite) in outcome.results.iter() {
+        for (suite_name, suite) in &outcome.results {
             let failed = suite.failed();
             if failed == 0 {
                 continue;
@@ -184,7 +191,15 @@ impl TestOutcome {
             successes.to_string().green()
         )?;
 
-        // TODO: Avoid process::exit
+        // Show helpful hint for rerunning failed tests
+        let test_word = if failures == 1 { "test" } else { "tests" };
+        sh_println!(
+            "\nTip: Run {} to retry only the {} failed {}",
+            "`forge test --rerun`".cyan(),
+            failures,
+            test_word
+        )?;
+
         std::process::exit(1);
     }
 
@@ -205,7 +220,7 @@ impl TestOutcome {
 #[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
     /// Wall clock time it took to execute all tests in this suite.
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
     /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
@@ -399,16 +414,20 @@ pub struct TestResult {
     pub traces: Traces,
 
     /// Additional traces to use for gas report.
+    ///
+    /// These are cleared after the gas report is analyzed.
     #[serde(skip)]
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
 
-    /// Raw coverage info
+    /// Raw line coverage info
     #[serde(skip)]
-    pub coverage: Option<HitMaps>,
+    pub line_coverage: Option<HitMaps>,
 
     /// Labeled addresses
-    pub labeled_addresses: AddressHashMap<String>,
+    #[serde(rename = "labeled_addresses")] // Backwards compatibility.
+    pub labels: AddressHashMap<String>,
 
+    #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
 
     /// pc breakpoint char map
@@ -465,20 +484,29 @@ impl fmt::Display for TestResult {
                 } else {
                     s.push(']');
                 }
-                s.red().fmt(f)
+                s.red().wrap().fmt(f)
             }
         }
     }
+}
+
+macro_rules! extend {
+    ($a:expr, $b:expr, $trace_kind:expr) => {
+        $a.logs.extend($b.logs);
+        $a.labels.extend($b.labels);
+        $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
+        $a.merge_coverages($b.line_coverage);
+    };
 }
 
 impl TestResult {
     /// Creates a new test result starting from test setup results.
     pub fn new(setup: &TestSetup) -> Self {
         Self {
-            labeled_addresses: setup.labels.clone(),
+            labels: setup.labels.clone(),
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
-            coverage: setup.coverage.clone(),
+            line_coverage: setup.coverage.clone(),
             ..Default::default()
         }
     }
@@ -490,13 +518,25 @@ impl TestResult {
 
     /// Creates a test setup result.
     pub fn setup_result(setup: TestSetup) -> Self {
+        let TestSetup {
+            address: _,
+            fuzz_fixtures: _,
+            logs,
+            labels,
+            traces,
+            coverage,
+            deployed_libs: _,
+            reason,
+            skipped,
+            deployment_failure: _,
+        } = setup;
         Self {
-            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
-            reason: setup.reason,
-            logs: setup.logs,
-            traces: setup.traces,
-            coverage: setup.coverage,
-            labeled_addresses: setup.labels,
+            status: if skipped { TestStatus::Skipped } else { TestStatus::Failure },
+            reason,
+            logs,
+            traces,
+            line_coverage: coverage,
+            labels,
             ..Default::default()
         }
     }
@@ -524,11 +564,7 @@ impl TestResult {
         self.kind =
             TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };
 
-        // Record logs, labels, traces and merge coverages.
-        self.logs.extend(raw_call_result.logs);
-        self.labeled_addresses.extend(raw_call_result.labels);
-        self.traces.extend(raw_call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(raw_call_result.coverage);
+        extend!(self, raw_call_result, TraceKind::Execution);
 
         self.status = match success {
             true => TestStatus::Success,
@@ -553,13 +589,11 @@ impl TestResult {
             mean_gas: result.mean_gas(false),
             first_case: result.first_case,
             runs: result.gas_by_case.len(),
+            failed_corpus_replays: result.failed_corpus_replays,
         };
 
         // Record logs, labels, traces and merge coverages.
-        self.logs.extend(result.logs);
-        self.labeled_addresses.extend(result.labeled_addresses);
-        self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(result.coverage);
+        extend!(self, result, TraceKind::Execution);
 
         self.status = if result.skipped {
             TestStatus::Skipped
@@ -576,10 +610,28 @@ impl TestResult {
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
     }
 
+    /// Returns the fail result for fuzz test setup.
+    pub fn fuzz_setup_fail(&mut self, e: Report) {
+        self.kind = TestKind::Fuzz {
+            first_case: Default::default(),
+            runs: 0,
+            mean_gas: 0,
+            median_gas: 0,
+            failed_corpus_replays: 0,
+        };
+        self.status = TestStatus::Failure;
+        self.reason = Some(format!("failed to set up fuzz testing environment: {e}"));
+    }
+
     /// Returns the skipped result for invariant test.
     pub fn invariant_skip(&mut self, reason: SkipReason) {
-        self.kind =
-            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
+        self.kind = TestKind::Invariant {
+            runs: 1,
+            calls: 1,
+            reverts: 1,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+        };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
     }
@@ -591,8 +643,13 @@ impl TestResult {
         invariant_name: &String,
         call_sequence: Vec<BaseCounterExample>,
     ) {
-        self.kind =
-            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
+        self.kind = TestKind::Invariant {
+            runs: 1,
+            calls: 1,
+            reverts: 1,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+        };
         self.status = TestStatus::Failure;
         self.reason = if replayed_entirely {
             Some(format!("{invariant_name} replay failure"))
@@ -604,14 +661,19 @@ impl TestResult {
 
     /// Returns the fail result for invariant test setup.
     pub fn invariant_setup_fail(&mut self, e: Report) {
-        self.kind =
-            TestKind::Invariant { runs: 0, calls: 0, reverts: 0, metrics: HashMap::default() };
+        self.kind = TestKind::Invariant {
+            runs: 0,
+            calls: 0,
+            reverts: 0,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+        };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
     }
 
     /// Returns the invariant test result.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn invariant_result(
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
@@ -621,12 +683,14 @@ impl TestResult {
         cases: Vec<FuzzedCases>,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
     ) {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
             reverts,
             metrics,
+            failed_corpus_replays,
         };
         self.status = match success {
             true => TestStatus::Success,
@@ -635,6 +699,33 @@ impl TestResult {
         self.reason = reason;
         self.counterexample = counterexample;
         self.gas_report_traces = gas_report_traces;
+    }
+
+    /// Returns the result for a table test. Merges table test execution results (logs, labeled
+    /// addresses, traces and coverages) in initial setup results.
+    pub fn table_result(&mut self, result: FuzzTestResult) {
+        self.kind = TestKind::Table {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            runs: result.gas_by_case.len(),
+        };
+
+        // Record logs, labels, traces and merge coverages.
+        extend!(self, result, TraceKind::Execution);
+
+        self.status = if result.skipped {
+            TestStatus::Skipped
+        } else if result.success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
+        };
+        self.reason = result.reason;
+        self.counterexample = result.counterexample;
+        self.duration = Duration::default();
+        self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
+        self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
     }
 
     /// Returns `true` if this is the result of a fuzz test
@@ -649,24 +740,39 @@ impl TestResult {
 
     /// Merges the given raw call result into `self`.
     pub fn extend(&mut self, call_result: RawCallResult) {
-        self.logs.extend(call_result.logs);
-        self.labeled_addresses.extend(call_result.labels);
-        self.traces.extend(call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(call_result.coverage);
+        extend!(self, call_result, TraceKind::Execution);
     }
 
     /// Merges the given coverage result into `self`.
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
-        HitMaps::merge_opt(&mut self.coverage, other_coverage);
+        HitMaps::merge_opt(&mut self.line_coverage, other_coverage);
     }
 }
 
 /// Data report by a test.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TestKindReport {
-    Unit { gas: u64 },
-    Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },
-    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
+    Unit {
+        gas: u64,
+    },
+    Fuzz {
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
+        failed_corpus_replays: usize,
+    },
+    Invariant {
+        runs: usize,
+        calls: usize,
+        reverts: usize,
+        metrics: Map<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
+    },
+    Table {
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
+    },
 }
 
 impl fmt::Display for TestKindReport {
@@ -675,11 +781,28 @@ impl fmt::Display for TestKindReport {
             Self::Unit { gas } => {
                 write!(f, "(gas: {gas})")
             }
-            Self::Fuzz { runs, mean_gas, median_gas } => {
-                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+            Self::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays } => {
+                if *failed_corpus_replays != 0 {
+                    write!(
+                        f,
+                        "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}, failed corpus replays: {failed_corpus_replays})"
+                    )
+                } else {
+                    write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+                }
             }
-            Self::Invariant { runs, calls, reverts, metrics: _ } => {
-                write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
+            Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
+                if *failed_corpus_replays != 0 {
+                    write!(
+                        f,
+                        "(runs: {runs}, calls: {calls}, reverts: {reverts}, failed corpus replays: {failed_corpus_replays})"
+                    )
+                } else {
+                    write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
+                }
+            }
+            Self::Table { runs, mean_gas, median_gas } => {
+                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
         }
     }
@@ -691,7 +814,7 @@ impl TestKindReport {
         match *self {
             Self::Unit { gas } => gas,
             // We use the median for comparisons
-            Self::Fuzz { median_gas, .. } => median_gas,
+            Self::Fuzz { median_gas, .. } | Self::Table { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
             Self::Invariant { .. } => 0,
         }
@@ -710,9 +833,18 @@ pub enum TestKind {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+        failed_corpus_replays: usize,
     },
     /// An invariant test.
-    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
+    Invariant {
+        runs: usize,
+        calls: usize,
+        reverts: usize,
+        metrics: Map<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
+    },
+    /// A table test.
+    Table { runs: usize, mean_gas: u64, median_gas: u64 },
 }
 
 impl Default for TestKind {
@@ -726,15 +858,26 @@ impl TestKind {
     pub fn report(&self) -> TestKindReport {
         match self {
             Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
-            Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
-                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            Self::Fuzz { first_case: _, runs, mean_gas, median_gas, failed_corpus_replays } => {
+                TestKindReport::Fuzz {
+                    runs: *runs,
+                    mean_gas: *mean_gas,
+                    median_gas: *median_gas,
+                    failed_corpus_replays: *failed_corpus_replays,
+                }
             }
-            Self::Invariant { runs, calls, reverts, metrics: _ } => TestKindReport::Invariant {
-                runs: *runs,
-                calls: *calls,
-                reverts: *reverts,
-                metrics: HashMap::default(),
-            },
+            Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
+                TestKindReport::Invariant {
+                    runs: *runs,
+                    calls: *calls,
+                    reverts: *reverts,
+                    metrics: HashMap::default(),
+                    failed_corpus_replays: *failed_corpus_replays,
+                }
+            }
+            Self::Table { runs, mean_gas, median_gas } => {
+                TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            }
         }
     }
 }
@@ -765,6 +908,8 @@ pub struct TestSetup {
     pub reason: Option<String>,
     /// Whether setup and entire test suite is skipped.
     pub skipped: bool,
+    /// Whether the test failed to deploy.
+    pub deployment_failure: bool,
 }
 
 impl TestSetup {
@@ -777,9 +922,10 @@ impl TestSetup {
     }
 
     pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {
-        self.logs.extend(raw.logs);
-        self.labels.extend(raw.labels);
-        self.traces.extend(raw.traces.map(|traces| (trace_kind, traces)));
-        HitMaps::merge_opt(&mut self.coverage, raw.coverage);
+        extend!(self, raw, trace_kind);
+    }
+
+    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
+        HitMaps::merge_opt(&mut self.coverage, other_coverage);
     }
 }

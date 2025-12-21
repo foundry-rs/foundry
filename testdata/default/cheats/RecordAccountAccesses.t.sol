@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 /// @notice Helper contract with a construction that makes a call to itself then
 ///         optionally reverts if zero-length data is passed
@@ -124,13 +122,13 @@ contract NestedRunner {
 
 /// Helper contract that uses all three EXT* opcodes on a given address
 contract ExtChecker {
-    function checkExts(address a) external {
+    function checkExts(address a) external returns (bytes memory out) {
         assembly {
-            let x := extcodesize(a)
-            let y := extcodehash(a)
-            extcodecopy(a, x, y, 0)
-            // sstore to check that storage accesses are correctly stored in a new access with a "resume" context
-            sstore(0, balance(a))
+            mstore(out, mul(0x20, 4))
+            mstore(add(out, 0x20), extcodesize(a))
+            mstore(add(out, 0x40), extcodehash(a))
+            extcodecopy(a, 0, 0x60, 0x20)
+            mstore(add(out, 0x80), balance(a))
         }
     }
 }
@@ -203,8 +201,7 @@ contract Proxy {
 }
 
 /// @notice Test that the cheatcode correctly records account accesses
-contract RecordAccountAccessesTest is DSTest {
-    Vm constant cheats = Vm(HEVM_ADDRESS);
+contract RecordAccountAccessesTest is Test {
     NestedRunner runner;
     NestedStorer nestedStorer;
     Create2or create2or;
@@ -225,9 +222,10 @@ contract RecordAccountAccessesTest is DSTest {
         StorageAccessor one = test1;
         Proxy proxy = new Proxy(address(one));
 
-        cheats.startStateDiffRecording();
-        address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        vm.startStateDiffRecording();
+        (bool success,) = address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
+        require(success, "call failed");
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
 
         assertEq(called.length, 2, "incorrect length");
 
@@ -255,24 +253,24 @@ contract RecordAccountAccessesTest is DSTest {
     function testStorageAccesses() public {
         StorageAccessor one = test1;
         StorageAccessor two = test2;
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
 
         one.read(bytes32(uint256(1234)));
         one.write(bytes32(uint256(1235)), bytes32(uint256(5678)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(123469)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(1234)));
 
-        string memory diffs = cheats.getStateDiff();
+        string memory diffs = vm.getStateDiff();
         assertEq(
-            "0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9\n- state diff:\n@ 0x00000000000000000000000000000000000000000000000000000000000004d3: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x000000000000000000000000000000000000000000000000000000000000162e\n\n0xc7183455a4C133Ae270771860664b6B7ec320bB1\n- state diff:\n@ 0x000000000000000000000000000000000000000000000000000000000000162e: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x00000000000000000000000000000000000000000000000000000000000004d2\n\n",
+            "0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9\ncontract: default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\n- state diff:\n@ 0x00000000000000000000000000000000000000000000000000000000000004d3: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x000000000000000000000000000000000000000000000000000000000000162e\n\n0xc7183455a4C133Ae270771860664b6B7ec320bB1\ncontract: default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\n- state diff:\n@ 0x000000000000000000000000000000000000000000000000000000000000162e: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x00000000000000000000000000000000000000000000000000000000000004d2\n\n",
             diffs
         );
-        string memory diffsJson = cheats.getStateDiffJson();
+        string memory diffsJson = vm.getStateDiffJson();
         assertEq(
-            "{\"0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9\":{\"label\":null,\"balanceDiff\":null,\"stateDiff\":{\"0x00000000000000000000000000000000000000000000000000000000000004d3\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000162e\"}}},\"0xc7183455a4c133ae270771860664b6b7ec320bb1\":{\"label\":null,\"balanceDiff\":null,\"stateDiff\":{\"0x000000000000000000000000000000000000000000000000000000000000162e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x00000000000000000000000000000000000000000000000000000000000004d2\"}}}}",
+            '{"0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9":{"label":null,"contract":"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x00000000000000000000000000000000000000000000000000000000000004d3":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000000000000000000000000000162e"}}},"0xc7183455a4c133ae270771860664b6b7ec320bb1":{"label":null,"contract":"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x000000000000000000000000000000000000000000000000000000000000162e":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x00000000000000000000000000000000000000000000000000000000000004d2"}}}}',
             diffsJson
         );
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 4, "incorrect length");
 
         assertEq(called[0].storageAccesses.length, 1, "incorrect storage length");
@@ -334,7 +332,7 @@ contract RecordAccountAccessesTest is DSTest {
 
     /// @notice Test that basic account accesses are correctly recorded
     function testRecordAccountAccesses() public {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
 
         (bool succ,) = address(1234).call("");
         (succ,) = address(5678).call{value: 1 ether}("");
@@ -343,14 +341,19 @@ contract RecordAccountAccessesTest is DSTest {
         // contract calls to self in constructor
         SelfCaller caller = new SelfCaller{value: 2 ether}("hello2 world2");
 
-        string memory callerAddress = cheats.toString(address(caller));
+        string memory callerAddress = vm.toString(address(caller));
         string memory expectedStateDiff =
             "0x000000000000000000000000000000000000162e\n- balance diff: 0 \xE2\x86\x92 1000000000000000000\n\n";
         expectedStateDiff = string.concat(expectedStateDiff, callerAddress);
-        expectedStateDiff = string.concat(expectedStateDiff, "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n\n");
-        assertEq(expectedStateDiff, cheats.getStateDiff());
+        expectedStateDiff =
+            string.concat(expectedStateDiff, "\ncontract: default/cheats/RecordAccountAccesses.t.sol:SelfCaller");
+        expectedStateDiff = string.concat(
+            expectedStateDiff,
+            "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n- nonce diff: 0 \xE2\x86\x92 1\n\n"
+        );
+        assertEq(expectedStateDiff, vm.getStateDiff());
 
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 6);
         assertEq(
             called[0],
@@ -362,6 +365,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0,
                 data: "",
@@ -381,6 +386,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 1 ether,
                 data: "",
@@ -399,6 +406,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0,
                 data: "hello world",
@@ -417,6 +426,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: 1 ether,
                 newBalance: 1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0,
                 data: "",
@@ -435,6 +446,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: 0,
                 newBalance: 2 ether,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: address(caller).code,
                 value: 2 ether,
                 data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("hello2 world2")),
@@ -453,6 +466,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: 2 ether,
                 newBalance: 2 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0.2 ether,
                 data: "",
@@ -467,17 +482,17 @@ contract RecordAccountAccessesTest is DSTest {
     ///         reverts
     function testRevertingCall() public {
         uint256 initBalance = address(this).balance;
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         try this.revertingCall{value: 1 ether}(address(1234), "") {} catch {}
         assertEq(
             "0x00000000000000000000000000000000000004d2\n- balance diff: 0 \xE2\x86\x92 100000000000000000\n\n",
-            cheats.getStateDiff()
+            vm.getStateDiff()
         );
         assertEq(
-            "{\"0x00000000000000000000000000000000000004d2\":{\"label\":null,\"balanceDiff\":{\"previousValue\":\"0x0\",\"newValue\":\"0x16345785d8a0000\"},\"stateDiff\":{}}}",
-            cheats.getStateDiffJson()
+            '{"0x00000000000000000000000000000000000004d2":{"label":null,"contract":null,"balanceDiff":{"previousValue":"0x0","newValue":"0x16345785d8a0000"},"nonceDiff":null,"stateDiff":{}}}',
+            vm.getStateDiffJson()
         );
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 2);
         assertEq(
             called[0],
@@ -489,6 +504,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: initBalance,
                 newBalance: initBalance,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 1 ether,
                 data: abi.encodeCall(this.revertingCall, (address(1234), "")),
@@ -507,6 +524,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 0.1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0.1 ether,
                 data: "",
@@ -519,14 +538,14 @@ contract RecordAccountAccessesTest is DSTest {
 
     /// @notice Test that nested account accesses are correctly recorded
     function testNested() public {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         runNested(false, false);
     }
 
     /// @notice Test that nested account accesses are correctly recorded when
     ///         the first call reverts
     function testNested_Revert() public {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         runNested(true, false);
     }
 
@@ -534,7 +553,7 @@ contract RecordAccountAccessesTest is DSTest {
     /// @param shouldRevert Whether the first call should revert
     function runNested(bool shouldRevert, bool expectFirstCall) public {
         try runner.run{value: 1 ether}(shouldRevert) {} catch {}
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 7 + toUint(expectFirstCall), "incorrect length");
 
         uint64 startingIndex = uint64(toUint(expectFirstCall));
@@ -548,6 +567,8 @@ contract RecordAccountAccessesTest is DSTest {
                     kind: Vm.AccountAccessKind.Call,
                     oldBalance: 0,
                     newBalance: 0,
+                    oldNonce: 0,
+                    newNonce: 0,
                     deployedCode: "",
                     initialized: false,
                     value: 0,
@@ -581,6 +602,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: shouldRevert ? 0 : 0.9 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
@@ -614,6 +637,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.1 ether,
@@ -647,6 +672,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.01 ether,
@@ -680,6 +707,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0.01 ether,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.001 ether,
@@ -713,6 +742,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0.09 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.1 ether,
@@ -746,6 +777,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.01 ether,
@@ -779,6 +812,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0.01 ether,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.001 ether,
@@ -792,18 +827,18 @@ contract RecordAccountAccessesTest is DSTest {
     }
 
     function testNestedStorage() public {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         nestedStorer.run();
-        cheats.label(address(nestedStorer), "NestedStorer");
+        vm.label(address(nestedStorer), "NestedStorer");
         assertEq(
-            "0x2e234DAe75C793f67A35089C9d99245E1C58470b\nlabel: NestedStorer\n- state diff:\n@ 0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n\n",
-            cheats.getStateDiff()
+            "0x2e234DAe75C793f67A35089C9d99245E1C58470b\nlabel: NestedStorer\ncontract: default/cheats/RecordAccountAccesses.t.sol:NestedStorer\n- state diff:\n@ 0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n\n",
+            vm.getStateDiff()
         );
         assertEq(
-            "{\"0x2e234dae75c793f67a35089c9d99245e1c58470b\":{\"label\":\"NestedStorer\",\"balanceDiff\":null,\"stateDiff\":{\"0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"}}}}",
-            cheats.getStateDiffJson()
+            '{"0x2e234dae75c793f67a35089c9d99245e1c58470b":{"label":"NestedStorer","contract":"default/cheats/RecordAccountAccesses.t.sol:NestedStorer","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"},"0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"},"0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"},"0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"}}}}',
+            vm.getStateDiffJson()
         );
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect account access length");
 
         assertEq(called[0].storageAccesses.length, 2, "incorrect run storage length");
@@ -828,6 +863,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -873,6 +910,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -906,6 +945,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Resume,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -920,14 +961,14 @@ contract RecordAccountAccessesTest is DSTest {
 
     /// @notice Test that constructor account and storage accesses are recorded, including reverts
     function testConstructorStorage() public {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         address storer = address(new ConstructorStorer(false));
         try create2or.create2(bytes32(0), abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true))) {}
             catch {}
         bytes memory creationCode = abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true));
         address hypotheticalStorer = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
 
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect account access length");
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
         assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
@@ -952,6 +993,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: storer.code,
                 initialized: true,
                 value: 0,
@@ -972,6 +1015,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -1004,6 +1049,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: address(hypotheticalStorer).code,
                 initialized: true,
                 value: 0,
@@ -1034,12 +1081,12 @@ contract RecordAccountAccessesTest is DSTest {
     /// @notice Test that constructor calls and calls made within a constructor
     ///         are correctly recorded, even if it reverts
     function testCreateRevert() public {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         bytes memory creationCode = abi.encodePacked(type(SelfCaller).creationCode, abi.encode(""));
         try create2or.create2(bytes32(0), creationCode) {} catch {}
         address hypotheticalAddress = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
 
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect length");
         assertEq(
             called[1],
@@ -1050,6 +1097,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: address(hypotheticalAddress).code,
                 initialized: true,
                 value: 0,
@@ -1068,6 +1117,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 initialized: true,
                 value: 0,
@@ -1087,7 +1138,7 @@ contract RecordAccountAccessesTest is DSTest {
         this.startRecordingFromLowerDepth();
         address a = address(new SelfDestructor{value: 1 ether}(address(this)));
         address b = address(new SelfDestructor{value: 1 ether}(address(bytes20("doesn't exist yet"))));
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 5, "incorrect length");
         assertEq(
             called[1],
@@ -1098,6 +1149,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
@@ -1116,6 +1169,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.SelfDestruct,
                 oldBalance: startingBalance - 1 ether,
                 newBalance: startingBalance,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
@@ -1134,10 +1189,14 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
-                data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(bytes20("doesn't exist yet")))),
+                data: abi.encodePacked(
+                    type(SelfDestructor).creationCode, abi.encode(address(bytes20("doesn't exist yet")))
+                ),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
                 depth: 3
@@ -1152,6 +1211,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.SelfDestruct,
                 oldBalance: 0,
                 newBalance: 1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 initialized: false,
                 value: 1 ether,
@@ -1165,13 +1226,13 @@ contract RecordAccountAccessesTest is DSTest {
 
     /// @notice Asserts interaction between broadcast and recording cheatcodes
     function testIssue6514() public {
-        cheats.startStateDiffRecording();
-        cheats.startBroadcast();
+        vm.startStateDiffRecording();
+        vm.startBroadcast();
 
         StorageAccessor a = new StorageAccessor();
 
-        cheats.stopBroadcast();
-        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
+        vm.stopBroadcast();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
         assertEq(called.length, 1, "incorrect length");
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Create));
         assertEq(called[0].account, address(a));
@@ -1179,22 +1240,17 @@ contract RecordAccountAccessesTest is DSTest {
 
     /// @notice Test that EXT* opcodes are recorded as account accesses
     function testExtOpcodes() public {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         extChecker.checkExts(address(1234));
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
-        assertEq(called.length, 7, "incorrect length");
-        // initial solidity extcodesize check for calling extChecker
-        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Extcodesize));
+        Vm.AccountAccess[] memory called = vm.stopAndReturnStateDiff();
+        assertEq(called.length, 5, "incorrect length");
         // call to extChecker
-        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Call));
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call));
         // extChecker checks
-        assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Extcodesize));
-        assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Extcodehash));
-        assertEq(toUint(called[4].kind), toUint(Vm.AccountAccessKind.Extcodecopy));
-        assertEq(toUint(called[5].kind), toUint(Vm.AccountAccessKind.Balance));
-        // resume of extChecker to hold SSTORE access
-        assertEq(toUint(called[6].kind), toUint(Vm.AccountAccessKind.Resume));
-        assertEq(called[6].storageAccesses.length, 1, "incorrect length");
+        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Extcodesize));
+        assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Extcodehash));
+        assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Extcodecopy));
+        assertEq(toUint(called[4].kind), toUint(Vm.AccountAccessKind.Balance));
     }
 
     /**
@@ -1224,7 +1280,7 @@ contract RecordAccountAccessesTest is DSTest {
     }
 
     function startRecordingFromLowerDepth() external {
-        cheats.startStateDiffRecording();
+        vm.startStateDiffRecording();
         assembly {
             pop(call(gas(), 1234, 0, 0, 0, 0, 0))
         }
@@ -1248,6 +1304,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Resume,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: expected.initialized,
                 value: 0,
@@ -1339,5 +1397,52 @@ contract RecordAccountAccessesTest is DSTest {
 
     function deriveCreate2Address(address deployer, bytes32 salt, bytes32 codeHash) internal pure returns (address) {
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)))));
+    }
+
+    /// @notice Simple test for getStorageAccesses() cheatcode
+    function testGetStorageAccesses() public {
+        StorageAccessor accessor = test1;
+
+        // Start recording to enable storage access tracking
+        vm.startStateDiffRecording();
+
+        // Perform a read operation
+        accessor.read(bytes32(uint256(789)));
+
+        // Perform a write operation
+        accessor.write(bytes32(uint256(123)), bytes32(uint256(456)));
+
+        // Perform another read operation after the write
+        accessor.read(bytes32(uint256(123)));
+
+        // Get all storage accesses
+        Vm.StorageAccess[] memory accesses = vm.getStorageAccesses();
+
+        // Check we have 3 storage accesses (2 reads + 1 write)
+        assertEq(accesses.length, 3, "should have 3 storage accesses");
+
+        // Check the first read access
+        assertEq(accesses[0].account, address(accessor));
+        assertEq(accesses[0].slot, bytes32(uint256(789)));
+        assertEq(accesses[0].isWrite, false);
+        assertEq(accesses[0].previousValue, bytes32(uint256(0)));
+        assertEq(accesses[0].newValue, bytes32(uint256(0)));
+        assertEq(accesses[0].reverted, false);
+
+        // Check the write access
+        assertEq(accesses[1].account, address(accessor));
+        assertEq(accesses[1].slot, bytes32(uint256(123)));
+        assertEq(accesses[1].isWrite, true);
+        assertEq(accesses[1].previousValue, bytes32(uint256(0)));
+        assertEq(accesses[1].newValue, bytes32(uint256(456)));
+        assertEq(accesses[1].reverted, false);
+
+        // Check the second read access (reading the value we just wrote)
+        assertEq(accesses[2].account, address(accessor));
+        assertEq(accesses[2].slot, bytes32(uint256(123)));
+        assertEq(accesses[2].isWrite, false);
+        assertEq(accesses[2].previousValue, bytes32(uint256(456)));
+        assertEq(accesses[2].newValue, bytes32(uint256(456)));
+        assertEq(accesses[2].reverted, false);
     }
 }

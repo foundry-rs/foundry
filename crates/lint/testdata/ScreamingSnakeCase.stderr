@@ -1,0 +1,64 @@
+note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 constant screamingSnakeCase = 0;
+   |                      ^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-const
+
+note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 constant screaming_snake_case = 0;
+   |                      ^^^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-const
+
+note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 constant ScreamingSnakeCase = 0;
+   |                      ^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-const
+
+note[screaming-snake-case-const]: constants should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 constant SCREAMING_snake_case = 0;
+   |                      ^^^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-const
+
+note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 immutable screamingSnakeCase0 = 0;
+   |                       ^^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE0`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-immutable
+
+note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 immutable screaming_snake_case0 = 0;
+   |                       ^^^^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE0`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-immutable
+
+note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 immutable ScreamingSnakeCase0 = 0;
+   |                       ^^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE0`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-immutable
+
+note[screaming-snake-case-immutable]: immutables should use SCREAMING_SNAKE_CASE
+  --> ROOT/testdata/ScreamingSnakeCase.sol:LL:CC
+   |
+LL |     uint256 immutable SCREAMING_snake_case_0 = 0;
+   |                       ^^^^^^^^^^^^^^^^^^^^^^ help: consider using: `SCREAMING_SNAKE_CASE_0`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#screaming-snake-case-immutable
+

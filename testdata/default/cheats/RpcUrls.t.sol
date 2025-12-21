@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract RpcUrlTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract RpcUrlTest is Test {
     // returns the correct url
     function testCanGetRpcUrl() public {
         string memory url = vm.rpcUrl("mainnet");
-        assertTrue(bytes(url).length == 61 || bytes(url).length == 69);
+        assertTrue(bytes(url).length >= 36);
     }
 
     // returns an error if env alias does not exist

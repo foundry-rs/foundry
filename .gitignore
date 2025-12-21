@@ -1,7 +1,26 @@
 .DS_STORE
 /target*
+/*.sol
+CLAUDE.md
+
+# Foundry artifacts
 out/
 snapshots/
-out.json
+
+# IDEs and extensions
 .idea
 .vscode
+.claude
+.zed
+
+# NPM
+.env
+node_modules
+dist
+bin
+_
+*.tgz
+.vercel
+.vite
+.wrangler
+*.zip

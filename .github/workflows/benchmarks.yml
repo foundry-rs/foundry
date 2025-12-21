@@ -1,0 +1,228 @@
+name: Foundry Benchmarks
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to comment on (optional)"
+        required: false
+        type: string
+      versions:
+        description: "Comma-separated list of Foundry versions to benchmark (e.g., stable,nightly,v1.0.0)"
+        required: false
+        type: string
+        default: "stable,nightly"
+      repos:
+        description: "Comma-separated list of repos to benchmark (e.g., ithacaxyz/account:main,Vectorized/solady)"
+        required: false
+        type: string
+        default: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
+
+env:
+  ITHACAXYZ_ACCOUNT: "ithacaxyz/account:v0.3.2"
+  VECTORIZED_SOLADY: "Vectorized/solady:v0.1.22"
+  DEFAULT_REPOS: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  run-benchmarks:
+    name: Run All Benchmarks
+    runs-on: foundry-runner
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          ./.github/scripts/setup-foundryup.sh
+          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
+
+      - name: Build benchmark binary
+        run: cargo build --release --bin foundry-bench
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
+
+      - name: Run forge test benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          REPOS="${{ github.event.inputs.repos || env.DEFAULT_REPOS }}"
+
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_test,forge_fuzz_test \
+            --output-file forge_test_bench.md
+
+      - name: Run forge isolate test benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          # Isolate tests default to Vectorized/solady but can be overridden
+          REPOS="${{ github.event.inputs.repos || env.VECTORIZED_SOLADY }}"
+
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_isolate_test \
+            --output-file forge_isolate_test_bench.md
+
+      - name: Run forge build benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          REPOS="${{ github.event.inputs.repos || env.DEFAULT_REPOS }}"
+
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_build_no_cache,forge_build_with_cache \
+            --output-file forge_build_bench.md
+
+      - name: Run forge coverage benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          # Coverage only runs on ithacaxyz/account:v0.3.2
+
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos ${{ env.ITHACAXYZ_ACCOUNT }} \
+            --benchmarks forge_coverage \
+            --output-file forge_coverage_bench.md
+
+      - name: Combine benchmark results
+        run: ./.github/scripts/combine-benchmarks.sh benches
+
+      - name: Commit and read benchmark results
+        id: benchmark_results
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
+
+      - name: Upload benchmark results as artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-results
+          path: |
+            benches/forge_test_bench.md
+            benches/forge_isolate_test_bench.md
+            benches/forge_build_bench.md
+            benches/forge_coverage_bench.md
+            benches/LATEST.md
+
+    outputs:
+      branch_name: ${{ steps.benchmark_results.outputs.branch_name }}
+      pr_comment: ${{ steps.benchmark_results.outputs.pr_comment }}
+
+  publish-results:
+    name: Publish Results
+    needs: run-benchmarks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download benchmark results
+        uses: actions/download-artifact@v7
+        with:
+          name: benchmark-results
+          path: benches/
+
+      - name: Push branch for manual runs
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git push origin "${{ needs.run-benchmarks.outputs.branch_name }}"
+          echo "Pushed branch: ${{ needs.run-benchmarks.outputs.branch_name }}"
+
+      - name: Create PR for manual runs
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const branchName = '${{ needs.run-benchmarks.outputs.branch_name }}';
+            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
+
+            // Create the pull request
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'chore(bench): update benchmark results',
+              head: branchName,
+              base: 'master',
+              body: `## Benchmark Results Update
+
+            This PR contains the latest benchmark results from a manual workflow run.
+
+            ${prComment}
+
+            ---
+
+            🤖 This PR was automatically generated by the [Foundry Benchmarks workflow](https://github.com/${{ github.repository }}/actions).`
+            });
+
+            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+
+      - name: Comment on PR
+        if: github.event.inputs.pr_number != '' || github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};
+            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
+
+            const comment = `${prComment}
+
+            ---
+
+            🤖 This comment was automatically generated by the [Foundry Benchmarks workflow](https://github.com/${{ github.repository }}/actions).
+
+            To run benchmarks manually: Go to [Actions](https://github.com/${{ github.repository }}/actions/workflows/benchmarks.yml) → "Run workflow"`;
+
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

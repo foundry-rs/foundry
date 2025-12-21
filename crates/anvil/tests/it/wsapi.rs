@@ -2,7 +2,7 @@
 
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number_ws() {

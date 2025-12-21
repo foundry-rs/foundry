@@ -1,0 +1,48 @@
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |         IERC20(address(token)).transfer(to, amount);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#erc20-unchecked-transfer
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |         token.transfer(to, amount);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#erc20-unchecked-transfer
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | ...   IERC20(address(token)).transferFrom(from, to, amount);
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#erc20-unchecked-transfer
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |         token.transferFrom(from, to, amount);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#erc20-unchecked-transfer
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | ...   IERC20(address(token)).transfer(recipients[i], amounts[i]);
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#erc20-unchecked-transfer
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |             token.transfer(recipients[i], amounts[i]);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#erc20-unchecked-transfer
+

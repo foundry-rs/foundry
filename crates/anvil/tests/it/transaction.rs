@@ -2,17 +2,22 @@ use crate::{
     abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
+use alloy_consensus::Transaction;
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{map::B256HashSet, Address, Bytes, FixedBytes, U256};
-use alloy_provider::Provider;
+use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
+use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
-    state::{AccountOverride, StateOverride},
-    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, TransactionRequest,
+    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
+    TransactionRequest,
+    state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use alloy_sol_types::SolValue;
+use anvil::{NodeConfig, spawn};
 use eyre::Ok;
-use futures::{future::join_all, FutureExt, StreamExt};
+use foundry_evm::hardfork::EthereumHardfork;
+use futures::{FutureExt, StreamExt, future::join_all};
+use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 
@@ -90,7 +95,7 @@ async fn can_order_transactions() {
     let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
 
     // get the block, await receipts
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
@@ -129,7 +134,7 @@ async fn can_respect_nonces() {
     // this will unblock the currently pending tx
     let higher_tx = higher_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
 
-    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(2, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![tx.transaction_hash, higher_tx.transaction_hash]),
@@ -170,7 +175,7 @@ async fn can_replace_transaction() {
     // mine exactly one block
     api.mine_one().await;
 
-    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(BlockTransactions::Hashes(vec![higher_tx_hash]), block.transactions);
@@ -237,7 +242,7 @@ async fn can_mine_large_gas_limit() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let gas_limit = anvil::DEFAULT_GAS_LIMIT as u64;
+    let gas_limit = anvil::DEFAULT_GAS_LIMIT;
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx =
@@ -286,7 +291,7 @@ async fn can_reject_underpriced_replacement() {
     let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
     // ensure that only the higher priced tx was mined
-    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(1, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
@@ -314,7 +319,7 @@ async fn can_deploy_greeter_http() {
 
     let greeting = alloy_greeter.greet().call().await.unwrap();
 
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -351,7 +356,7 @@ async fn can_deploy_and_mine_manually() {
     let address = receipt.contract_address.unwrap();
     let greeter_contract = Greeter::new(address, provider);
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let set_greeting = greeter_contract.setGreeting("Another Message".to_string());
     let tx = set_greeting.send().await.unwrap();
@@ -361,7 +366,7 @@ async fn can_deploy_and_mine_manually() {
 
     let _tx = tx.get_receipt().await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Another Message", greeting._0);
+    assert_eq!("Another Message", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -410,7 +415,7 @@ async fn can_call_greeter_historic() {
     let greeter_contract = Greeter::new(greeter_addr, provider.clone());
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let block_number = provider.get_block_number().await.unwrap();
 
@@ -424,7 +429,7 @@ async fn can_call_greeter_historic() {
         .unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Another Message", greeting._0);
+    assert_eq!("Another Message", greeting);
 
     // min
     api.mine_one().await;
@@ -432,7 +437,7 @@ async fn can_call_greeter_historic() {
     // returns previous state
     let greeting =
         greeter_contract.greet().block(BlockId::Number(block_number.into())).call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -452,7 +457,7 @@ async fn can_deploy_greeter_ws() {
     let greeter_contract = Greeter::new(greeter_addr, provider.clone());
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -479,41 +484,31 @@ async fn get_blocktimestamp_works() {
 
     let contract = Multicall::deploy(provider.clone()).await.unwrap();
 
-    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap();
 
     assert!(timestamp > U256::from(1));
 
     let latest_block =
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp.to::<u64>(), latest_block.header.timestamp);
 
     // repeat call same result
-    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp.to::<u64>(), latest_block.header.timestamp);
 
     // mock timestamp
     let next_timestamp = timestamp.to::<u64>() + 1337;
     api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
-    let timestamp = contract
-        .getCurrentBlockTimestamp()
-        .block(BlockId::pending())
-        .call()
-        .await
-        .unwrap()
-        .timestamp;
+    let timestamp =
+        contract.getCurrentBlockTimestamp().block(BlockId::pending()).call().await.unwrap();
     assert_eq!(timestamp, U256::from(next_timestamp));
 
     // repeat call same result
-    let timestamp = contract
-        .getCurrentBlockTimestamp()
-        .block(BlockId::pending())
-        .call()
-        .await
-        .unwrap()
-        .timestamp;
+    let timestamp =
+        contract.getCurrentBlockTimestamp().block(BlockId::pending()).call().await.unwrap();
     assert_eq!(timestamp, U256::from(next_timestamp));
 }
 
@@ -535,7 +530,7 @@ async fn call_past_state() {
     let deployed_block = provider.get_block_number().await.unwrap();
 
     let value = contract.getValue().call().await.unwrap();
-    assert_eq!(value._0, "initial value");
+    assert_eq!(value, "initial value");
 
     let gas_price = api.gas_price();
     let set_tx = contract.setValue("hi".to_string()).gas_price(gas_price + 1);
@@ -544,22 +539,16 @@ async fn call_past_state() {
 
     // assert new value
     let value = contract.getValue().call().await.unwrap();
-    assert_eq!(value._0, "hi");
+    assert_eq!(value, "hi");
 
     // assert previous value
     let value =
         contract.getValue().block(BlockId::Number(deployed_block.into())).call().await.unwrap();
-    assert_eq!(value._0, "initial value");
+    assert_eq!(value, "initial value");
 
-    let hash = provider
-        .get_block(BlockId::Number(1.into()), false.into())
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .hash;
+    let hash = provider.get_block(BlockId::Number(1.into())).await.unwrap().unwrap().header.hash;
     let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
-    assert_eq!(value._0, "initial value");
+    assert_eq!(value, "initial value");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -722,6 +711,34 @@ async fn can_get_pending_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_listen_full_pending_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // Disable auto-mining so transactions remain pending
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = alloy_provider::ProviderBuilder::new()
+        .connect_ws(WsConnect::new(handle.ws_endpoint()))
+        .await
+        .unwrap();
+
+    // Subscribe to full pending transactions
+    let sub = provider.subscribe_full_pending_transactions().await;
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let mut stream = sub.expect("Failed to subscribe to pending tx").into_stream().take(5);
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1337)).to(Address::random());
+
+    let tx = provider.send_transaction(tx).await.unwrap();
+
+    // Wait for the subscription to yield a transaction
+    let received = stream.next().await.expect("Failed to receive pending tx");
+
+    assert_eq!(received.tx_hash(), *tx.tx_hash());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_raw_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
@@ -878,7 +895,7 @@ async fn test_tx_receipt() {
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    // `to` field is none if it's a contract creation transaction: https://ethereum.org/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
+    // `to` field is none if it's a contract creation transaction: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
     assert!(tx.to.is_none());
     assert!(tx.contract_address.is_some());
 }
@@ -946,14 +963,15 @@ async fn can_stream_pending_transactions() {
             complete => unreachable!(),
         };
 
-        if watch_received.len() == num_txs && sub_received.len() == num_txs {
-            if let Some(sent) = &sent {
-                assert_eq!(sent.len(), watch_received.len());
-                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
-                assert_eq!(sent_txs, watch_received.iter().copied().collect());
-                assert_eq!(sent_txs, sub_received.iter().copied().collect());
-                break
-            }
+        if watch_received.len() == num_txs
+            && sub_received.len() == num_txs
+            && let Some(sent) = &sent
+        {
+            assert_eq!(sent.len(), watch_received.len());
+            let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
+            assert_eq!(sent_txs, watch_received.iter().copied().collect());
+            assert_eq!(sent_txs, sub_received.iter().copied().collect());
+            break;
         }
     }
 }
@@ -1096,7 +1114,7 @@ async fn estimates_gas_on_pending_by_default() {
         .to(sender)
         .value(U256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
-    api.estimate_gas(WithOtherFields::new(tx), None, None).await.unwrap();
+    api.estimate_gas(WithOtherFields::new(tx), None, EvmOverrides::default()).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1113,7 +1131,8 @@ async fn test_estimate_gas() {
         .value(U256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     // Expect the gas estimation to fail due to insufficient funds.
-    let error_result = api.estimate_gas(WithOtherFields::new(tx.clone()), None, None).await;
+    let error_result =
+        api.estimate_gas(WithOtherFields::new(tx.clone()), None, EvmOverrides::default()).await;
 
     assert!(error_result.is_err(), "Expected an error due to insufficient funds");
     let error_message = error_result.unwrap_err().to_string();
@@ -1131,12 +1150,53 @@ async fn test_estimate_gas() {
 
     // Estimate gas with state override implying sufficient funds.
     let gas_estimate = api
-        .estimate_gas(WithOtherFields::new(tx), None, Some(state_override))
+        .estimate_gas(WithOtherFields::new(tx), None, EvmOverrides::new(Some(state_override), None))
         .await
         .expect("Failed to estimate gas with state override");
 
     // Assert the gas estimate meets the expected minimum.
     assert!(gas_estimate >= U256::from(21000), "Gas estimate is lower than expected minimum");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_override() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let tx = TransactionRequest::default()
+        .from(sender)
+        .to(recipient)
+        .input(Bytes::from(hex!("42cbb15c").to_vec()).into());
+
+    //     function getBlockNumber() external view returns (uint256) {
+    //         return block.number;
+    //     }
+    let code = hex!(
+        "6080604052348015600e575f5ffd5b50600436106026575f3560e01c806342cbb15c14602a575b5f5ffd5b60306044565b604051603b91906061565b60405180910390f35b5f43905090565b5f819050919050565b605b81604b565b82525050565b5f60208201905060725f8301846054565b9291505056fea26469706673582212207741266d8151c5e7d1a96fc1697f8fc94e60e730b3f2861d398339c74a2180d464736f6c634300081e0033"
+    );
+
+    let account_override =
+        AccountOverride { balance: Some(U256::from(1e18)), ..Default::default() };
+    let state_override = StateOverridesBuilder::default()
+        .append(sender, account_override)
+        .append(recipient, AccountOverride::default().with_code(code.to_vec()))
+        .build();
+
+    let block_override = BlockOverrides { number: Some(U256::from(99)), ..Default::default() };
+
+    let output = api
+        .call(
+            WithOtherFields::new(tx),
+            None,
+            EvmOverrides::new(Some(state_override), Some(Box::new(block_override))),
+        )
+        .await
+        .expect("Failed to estimate gas with state override");
+
+    assert_eq!(output, U256::from(99).abi_encode());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1169,7 +1229,7 @@ async fn can_call_with_high_gas_limit() {
     let greeter_contract = Greeter::deploy(provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().gas(60_000_000).call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1208,7 +1268,7 @@ async fn test_reject_eip1559_pre_london() {
     let greeter_contract = Greeter::new(greeter_contract_addr, provider);
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 // https://github.com/foundry-rs/foundry/issues/6931
@@ -1234,4 +1294,184 @@ async fn can_mine_multiple_in_block() {
 
     let txs = block.transactions.hashes().collect::<Vec<_>>();
     assert_eq!(txs, vec![first, second]);
+}
+
+// ensures that the gas estimate is running on pending block by default
+#[tokio::test(flavor = "multi_thread")]
+async fn can_estimate_gas_prague() {
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    // {"data":"0xcafebabe","from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"
+    // 0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}
+    let req = TransactionRequest::default()
+        .with_input(hex!("0xcafebabe"))
+        .with_from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+        .with_to(address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"));
+    api.estimate_gas(WithOtherFields::new(req), None, EvmOverrides::default()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_osaka_valid_with_limit_enabled() {
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .enable_tx_gas_limit(true)
+            .with_hardfork(Some(EthereumHardfork::Osaka.into())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let base_tx = TransactionRequest::default().from(sender).to(recipient).value(U256::from(1e18));
+
+    // gas limit below the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP - 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit at the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit above the cap is rejected
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP + 1);
+    let tx = WithOtherFields::new(tx);
+    let err = provider.send_transaction(tx).await.unwrap_err().to_string();
+    assert!(
+        err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+        "{err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_osaka_valid_with_limit_disabled() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let base_tx = TransactionRequest::default().from(sender).to(recipient).value(U256::from(1e18));
+
+    // gas limit below the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP - 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit at the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit above the cap is accepted when the limit is disabled
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP + 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tx_by_sender_and_nonce() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let recipient = accounts[1].address();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let mut tx_hashes = std::collections::BTreeMap::new();
+
+    // send 4 transactions from the same sender with consecutive nonces
+    for i in 0..4 {
+        let tx_request = TransactionRequest::default()
+            .to(recipient)
+            .value(U256::from(1000 + i))
+            .from(sender)
+            .nonce(i as u64);
+
+        let tx = WithOtherFields::new(tx_request);
+        let pending_tx = provider.send_transaction(tx).await.unwrap();
+        tx_hashes.insert(i as u64, *pending_tx.tx_hash());
+    }
+
+    // mine all transactions
+    api.mine_one().await;
+
+    for nonce in 0..4 {
+        let result: Option<alloy_network::AnyRpcTransaction> = provider
+            .client()
+            .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(nonce)))
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let found_tx = result.unwrap();
+
+        assert_eq!(found_tx.inner.nonce(), nonce);
+        assert_eq!(found_tx.from(), sender);
+        assert_eq!(found_tx.inner.to(), Some(recipient));
+        assert_eq!(found_tx.inner.value(), U256::from(1000 + nonce));
+        assert_eq!(found_tx.inner.tx_hash(), tx_hashes[&nonce]);
+    }
+
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(999)))
+        .await
+        .unwrap();
+    assert!(result.is_none());
+
+    let different_sender = accounts[2].address();
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (different_sender, U256::from(0)))
+        .await
+        .unwrap();
+    assert!(result.is_none());
+
+    // send a pending transaction with explicit nonce 4
+    let pending_tx_request =
+        TransactionRequest::default().to(recipient).value(U256::from(5000)).from(sender).nonce(4);
+
+    let tx = WithOtherFields::new(pending_tx_request);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+
+    // find the pending transaction with nonce 4
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(4)))
+        .await
+        .unwrap();
+
+    assert!(result.is_some());
+    let found_tx = result.unwrap();
+    assert_eq!(found_tx.inner.nonce(), 4);
+    assert_eq!(found_tx.inner.tx_hash(), *pending_tx.tx_hash());
+
+    api.mine_one().await;
+
+    let result: Option<alloy_network::AnyRpcTransaction> = provider
+        .client()
+        .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(4)))
+        .await
+        .unwrap();
+
+    assert!(result.is_some());
+    let found_tx = result.unwrap();
+    assert_eq!(found_tx.inner.nonce(), 4);
 }

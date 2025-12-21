@@ -1,7 +1,7 @@
 //! Cheatcode specification for Foundry.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt};
@@ -83,6 +83,7 @@ impl Cheatcodes<'static> {
                 Vm::Wallet::STRUCT.clone(),
                 Vm::FfiResult::STRUCT.clone(),
                 Vm::ChainInfo::STRUCT.clone(),
+                Vm::Chain::STRUCT.clone(),
                 Vm::AccountAccess::STRUCT.clone(),
                 Vm::StorageAccess::STRUCT.clone(),
                 Vm::Gas::STRUCT.clone(),
@@ -90,6 +91,7 @@ impl Cheatcodes<'static> {
                 Vm::BroadcastTxSummary::STRUCT.clone(),
                 Vm::SignedDelegation::STRUCT.clone(),
                 Vm::PotentialRevert::STRUCT.clone(),
+                Vm::AccessListItem::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
@@ -106,7 +108,7 @@ impl Cheatcodes<'static> {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use std::{fs, path::Path};
@@ -115,8 +117,7 @@ mod tests {
     #[cfg(feature = "schema")]
     const SCHEMA_PATH: &str =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/cheatcodes.schema.json");
-    const IFACE_PATH: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../testdata/cheats/Vm.sol");
+    const IFACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../testdata/utils/Vm.sol");
 
     /// Generates the `cheatcodes.json` file contents.
     fn json_cheatcodes() -> String {
@@ -168,11 +169,11 @@ interface Vm {{
     /// Checks that the `file` has the specified `contents`. If that is not the
     /// case, updates the file and then fails the test.
     fn ensure_file_contents(file: &Path, contents: &str) {
-        if let Ok(old_contents) = fs::read_to_string(file) {
-            if normalize_newlines(&old_contents) == normalize_newlines(contents) {
-                // File is already up to date.
-                return
-            }
+        if let Ok(old_contents) = fs::read_to_string(file)
+            && normalize_newlines(&old_contents) == normalize_newlines(contents)
+        {
+            // File is already up to date.
+            return;
         }
 
         eprintln!("\n\x1b[31;1merror\x1b[0m: {} was not up-to-date, updating\n", file.display());

@@ -1,30 +1,32 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes, map::HashMap};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::ArtifactId;
 use foundry_config::{Chain, Config};
+use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
 
 mod local;
 pub use local::LocalTraceIdentifier;
 
-mod etherscan;
-pub use etherscan::EtherscanIdentifier;
+mod external;
+pub use external::ExternalIdentifier;
 
 mod signatures;
-pub use signatures::{CachedSignatures, SignaturesIdentifier, SingleSignaturesIdentifier};
+pub use signatures::{SignaturesCache, SignaturesIdentifier};
 
-/// An address identity
-pub struct AddressIdentity<'a> {
-    /// The address this identity belongs to
+/// An address identified by a [`TraceIdentifier`].
+#[derive(Debug)]
+pub struct IdentifiedAddress<'a> {
+    /// The address.
     pub address: Address,
-    /// The label for the address
+    /// The label for the address.
     pub label: Option<String>,
-    /// The contract this address represents
+    /// The contract this address represents.
     ///
     /// Note: This may be in the format `"<artifact>:<contract>"`.
     pub contract: Option<String>,
-    /// The ABI of the contract at this address
+    /// The ABI of the contract at this address.
     pub abi: Option<Cow<'a, JsonAbi>>,
     /// The artifact ID of the contract, if any.
     pub artifact_id: Option<ArtifactId>,
@@ -33,17 +35,15 @@ pub struct AddressIdentity<'a> {
 /// Trace identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub trait TraceIdentifier {
     /// Attempts to identify an address in one or more call traces.
-    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
-    where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone;
+    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>>;
 }
 
 /// A collection of trace identifiers.
 pub struct TraceIdentifiers<'a> {
     /// The local trace identifier.
     pub local: Option<LocalTraceIdentifier<'a>>,
-    /// The optional Etherscan trace identifier.
-    pub etherscan: Option<EtherscanIdentifier>,
+    /// The optional external trace identifier.
+    pub external: Option<ExternalIdentifier>,
 }
 
 impl Default for TraceIdentifiers<'_> {
@@ -53,16 +53,20 @@ impl Default for TraceIdentifiers<'_> {
 }
 
 impl TraceIdentifier for TraceIdentifiers<'_> {
-    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
-    where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone,
-    {
-        let mut identities = Vec::new();
-        if let Some(local) = &mut self.local {
-            identities.extend(local.identify_addresses(addresses.clone()));
+    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+        if nodes.is_empty() {
+            return Vec::new();
         }
-        if let Some(etherscan) = &mut self.etherscan {
-            identities.extend(etherscan.identify_addresses(addresses));
+
+        let mut identities = Vec::with_capacity(nodes.len());
+        if let Some(local) = &mut self.local {
+            identities.extend(local.identify_addresses(nodes));
+            if identities.len() >= nodes.len() {
+                return identities;
+            }
+        }
+        if let Some(external) = &mut self.external {
+            identities.extend(external.identify_addresses(nodes));
         }
         identities
     }
@@ -71,7 +75,7 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
 impl<'a> TraceIdentifiers<'a> {
     /// Creates a new, empty instance.
     pub const fn new() -> Self {
-        Self { local: None, etherscan: None }
+        Self { local: None, external: None }
     }
 
     /// Sets the local identifier.
@@ -80,14 +84,25 @@ impl<'a> TraceIdentifiers<'a> {
         self
     }
 
-    /// Sets the etherscan identifier.
-    pub fn with_etherscan(mut self, config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
-        self.etherscan = EtherscanIdentifier::new(config, chain)?;
+    /// Sets the local identifier.
+    pub fn with_local_and_bytecodes(
+        mut self,
+        known_contracts: &'a ContractsByArtifact,
+        contracts_bytecode: &'a HashMap<Address, Bytes>,
+    ) -> Self {
+        self.local =
+            Some(LocalTraceIdentifier::new(known_contracts).with_bytecodes(contracts_bytecode));
+        self
+    }
+
+    /// Sets the external identifier.
+    pub fn with_external(mut self, config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
+        self.external = ExternalIdentifier::new(config, chain)?;
         Ok(self)
     }
 
     /// Returns `true` if there are no set identifiers.
     pub fn is_empty(&self) -> bool {
-        self.local.is_none() && self.etherscan.is_none()
+        self.local.is_none() && self.external.is_none()
     }
 }

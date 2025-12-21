@@ -1,0 +1,53 @@
+name: nix
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: "0 0 * * SUN" # Run weekly on Sundays at midnight UTC
+  workflow_dispatch: # Needed so we can run it manually
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Opens a PR with an updated flake.lock file
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: DeterminateSystems/determinate-nix-action@9a921d81e9a16a9ad8423a63a7b31deb601139a6 # v3
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/update-flake-lock@2235257b90962ba68499d64da5b0d1eaa3b46c1e # main
+        with:
+          pr-title: "Update flake.lock"
+          pr-labels: |
+            L-ignore
+            A-dependencies
+
+  build:
+    strategy:
+      matrix:
+        runs-on: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - uses: DeterminateSystems/determinate-nix-action@9a921d81e9a16a9ad8423a63a7b31deb601139a6 # v3
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Update flake.lock
+        run: nix flake update
+
+      - name: Activate nix env
+        run: nix develop -c echo Ok
+
+      - name: Check that we can compile all crates
+        run: nix develop -c cargo check --all-targets

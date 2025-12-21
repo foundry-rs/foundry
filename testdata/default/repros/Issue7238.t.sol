@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Reverter {
     function doNotRevert() public {}
@@ -13,9 +12,7 @@ contract Reverter {
 }
 
 // https://github.com/foundry-rs/foundry/issues/7238
-contract Issue7238Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue7238Test is Test {
     function testExpectRevertString() public {
         Reverter reverter = new Reverter();
         vm.expectRevert("revert");
@@ -33,10 +30,10 @@ contract Issue7238Test is DSTest {
     /// forge-config: default.allow_internal_expect_revert = true
     function testShouldFailEarlyRevert() public {
         vm.expectRevert();
-        rever();
+        revert_();
     }
 
-    function rever() internal {
+    function revert_() internal {
         revert();
     }
 }

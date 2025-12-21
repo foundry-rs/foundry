@@ -10,11 +10,18 @@ use alloy_signer_aws::AwsSignerError;
 #[cfg(feature = "gcp-kms")]
 use alloy_signer_gcp::GcpSignerError;
 
+#[cfg(feature = "turnkey")]
+use alloy_signer_turnkey::TurnkeySignerError;
+
+use crate::wallet_browser::error::BrowserWalletError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum PrivateKeyError {
     #[error("Failed to create wallet from private key. Private key is invalid hex: {0}")]
     InvalidHex(#[from] FromHexError),
-    #[error("Failed to create wallet from private key. Invalid private key. But env var {0} exists. Is the `$` anchor missing?")]
+    #[error(
+        "Failed to create wallet from private key. Invalid private key. But env var {0} exists. Is the `$` anchor missing?"
+    )]
     ExistsAsEnvVar(String),
 }
 
@@ -30,10 +37,15 @@ pub enum WalletSignerError {
     Trezor(#[from] TrezorError),
     #[error(transparent)]
     #[cfg(feature = "aws-kms")]
-    Aws(#[from] AwsSignerError),
+    Aws(#[from] Box<AwsSignerError>),
     #[error(transparent)]
     #[cfg(feature = "gcp-kms")]
-    Gcp(#[from] GcpSignerError),
+    Gcp(#[from] Box<GcpSignerError>),
+    #[error(transparent)]
+    #[cfg(feature = "turnkey")]
+    Turnkey(#[from] TurnkeySignerError),
+    #[error(transparent)]
+    Browser(#[from] BrowserWalletError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -51,5 +63,13 @@ impl WalletSignerError {
 
     pub fn gcp_unsupported() -> Self {
         Self::UnsupportedSigner("Google Cloud KMS")
+    }
+
+    pub fn turnkey_unsupported() -> Self {
+        Self::UnsupportedSigner("Turnkey")
+    }
+
+    pub fn browser_unsupported() -> Self {
+        Self::UnsupportedSigner("Browser Wallet")
     }
 }

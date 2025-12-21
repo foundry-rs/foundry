@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract GasSnapshotTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GasSnapshotTest is Test {
     uint256 public slot0;
     Flare public flare;
 
@@ -94,7 +91,7 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasSectionDefaultGroupStop() public {
         vm.startSnapshotGas("testSnapshotGasSection");
 
-        flare.run(256);
+        flare.run(8);
 
         // vm.stopSnapshotGas() will use the last snapshot name.
         uint256 gasUsed = vm.stopSnapshotGas();
@@ -105,7 +102,7 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasSectionCustomGroupStop() public {
         vm.startSnapshotGas("CustomGroup", "testSnapshotGasSection");
 
-        flare.run(256);
+        flare.run(8);
 
         // vm.stopSnapshotGas() will use the last snapshot name, even with custom group.
         uint256 gasUsed = vm.stopSnapshotGas();
@@ -116,7 +113,7 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasSectionName() public {
         vm.startSnapshotGas("testSnapshotGasSectionName");
 
-        flare.run(256);
+        flare.run(8);
 
         uint256 gasUsed = vm.stopSnapshotGas("testSnapshotGasSectionName");
         assertGt(gasUsed, 0);
@@ -126,7 +123,7 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasSectionGroupName() public {
         vm.startSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
 
-        flare.run(256);
+        flare.run(8);
 
         uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
         assertGt(gasUsed, 0);
@@ -149,9 +146,7 @@ contract GasSnapshotTest is DSTest {
     }
 }
 
-contract GasComparisonTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GasComparisonTest is Test {
     uint256 public slot0;
     uint256 public slot1;
 
@@ -162,7 +157,7 @@ contract GasComparisonTest is DSTest {
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonEmptyA");
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonEmptyB", b);
@@ -176,7 +171,7 @@ contract GasComparisonTest is DSTest {
         slot0 = 1;
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         slot1 = 1;
         uint256 b = _snapEnd();
@@ -194,7 +189,7 @@ contract GasComparisonTest is DSTest {
         slot0 = 2;
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         slot0 = 3;
         uint256 b = _snapEnd();
@@ -213,7 +208,7 @@ contract GasComparisonTest is DSTest {
         target.update(2);
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         target.update(3);
         uint256 b = _snapEnd();
@@ -228,7 +223,7 @@ contract GasComparisonTest is DSTest {
         new TargetC();
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         new TargetC();
         uint256 b = _snapEnd();
@@ -247,7 +242,7 @@ contract GasComparisonTest is DSTest {
         target.update(2);
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         target.update(3);
         uint256 b = _snapEnd();
@@ -263,12 +258,12 @@ contract GasComparisonTest is DSTest {
 
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonFlareA");
-        flare.run(256);
+        flare.run(8);
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
-        flare.run(256);
+        flare.run(8);
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonFlareB", b);
 

@@ -5,42 +5,35 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
+        env::Env,
         mem::cache::DiskStateCache,
     },
-    error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::constants::EMPTY_WITHDRAWALS;
+use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{
+    B256, Bytes, U256,
     map::{B256HashMap, HashMap},
-    Bytes, B256, U256, U64,
 };
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
     trace::{
-        geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingOptions, GethTrace, NoopFrame,
-        },
         otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
-    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
 };
 use anvil_core::eth::{
-    block::{Block, PartialHeader},
-    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
+    block::{Block, create_block},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use anvil_rpc::error::RpcError;
 use foundry_evm::{
     backend::MemDb,
-    revm::primitives::Env,
-    traces::{
-        CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
-    },
+    traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
 use parking_lot::RwLock;
-use revm::primitives::SpecId;
+use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
 // use yansi::Paint;
 
@@ -173,17 +166,21 @@ impl InMemoryBlockStates {
         }
     }
 
-    /// Returns the state for the given `hash` if present
-    pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
-        self.states.get(hash).or_else(|| {
-            if let Some(state) = self.on_disk_states.get_mut(hash) {
-                if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_state_snapshot(cached);
-                    return Some(state);
-                }
-            }
-            None
-        })
+    /// Returns the in-memory state for the given `hash` if present
+    pub fn get_state(&self, hash: &B256) -> Option<&StateDb> {
+        self.states.get(hash)
+    }
+
+    /// Returns on-disk state for the given `hash` if present
+    pub fn get_on_disk_state(&mut self, hash: &B256) -> Option<&StateDb> {
+        if let Some(state) = self.on_disk_states.get_mut(hash)
+            && let Some(cached) = self.disk_cache.read(*hash)
+        {
+            state.init_from_state_snapshot(cached);
+            return Some(state);
+        }
+
+        None
     }
 
     /// Sets the maximum number of stats we keep in memory
@@ -250,16 +247,16 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
     /// mapping from block number -> block hash
-    pub hashes: HashMap<U64, B256>,
+    pub hashes: HashMap<u64, B256>,
     /// The current best hash
     pub best_hash: B256,
     /// The current best block number
-    pub best_number: U64,
+    pub best_number: u64,
     /// genesis hash of the chain
     pub genesis_hash: B256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
@@ -271,30 +268,36 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+    pub fn new(
+        env: &Env,
+        spec_id: SpecId,
+        base_fee: Option<u64>,
+        timestamp: u64,
+        genesis_number: u64,
+    ) -> Self {
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
         let is_cancun = spec_id >= SpecId::CANCUN;
         let is_prague = spec_id >= SpecId::PRAGUE;
 
         // create a dummy genesis block
-        let partial_header = PartialHeader {
+        let header = Header {
             timestamp,
-            base_fee,
-            gas_limit: env.block.gas_limit.to::<u64>(),
-            beneficiary: env.block.coinbase,
-            difficulty: env.block.difficulty,
-            blob_gas_used: env.block.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: env.block.get_blob_excess_gas(),
-
+            base_fee_per_gas: base_fee,
+            gas_limit: env.evm_env.block_env.gas_limit,
+            beneficiary: env.evm_env.block_env.beneficiary,
+            difficulty: env.evm_env.block_env.difficulty,
+            blob_gas_used: env.evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+            excess_blob_gas: env.evm_env.block_env.blob_excess_gas(),
+            number: genesis_number,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
-        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
+        let block = create_block(header, Vec::<MaybeImpersonatedTransaction>::new());
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
-        let best_number: U64 = U64::from(0u64);
+        let best_number = genesis_number;
 
         let mut blocks = B256HashMap::default();
         blocks.insert(genesis_hash, block);
@@ -314,13 +317,13 @@ impl BlockchainStorage {
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
         let mut hashes = HashMap::default();
-        hashes.insert(U64::from(block_number), block_hash);
+        hashes.insert(block_number, block_hash);
 
         Self {
             blocks: B256HashMap::default(),
             hashes,
             best_hash: block_hash,
-            best_number: U64::from(block_number),
+            best_number: block_number,
             genesis_hash: Default::default(),
             transactions: Default::default(),
             total_difficulty,
@@ -331,20 +334,26 @@ impl BlockchainStorage {
     ///
     /// The block identified by `block_number` and `block_hash` is __non-inclusive__, i.e. it will
     /// remain in the state.
-    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
-        let best_num: u64 = self.best_number.try_into().unwrap_or(0);
+    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) -> Vec<Block> {
+        let mut removed = vec![];
+        let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
-            if let Some(hash) = self.hashes.remove(&U64::from(i)) {
+            if let Some(hash) = self.hashes.get(&i).copied() {
+                // First remove the block's transactions while the mappings still exist
+                self.remove_block_transactions_by_number(i);
+
+                // Now remove the block from storage (may already be empty of txs) and drop mapping
                 if let Some(block) = self.blocks.remove(&hash) {
-                    self.remove_block_transactions_by_number(block.header.number);
+                    removed.push(block);
                 }
+                self.hashes.remove(&i);
             }
         }
         self.best_hash = block_hash;
-        self.best_number = U64::from(block_number);
+        self.best_number = block_number;
+        removed
     }
 
-    #[allow(unused)]
     pub fn empty() -> Self {
         Self {
             blocks: Default::default(),
@@ -359,7 +368,7 @@ impl BlockchainStorage {
 
     /// Removes all stored transactions for the given block number
     pub fn remove_block_transactions_by_number(&mut self, num: u64) {
-        if let Some(hash) = self.hashes.get(&(U64::from(num))).copied() {
+        if let Some(hash) = self.hashes.get(&num).copied() {
             self.remove_block_transactions(hash);
         }
     }
@@ -367,10 +376,10 @@ impl BlockchainStorage {
     /// Removes all stored transactions for the given block hash
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
         if let Some(block) = self.blocks.get_mut(&block_hash) {
-            for tx in block.transactions.iter() {
+            for tx in &block.body.transactions {
                 self.transactions.remove(&tx.hash());
             }
-            block.transactions.clear();
+            block.body.transactions.clear();
         }
     }
 }
@@ -378,12 +387,12 @@ impl BlockchainStorage {
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumberOrTag]
     pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
-        let slots_in_an_epoch = U64::from(32u64);
+        let slots_in_an_epoch = 32;
         match number {
             BlockNumberOrTag::Latest => Some(self.best_hash),
             BlockNumberOrTag::Earliest => Some(self.genesis_hash),
             BlockNumberOrTag::Pending => None,
-            BlockNumberOrTag::Number(num) => self.hashes.get(&U64::from(num)).copied(),
+            BlockNumberOrTag::Number(num) => self.hashes.get(&num).copied(),
             BlockNumberOrTag::Safe => {
                 if self.best_number > (slots_in_an_epoch) {
                     self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
@@ -392,10 +401,8 @@ impl BlockchainStorage {
                 }
             }
             BlockNumberOrTag::Finalized => {
-                if self.best_number > (slots_in_an_epoch * U64::from(2)) {
-                    self.hashes
-                        .get(&(self.best_number - (slots_in_an_epoch * U64::from(2))))
-                        .copied()
+                if self.best_number > (slots_in_an_epoch * 2) {
+                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
@@ -413,18 +420,18 @@ impl BlockchainStorage {
 
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in serializable_blocks.iter() {
+        for serializable_block in &serializable_blocks {
             let block: Block = serializable_block.clone().into();
             let block_hash = block.header.hash_slow();
             let block_number = block.header.number;
             self.blocks.insert(block_hash, block);
-            self.hashes.insert(U64::from(block_number), block_hash);
+            self.hashes.insert(block_number, block_hash);
         }
     }
 
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
-        for serializable_transaction in serializable_transactions.iter() {
+        for serializable_transaction in &serializable_transactions {
             let transaction: MinedTransaction = serializable_transaction.clone().into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
@@ -432,7 +439,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
@@ -440,10 +447,20 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+    pub fn new(
+        env: &Env,
+        spec_id: SpecId,
+        base_fee: Option<u64>,
+        timestamp: u64,
+        genesis_number: u64,
+    ) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                env, spec_id, base_fee, timestamp,
+                env,
+                spec_id,
+                base_fee,
+                timestamp,
+                genesis_number,
             ))),
         }
     }
@@ -484,7 +501,7 @@ impl Blockchain {
 #[derive(Clone, Debug)]
 pub struct MinedBlockOutcome {
     /// The block that was mined
-    pub block_number: U64,
+    pub block_number: u64,
     /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction>>,
     /// All transactions that were attempted to be included but were invalid at the time of
@@ -496,7 +513,7 @@ pub struct MinedBlockOutcome {
 #[derive(Clone, Debug)]
 pub struct MinedTransaction {
     pub info: TransactionInfo,
-    pub receipt: TypedReceipt,
+    pub receipt: FoundryReceiptEnvelope,
     pub block_hash: B256,
     pub block_number: u64,
 }
@@ -542,52 +559,13 @@ impl MinedTransaction {
             })
             .collect()
     }
-
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
-
-        if let Some(tracer) = tracer {
-            match tracer {
-                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
-                    GethDebugBuiltInTracerType::FourByteTracer => {
-                        let inspector = FourByteInspector::default();
-                        return Ok(FourByteFrame::from(inspector).into());
-                    }
-                    GethDebugBuiltInTracerType::CallTracer => {
-                        return match tracer_config.into_call_config() {
-                            Ok(call_config) => Ok(GethTraceBuilder::new(self.info.traces.clone())
-                                .geth_call_traces(call_config, self.receipt.cumulative_gas_used())
-                                .into()),
-                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
-                        };
-                    }
-                    GethDebugBuiltInTracerType::PreStateTracer |
-                    GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer |
-                    GethDebugBuiltInTracerType::FlatCallTracer => {}
-                },
-                GethDebugTracerType::JsTracer(_code) => {}
-            }
-
-            return Ok(NoopFrame::default().into());
-        }
-
-        // default structlog tracer
-        Ok(GethTraceBuilder::new(self.info.traces.clone())
-            .geth_traces(
-                self.receipt.cumulative_gas_used(),
-                self.info.out.clone().unwrap_or_default(),
-                config,
-            )
-            .into())
-    }
 }
 
 /// Intermediary Anvil representation of a receipt
 #[derive(Clone, Debug)]
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
-    pub inner: ReceiptResponse,
+    pub inner: FoundryTxReceipt,
     /// Output data for the transaction
     pub out: Option<Bytes>,
 }
@@ -596,16 +574,10 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{hex, Address};
+    use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
-    use anvil_core::eth::transaction::TypedTransaction;
-    use foundry_evm::{
-        backend::MemDb,
-        revm::{
-            db::DatabaseRef,
-            primitives::{AccountInfo, U256},
-        },
-    };
+    use foundry_primitives::FoundryTxEnvelope;
+    use revm::{database::DatabaseRef, state::AccountInfo};
 
     #[test]
     fn test_interval_update() {
@@ -656,7 +628,7 @@ mod tests {
         assert_eq!(storage.on_disk_states.len(), 1);
         assert!(storage.on_disk_states.contains_key(&one));
 
-        let loaded = storage.get(&one).unwrap();
+        let loaded = storage.get_on_disk_state(&one).unwrap();
 
         let acc = loaded.basic_ref(addr).unwrap().unwrap();
         assert_eq!(acc.balance, U256::from(1337u64));
@@ -681,13 +653,21 @@ mod tests {
         // wait for files to be flushed
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_in_memory_limit);
+        let on_disk_states_len = num_states - storage.min_in_memory_limit;
+
+        assert_eq!(storage.on_disk_states.len(), on_disk_states_len);
         assert_eq!(storage.present.len(), storage.min_in_memory_limit);
 
         for idx in 0..num_states {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
-            let loaded = storage.get(&hash).unwrap();
+
+            let loaded = if idx < on_disk_states_len {
+                storage.get_on_disk_state(&hash).unwrap()
+            } else {
+                storage.get_state(&hash).unwrap()
+            };
+
             let acc = loaded.basic_ref(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));
@@ -700,12 +680,11 @@ mod tests {
     fn test_storage_dump_reload_cycle() {
         let mut dump_storage = BlockchainStorage::empty();
 
-        let partial_header = PartialHeader { gas_limit: 123456, ..Default::default() };
+        let header = Header { gas_limit: 123456, ..Default::default() };
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction =
-            TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();
-        let block =
-            Block::new::<MaybeImpersonatedTransaction>(partial_header.clone(), vec![tx.clone()]);
+            FoundryTxEnvelope::decode(&mut &bytes_first[..]).unwrap().into();
+        let block = create_block(header.clone(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
 
@@ -718,8 +697,8 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, { partial_header.gas_limit });
-        let loaded_tx = loaded_block.transactions.first().unwrap();
+        assert_eq!(loaded_block.header.gas_limit, { header.gas_limit });
+        let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }
 }
