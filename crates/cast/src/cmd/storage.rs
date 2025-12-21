@@ -172,7 +172,7 @@ impl StorageArgs {
                 contract_root
             }
         } else {
-            tempfile::tempdir()?.path().to_path_buf()
+            tempfile::tempdir()?.keep()
         };
         let mut project = etherscan_project(metadata, &root_path)?;
         add_storage_layout_output(&mut project);
