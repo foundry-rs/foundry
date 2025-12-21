@@ -144,7 +144,7 @@ single_line_imports = false
 [lint]
 severity = [
     "high",
-    "med",
+    "medium",
     "low",
 ]
 exclude_lints = []
@@ -1343,7 +1343,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "lint": {
     "severity": [
       "high",
-      "med",
+      "medium",
       "low"
     ],
     "exclude_lints": [],
