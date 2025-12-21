@@ -1,6 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
+use alloy_consensus::crypto::RecoveryError;
 use alloy_evm::overrides::StateOverrideError;
 use alloy_primitives::{B256, Bytes, SignatureError};
 use alloy_rpc_types::BlockNumberOrTag;
@@ -46,6 +47,8 @@ pub enum BlockchainError {
     PrevrandaoNotSet,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
+    #[error(transparent)]
+    RecoveryError(#[from] RecoveryError),
     #[error(transparent)]
     SignerError(#[from] SignerError),
     #[error("Rpc Endpoint not implemented")]
@@ -569,6 +572,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::InvalidTransactionRequest(_) => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::RecoveryError(_) => {
                     RpcError::invalid_params(err.to_string())
                 }
             }

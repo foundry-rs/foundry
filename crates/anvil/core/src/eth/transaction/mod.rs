@@ -1,5 +1,7 @@
 //! Transaction related types
-use alloy_consensus::{Signed, Transaction, TxEnvelope, Typed2718, transaction::Recovered};
+use alloy_consensus::{
+    Signed, Transaction, TxEnvelope, Typed2718, crypto::RecoveryError, transaction::Recovered,
+};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
@@ -40,7 +42,7 @@ impl MaybeImpersonatedTransaction {
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
-    pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
+    pub fn recover(&self) -> Result<Address, RecoveryError> {
         if let Some(sender) = self.impersonated_sender {
             return Ok(sender);
         }
@@ -167,7 +169,7 @@ pub struct PendingTransaction {
 }
 
 impl PendingTransaction {
-    pub fn new(transaction: FoundryTxEnvelope) -> Result<Self, alloy_primitives::SignatureError> {
+    pub fn new(transaction: FoundryTxEnvelope) -> Result<Self, RecoveryError> {
         let sender = transaction.recover()?;
         let hash = transaction.hash();
         Ok(Self { transaction: MaybeImpersonatedTransaction::new(transaction), sender, hash })
@@ -185,7 +187,7 @@ impl PendingTransaction {
     /// Converts a [`MaybeImpersonatedTransaction`] into a [`PendingTransaction`].
     pub fn from_maybe_impersonated(
         transaction: MaybeImpersonatedTransaction,
-    ) -> Result<Self, alloy_primitives::SignatureError> {
+    ) -> Result<Self, RecoveryError> {
         if let Some(impersonated) = transaction.impersonated_sender {
             Ok(Self::with_impersonated(transaction.transaction, impersonated))
         } else {
