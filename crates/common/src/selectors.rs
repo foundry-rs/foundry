@@ -159,12 +159,12 @@ impl OpenChainClient {
         let mut url: url::Url = SELECTOR_LOOKUP_URL.parse().unwrap();
         {
             let mut query = url.query_pairs_mut();
-            let functions = selectors.iter().filter_map(SelectorKind::as_function);
-            if functions.clone().next().is_some() {
+            let mut functions = selectors.iter().filter_map(SelectorKind::as_function).peekable();
+            if functions.peek().is_some() {
                 query.append_pair("function", &functions.format(",").to_string());
             }
-            let events = selectors.iter().filter_map(SelectorKind::as_event);
-            if events.clone().next().is_some() {
+            let mut events = selectors.iter().filter_map(SelectorKind::as_event).peekable();
+            if events.peek().is_some() {
                 query.append_pair("event", &events.format(",").to_string());
             }
             let _ = query.finish();
@@ -307,10 +307,10 @@ impl OpenChainClient {
 
                 SelectorImportRequest { function: functions_and_errors, event: events }
             }
-            SelectorImportData::Raw(raw) => {
-                let function_and_error =
-                    raw.function.iter().chain(raw.error.iter()).cloned().collect::<Vec<_>>();
-                SelectorImportRequest { function: function_and_error, event: raw.event }
+            SelectorImportData::Raw(mut raw) => {
+                // Reuse owned vectors instead of cloning function and error signatures.
+                raw.function.extend(raw.error);
+                SelectorImportRequest { function: raw.function, event: raw.event }
             }
         };
 
