@@ -136,7 +136,11 @@ impl RpcHandler for HttpEthRpcHandler {
         self.api.execute_with_raw(request, raw, metadata).await
     }
 
-    async fn on_call_with_addr(&self, call: RpcMethodCall, peer_addr: Option<SocketAddr>) -> RpcResponse {
+    async fn on_call_with_addr(
+        &self,
+        call: RpcMethodCall,
+        peer_addr: Option<SocketAddr>,
+    ) -> RpcResponse {
         trace!(
             target: "rpc",
             id = ?call.id,

@@ -106,13 +106,17 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// This method is similar to [`Self::on_call`] but includes the optional peer socket address,
     /// which can be useful for logging, rate limiting, or other peer-specific logic.
     ///
-    /// The default implementation attempts to deserialize a `{ "method" : "<name>", "params": "<params>" }`
-    /// message into the `Request` type of this handler. If a `Request` instance was deserialized
-    /// successfully, [`Self::on_request`] will be invoked.
+    /// The default implementation attempts to deserialize a `{ "method" : "<name>", "params":
+    /// "<params>" }` message into the `Request` type of this handler. If a `Request` instance
+    /// was deserialized successfully, [`Self::on_request`] will be invoked.
     ///
     /// **Note**: override this function if you need access to the peer address or if the expected
     /// `Request` deviates from `{ "method" : "<name>", "params": "<params>" }`
-    async fn on_call_with_addr(&self, call: RpcMethodCall, peer_addr: Option<SocketAddr>) -> RpcResponse {
+    async fn on_call_with_addr(
+        &self,
+        call: RpcMethodCall,
+        peer_addr: Option<SocketAddr>,
+    ) -> RpcResponse {
         trace!(
             target: "rpc",
             id = ?call.id,
