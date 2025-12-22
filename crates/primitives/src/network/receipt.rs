@@ -236,7 +236,7 @@ mod tests {
         let foundry_receipt = FoundryTxReceipt::try_from(any_receipt).unwrap();
 
         let pretty_output = foundry_receipt.pretty();
-        
+
         // Check that essential fields are present in the output
         assert!(pretty_output.contains("blockHash"));
         assert!(pretty_output.contains("blockNumber"));
