@@ -9,6 +9,12 @@ ignore = [
     "RUSTSEC-2024-0436",
     # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
     "RUSTSEC-2024-0437",
+    # https://rustsec.org/advisories/RUSTSEC-2023-0018 remove_dir_all vulnerability
+    # Transitive dep: sled -> assertion-executor. Not fixable until sled updates.
+    "RUSTSEC-2023-0018",
+    # https://rustsec.org/advisories/RUSTSEC-2018-0017 tempdir deprecated
+    # Transitive dep: sled -> assertion-executor. Not fixable until sled updates.
+    "RUSTSEC-2018-0017",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -21,7 +27,11 @@ multiple-versions = "allow"
 wildcards = "allow"
 highlight = "all"
 # List of crates to deny
-deny = [{ name = "openssl" }]
+deny = [
+    # openssl is banned but allowed when wrapped by native-tls
+    # (transitive dep from assertion-executor -> alloy -> reqwest -> native-tls)
+    { name = "openssl", wrappers = ["native-tls"] },
+]
 # Certain crates/versions that will be skipped when doing duplicate detection.
 skip = []
 # Similarly to `skip` allows you to skip certain crates during duplicate
@@ -69,6 +79,16 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
 ]
+
+# Crates from credible-sdk and evm-glue don't have license fields
+# These are internal/trusted dependencies - ignore unlicensed crates from these sources
+[licenses.private]
+ignore = true
+registries = []
+ignore-sources = [
+    "https://github.com/phylaxsystems/credible-sdk",
+    "https://git@github.com/Philogy/evm-glue",
+]
 # copyleft = "deny"
 
 # See note in unicode-ident's readme!
@@ -95,16 +115,14 @@ unknown-registry = "warn"
 # in the allow list is encountered
 unknown-git = "deny"
 allow-git = [
-    "https://github.com/alloy-rs/alloy",
-    "https://github.com/foundry-rs/compilers",
-    "https://github.com/foundry-rs/foundry-fork-db",
-    "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/paradigmxyz/solar",
-    "https://github.com/bluealloy/revm",
     # Only for tests.
     "https://github.com/rust-cli/rexpect",
     # Tempo
     "https://github.com/tempoxyz/tempo",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
+    # Assertion executor and its dependencies
+    "https://github.com/phylaxsystems/credible-sdk",
+    "https://git@github.com/Philogy/evm-glue",
 ]
