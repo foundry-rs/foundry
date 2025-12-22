@@ -179,7 +179,8 @@ impl TraceIdentifier for ExternalIdentifier {
         // Use collect() and await the future.
         let fetched_identities = futures::stream::select_all(fetchers)
             .filter_map(|(address, value)| {
-                let addr = value.1.as_ref().map(|metadata| self.identify_from_metadata(address, metadata));
+                let addr =
+                    value.1.as_ref().map(|metadata| self.identify_from_metadata(address, metadata));
                 match self.contracts.entry(address) {
                     Entry::Occupied(mut occupied_entry) => {
                         // Override if:
