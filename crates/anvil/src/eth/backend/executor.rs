@@ -23,11 +23,11 @@ use alloy_eips::{
     eip7840::BlobParams,
 };
 use alloy_evm::{
-    EthEvm, Evm, FromRecoveredTx,
+    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
-use alloy_op_evm::OpEvm;
+use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{BlockInfo, create_block},
@@ -40,17 +40,12 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
-use op_revm::{L1BlockInfo, OpContext, OpTransaction, precompiles::OpPrecompiles};
+use op_revm::{OpContext, OpTransaction};
 use revm::{
-    Database, DatabaseRef, Inspector, Journal,
-    context::{
-        Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
-    },
+    Database, Inspector,
+    context::{Block as RevmBlock, Cfg, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
-    database::WrapDatabaseRef,
-    handler::{EthPrecompiles, instructions::EthInstructions},
     interpreter::InstructionResult,
-    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
 use std::{fmt::Debug, sync::Arc};
@@ -100,6 +95,8 @@ impl ExecutedTransaction {
                     logs_bloom: receipt_with_bloom.logs_bloom,
                 })
             }
+            // TODO(onbjerg): we should impl support for Tempo transactions
+            FoundryTxEnvelope::Tempo(_) => todo!(),
         }
     }
 }
@@ -124,9 +121,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub validator: &'a V,
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
-    pub block_env: BlockEnv,
-    /// The configuration environment and spec id
-    pub cfg_env: CfgEnv,
+    pub evm_env: EvmEnv,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: u64,
@@ -154,23 +149,24 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut cumulative_gas_used = 0u64;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
-        let gas_limit = self.block_env.gas_limit;
+        let gas_limit = self.evm_env.block_env().gas_limit;
         let parent_hash = self.parent_hash;
-        let block_number = self.block_env.number;
-        let difficulty = self.block_env.difficulty;
-        let mix_hash = self.block_env.prevrandao;
-        let beneficiary = self.block_env.beneficiary;
-        let timestamp = self.block_env.timestamp;
-        let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
-            Some(self.block_env.basefee)
+        let block_number = self.evm_env.block_env().number;
+        let difficulty = self.evm_env.block_env().difficulty;
+        let mix_hash = self.evm_env.block_env().prevrandao;
+        let beneficiary = self.evm_env.block_env().beneficiary;
+        let timestamp = self.evm_env.block_env().timestamp;
+        let base_fee = if self.evm_env.cfg_env().spec.is_enabled_in(SpecId::LONDON) {
+            Some(self.evm_env.block_env().basefee)
         } else {
             None
         };
 
-        let is_shanghai = self.cfg_env.spec >= SpecId::SHANGHAI;
-        let is_cancun = self.cfg_env.spec >= SpecId::CANCUN;
-        let is_prague = self.cfg_env.spec >= SpecId::PRAGUE;
-        let excess_blob_gas = if is_cancun { self.block_env.blob_excess_gas() } else { None };
+        let is_shanghai = self.evm_env.cfg_env().spec >= SpecId::SHANGHAI;
+        let is_cancun = self.evm_env.cfg_env().spec >= SpecId::CANCUN;
+        let is_prague = self.evm_env.cfg_env().spec >= SpecId::PRAGUE;
+        let excess_blob_gas =
+            if is_cancun { self.evm_env.block_env().blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
         for tx in self.into_iter() {
@@ -310,7 +306,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(tx.transaction.as_ref()).into());
         }
 
-        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.networks)
+        Env::new(self.evm_env.clone(), tx_env, self.networks)
     }
 }
 
@@ -505,78 +501,16 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.networks.is_optimism() {
-        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
-        let op_context = OpContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                // Converting SpecId into OpSpecId
-                journal.set_spec_id(env.evm_env.cfg_env.spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: op_cfg.clone(),
-            tx: env.tx.clone(),
-            chain: L1BlockInfo::default(),
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
-        let op_evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
-            op_context,
-            inspector,
-            EthInstructions::default(),
-            PrecompilesMap::from_static(op_precompiles),
-        ));
-
-        let op = OpEvm::new(op_evm, true);
-
-        EitherEvm::Op(op)
-    } else {
-        let spec = env.evm_env.cfg_env.spec;
-        let eth_context = EthEvmContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                journal.set_spec_id(spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone(),
-            tx: env.tx.base.clone(),
-            chain: (),
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let eth_precompiles = EthPrecompiles {
-            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
-            spec,
-        }
-        .precompiles;
-        let eth_evm = RevmEvm::new_with_inspector(
-            eth_context,
-            inspector,
-            EthInstructions::default(),
-            PrecompilesMap::from_static(eth_precompiles),
+        let evm_env = EvmEnv::new(
+            env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS),
+            env.evm_env.block_env.clone(),
         );
-
-        let eth = EthEvm::new(eth_evm, true);
-
-        EitherEvm::Eth(eth)
+        EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
+    } else {
+        EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
+            db,
+            env.evm_env.clone(),
+            inspector,
+        ))
     }
-}
-
-/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'db, DB, I>(
-    db: &'db DB,
-    env: &Env,
-    inspector: &'db mut I,
-) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
-where
-    DB: DatabaseRef<Error = DatabaseError> + Debug + 'db + ?Sized,
-    I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-        + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
-    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-{
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }
