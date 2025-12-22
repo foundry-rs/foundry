@@ -5071,6 +5071,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "derive_more",
+ "foundry-common-fmt",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",

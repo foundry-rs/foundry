@@ -7,7 +7,9 @@ use alloy_network::{
     AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt,
     AnyTxEnvelope, ReceiptResponse,
 };
-use alloy_primitives::{Address, Bloom, Bytes, FixedBytes, I256, U8, U64, U256, Uint, hex};
+use alloy_primitives::{
+    Address, Bloom, Bytes, FixedBytes, I256, Log as PrimitiveLog, U8, U64, U256, Uint, hex,
+};
 use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
@@ -256,6 +258,20 @@ transactionIndex: {}",
             self.topics().pretty(),
             self.transaction_hash.pretty(),
             self.transaction_index.pretty(),
+        )
+    }
+}
+
+impl UIfmt for PrimitiveLog {
+    fn pretty(&self) -> String {
+        format!(
+            "
+address: {}
+data: {}
+topics: {}",
+            self.address.pretty(),
+            self.data.data.pretty(),
+            self.topics().iter().map(|t| t.pretty()).collect::<Vec<_>>().join(", ")
         )
     }
 }
@@ -1532,5 +1548,40 @@ l1GasUsed            1600
             signed_authorization.pretty(),
             r#"{recoveredAuthority: 0xf3eaBD0de6Ca1aE7fC4D81FfD6C9a40e5D5D7e30, signedAuthority: {"chainId":"0x1","address":"0x000000000000000000000000000000000000dead","nonce":"0x2a","yParity":"0x1","r":"0x14","s":"0x1e"}}"#
         );
+    }
+
+    #[test]
+    fn test_primitive_log_uifmt() {
+        use alloy_primitives::{B256, LogData};
+
+        let log = PrimitiveLog {
+            address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
+            data: LogData::new_unchecked(
+                vec![
+                    B256::from_str(
+                        "000000000000000000000000000000000000000000000000000000000000dead",
+                    )
+                    .unwrap(),
+                    B256::from_str(
+                        "000000000000000000000000000000000000000000000000000000000000beef",
+                    )
+                    .unwrap(),
+                ],
+                Bytes::from_str("0100ff").unwrap(),
+            ),
+        };
+
+        let pretty_output = log.pretty();
+
+        // Check that essential fields are present in the output
+        assert!(pretty_output.contains("address:"));
+        assert!(pretty_output.contains("data:"));
+        assert!(pretty_output.contains("topics:"));
+
+        // Check the address is formatted correctly
+        assert!(pretty_output.contains("0x0000000000000000000000000000000000000011"));
+
+        // Check that data is hex encoded
+        assert!(pretty_output.contains("0x0100ff"));
     }
 }
