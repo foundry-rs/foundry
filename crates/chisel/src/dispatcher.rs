@@ -129,11 +129,6 @@ impl ChiselDispatcher {
             return Ok(ControlFlow::Continue(()));
         }
 
-        // Create new source with exact input appended and parse
-        let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
-
-        // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
-        // Should change up how this works.
         let (cf, res) = source.inspect(input).await?;
         if let Some(res) = &res {
             let _ = sh_println!("{res}");
@@ -142,6 +137,9 @@ impl ChiselDispatcher {
             debug!(%input, ?res, "inspect success");
             return Ok(ControlFlow::Continue(()));
         }
+
+        // Create new source with exact input appended and parse
+        let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
         if do_execute {
             self.execute_and_replace(new_source).await.map(ControlFlow::Continue)
