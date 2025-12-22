@@ -45,7 +45,7 @@ impl<P: Provider> WarningsProvider<P> {
         let mut out = self.old_warnings.clone()?;
 
         // Add warning for unknown sections.
-        out.extend(data.keys().filter(|k| Config::is_standalone_section(k.as_str())).map(
+        out.extend(data.keys().filter(|k| !Config::is_standalone_section(k.as_str())).map(
             |unknown_section| {
                 let source = self.provider.metadata().source.map(|s| s.to_string());
                 Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
