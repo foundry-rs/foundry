@@ -1659,8 +1659,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.7.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?branch=mateo%2Fupdate-revm#33c32700e4379cf5878b135f339907c83aa5ce11"
+version = "0.9.0"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?tag=0.9.0#b934f6d8367940cdb8b3565b3748d6aec0e59fb9"
 dependencies = [
  "alloy",
  "assertion-da-core",
@@ -1676,8 +1676,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-core"
-version = "0.7.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?branch=mateo%2Fupdate-revm#33c32700e4379cf5878b135f339907c83aa5ce11"
+version = "0.9.0"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?tag=0.9.0#b934f6d8367940cdb8b3565b3748d6aec0e59fb9"
 dependencies = [
  "alloy",
  "serde",
@@ -1685,8 +1685,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.7.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?branch=mateo%2Fupdate-revm#33c32700e4379cf5878b135f339907c83aa5ce11"
+version = "0.9.0"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?tag=0.9.0#b934f6d8367940cdb8b3565b3748d6aec0e59fb9"
 dependencies = [
  "alloy",
  "alloy-consensus",
@@ -1716,6 +1716,7 @@ dependencies = [
  "moka",
  "op-revm",
  "parking_lot",
+ "rapidhash",
  "rayon",
  "revm",
  "serde",
