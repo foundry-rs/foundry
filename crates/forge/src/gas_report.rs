@@ -239,10 +239,18 @@ impl GasReport {
 
                 table.add_row(vec![
                     Cell::new(display_name),
-                    Cell::new(gas_info.min.to_string()).fg(Color::Green).set_alignment(CellAlignment::Right),
-                    Cell::new(gas_info.mean.to_string()).fg(Color::Yellow).set_alignment(CellAlignment::Right),
-                    Cell::new(gas_info.median.to_string()).fg(Color::Yellow).set_alignment(CellAlignment::Right),
-                    Cell::new(gas_info.max.to_string()).fg(Color::Red).set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.min.to_string())
+                        .fg(Color::Green)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.mean.to_string())
+                        .fg(Color::Yellow)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.median.to_string())
+                        .fg(Color::Yellow)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.max.to_string())
+                        .fg(Color::Red)
+                        .set_alignment(CellAlignment::Right),
                     Cell::new(gas_info.calls.to_string()).set_alignment(CellAlignment::Right),
                 ]);
             })
