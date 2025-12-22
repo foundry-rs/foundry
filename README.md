@@ -338,6 +338,23 @@ Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in these crates by you, as defined in the Apache-2.0 license,
 shall be dual licensed as above, without any additional terms or conditions.
 
+## How to update upstream
+
+The default branch of this repository is `main`.
+
+To update the upstream repository, run the following commands:
+
+```terminal
+git remote add upstream https://github.com/foundry-rs/foundry.git
+git fetch upstream
+git checkout main
+# Backup branch
+git checkout -b upstream-update
+git checkout main
+git rebase upstream/master
+git push --force-with-lease origin main
+```
+
 ## Acknowledgements
 
 - Foundry is a clean-room rewrite of the testing framework [DappTools][dapptools]. None of this would have been possible without the DappHub team's work over the years.
