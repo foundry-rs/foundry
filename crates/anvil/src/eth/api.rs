@@ -29,10 +29,7 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
 };
-use alloy_consensus::{
-    Account, Blob, Transaction,
-    transaction::{Recovered, eip4844::TxEip4844Variant},
-};
+use alloy_consensus::{Account, Blob, Transaction, TxEip4844Variant, transaction::Recovered};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
@@ -41,8 +38,8 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionBuilder4844,
-    TransactionResponse, eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, ReceiptResponse, TransactionBuilder,
+    TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, Signature, TxHash, TxKind, U64, U256,
@@ -72,10 +69,7 @@ use anvil_core::{
     eth::{
         EthRequest,
         block::BlockInfo,
-        transaction::{
-            MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-            transaction_request_to_typed,
-        },
+        transaction::{MaybeImpersonatedTransaction, PendingTransaction},
         wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
@@ -83,7 +77,9 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
-use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
+use foundry_primitives::{
+    FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
+};
 use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
@@ -1048,7 +1044,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_signTransaction`
     pub async fn sign_transaction(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
     ) -> Result<String> {
         node_info!("eth_signTransaction");
 
@@ -1058,15 +1054,7 @@ impl EthApi {
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
 
-        if request.gas.is_none() {
-            // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, EvmOverrides::default()).await
-            {
-                request.gas = Some(gas.to());
-            }
-        }
-
-        let request = self.build_typed_tx_request(request, nonce)?;
+        let request = self.build_tx_request(request, nonce).await?;
 
         let signed_transaction = self.sign_request(&from, request)?.encoded_2718();
         Ok(alloy_primitives::hex::encode_prefixed(signed_transaction))
@@ -1077,7 +1065,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendTransaction`
     pub async fn send_transaction(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
@@ -1086,15 +1074,7 @@ impl EthApi {
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        if request.gas.is_none() {
-            // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, EvmOverrides::default()).await
-            {
-                request.gas = Some(gas.to());
-            }
-        }
-
-        let request = self.build_typed_tx_request(request, nonce)?;
+        let request = self.build_tx_request(request, nonce).await?;
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
@@ -1119,7 +1099,7 @@ impl EthApi {
     }
 
     /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
-    async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+    async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
         let mut stream = self.new_block_notifications();
         // Check if the transaction is already included before listening for new blocks.
         if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
@@ -1138,7 +1118,7 @@ impl EthApi {
     }
 
     /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
-    async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+    async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
         const TIMEOUT_DURATION: Duration = Duration::from_secs(30);
         tokio::time::timeout(TIMEOUT_DURATION, self.await_transaction_inclusion(hash))
             .await
@@ -1156,13 +1136,13 @@ impl EthApi {
     pub async fn send_transaction_sync(
         &self,
         request: WithOtherFields<TransactionRequest>,
-    ) -> Result<ReceiptResponse> {
+    ) -> Result<FoundryTxReceipt> {
         node_info!("eth_sendTransactionSync");
         let hash = self.send_transaction(request).await?;
 
         let receipt = self.check_transaction_inclusion(hash).await?;
 
-        Ok(ReceiptResponse::from(receipt))
+        Ok(receipt)
     }
 
     /// Sends signed transaction, returning its hash.
@@ -1206,13 +1186,13 @@ impl EthApi {
     /// Sends signed transaction, returning its receipt.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
-    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<ReceiptResponse> {
+    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<FoundryTxReceipt> {
         node_info!("eth_sendRawTransactionSync");
 
         let hash = self.send_raw_transaction(tx).await?;
         let receipt = self.check_transaction_inclusion(hash).await?;
 
-        Ok(ReceiptResponse::from(receipt))
+        Ok(receipt)
     }
 
     /// Call contract, returning the output data.
@@ -1385,41 +1365,16 @@ impl EthApi {
             self.request_nonce(&request, from).await?.0
         };
 
-        if request.as_ref().has_eip4844_fields()
-            && request.as_ref().max_fee_per_blob_gas().is_none()
-        {
-            // Use the next block's blob base fee for better accuracy
-            let blob_fee = self.backend.fees().get_next_block_blob_base_fee_per_gas();
-            request.as_mut().set_max_fee_per_blob_gas(blob_fee);
-        }
-
-        if request.as_ref().blob_sidecar().is_some()
-            && request.as_ref().blob_versioned_hashes.is_none()
-        {
-            request.as_mut().populate_blob_hashes();
-        }
-
+        // Prefill gas limit with estimated gas, bubble up the error if the gas estimation fails
+        // This is a workaround to avoid the error being swallowed by the `build_tx_request`
+        // function
         if request.as_ref().gas_limit().is_none() {
-            let estimated_gas = self
-                .estimate_gas(request.clone(), Some(BlockId::latest()), EvmOverrides::default())
-                .await?;
+            let estimated_gas =
+                self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
             request.as_mut().set_gas_limit(estimated_gas.to());
         }
 
-        if request.as_ref().gas_price().is_none() {
-            let tip = if let Some(tip) = request.as_ref().max_priority_fee_per_gas() {
-                tip
-            } else {
-                let tip = self.lowest_suggestion_tip();
-                request.as_mut().set_max_priority_fee_per_gas(tip);
-                tip
-            };
-            if request.as_ref().max_fee_per_gas().is_none() {
-                request.as_mut().set_max_fee_per_gas(self.gas_price() + tip);
-            }
-        }
-
-        let typed_tx = self.build_typed_tx_request(request, nonce)?;
+        let typed_tx = self.build_tx_request(request, nonce).await?;
         let tx = build_typed_transaction(
             typed_tx,
             Signature::new(Default::default(), Default::default(), false),
@@ -1623,7 +1578,7 @@ impl EthApi {
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
-    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<ReceiptResponse>> {
+    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<FoundryTxReceipt>> {
         node_info!("eth_getTransactionReceipt");
         self.backend.transaction_receipt(hash).await
     }
@@ -1631,7 +1586,7 @@ impl EthApi {
     /// Returns block receipts by block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
-    pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<ReceiptResponse>>> {
+    pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<FoundryTxReceipt>>> {
         node_info!("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
@@ -2620,9 +2575,8 @@ impl EthApi {
                         PendingTransaction::new(decoded)?
                     }
 
-                    TransactionData::JSON(req) => {
-                        let mut tx_req = WithOtherFields::new(req);
-                        let from = tx_req.from.map(Ok).unwrap_or_else(|| {
+                    TransactionData::JSON(request) => {
+                        let from = request.from.map(Ok).unwrap_or_else(|| {
                             self.accounts()?
                                 .first()
                                 .copied()
@@ -2638,17 +2592,8 @@ impl EthApi {
                             .await?,
                         );
 
-                        // Estimate gas
-                        if tx_req.gas.is_none()
-                            && let Ok(gas) = self
-                                .estimate_gas(tx_req.clone(), None, EvmOverrides::default())
-                                .await
-                        {
-                            tx_req.gas = Some(gas.to());
-                        }
-
                         // Build typed transaction request
-                        let typed = self.build_typed_tx_request(tx_req, *curr_nonce)?;
+                        let typed = self.build_tx_request(request.into(), *curr_nonce).await?;
 
                         // Increment nonce
                         *curr_nonce += 1;
@@ -2827,14 +2772,7 @@ impl EthApi {
                         && let Some(output) = receipt.out
                     {
                         // insert revert reason if failure
-                        if !receipt
-                            .inner
-                            .inner
-                            .inner
-                            .as_receipt_with_bloom()
-                            .receipt
-                            .status
-                            .coerce_status()
+                        if !receipt.inner.as_ref().status()
                             && let Some(reason) = RevertDecoder::new().maybe_decode(&output, None)
                         {
                             tx.other.insert(
@@ -2912,7 +2850,7 @@ impl EthApi {
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        let request = self.build_typed_tx_request(request, nonce)?;
+        let request = self.build_tx_request(request, nonce).await?;
 
         let bypass_signature = self.impersonated_signature(&request);
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
@@ -3396,100 +3334,75 @@ impl EthApi {
         Some(partial_block)
     }
 
-    fn build_typed_tx_request(
+    /// Prepares transaction request by filling missing fields using Anvil's API, then attempts
+    /// to build a [`FoundryTypedTx`].
+    async fn build_tx_request(
         &self,
         request: WithOtherFields<TransactionRequest>,
         nonce: u64,
     ) -> Result<FoundryTypedTx> {
-        let chain_id = request.chain_id.unwrap_or_else(|| self.chain_id());
-        let max_fee_per_gas = request.max_fee_per_gas;
-        let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
-        let gas_price = request.gas_price;
+        let mut request = Into::<FoundryTransactionRequest>::into(request);
+        let from = request.from().or(self.accounts()?.first().copied());
 
-        let gas_limit = request.gas.unwrap_or_else(|| self.backend.gas_limit());
-        let from = request.from;
+        // Fill common fields for all tx types
+        request.chain_id().is_none().then(|| request.set_chain_id(self.chain_id()));
+        request.nonce().is_none().then(|| request.set_nonce(nonce));
+        request.kind().is_none().then(|| request.set_kind(TxKind::default()));
+        if request.gas_limit().is_none() {
+            request.set_gas_limit(
+                self.do_estimate_gas(request.as_ref().clone(), None, EvmOverrides::default())
+                    .await
+                    .map(|v| v as u64)
+                    .unwrap_or(self.backend.gas_limit()),
+            );
+        }
 
-        let request = match transaction_request_to_typed(request) {
-            Some(FoundryTypedTx::Legacy(mut m)) => {
-                m.nonce = nonce;
-                m.chain_id = Some(chain_id);
-                m.gas_limit = gas_limit;
-                if gas_price.is_none() {
-                    m.gas_price = self.gas_price();
-                }
-                FoundryTypedTx::Legacy(m)
+        // Fill missing tx type specific fields
+        if let Err((tx_type, _)) = request.missing_keys() {
+            if matches!(tx_type, FoundryTxType::Legacy | FoundryTxType::Eip2930) {
+                request.gas_price().is_none().then(|| request.set_gas_price(self.gas_price()));
             }
-            Some(FoundryTypedTx::EIP2930(mut m)) => {
-                m.nonce = nonce;
-                m.chain_id = chain_id;
-                m.gas_limit = gas_limit;
-                if gas_price.is_none() {
-                    m.gas_price = self.gas_price();
-                }
-                FoundryTypedTx::EIP2930(m)
+            if tx_type == FoundryTxType::Eip2930 {
+                request
+                    .access_list()
+                    .is_none()
+                    .then(|| request.set_access_list(Default::default()));
             }
-            Some(FoundryTypedTx::EIP1559(mut m)) => {
-                m.nonce = nonce;
-                m.chain_id = chain_id;
-                m.gas_limit = gas_limit;
-                if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.gas_price();
-                }
-                FoundryTypedTx::EIP1559(m)
+            if matches!(
+                tx_type,
+                FoundryTxType::Eip1559 | FoundryTxType::Eip4844 | FoundryTxType::Eip7702
+            ) {
+                request
+                    .max_fee_per_gas()
+                    .is_none()
+                    .then(|| request.set_max_fee_per_gas(self.gas_price()));
+                // TODO: use suggested tip instead of 0
+                request
+                    .max_priority_fee_per_gas()
+                    .is_none()
+                    .then(|| request.set_max_priority_fee_per_gas(Default::default()));
             }
-            Some(FoundryTypedTx::EIP7702(mut m)) => {
-                m.nonce = nonce;
-                m.chain_id = chain_id;
-                m.gas_limit = gas_limit;
-                if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.gas_price();
-                }
-                FoundryTypedTx::EIP7702(m)
+            if tx_type == FoundryTxType::Eip4844 {
+                request.as_ref().max_fee_per_blob_gas().is_none().then(|| {
+                    request.as_mut().set_max_fee_per_blob_gas(
+                        self.backend.fees().get_next_block_blob_base_fee_per_gas(),
+                    )
+                });
             }
-            Some(FoundryTypedTx::EIP4844(m)) => {
-                FoundryTypedTx::EIP4844(match m {
-                    // We only accept the TxEip4844 variant which has the sidecar.
-                    TxEip4844Variant::TxEip4844WithSidecar(mut m) => {
-                        m.tx.nonce = nonce;
-                        m.tx.chain_id = chain_id;
-                        m.tx.gas_limit = gas_limit;
-                        if max_fee_per_gas.is_none() {
-                            m.tx.max_fee_per_gas = self.gas_price();
-                        }
-                        if max_fee_per_blob_gas.is_none() {
-                            m.tx.max_fee_per_blob_gas =
-                                self.backend.fees().get_next_block_blob_base_fee_per_gas();
-                        }
-                        TxEip4844Variant::TxEip4844WithSidecar(m)
-                    }
-                    TxEip4844Variant::TxEip4844(mut tx) => {
-                        if !self.backend.skip_blob_validation(from) {
-                            return Err(BlockchainError::FailedToDecodeTransaction);
-                        }
+        }
 
-                        // Allows 4844 with no sidecar when impersonation is active.
-                        tx.nonce = nonce;
-                        tx.chain_id = chain_id;
-                        tx.gas_limit = gas_limit;
-                        if max_fee_per_gas.is_none() {
-                            tx.max_fee_per_gas = self.gas_price();
-                        }
-                        if max_fee_per_blob_gas.is_none() {
-                            tx.max_fee_per_blob_gas =
-                                self.backend.fees().get_next_block_blob_base_fee_per_gas();
-                        }
-
-                        TxEip4844Variant::TxEip4844(tx)
-                    }
-                })
+        match request
+            .build_unsigned()
+            .map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?
+        {
+            FoundryTypedTx::Eip4844(TxEip4844Variant::TxEip4844(_))
+                if !self.backend.skip_blob_validation(from) =>
+            {
+                // If blob validation is not skipped, reject TxEip4844 variant without sidecar.
+                Err(BlockchainError::FailedToDecodeTransaction)
             }
-            Some(FoundryTypedTx::Deposit(mut m)) => {
-                m.gas_limit = gas_limit;
-                FoundryTypedTx::Deposit(m)
-            }
-            None => return Err(BlockchainError::FailedToDecodeTransaction),
-        };
-        Ok(request)
+            res => Ok(res),
+        }
     }
 
     /// Returns true if the `addr` is currently impersonated
@@ -3507,15 +3420,17 @@ impl EthApi {
                 B256::with_last_byte(1),
                 false,
             ),
-            FoundryTypedTx::EIP2930(_)
-            | FoundryTypedTx::EIP1559(_)
-            | FoundryTypedTx::EIP7702(_)
-            | FoundryTypedTx::EIP4844(_)
+            FoundryTypedTx::Eip2930(_)
+            | FoundryTypedTx::Eip1559(_)
+            | FoundryTypedTx::Eip7702(_)
+            | FoundryTypedTx::Eip4844(_)
             | FoundryTypedTx::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
                 false,
             ),
+            // TODO(onbjerg): we should impl support for Tempo transactions
+            FoundryTypedTx::Tempo(_) => todo!(),
         }
     }
 
@@ -3580,12 +3495,14 @@ impl EthApi {
     /// additional validation against hardfork
     fn ensure_typed_transaction_supported(&self, tx: &FoundryTxEnvelope) -> Result<()> {
         match &tx {
-            FoundryTxEnvelope::EIP2930(_) => self.backend.ensure_eip2930_active(),
-            FoundryTxEnvelope::EIP1559(_) => self.backend.ensure_eip1559_active(),
-            FoundryTxEnvelope::EIP4844(_) => self.backend.ensure_eip4844_active(),
-            FoundryTxEnvelope::EIP7702(_) => self.backend.ensure_eip7702_active(),
+            FoundryTxEnvelope::Eip2930(_) => self.backend.ensure_eip2930_active(),
+            FoundryTxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active(),
+            FoundryTxEnvelope::Eip4844(_) => self.backend.ensure_eip4844_active(),
+            FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
             FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
+            // TODO(onbjerg): we should impl support for Tempo transactions
+            FoundryTxEnvelope::Tempo(_) => todo!(),
         }
     }
 }
@@ -3618,33 +3535,16 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
 fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
-    match transaction_request_to_typed(request.clone()) {
-        Some(request) => match request {
-            FoundryTypedTx::Legacy(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::EIP1559(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::EIP7702(req) => {
-                MIN_TRANSACTION_GAS
-                    + req.authorization_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
-            }
-            FoundryTypedTx::EIP2930(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-            FoundryTypedTx::EIP4844(_) => MIN_TRANSACTION_GAS,
-            FoundryTypedTx::Deposit(req) => match req.to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
-        },
-        // Tighten the gas limit upwards if we don't know the transaction type to avoid deployments
-        // failing.
-        _ => MIN_CREATE_GAS,
+    match request.kind() {
+        Some(TxKind::Call(_)) => {
+            MIN_TRANSACTION_GAS
+                + request.inner().authorization_list.as_ref().map_or(0, |auths_list| {
+                    auths_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
+                })
+        }
+        Some(TxKind::Create) => MIN_CREATE_GAS,
+        // Tighten the gas limit upwards if we don't know the tx kind to avoid deployments failing.
+        None => MIN_CREATE_GAS,
     }
 }
 

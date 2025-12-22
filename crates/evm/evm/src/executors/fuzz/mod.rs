@@ -171,6 +171,11 @@ impl FuzzedExecutor {
                     last_metrics_report = Instant::now();
                 };
 
+                if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut()
+                    && let Some(seed) = self.config.seed
+                {
+                    cheats.set_seed(seed.wrapping_add(U256::from(test_data.runs)));
+                }
                 test_data.runs += 1;
 
                 match corpus_manager.new_input(&mut self.runner, state, func) {

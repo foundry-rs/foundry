@@ -87,7 +87,7 @@ impl TomlFile {
         } else {
             // insert profile section at the beginning of the map
             let mut profile_section = toml_edit::Table::new();
-            profile_section.set_position(0);
+            profile_section.set_position(Some(0));
             profile_section.set_implicit(true);
             self.insert(Config::PROFILE_SECTION, toml_edit::Item::Table(profile_section));
             self.get_mut(Config::PROFILE_SECTION).expect("exists per above")

@@ -6,7 +6,6 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
-use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -22,6 +21,7 @@ use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
+use foundry_evm::hardfork::EthereumHardfork;
 
 use revm::primitives::hardfork::SpecId;
 use std::{

@@ -237,7 +237,7 @@ pub struct EnvArgs {
     pub block_prevrandao: Option<B256>,
 
     /// The block gas limit.
-    #[arg(long, visible_aliases = &["block-gas-limit", "gas-limit"], value_name = "BLOCK_GAS_LIMIT")]
+    #[arg(long, visible_alias = "gas-limit", value_name = "BLOCK_GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
 
