@@ -701,6 +701,12 @@ impl Config {
         "bind_json",
     ];
 
+    pub(crate) fn is_standalone_section<T: ?Sized + PartialEq<str>>(section: &T) -> bool {
+        section == Self::PROFILE_SECTION
+            || section == Self::EXTERNAL_SECTION
+            || Self::STANDALONE_SECTIONS.iter().any(|s| section == *s)
+    }
+
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
