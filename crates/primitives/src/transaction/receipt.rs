@@ -8,7 +8,6 @@ use alloy_network::eip2718::{
 use alloy_primitives::{Bloom, Log, TxHash, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header, bytes};
 use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
-use foundry_common_fmt::UIfmt;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 use serde::{Deserialize, Serialize};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
@@ -263,42 +262,6 @@ where
     /// Return the receipt logs.
     fn logs(&self) -> &[T] {
         self.logs()
-    }
-}
-
-impl<T> UIfmt for FoundryReceiptEnvelope<T>
-where
-    T: UIfmt + Clone + core::fmt::Debug + PartialEq + Eq,
-{
-    fn pretty(&self) -> String {
-        let receipt = self.as_receipt();
-        let deposit_info = match self {
-            Self::Deposit(d) => {
-                format!(
-                    "
-depositNonce         {}
-depositReceiptVersion {}",
-                    d.receipt.deposit_nonce.pretty(),
-                    d.receipt.deposit_receipt_version.pretty()
-                )
-            }
-            _ => String::new(),
-        };
-
-        format!(
-            "
-status               {}
-cumulativeGasUsed    {}
-logs                 {}
-logsBloom            {}
-type                 {}{}",
-            receipt.status.pretty(),
-            receipt.cumulative_gas_used.pretty(),
-            receipt.logs.pretty(),
-            self.logs_bloom().pretty(),
-            self.tx_type() as u8,
-            deposit_info
-        )
     }
 }
 
@@ -677,82 +640,5 @@ mod tests {
         let mapped = receipt.map_logs(|log| log);
         assert_eq!(mapped.logs().len(), 1);
         assert_eq!(mapped.tx_type(), FoundryTxType::Tempo);
-    }
-
-    #[test]
-    fn test_foundry_receipt_envelope_uifmt() {
-        // Test UIfmt implementation for FoundryReceiptEnvelope
-        let receipt = FoundryReceiptEnvelope::Eip1559(ReceiptWithBloom {
-            receipt: Receipt {
-                status: true.into(),
-                cumulative_gas_used: 21000,
-                logs: vec![Log {
-                    address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
-                    data: LogData::new_unchecked(
-                        vec![
-                            B256::from_str(
-                                "000000000000000000000000000000000000000000000000000000000000dead",
-                            )
-                            .unwrap(),
-                        ],
-                        Bytes::from_str("0100ff").unwrap(),
-                    ),
-                }],
-            },
-            logs_bloom: [0; 256].into(),
-        });
-
-        let pretty_output = receipt.pretty();
-
-        // Check that essential fields are present in the output
-        assert!(pretty_output.contains("status"));
-        assert!(pretty_output.contains("cumulativeGasUsed"));
-        assert!(pretty_output.contains("logs"));
-        assert!(pretty_output.contains("logsBloom"));
-        assert!(pretty_output.contains("type"));
-
-        // Verify the transaction type (EIP-1559 = 2)
-        assert!(pretty_output.contains("2"));
-
-        // Verify status is formatted as boolean
-        assert!(pretty_output.contains("1 (success)"));
-
-        // Verify gas used appears
-        assert!(pretty_output.contains("21000"));
-    }
-
-    #[test]
-    fn test_foundry_deposit_receipt_envelope_uifmt() {
-        use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
-
-        // Test UIfmt implementation for FoundryReceiptEnvelope with deposit receipt
-        let deposit_receipt = FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
-            receipt: OpDepositReceipt {
-                inner: Receipt {
-                    status: true.into(),
-                    cumulative_gas_used: 50000,
-                    logs: vec![] as Vec<Log>,
-                },
-                deposit_nonce: Some(42),
-                deposit_receipt_version: Some(1),
-            },
-            logs_bloom: [0; 256].into(),
-        });
-
-        let pretty_output = deposit_receipt.pretty();
-
-        // Check that essential fields are present in the output
-        assert!(pretty_output.contains("status"));
-        assert!(pretty_output.contains("cumulativeGasUsed"));
-        assert!(pretty_output.contains("type"));
-
-        // Check deposit-specific fields
-        assert!(pretty_output.contains("depositNonce"));
-        assert!(pretty_output.contains("depositReceiptVersion"));
-        assert!(pretty_output.contains("42"));
-        assert!(pretty_output.contains("1"));
-
-        // Verify the transaction type (Deposit = 126)
-        assert!(pretty_output.contains("126"));
     }
 }
