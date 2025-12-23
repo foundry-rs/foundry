@@ -20,6 +20,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
+
 /// Wrapper around DatabaseExt to make it thread-safe
 #[derive(Clone)]
 struct ThreadSafeDb<'a> {
@@ -135,19 +137,17 @@ pub fn execute_assertion(
     let chain_id = ecx.cfg.chain_id;
 
     let (db, journal, _) = ecx.as_db_env_and_journal();
-    let nonce = journal
-        .load_account(db, tx_attributes.caller)
-        .map(|acc| acc.info.nonce)
-        .unwrap_or(0);
+    let nonce =
+        journal.load_account(db, tx_attributes.caller).map(|acc| acc.info.nonce).unwrap_or(0);
     // Setup assertion database
     let db = ThreadSafeDb::new(*ecx.db_mut());
 
     // Prepare assertion store
 
     let config =
-        ExecutorConfig { spec_id: spec_id.into(), chain_id, assertion_gas_limit: u64::MAX };
+        ExecutorConfig { spec_id: spec_id.into(), chain_id, assertion_gas_limit: TX_GAS_LIMIT_CAP };
 
-    let store = AssertionStore::new_ephemeral().expect("Failed to create assertion store");
+    let store = AssertionStore::new_ephemeral();
 
     if assertion.create_data.is_empty() {
         bail!("Assertion bytecode is empty");

@@ -21,7 +21,7 @@ assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git"
     "phoundry",
 ] }
 foundry-fork-db.workspace = true
-#assertion-executor = { path = "../../../credible-sdk/crates/assertion-executor", features = ["phoundry"]}
+# assertion-executor = { path = "../../../credible-sdk/crates/assertion-executor", features = ["phoundry"]}
 
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
