@@ -901,7 +901,6 @@ mod tests {
     use alloy_primitives::hex;
     use foundry_compilers::CompilerContract;
     use foundry_test_utils::rpc::next_etherscan_api_key;
-    use std::collections::BTreeMap;
 
     #[expect(clippy::disallowed_macros)]
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
