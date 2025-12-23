@@ -505,7 +505,7 @@ type                 {}
                     ",
                     tx.hash.pretty(),
                     tx.ty(),
-                    tx.inner.fields.pretty(),
+                    tx.inner.fields.pretty().trim_start(),
                 )
             }
         }
@@ -754,7 +754,7 @@ effectiveGasPrice    {}
             self.inner.signer().pretty(),
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
-            self.inner.pretty(),
+            self.inner.pretty().trim_start(),
         )
     }
 }
@@ -1531,6 +1531,86 @@ l1GasUsed            1600
         assert_eq!(
             signed_authorization.pretty(),
             r#"{recoveredAuthority: 0xf3eaBD0de6Ca1aE7fC4D81FfD6C9a40e5D5D7e30, signedAuthority: {"chainId":"0x1","address":"0x000000000000000000000000000000000000dead","nonce":"0x2a","yParity":"0x1","r":"0x14","s":"0x1e"}}"#
+        );
+    }
+
+    #[test]
+    fn can_pretty_print_tempo_tx() {
+        let s = r#"{
+            "type":"0x76",
+            "chainId":"0xa5bd",
+            "feeToken":"0x20c0000000000000000000000000000000000001",
+            "maxPriorityFeePerGas":"0x0",
+            "maxFeePerGas":"0x2cb417800",
+            "gas":"0x2d178",
+            "calls":[
+                {
+                    "data":null,
+                    "input":"0x095ea7b3000000000000000000000000dec00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680",
+                    "to":"0x20c0000000000000000000000000000000000000",
+                    "value":"0x0"
+                },
+                {
+                    "data":null,
+                    "input":"0xf8856c0f00000000000000000000000020c000000000000000000000000000000000000000000000000000000000000020c00000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000097d330",
+                    "to":"0xdec0000000000000000000000000000000000000",
+                    "value":"0x0"
+                }
+            ],
+            "accessList":[],
+            "nonceKey":"0x0",
+            "nonce":"0x0",
+            "feePayerSignature":null,
+            "validBefore":null,
+            "validAfter":null,
+            "keyAuthorization":null,
+            "aaAuthorizationList":[],
+            "signature":{
+                "pubKeyX":"0xaacc80b21e45fb11f349424dce3a2f23547f60c0ff2f8bcaede2a247545ce8dd",
+                "pubKeyY":"0x87abf0dbb7a5c9507efae2e43833356651b45ac576c2e61cec4e9c0f41fcbf6e",
+                "r":"0xcfd45c3b19745a42f80b134dcb02a8ba099a0e4e7be1984da54734aa81d8f29f",
+                "s":"0x74bb9170ae6d25bd510c83fe35895ee5712efe13980a5edc8094c534e23af85e",
+                "type":"webAuthn",
+                "webauthnData":"0x7b98b7a8e6c68d7eac741a52e6fdae0560ce3c16ef5427ad46d7a54d0ed86dd41d000000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2238453071464a7a50585167546e645473643649456659457776323173516e626966374c4741776e4b43626b222c226f726967696e223a2268747470733a2f2f74656d706f2d6465782e76657263656c2e617070222c2263726f73734f726967696e223a66616c73657d"
+            },
+            "hash":"0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd",
+            "blockHash":"0xc82b23589ceef5341ed307d33554714db6f9eefd4187a9ca8abc910a325b4689",
+            "blockNumber":"0x321fde",
+            "transactionIndex":"0x0",
+            "from":"0x566ff0f4a6114f8072ecdc8a7a8a13d8d0c6b45f",
+            "gasPrice":"0x2540be400"
+        }"#;
+
+        let tx: AnyRpcTransaction = serde_json::from_str(s).unwrap();
+
+        assert_eq!(
+            tx.pretty().trim(),
+            r#"
+blockHash            0xc82b23589ceef5341ed307d33554714db6f9eefd4187a9ca8abc910a325b4689
+blockNumber          3284958
+from                 0x566Ff0f4a6114F8072ecDC8A7A8A13d8d0C6B45F
+transactionIndex     0
+effectiveGasPrice    10000000000
+hash                 0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd
+type                 118
+aaAuthorizationList  []
+accessList           []
+calls                [{"data":null,"input":"0x095ea7b3000000000000000000000000dec00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680","to":"0x20c0000000000000000000000000000000000000","value":"0x0"},{"data":null,"input":"0xf8856c0f00000000000000000000000020c000000000000000000000000000000000000000000000000000000000000020c00000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000097d330","to":"0xdec0000000000000000000000000000000000000","value":"0x0"}]
+chainId              42429
+feePayerSignature    null
+feeToken             0x20C0000000000000000000000000000000000001
+gas                  184696
+gasPrice             10000000000
+keyAuthorization     null
+maxFeePerGas         12000000000
+maxPriorityFeePerGas 0
+nonce                0
+nonceKey             0
+signature            {"pubKeyX":"0xaacc80b21e45fb11f349424dce3a2f23547f60c0ff2f8bcaede2a247545ce8dd","pubKeyY":"0x87abf0dbb7a5c9507efae2e43833356651b45ac576c2e61cec4e9c0f41fcbf6e","r":"0xcfd45c3b19745a42f80b134dcb02a8ba099a0e4e7be1984da54734aa81d8f29f","s":"0x74bb9170ae6d25bd510c83fe35895ee5712efe13980a5edc8094c534e23af85e","type":"webAuthn","webauthnData":"0x7b98b7a8e6c68d7eac741a52e6fdae0560ce3c16ef5427ad46d7a54d0ed86dd41d000000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2238453071464a7a50585167546e645473643649456659457776323173516e626966374c4741776e4b43626b222c226f726967696e223a2268747470733a2f2f74656d706f2d6465782e76657263656c2e617070222c2263726f73734f726967696e223a66616c73657d"}
+validAfter           null
+validBefore          null
+"#
+                .trim()
         );
     }
 }

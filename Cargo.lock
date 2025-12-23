@@ -2709,7 +2709,6 @@ dependencies = [
  "solar-compiler",
  "tempfile",
  "time",
- "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",
  "walkdir",
@@ -4255,7 +4254,6 @@ dependencies = [
  "foundry-linking",
  "foundry-test-utils",
  "foundry-wallets",
- "futures",
  "globset",
  "indicatif",
  "inferno",
@@ -4263,7 +4261,6 @@ dependencies = [
  "mockall",
  "opener",
  "parking_lot",
- "paste",
  "path-slash",
  "proptest",
  "quick-junit",
@@ -4325,11 +4322,9 @@ dependencies = [
  "foundry-test-utils",
  "itertools 0.14.0",
  "similar",
- "similar-asserts",
  "snapbox",
  "solar-compiler",
  "toml 0.9.10+spec-1.1.0",
- "tracing-subscriber 0.3.22",
 ]
 
 [[package]]
@@ -4481,7 +4476,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
