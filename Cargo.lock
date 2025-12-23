@@ -253,7 +253,6 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.25.2"
-source = "git+https://github.com/haythemsellami/evm?branch=monad-evm#b37b918eb8702aae19b9c878ed89538ffef8c194"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -327,7 +326,6 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.25.2"
-source = "git+https://github.com/haythemsellami/evm?branch=monad-evm#b37b918eb8702aae19b9c878ed89538ffef8c194"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -377,7 +375,6 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.25.2"
-source = "git+https://github.com/haythemsellami/evm?branch=monad-evm#b37b918eb8702aae19b9c878ed89538ffef8c194"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6747,7 +6744,6 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "auto_impl",
  "revm",
@@ -7221,7 +7217,6 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#bc1e59dfb5b7ec1e5f243e172910f1ffe1da4282"
 dependencies = [
  "auto_impl",
  "revm",
@@ -8356,7 +8351,6 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "33.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#bc1e59dfb5b7ec1e5f243e172910f1ffe1da4282"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -8374,7 +8368,6 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "7.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "bitvec",
  "phf 0.13.1",
@@ -8385,7 +8378,6 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "12.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -8401,7 +8393,6 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "13.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -8416,7 +8407,6 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "9.0.6"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -8429,7 +8419,6 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "8.0.5"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "auto_impl",
  "either",
@@ -8442,7 +8431,6 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -8460,7 +8448,6 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "auto_impl",
  "either",
@@ -8497,7 +8484,6 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "31.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -8509,7 +8495,6 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "31.0.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -8533,7 +8518,6 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "21.0.2"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -8544,7 +8528,6 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "8.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#ee30af09e11de658f031f079590717d96636c88c"
 dependencies = [
  "bitflags 2.10.0",
  "revm-bytecode",
