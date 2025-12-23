@@ -1,6 +1,6 @@
 use crate::{
     Cast, SimpleCast,
-    cmd::erc20::IERC20,
+    cmd::{convert::ConvertSubCommand, erc20::IERC20},
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
@@ -27,6 +27,7 @@ use foundry_common::{
     },
     shell, stdin,
 };
+
 use std::time::Instant;
 
 /// Run the `cast` command-line interface.
@@ -65,122 +66,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::HashZero => {
             sh_println!("{:?}", B256::ZERO)?;
         }
-
-        // Conversions & transformations
-        CastSubcommand::FromUtf8 { text } => {
-            let value = stdin::unwrap(text, false)?;
-            sh_println!("{}", SimpleCast::from_utf8(&value))?
-        }
-        CastSubcommand::ToAscii { hexdata } => {
-            let value = stdin::unwrap(hexdata, false)?;
-            sh_println!("{}", SimpleCast::to_ascii(value.trim())?)?
-        }
-        CastSubcommand::ToUtf8 { hexdata } => {
-            let value = stdin::unwrap(hexdata, false)?;
-            sh_println!("{}", SimpleCast::to_utf8(&value)?)?
-        }
-        CastSubcommand::FromFixedPoint { value, decimals } => {
-            let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            sh_println!("{}", SimpleCast::from_fixed_point(&value, &decimals)?)?
-        }
-        CastSubcommand::ToFixedPoint { value, decimals } => {
-            let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            sh_println!("{}", SimpleCast::to_fixed_point(&value, &decimals)?)?
-        }
-        CastSubcommand::ConcatHex { data } => {
-            if data.is_empty() {
-                let s = stdin::read(true)?;
-                sh_println!("{}", SimpleCast::concat_hex(s.split_whitespace()))?
-            } else {
-                sh_println!("{}", SimpleCast::concat_hex(data))?
-            }
-        }
-        CastSubcommand::FromBin => {
-            let hex = stdin::read_bytes(false)?;
-            sh_println!("{}", hex::encode_prefixed(hex))?
-        }
-        CastSubcommand::ToHexdata { input } => {
-            let value = stdin::unwrap_line(input)?;
-            let output = match value {
-                s if s.starts_with('@') => hex::encode(std::env::var(&s[1..])?),
-                s if s.starts_with('/') => hex::encode(fs::read(s)?),
-                s => s.split(':').map(|s| s.trim_start_matches("0x").to_lowercase()).collect(),
-            };
-            sh_println!("0x{output}")?
-        }
-        CastSubcommand::ToCheckSumAddress { address, chain_id } => {
-            let value = stdin::unwrap_line(address)?;
-            sh_println!("{}", value.to_checksum(chain_id))?
-        }
-        CastSubcommand::ToUint256 { value } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_uint256(&value)?)?
-        }
-        CastSubcommand::ToInt256 { value } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_int256(&value)?)?
-        }
-        CastSubcommand::ToUnit { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_unit(&value, &unit)?)?
-        }
-        CastSubcommand::ParseUnits { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::parse_units(&value, unit)?)?;
-        }
-        CastSubcommand::FormatUnits { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::format_units(&value, unit)?)?;
-        }
-        CastSubcommand::FromWei { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_wei(&value, &unit)?)?
-        }
-        CastSubcommand::ToWei { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_wei(&value, &unit)?)?
-        }
-        CastSubcommand::FromRlp { value, as_int } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_rlp(value, as_int)?)?
-        }
-        CastSubcommand::ToRlp { value } => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_rlp(&value)?)?
-        }
-        CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "hex")?)?
-        }
-        CastSubcommand::ToDec(ToBaseArgs { value, base_in }) => {
-            let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "dec")?)?
-        }
-        CastSubcommand::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
-            let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?)?
-        }
-        CastSubcommand::ToBytes32 { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::to_bytes32(&value)?)?
-        }
-        CastSubcommand::Pad { data, right, left: _, len } => {
-            let value = stdin::unwrap_line(data)?;
-            sh_println!("{}", SimpleCast::pad(&value, right, len)?)?
-        }
-        CastSubcommand::FormatBytes32String { string } => {
-            let value = stdin::unwrap_line(string)?;
-            sh_println!("{}", SimpleCast::format_bytes32_string(&value)?)?
-        }
-        CastSubcommand::ParseBytes32String { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::parse_bytes32_string(&value)?)?
-        }
-        CastSubcommand::ParseBytes32Address { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::parse_bytes32_address(&value)?)?
-        }
-
         // ABI encoding & decoding
         CastSubcommand::DecodeAbi { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
@@ -756,6 +641,177 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
+        }
+        CastSubcommand::Convert { command } => {
+            command.run().await?;
+        }
+
+        // Conversions and transformations (soon to be deprecated)
+        CastSubcommand::FromUtf8 { text } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert from-utf8' instead"
+            )?;
+            ConvertSubCommand::FromUtf8 { text }.run().await?;
+        }
+        CastSubcommand::ToAscii { hexdata } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-ascii' instead"
+            )?;
+            ConvertSubCommand::ToAscii { hexdata }.run().await?;
+        }
+        CastSubcommand::ToUtf8 { hexdata } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-utf8' instead"
+            )?;
+            ConvertSubCommand::ToUtf8 { hexdata }.run().await?;
+        }
+        CastSubcommand::FromFixedPoint { value, decimals } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert from-fixed-point' instead"
+            )?;
+            ConvertSubCommand::FromFixedPoint { value, decimals }.run().await?;
+        }
+        CastSubcommand::ToFixedPoint { value, decimals } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-fixed-point' instead"
+            )?;
+            ConvertSubCommand::ToFixedPoint { value, decimals }.run().await?;
+        }
+        CastSubcommand::ConcatHex { data } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert concat-hex' instead"
+            )?;
+            ConvertSubCommand::ConcatHex { data }.run().await?;
+        }
+        CastSubcommand::FromBin => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert from-bin' instead"
+            )?;
+            ConvertSubCommand::FromBin.run().await?;
+        }
+        CastSubcommand::ToHexdata { input } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-hexdata' instead"
+            )?;
+            ConvertSubCommand::ToHexdata { input }.run().await?;
+        }
+        CastSubcommand::ToCheckSumAddress { address, chain_id } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-checksum-address' instead"
+            )?;
+            ConvertSubCommand::ToCheckSumAddress { address, chain_id }.run().await?;
+        }
+        CastSubcommand::ToUint256 { value } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-uint256' instead"
+            )?;
+            ConvertSubCommand::ToUint256 { value }.run().await?;
+        }
+        CastSubcommand::ToInt256 { value } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-int256' instead"
+            )?;
+            ConvertSubCommand::ToInt256 { value }.run().await?;
+        }
+        CastSubcommand::ToUnit { value, unit } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-unit' instead"
+            )?;
+            ConvertSubCommand::ToUnit { value, unit }.run().await?;
+        }
+        CastSubcommand::ParseUnits { value, unit } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert parse-units' instead"
+            )?;
+            ConvertSubCommand::ParseUnits { value, unit }.run().await?;
+        }
+        CastSubcommand::FormatUnits { value, unit } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert format-units' instead"
+            )?;
+            ConvertSubCommand::FormatUnits { value, unit }.run().await?;
+        }
+        CastSubcommand::FromWei { value, unit } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert from-wei' instead"
+            )?;
+            // Delegate to convert command instead of duplicating logic
+            ConvertSubCommand::FromWei { value, unit }.run().await?;
+        }
+        CastSubcommand::ToWei { value, unit } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-wei' instead"
+            )?;
+            ConvertSubCommand::ToWei { value, unit }.run().await?;
+        }
+        CastSubcommand::FromRlp { value, as_int } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert from-rlp' instead"
+            )?;
+            ConvertSubCommand::FromRlp { value, as_int }.run().await?;
+        }
+        CastSubcommand::ToRlp { value } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-rlp' instead"
+            )?;
+            ConvertSubCommand::ToRlp { value }.run().await?;
+        }
+        CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-hex' instead"
+            )?;
+            ConvertSubCommand::ToHex(crate::cmd::convert::ToBaseArgs { value, base_in })
+                .run()
+                .await?;
+        }
+        CastSubcommand::ToDec(ToBaseArgs { value, base_in }) => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-dec' instead"
+            )?;
+            ConvertSubCommand::ToDec(crate::cmd::convert::ToBaseArgs { value, base_in })
+                .run()
+                .await?;
+        }
+        CastSubcommand::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-base' instead"
+            )?;
+            ConvertSubCommand::ToBase {
+                base: crate::cmd::convert::ToBaseArgs { value, base_in },
+                base_out,
+            }
+            .run()
+            .await?;
+        }
+        CastSubcommand::ToBytes32 { bytes } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert to-bytes32' instead"
+            )?;
+            ConvertSubCommand::ToBytes32 { bytes }.run().await?;
+        }
+        CastSubcommand::Pad { data, right, left, len } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert pad' instead"
+            )?;
+            ConvertSubCommand::Pad { data, right, left, len }.run().await?;
+        }
+        CastSubcommand::FormatBytes32String { string } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert format-bytes32-string' instead"
+            )?;
+            ConvertSubCommand::FormatBytes32String { string }.run().await?;
+        }
+        CastSubcommand::ParseBytes32String { bytes } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert parse-bytes32-string' instead"
+            )?;
+            ConvertSubCommand::ParseBytes32String { bytes }.run().await?;
+        }
+        CastSubcommand::ParseBytes32Address { bytes } => {
+            sh_println!(
+                "⚠️  This command is deprecated and may be removed in the future, please use 'cast convert parse-bytes32-address' instead"
+            )?;
+            ConvertSubCommand::ParseBytes32Address { bytes }.run().await?;
         }
     };
 
