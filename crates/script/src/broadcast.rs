@@ -29,6 +29,7 @@ use crate::{
     ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
     sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
+use forge_script_sequence::ScriptSequence;
 
 pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx: &mut WithOtherFields<TransactionRequest>,
@@ -226,6 +227,21 @@ pub struct BundledState {
 }
 
 impl BundledState {
+    /// Saves the sequence to disk and returns a mutable reference to the sequence at the given
+    /// index.
+    ///
+    /// This helper method encapsulates the pattern of saving the sequence and reloading the
+    /// reference, which is necessary due to Rust's borrow checker rules: calling `save()`
+    /// requires `&mut self.sequence`, which invalidates any existing mutable references to
+    /// individual sequences.
+    fn save_and_reload_sequence(&mut self, index: usize) -> Result<&mut ScriptSequence> {
+        self.sequence.save(true, false)?;
+        self.sequence
+            .sequences_mut()
+            .get_mut(index)
+            .ok_or_else(|| eyre::eyre!("Sequence index {} out of bounds", index))
+    }
+
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
@@ -471,16 +487,14 @@ impl BundledState {
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save
-                            self.sequence.save(true, false)?;
-                            sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+                            sequence = self.save_and_reload_sequence(i)?;
 
                             seq_progress.inner.write().tx_sent(tx_hash);
                             index += 1;
                         }
 
                         // Checkpoint save
-                        self.sequence.save(true, false)?;
-                        sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+                        sequence = self.save_and_reload_sequence(i)?;
 
                         progress
                             .wait_for_pending(
@@ -492,8 +506,7 @@ impl BundledState {
                             .await?
                     }
                     // Checkpoint save
-                    self.sequence.save(true, false)?;
-                    sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
+                    sequence = self.save_and_reload_sequence(i)?;
                 }
             }
 
