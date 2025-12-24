@@ -12,6 +12,7 @@ use foundry_compilers::{
     compilers::{
         Compiler,
         solc::{Solc, SolcCompiler},
+        vyper::{Vyper, VyperSettings},
     },
     info::ContractInfo as CompilerContractInfo,
     multi::{MultiCompiler, MultiCompilerSettings},
@@ -533,20 +534,38 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .remappings(settings.remappings.clone())
         .build_with_root(sources_path);
 
-    // TODO: detect vyper
-    let v = metadata.compiler_version()?;
-    let solc = Solc::find_or_install(&v)?;
+    // Detect if contract is compiled with Vyper
+    let is_vyper = metadata.compiler_version.starts_with("vyper:");
 
-    let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
+    let compiler = if is_vyper {
+        // For Vyper contracts, try to find Vyper compiler in PATH
+        let vyper = Vyper::new("vyper")
+            .map_err(|e| eyre::eyre!("Failed to find Vyper compiler: {e}. Please ensure Vyper is installed and available in PATH"))?;
+        MultiCompiler { solc: None, vyper: Some(vyper) }
+    } else {
+        // For Solidity contracts, use Solc
+        let v = metadata.compiler_version()?;
+        let solc = Solc::find_or_install(&v)?;
+        MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None }
+    };
 
-    Ok(ProjectBuilder::<MultiCompiler>::default()
-        .settings(MultiCompilerSettings {
+    let compiler_settings = if is_vyper {
+        // For Vyper, use default VyperSettings
+        // Note: metadata.settings() returns Solidity settings, so we use defaults for Vyper
+        MultiCompilerSettings { solc: Default::default(), vyper: VyperSettings::default() }
+    } else {
+        // For Solidity, use the settings from metadata
+        MultiCompilerSettings {
             solc: SolcSettings {
                 settings: SolcConfig::builder().settings(settings).build(),
                 ..Default::default()
             },
-            ..Default::default()
-        })
+            vyper: Default::default(),
+        }
+    };
+
+    Ok(ProjectBuilder::<MultiCompiler>::default()
+        .settings(compiler_settings)
         .paths(paths)
         .ephemeral()
         .no_artifacts()
