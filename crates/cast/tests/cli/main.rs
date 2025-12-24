@@ -1,12 +1,15 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
+use alloy_eips::eip7702::Authorization;
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_network::{
+    EthereumWallet, TransactionBuilder, TransactionBuilder7702, TransactionResponse,
+};
 use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest};
-use alloy_signer::Signer;
+use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
+use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
 use foundry_test_utils::{
@@ -2787,6 +2790,427 @@ casttest!(send_eip7702_multiple_address_auth_rejected, async |_prj, cmd| {
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: Multiple address-based authorizations provided. Only one address can be specified; use pre-signed authorizations (hex-encoded) for multiple authorizations.
+
+"#]]);
+});
+
+casttest!(validate_auth, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    // Send EIP-7702 transaction and capture the tx hash
+    let output = cmd
+        .args([
+            "send",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "--auth",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract tx hash from output (format: "transactionHash 0x...")
+    let tx_hash = output
+        .lines()
+        .find(|l| l.contains("transactionHash"))
+        .and_then(|l| l.split_whitespace().last())
+        .expect("should have tx hash");
+
+    // Validate the auth - check exact output format
+    cmd.cast_fuse()
+        .args(["validate-auth", tx_hash, "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Transaction: [..]
+Block: 1 (tx index: 0)
+
+Authorization #0
+  Decoded:
+    Chain ID: 31337
+    [ADDRESS]
+    Nonce: 1
+    r: [..]
+    s: [..]
+    v: [..]
+  Recovered Authority: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  Validation Status:
+    Chain: VALID
+    Nonce: VALID
+  Code Status (at end of block [..]):
+    ACTIVE (delegated to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8)
+
+
+"#]]);
+});
+
+casttest!(validate_auth_invalid_nonce, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    // First, send a regular tx from the authority account to increment its nonce
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--value",
+        "1",
+        "--private-key",
+        // Authority's private key (account 1)
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success();
+
+    // Sign an authorization with nonce 0 (which is now stale since we sent a tx)
+    let auth_output = cmd
+        .cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC", // delegate to account 2
+            "--private-key",
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d", // authority (account 1)
+            "--nonce",
+            "0", // Stale nonce - authority's nonce is now 1
+            "--chain",
+            "31337",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let auth_hex = auth_output.trim();
+
+    // Send EIP-7702 tx with the stale authorization
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--auth",
+            auth_hex,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let tx_hash = output
+        .lines()
+        .find(|l| l.contains("transactionHash"))
+        .and_then(|l| l.split_whitespace().last())
+        .expect("should have tx hash");
+
+    // Validate - should show invalid nonce
+    cmd.cast_fuse()
+        .args(["validate-auth", tx_hash, "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Transaction: [..]
+Block: 2 (tx index: 0)
+
+Authorization #0
+  Decoded:
+    Chain ID: 31337
+    [ADDRESS]
+    Nonce: 0
+    r: [..]
+    s: [..]
+    v: [..]
+  Recovered Authority: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Validation Status:
+    Chain: VALID
+    Nonce: INVALID (expected: 1, got: 0)
+  Code Status (at end of block [..]):
+    No delegation (account has no code)
+
+
+"#]]);
+});
+
+casttest!(validate_auth_duplicate_nonce, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let sender_key: PrivateKeySigner =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
+    let sender_wallet = EthereumWallet::from(sender_key);
+    let provider = ProviderBuilder::new().wallet(sender_wallet).connect(&endpoint).await.unwrap();
+
+    // Authority key (account 1)
+    let authority_key: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+
+    // Sign two authorizations from the same authority with the same nonce
+    let auth1 = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        nonce: 0,
+    };
+    let sig1 = authority_key.sign_hash_sync(&auth1.signature_hash()).unwrap();
+    let signed_auth1 = auth1.into_signed(sig1);
+
+    let auth2 = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
+        nonce: 0, // Same nonce - will be invalid after first auth executes
+    };
+    let sig2 = authority_key.sign_hash_sync(&auth2.signature_hash()).unwrap();
+    let signed_auth2 = auth2.into_signed(sig2);
+
+    // Build and send tx with both authorizations
+    let tx = TransactionRequest::default()
+        .with_to(address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"))
+        .with_authorization_list(vec![signed_auth1, signed_auth2]);
+
+    let pending = provider.send_transaction(tx).await.unwrap();
+    let tx_hash = format!("{:?}", pending.tx_hash());
+
+    // Wait for tx to be mined
+    let _ = pending.get_receipt().await.unwrap();
+
+    // Validate - first auth should be valid, second should have invalid nonce
+    cmd.args(["validate-auth", &tx_hash, "--rpc-url", &endpoint]).assert_success().stdout_eq(str![
+        [r#"
+Transaction: [..]
+Block: 1 (tx index: 0)
+
+Authorization #0
+  Decoded:
+    Chain ID: 31337
+    [ADDRESS]
+    Nonce: 0
+    r: [..]
+    s: [..]
+    v: [..]
+  Recovered Authority: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Validation Status:
+    Chain: VALID
+    Nonce: VALID
+  Code Status (at end of block [..]):
+    ACTIVE (delegated to 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC)
+
+Authorization #1
+  Decoded:
+    Chain ID: 31337
+    [ADDRESS]
+    Nonce: 0
+    r: [..]
+    s: [..]
+    v: [..]
+  Recovered Authority: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Validation Status:
+    Chain: VALID
+    Nonce: INVALID (expected: 1, got: 0)
+  Code Status (at end of block [..]):
+    SUPERSEDED (delegated to 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC)
+
+
+"#]
+    ]);
+});
+
+casttest!(validate_auth_invalid_chain, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    // Sign an authorization with wrong chain ID (1 instead of 31337)
+    let auth_output = cmd
+        .args([
+            "wallet",
+            "sign-auth",
+            "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+            "--private-key",
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            "--nonce",
+            "0",
+            "--chain",
+            "1", // Wrong chain ID (mainnet instead of anvil's 31337)
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let auth_hex = auth_output.trim();
+
+    // Send EIP-7702 tx with wrong chain authorization
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--auth",
+            auth_hex,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let tx_hash = output
+        .lines()
+        .find(|l| l.contains("transactionHash"))
+        .and_then(|l| l.split_whitespace().last())
+        .expect("should have tx hash");
+
+    // Validate - should show invalid chain
+    cmd.cast_fuse()
+        .args(["validate-auth", tx_hash, "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Transaction: [..]
+Block: 1 (tx index: 0)
+
+Authorization #0
+  Decoded:
+    Chain ID: 1
+    [ADDRESS]
+    Nonce: 0
+    r: [..]
+    s: [..]
+    v: [..]
+  Recovered Authority: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Validation Status:
+    Chain: INVALID (expected: 0 or 31337)
+    Nonce: VALID
+  Code Status (at end of block [..]):
+    No delegation (account has no code)
+
+
+"#]]);
+});
+
+// Test that running nonce correctly accounts for valid authorizations from previous transactions
+// in the same block
+casttest!(validate_auth_cross_tx_nonce, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Sender wallet (account 0)
+    let sender_key: PrivateKeySigner =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
+    let sender_wallet = EthereumWallet::from(sender_key);
+
+    let provider =
+        ProviderBuilder::new().wallet(sender_wallet).connect_http(endpoint.parse().unwrap());
+
+    // Authority key (account 1)
+    let authority_key: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+
+    // Disable auto-mining to control block construction
+    provider.raw_request::<_, ()>("evm_setAutomine".into(), [false]).await.unwrap();
+
+    // TX1: Authorization for authority with nonce 0
+    let auth1 = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        nonce: 0,
+    };
+    let sig1 = authority_key.sign_hash_sync(&auth1.signature_hash()).unwrap();
+    let signed_auth1 = auth1.into_signed(sig1);
+
+    let tx1 = TransactionRequest::default()
+        .with_to(address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"))
+        .with_authorization_list(vec![signed_auth1]);
+
+    let pending1 = provider.send_transaction(tx1).await.unwrap();
+
+    // TX2: Authorization for same authority with nonce 1 (should be valid after TX1 executes)
+    let auth2 = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
+        nonce: 1, // Incremented because TX1's auth will execute first
+    };
+    let sig2 = authority_key.sign_hash_sync(&auth2.signature_hash()).unwrap();
+    let signed_auth2 = auth2.into_signed(sig2);
+
+    let tx2 = TransactionRequest::default()
+        .with_to(address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"))
+        .with_authorization_list(vec![signed_auth2]);
+
+    let pending2 = provider.send_transaction(tx2).await.unwrap();
+    let tx2_hash = format!("{:?}", pending2.tx_hash());
+
+    // Mine a block with both transactions
+    provider.raw_request::<_, String>("evm_mine".into(), ()).await.unwrap();
+
+    // Wait for receipts
+    let _ = pending1.get_receipt().await.unwrap();
+    let _ = pending2.get_receipt().await.unwrap();
+
+    // Validate TX2 - the authorization should be VALID because TX1's auth incremented the nonce
+    cmd.args(["validate-auth", &tx2_hash, "--rpc-url", &endpoint]).assert_success().stdout_eq(
+        str![[r#"
+Executing previous transactions from the block.
+
+Transaction: [..]
+Block: 1 (tx index: 1)
+
+Authorization #0
+  Decoded:
+    Chain ID: 31337
+    [ADDRESS]
+    Nonce: 1
+    r: [..]
+    s: [..]
+    v: [..]
+  Recovered Authority: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Validation Status:
+    Chain: VALID
+    Nonce: VALID
+  Code Status (at end of block [..]):
+    ACTIVE (delegated to 0x90F79bf6EB2c4f870365E785982E1f101E93b906)
+
+
+"#]],
+    );
+});
+
+casttest!(validate_auth_non_eip7702_tx, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Send a regular transaction
+    let output = cmd
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let tx_hash = output
+        .lines()
+        .find(|l| l.contains("transactionHash"))
+        .and_then(|l| l.split_whitespace().last())
+        .expect("should have tx hash");
+
+    // Should fail for non EIP-7702 tx
+    cmd.cast_fuse()
+        .args(["validate-auth", tx_hash, "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Transaction has no authorization list
 
 "#]]);
 });
