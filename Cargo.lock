@@ -4676,6 +4676,7 @@ dependencies = [
  "chrono",
  "eyre",
  "foundry-macros",
+ "foundry-primitives",
  "revm",
  "serde",
  "serde_json",
