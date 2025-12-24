@@ -167,7 +167,7 @@ impl Create2Args {
 
         let mut n_threads = threads.unwrap_or(0);
         if n_threads == 0 {
-            n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+            n_threads = rayon::current_num_threads();
         }
         if cfg!(test) {
             n_threads = n_threads.min(2);
