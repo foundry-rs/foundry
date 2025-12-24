@@ -234,9 +234,12 @@ impl BundledState {
     /// reference, which is necessary due to Rust's borrow checker rules: calling `save()`
     /// requires `&mut self.sequence`, which invalidates any existing mutable references to
     /// individual sequences.
-    fn save_and_reload_sequence(&mut self, index: usize) -> Result<&mut ScriptSequence> {
-        self.sequence.save(true, false)?;
-        self.sequence
+    fn save_and_reload_sequence(
+        sequence: &mut ScriptSequenceKind,
+        index: usize,
+    ) -> Result<&mut ScriptSequence> {
+        sequence.save(true, false)?;
+        sequence
             .sequences_mut()
             .get_mut(index)
             .ok_or_else(|| eyre::eyre!("Sequence index {} out of bounds", index))
@@ -487,14 +490,14 @@ impl BundledState {
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save
-                            sequence = self.save_and_reload_sequence(i)?;
+                            sequence = Self::save_and_reload_sequence(&mut self.sequence, i)?;
 
                             seq_progress.inner.write().tx_sent(tx_hash);
                             index += 1;
                         }
 
                         // Checkpoint save
-                        sequence = self.save_and_reload_sequence(i)?;
+                        sequence = Self::save_and_reload_sequence(&mut self.sequence, i)?;
 
                         progress
                             .wait_for_pending(
@@ -506,7 +509,7 @@ impl BundledState {
                             .await?
                     }
                     // Checkpoint save
-                    sequence = self.save_and_reload_sequence(i)?;
+                    sequence = Self::save_and_reload_sequence(&mut self.sequence, i)?;
                 }
             }
 
