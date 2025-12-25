@@ -135,20 +135,20 @@ impl CloneArgs {
         let chain = config.chain.unwrap_or_default();
 
         // step 1. get the metadata from client based on source type
-        let (meta, explorer_name) = match source {
+        let (meta, explorer_name, sourcify_client) = match source {
             SourceExplorer::Etherscan => {
                 let etherscan_api_key =
                     config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
                 let client = Client::new(chain, etherscan_api_key.clone())?;
                 sh_println!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
-                (meta, "Etherscan")
+                (meta, "Etherscan", None)
             }
             SourceExplorer::Sourcify => {
                 let client = SourcifyClient::new(chain);
                 sh_println!("Downloading the source code of {address} from Sourcify...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
-                (meta, "Sourcify")
+                (meta, "Sourcify", Some(client))
             }
         };
 
@@ -177,7 +177,8 @@ impl CloneArgs {
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
             SourceExplorer::Sourcify => {
-                let client = SourcifyClient::new(chain);
+                // Reuse the client from step 1 to benefit from cached creation data
+                let client = sourcify_client.expect("Sourcify client should exist");
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
         }
@@ -676,6 +677,8 @@ pub(crate) struct SourcifyClient {
     client: reqwest::Client,
     chain: Chain,
     base_url: String,
+    /// Cached creation data from the first API call
+    cached_creation_data: std::sync::Arc<std::sync::Mutex<Option<ContractCreationData>>>,
 }
 
 impl SourcifyClient {
@@ -685,7 +688,12 @@ impl SourcifyClient {
 
     pub fn with_url(chain: Chain, verifier_url: Option<&str>) -> Self {
         let base_url = Self::get_base_url(verifier_url);
-        Self { client: reqwest::Client::new(), chain, base_url: base_url.to_string() }
+        Self {
+            client: reqwest::Client::new(),
+            chain,
+            base_url: base_url.to_string(),
+            cached_creation_data: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     fn get_base_url(verifier_url: Option<&str>) -> Url {
@@ -703,6 +711,7 @@ impl SourcifyClient {
 /// Sourcify API response for contract files.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
+#[allow(dead_code, clippy::large_enum_variant)]
 enum SourcifyContractResponse {
     Success(SourcifyContractData),
     Error(SourcifyErrorResponse),
@@ -778,6 +787,7 @@ struct SourcifyErrorResponse {
     // Error responses should not have sources field
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     sources: Option<()>,
 }
 
@@ -786,7 +796,11 @@ impl ExplorerClient for SourcifyClient {
         &self,
         address: Address,
     ) -> std::result::Result<ContractMetadata, EtherscanError> {
-        let url = self.get_contract_url(address, "sources,abi,compilation");
+        // Request creation data fields as well to cache them for later use
+        let url = self.get_contract_url(
+            address,
+            "sources,abi,compilation,creationTransactionHash,creatorAddress",
+        );
         let response = self.client.get(&url).send().await?;
 
         let status = response.status();
@@ -816,8 +830,7 @@ impl ExplorerClient for SourcifyClient {
                 let error: SourcifyErrorResponse =
                     serde_json::from_str(&response_text).map_err(|e| {
                         EtherscanError::Unknown(format!(
-                            "Failed to parse Sourcify response: {}. Response: {}",
-                            e, response_text
+                            "Failed to parse Sourcify response: {e}. Response: {response_text}"
                         ))
                     })?;
                 let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
@@ -851,6 +864,19 @@ impl ExplorerClient for SourcifyClient {
             data.compilation.as_ref().map(|c| c.compiler_version.clone()).unwrap_or_default();
 
         let abi = data.abi.map(|a| Box::<str>::from(a.get()).into()).unwrap_or_default();
+
+        // Cache creation data for later use in contract_creation_data
+        let tx_hash =
+            data.creation_transaction_hash.and_then(|h| h.parse().ok()).unwrap_or(TxHash::ZERO);
+        let creator = data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
+        let creation_data = ContractCreationData {
+            contract_address: address,
+            contract_creator: creator,
+            transaction_hash: tx_hash,
+        };
+        if let Ok(mut cache) = self.cached_creation_data.lock() {
+            *cache = Some(creation_data);
+        }
 
         // Extract compiler_settings from compilation if available
         let constructor_arguments = Bytes::default();
@@ -896,9 +922,15 @@ impl ExplorerClient for SourcifyClient {
         &self,
         address: Address,
     ) -> std::result::Result<ContractCreationData, EtherscanError> {
-        // Sourcify API doesn't provide creation transaction data directly
-        // We need to fetch it from a different endpoint or use a workaround
-        // For now, we'll try to get it from the full contract endpoint
+        // First, try to use cached data from contract_source_code call
+        if let Ok(cache) = self.cached_creation_data.lock()
+            && let Some(ref cached_data) = *cache
+            && cached_data.contract_address == address
+        {
+            return Ok(*cached_data);
+        }
+
+        // If cache is empty or address doesn't match, fetch from API
         let url = self.get_contract_url(address, "creationTransactionHash,creatorAddress");
         let response = self.client.get(&url).send().await?;
 
@@ -929,8 +961,7 @@ impl ExplorerClient for SourcifyClient {
                 let error: SourcifyErrorResponse =
                     serde_json::from_str(&response_text).map_err(|e| {
                         EtherscanError::Unknown(format!(
-                            "Failed to parse Sourcify response: {}. Response: {}",
-                            e, response_text
+                            "Failed to parse Sourcify response: {e}. Response: {response_text}"
                         ))
                     })?;
                 let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
@@ -949,11 +980,18 @@ impl ExplorerClient for SourcifyClient {
 
         let creator = data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
 
-        Ok(ContractCreationData {
+        let creation_data = ContractCreationData {
             contract_address: address,
             contract_creator: creator,
             transaction_hash: tx_hash,
-        })
+        };
+
+        // Cache the result
+        if let Ok(mut cache) = self.cached_creation_data.lock() {
+            *cache = Some(creation_data);
+        }
+
+        Ok(creation_data)
     }
 }
 
