@@ -813,11 +813,13 @@ impl ExplorerClient for SourcifyClient {
             Ok(data) => data,
             Err(_) => {
                 // If it fails, try to deserialize as error response
-                let error: SourcifyErrorResponse = serde_json::from_str(&response_text)
-                    .map_err(|e| EtherscanError::Unknown(format!(
-                        "Failed to parse Sourcify response: {}. Response: {}",
-                        e, response_text
-                    )))?;
+                let error: SourcifyErrorResponse =
+                    serde_json::from_str(&response_text).map_err(|e| {
+                        EtherscanError::Unknown(format!(
+                            "Failed to parse Sourcify response: {}. Response: {}",
+                            e, response_text
+                        ))
+                    })?;
                 let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
                     "Unknown Sourcify API error".to_string()
                 } else {
@@ -845,11 +847,8 @@ impl ExplorerClient for SourcifyClient {
             .map(|c| c.name.clone())
             .unwrap_or_else(|| "Contract".to_string());
 
-        let compiler_version = data
-            .compilation
-            .as_ref()
-            .map(|c| c.compiler_version.clone())
-            .unwrap_or_default();
+        let compiler_version =
+            data.compilation.as_ref().map(|c| c.compiler_version.clone()).unwrap_or_default();
 
         let abi = data.abi.map(|a| Box::<str>::from(a.get()).into()).unwrap_or_default();
 
@@ -927,11 +926,13 @@ impl ExplorerClient for SourcifyClient {
             Ok(data) => data,
             Err(_) => {
                 // If it fails, try to deserialize as error response
-                let error: SourcifyErrorResponse = serde_json::from_str(&response_text)
-                    .map_err(|e| EtherscanError::Unknown(format!(
-                        "Failed to parse Sourcify response: {}. Response: {}",
-                        e, response_text
-                    )))?;
+                let error: SourcifyErrorResponse =
+                    serde_json::from_str(&response_text).map_err(|e| {
+                        EtherscanError::Unknown(format!(
+                            "Failed to parse Sourcify response: {}. Response: {}",
+                            e, response_text
+                        ))
+                    })?;
                 let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
                     "Unknown Sourcify API error".to_string()
                 } else {
@@ -943,13 +944,10 @@ impl ExplorerClient for SourcifyClient {
 
         // Sourcify may not always provide creation transaction hash
         // Use zero hash as fallback if not available
-        let tx_hash = data
-            .creation_transaction_hash
-            .and_then(|h| h.parse().ok())
-            .unwrap_or(TxHash::ZERO);
+        let tx_hash =
+            data.creation_transaction_hash.and_then(|h| h.parse().ok()).unwrap_or(TxHash::ZERO);
 
-        let creator =
-            data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
+        let creator = data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
 
         Ok(ContractCreationData {
             contract_address: address,
