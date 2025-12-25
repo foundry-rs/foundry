@@ -12,6 +12,7 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 
@@ -824,6 +825,94 @@ impl UIfmt for SignedAuthorization {
     }
 }
 
+impl<T> UIfmt for FoundryReceiptEnvelope<T>
+where
+    T: UIfmt + Clone + core::fmt::Debug + PartialEq + Eq,
+{
+    fn pretty(&self) -> String {
+        let receipt = self.as_receipt();
+        let deposit_info = match self {
+            Self::Deposit(d) => {
+                format!(
+                    "
+depositNonce         {}
+depositReceiptVersion {}",
+                    d.receipt.deposit_nonce.pretty(),
+                    d.receipt.deposit_receipt_version.pretty()
+                )
+            }
+            _ => String::new(),
+        };
+
+        format!(
+            "
+status               {}
+cumulativeGasUsed    {}
+logs                 {}
+logsBloom            {}
+type                 {}{}",
+            receipt.status.pretty(),
+            receipt.cumulative_gas_used.pretty(),
+            receipt.logs.pretty(),
+            self.logs_bloom().pretty(),
+            self.tx_type() as u8,
+            deposit_info
+        )
+    }
+}
+
+impl UIfmt for FoundryTxReceipt {
+    fn pretty(&self) -> String {
+        let receipt = &self.0.inner;
+        let other = &self.0.other;
+
+        let mut pretty = format!(
+            "
+blockHash            {}
+blockNumber          {}
+contractAddress      {}
+cumulativeGasUsed    {}
+effectiveGasPrice    {}
+from                 {}
+gasUsed              {}
+logs                 {}
+logsBloom            {}
+root                 {}
+status               {}
+transactionHash      {}
+transactionIndex     {}
+type                 {}
+blobGasPrice         {}
+blobGasUsed          {}",
+            receipt.block_hash.pretty(),
+            receipt.block_number.pretty(),
+            receipt.contract_address.pretty(),
+            receipt.inner.cumulative_gas_used().pretty(),
+            receipt.effective_gas_price.pretty(),
+            receipt.from.pretty(),
+            receipt.gas_used.pretty(),
+            serde_json::to_string(receipt.inner.logs()).unwrap(),
+            receipt.inner.logs_bloom().pretty(),
+            self.state_root().pretty(),
+            receipt.inner.status().pretty(),
+            receipt.transaction_hash.pretty(),
+            receipt.transaction_index.pretty(),
+            receipt.inner.tx_type() as u8,
+            receipt.blob_gas_price.pretty(),
+            receipt.blob_gas_used.pretty()
+        );
+
+        if let Some(to) = receipt.to {
+            pretty.push_str(&format!("\nto                   {}", to.pretty()));
+        }
+
+        // additional captured fields
+        pretty.push_str(&other.pretty());
+
+        pretty
+    }
+}
+
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) -> Option<String> {
     let sig = match &transaction.inner.inner() {
@@ -1612,5 +1701,35 @@ validBefore          null
 "#
                 .trim()
         );
+    }
+
+    #[test]
+    fn test_foundry_tx_receipt_uifmt() {
+        use alloy_network::AnyTransactionReceipt;
+        use foundry_primitives::FoundryTxReceipt;
+
+        // Test UIfmt implementation for FoundryTxReceipt
+        let s = r#"{"type":"0x2","status":"0x1","cumulativeGasUsed":"0x5208","logs":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x1234567890123456789012345678901234567890123456789012345678901234","transactionIndex":"0x0","blockHash":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd","blockNumber":"0x1","gasUsed":"0x5208","effectiveGasPrice":"0x3b9aca00","from":"0x1234567890123456789012345678901234567890","to":"0x0987654321098765432109876543210987654321","contractAddress":null}"#;
+        let any_receipt: AnyTransactionReceipt = serde_json::from_str(s).unwrap();
+        let foundry_receipt = FoundryTxReceipt::try_from(any_receipt).unwrap();
+
+        let pretty_output = foundry_receipt.pretty();
+
+        // Check that essential fields are present in the output
+        assert!(pretty_output.contains("blockHash"));
+        assert!(pretty_output.contains("blockNumber"));
+        assert!(pretty_output.contains("status"));
+        assert!(pretty_output.contains("gasUsed"));
+        assert!(pretty_output.contains("transactionHash"));
+        assert!(pretty_output.contains("type"));
+
+        // Verify the transaction hash appears in the output
+        assert!(
+            pretty_output
+                .contains("0x1234567890123456789012345678901234567890123456789012345678901234")
+        );
+
+        // Verify status is pretty printed correctly (boolean true for successful transaction)
+        assert!(pretty_output.contains("true"));
     }
 }
