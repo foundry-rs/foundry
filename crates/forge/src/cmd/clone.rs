@@ -2,6 +2,7 @@ use super::{init::InitArgs, install::DependencyInstallOpts};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
+use forge_verify::sourcify::SOURCIFY_URL;
 use foundry_block_explorers::{
     Client,
     contract::{
@@ -24,6 +25,7 @@ use foundry_compilers::{
     compilers::solc::Solc,
 };
 use foundry_config::{Chain, Config};
+use reqwest::StatusCode;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -31,6 +33,8 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tracing::trace;
+use url::Url;
 
 /// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a
 /// cloned contract. The metadata can be serialized to a metadata file in the cloned project root.
@@ -193,7 +197,7 @@ impl CloneArgs {
     ///
     /// * `address` - the address of the contract to be cloned.
     /// * `client` - the client of the block explorer.
-    pub(crate) async fn collect_metadata_from_client<C: EtherscanClient>(
+    pub(crate) async fn collect_metadata_from_client<C: ExplorerClient>(
         address: Address,
         client: &C,
     ) -> Result<Metadata> {
@@ -224,12 +228,12 @@ impl CloneArgs {
     /// Collect the compilation metadata of the cloned contract.
     /// This function compiles the cloned contract and collects the compilation metadata.
     ///
-    /// * `meta` - the metadata of the contract (from Etherscan).
+    /// * `meta` - the metadata of the contract (from block explorer).
     /// * `chain` - the chain where the contract to be cloned locates.
     /// * `address` - the address of the contract to be cloned.
     /// * `root` - the root directory of the cloned project.
     /// * `client` - the client of the block explorer.
-    pub(crate) async fn collect_compilation_metadata<C: EtherscanClient>(
+    pub(crate) async fn collect_compilation_metadata<C: ExplorerClient>(
         meta: &Metadata,
         chain: Chain,
         address: Address,
@@ -637,10 +641,10 @@ pub fn find_main_contract<'a>(
     rv.ok_or_else(|| eyre::eyre!("contract not found"))
 }
 
-/// EtherscanClient is a trait that defines the methods to interact with Etherscan.
+/// ExplorerClient is a trait that defines the methods to interact with block explorers.
 /// It is defined as a wrapper of the `foundry_block_explorers::Client` to allow mocking.
 #[cfg_attr(test, mockall::automock)]
-pub(crate) trait EtherscanClient {
+pub(crate) trait ExplorerClient {
     async fn contract_source_code(
         &self,
         address: Address,
@@ -651,7 +655,7 @@ pub(crate) trait EtherscanClient {
     ) -> std::result::Result<ContractCreationData, EtherscanError>;
 }
 
-impl EtherscanClient for Client {
+impl ExplorerClient for Client {
     async fn contract_source_code(
         &self,
         address: Address,
@@ -676,11 +680,19 @@ pub(crate) struct SourcifyClient {
 
 impl SourcifyClient {
     pub fn new(chain: Chain) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            chain,
-            base_url: "https://sourcify.dev/server".to_string(),
-        }
+        Self::with_url(chain, None)
+    }
+
+    pub fn with_url(chain: Chain, verifier_url: Option<&str>) -> Self {
+        let base_url = Self::get_base_url(verifier_url);
+        Self { client: reqwest::Client::new(), chain, base_url: base_url.to_string() }
+    }
+
+    fn get_base_url(verifier_url: Option<&str>) -> Url {
+        // note(onbjerg): a little ugly but makes this infallible as we guarantee `SOURCIFY_URL` to
+        // be well formatted
+        Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
+            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap())
     }
 
     fn get_contract_url(&self, address: Address, fields: &str) -> String {
@@ -700,7 +712,7 @@ enum SourcifyContractResponse {
 #[serde(rename_all = "camelCase")]
 struct SourcifyContractData {
     #[serde(default)]
-    files: Option<BTreeMap<String, String>>,
+    sources: Option<BTreeMap<String, String>>,
     #[serde(default)]
     abi: Option<Box<serde_json::value::RawValue>>,
     #[serde(default)]
@@ -728,7 +740,7 @@ struct SourcifyCompilation {
     #[serde(default)]
     name: String,
     #[serde(default)]
-    settings: Option<serde_json::Value>,
+    compiler_settings: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -743,18 +755,20 @@ struct SourcifyErrorResponse {
     error_id: String,
 }
 
-impl EtherscanClient for SourcifyClient {
+impl ExplorerClient for SourcifyClient {
     async fn contract_source_code(
         &self,
         address: Address,
     ) -> std::result::Result<ContractMetadata, EtherscanError> {
-        let url = self.get_contract_url(address, "files,abi,compilation");
+        let url = self.get_contract_url(address, "sources,abi,compilation");
         let response = self.client.get(&url).send().await?;
 
+        trace!("Sourcify API response: status={:?}, url={}", response.status(), url);
+
         let status = response.status();
-        match status.as_u16() {
-            404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
-            429 => return Err(EtherscanError::RateLimitExceeded),
+        match status {
+            StatusCode::NOT_FOUND => return Err(EtherscanError::ContractCodeNotVerified(address)),
+            StatusCode::TOO_MANY_REQUESTS => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
 
@@ -770,12 +784,12 @@ impl EtherscanClient for SourcifyClient {
         match response_data {
             SourcifyContractResponse::Success(data) => {
                 let data = *data;
-                let files = data.files.ok_or_else(|| {
-                    EtherscanError::Unknown("Sourcify response missing files field".to_string())
+                let sources_map = data.sources.ok_or_else(|| {
+                    EtherscanError::Unknown("Sourcify response missing sources field".to_string())
                 })?;
 
-                // Convert files map to SourceCodeMetadata::Sources format
-                let sources: HashMap<String, SourceCodeEntry> = files
+                // Convert sources map to SourceCodeMetadata::Sources format
+                let sources: HashMap<String, SourceCodeEntry> = sources_map
                     .into_iter()
                     .map(|(path, content)| (path, SourceCodeEntry { content }))
                     .collect();
@@ -796,12 +810,12 @@ impl EtherscanClient for SourcifyClient {
 
                 let abi = data.abi.map(|a| Box::<str>::from(a.get()).into()).unwrap_or_default();
 
-                // Extract settings from compilation if available
+                // Extract compiler_settings from compilation if available
                 let constructor_arguments = Bytes::default();
                 let optimization_used = data
                     .compilation
                     .as_ref()
-                    .and_then(|c| c.settings.as_ref())
+                    .and_then(|c| c.compiler_settings.as_ref())
                     .and_then(|s| s.get("optimizer"))
                     .and_then(|o| o.get("enabled"))
                     .and_then(|e| e.as_bool())
@@ -811,7 +825,7 @@ impl EtherscanClient for SourcifyClient {
                 let runs = data
                     .compilation
                     .as_ref()
-                    .and_then(|c| c.settings.as_ref())
+                    .and_then(|c| c.compiler_settings.as_ref())
                     .and_then(|s| s.get("optimizer"))
                     .and_then(|o| o.get("runs"))
                     .and_then(|r| r.as_u64())
@@ -853,9 +867,9 @@ impl EtherscanClient for SourcifyClient {
         let response = self.client.get(&url).send().await?;
 
         let status = response.status();
-        match status.as_u16() {
-            404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
-            429 => return Err(EtherscanError::RateLimitExceeded),
+        match status {
+            StatusCode::NOT_FOUND => return Err(EtherscanError::ContractCodeNotVerified(address)),
+            StatusCode::TOO_MANY_REQUESTS => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
 
@@ -928,7 +942,7 @@ mod tests {
         });
     }
 
-    fn mock_etherscan(address: Address) -> impl super::EtherscanClient {
+    fn mock_etherscan(address: Address) -> impl super::ExplorerClient {
         // load mock data
         let mut mocked_data = BTreeMap::new();
         let data_folder =
@@ -955,7 +969,7 @@ mod tests {
         let (metadata, creation_data) = mocked_data.get(&address).unwrap();
         let metadata = metadata.clone();
         let creation_data = *creation_data;
-        let mut mocked_client = super::MockEtherscanClient::new();
+        let mut mocked_client = super::MockExplorerClient::new();
         mocked_client
             .expect_contract_source_code()
             .times(1)
