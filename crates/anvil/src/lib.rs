@@ -227,6 +227,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         logger,
         filters.clone(),
         transaction_order,
+        config.rpc_log,
     );
 
     // spawn the node service

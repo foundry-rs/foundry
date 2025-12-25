@@ -1,7 +1,7 @@
 //! Contains RPC handlers
 use crate::{
     EthApi,
-    eth::error::to_rpc_result,
+    eth::{api::RpcCallLogContext, error::to_rpc_result},
     pubsub::{EthSubscription, LogsSubscription},
 };
 use alloy_rpc_types::{
@@ -9,8 +9,74 @@ use alloy_rpc_types::{
     pubsub::{Params, SubscriptionKind},
 };
 use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::RpcError,
+    request::RpcMethodCall,
+    response::{ResponseResult, RpcResponse},
+};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
+use chrono::Utc;
+use serde_json::json;
+use std::{fmt, net::SocketAddr};
+use tracing::{error, trace};
+
+#[derive(Clone)]
+/// Wrapper around a JSON-RPC request used by `RpcHandler`.
+///
+/// This type keeps together:
+/// - the parsed, strongly-typed representation of the request (`parsed`),
+/// - the original raw JSON value as it was received over the wire (`raw`), and
+/// - additional logging/telemetry metadata associated with the call (`metadata`).
+///
+/// Keeping both the parsed and raw forms allows handlers and logging code to
+/// inspect or record the exact request payload while still working with a
+/// typed representation.
+pub struct JsonRpcRequest<T> {
+    /// The strongly-typed, already-deserialized representation of the request.
+    parsed: T,
+    /// The original JSON-RPC request payload as received from the client.
+    /// This is optional and only constructed when needed for verbose logging.
+    raw: Option<serde_json::Value>,
+    /// Context metadata used for logging, tracing, and metrics for this call.
+    metadata: RpcCallLogContext,
+}
+
+impl<T> JsonRpcRequest<T> {
+    fn new(parsed: T, raw: Option<serde_json::Value>, metadata: RpcCallLogContext) -> Self {
+        Self { parsed, raw, metadata }
+    }
+
+    fn into_parts(self) -> (T, Option<serde_json::Value>, RpcCallLogContext) {
+        (self.parsed, self.raw, self.metadata)
+    }
+}
+
+impl<T> fmt::Debug for JsonRpcRequest<T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JsonRpcRequest")
+            .field("parsed", &self.parsed)
+            .field("raw", &self.raw)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
+}
+
+impl<'de, T> serde::Deserialize<'de> for JsonRpcRequest<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let parsed = T::deserialize(&raw).map_err(serde::de::Error::custom)?;
+        Ok(Self { parsed, raw: Some(raw), metadata: RpcCallLogContext::default() })
+    }
+}
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
 #[derive(Clone)]
@@ -24,14 +90,76 @@ impl HttpEthRpcHandler {
     pub fn new(api: EthApi) -> Self {
         Self { api }
     }
+
+    /// Converts a `RpcMethodCall` into a `JsonRpcRequest<EthRequest>`.
+    ///
+    /// This helper stores the JSON-RPC call metadata in the context for potential
+    /// lazy construction of the raw JSON request when verbose logging is enabled.
+    /// This optimization avoids unnecessary JSON construction and cloning when
+    /// logging is disabled.
+    fn try_into_request(
+        call: &RpcMethodCall,
+        peer_addr: Option<SocketAddr>,
+    ) -> Result<JsonRpcRequest<EthRequest>, serde_json::Error> {
+        // Convert params to Value for deserialization into EthRequest.
+        // EthRequest uses #[serde(tag = "method", content = "params")] which requires
+        // a JSON object with method and params fields.
+        let params_value: serde_json::Value = call.params.clone().into();
+        let call_value = json!({
+            "method": &call.method,
+            "params": params_value,
+        });
+        let parsed = serde_json::from_value::<EthRequest>(call_value)?;
+
+        // Store the original params in metadata for lazy raw JSON construction.
+        // This avoids converting to Value until actually needed for logging.
+        let metadata = RpcCallLogContext {
+            id: Some(call.id.clone()),
+            method: Some(call.method.clone()),
+            peer_addr,
+            timestamp: Some(Utc::now()),
+            jsonrpc_version: Some(call.jsonrpc.clone()),
+            params: Some(call.params.clone()),
+        };
+
+        // Pass None for raw JSON - it will be constructed lazily only if logging is enabled
+        Ok(JsonRpcRequest::new(parsed, None, metadata))
+    }
 }
 
 #[async_trait::async_trait]
 impl RpcHandler for HttpEthRpcHandler {
-    type Request = EthRequest;
+    type Request = JsonRpcRequest<EthRequest>;
 
     async fn on_request(&self, request: Self::Request) -> ResponseResult {
-        self.api.execute(request).await
+        let (request, raw, metadata) = request.into_parts();
+        self.api.execute_with_raw(request, raw, metadata).await
+    }
+
+    async fn on_call_with_addr(
+        &self,
+        call: RpcMethodCall,
+        peer_addr: Option<SocketAddr>,
+    ) -> RpcResponse {
+        trace!(
+            target: "rpc",
+            id = ?call.id,
+            method = ?call.method,
+            ?peer_addr,
+            "handling call"
+        );
+
+        match Self::try_into_request(&call, peer_addr) {
+            Ok(request) => {
+                let result = self.on_request(request).await;
+                RpcResponse::new(call.id, result)
+            }
+            Err(err) => {
+                let err = err.to_string();
+                error!(target: "rpc", method = ?call.method, ?err, "failed to deserialize method");
+                RpcResponse::new(call.id, RpcError::invalid_params(err))
+            }
+        }
     }
 }
 
