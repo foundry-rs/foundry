@@ -704,7 +704,7 @@ impl SourcifyClient {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum SourcifyContractResponse {
-    Success(Box<SourcifyContractData>),
+    Success(SourcifyContractData),
     Error(SourcifyErrorResponse),
 }
 
@@ -730,6 +730,28 @@ struct SourcifyContractData {
     creation_transaction_hash: Option<String>,
     #[serde(default)]
     creator_address: Option<String>,
+    // Additional fields that may be present in the response
+    #[serde(default)]
+    #[allow(dead_code)]
+    match_id: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    creation_match: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    runtime_match: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    verified_at: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    r#match: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    chain_id: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    address: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -753,6 +775,10 @@ struct SourcifyErrorResponse {
     #[serde(default)]
     #[allow(dead_code)]
     error_id: String,
+    // Error responses should not have sources field
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sources: Option<()>,
 }
 
 impl ExplorerClient for SourcifyClient {
@@ -763,97 +789,108 @@ impl ExplorerClient for SourcifyClient {
         let url = self.get_contract_url(address, "sources,abi,compilation");
         let response = self.client.get(&url).send().await?;
 
-        trace!("Sourcify API response: status={:?}, url={}", response.status(), url);
-
         let status = response.status();
+        trace!("Sourcify API response: status={:?}, url={}", status, url);
+
         match status {
             StatusCode::NOT_FOUND => return Err(EtherscanError::ContractCodeNotVerified(address)),
             StatusCode::TOO_MANY_REQUESTS => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
 
+        // Read response body once
+        let response_text = response.text().await?;
+        trace!("Sourcify API response body: {}", response_text);
+
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
             return Err(EtherscanError::Unknown(format!(
-                "Sourcify API error (status {status}): {error_text}"
+                "Sourcify API error (status {status}): {response_text}"
             )));
         }
 
-        let response_data: SourcifyContractResponse = response.json().await?;
-
-        match response_data {
-            SourcifyContractResponse::Success(data) => {
-                let data = *data;
-                let sources_map = data.sources.ok_or_else(|| {
-                    EtherscanError::Unknown("Sourcify response missing sources field".to_string())
-                })?;
-
-                // Convert sources map to SourceCodeMetadata::Sources format
-                let sources: HashMap<String, SourceCodeEntry> = sources_map
-                    .into_iter()
-                    .map(|(path, content)| (path, SourceCodeEntry { content }))
-                    .collect();
-
-                let source_code = SourceCodeMetadata::Sources(sources);
-
-                let contract_name = data
-                    .compilation
-                    .as_ref()
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| "Contract".to_string());
-
-                let compiler_version = data
-                    .compilation
-                    .as_ref()
-                    .map(|c| c.compiler_version.clone())
-                    .unwrap_or_default();
-
-                let abi = data.abi.map(|a| Box::<str>::from(a.get()).into()).unwrap_or_default();
-
-                // Extract compiler_settings from compilation if available
-                let constructor_arguments = Bytes::default();
-                let optimization_used = data
-                    .compilation
-                    .as_ref()
-                    .and_then(|c| c.compiler_settings.as_ref())
-                    .and_then(|s| s.get("optimizer"))
-                    .and_then(|o| o.get("enabled"))
-                    .and_then(|e| e.as_bool())
-                    .map(|b| if b { 1 } else { 0 })
-                    .unwrap_or(0);
-
-                let runs = data
-                    .compilation
-                    .as_ref()
-                    .and_then(|c| c.compiler_settings.as_ref())
-                    .and_then(|s| s.get("optimizer"))
-                    .and_then(|o| o.get("runs"))
-                    .and_then(|r| r.as_u64())
-                    .unwrap_or(0);
-
-                Ok(ContractMetadata {
-                    items: vec![Metadata {
-                        source_code,
-                        abi,
-                        contract_name,
-                        compiler_version,
-                        optimization_used,
-                        runs,
-                        constructor_arguments,
-                        evm_version: String::new(),
-                        library: String::new(),
-                        license_type: String::new(),
-                        proxy: 0,
-                        implementation: None,
-                        swarm_source: String::new(),
-                    }],
-                })
+        // Try to deserialize as success response first
+        let data: SourcifyContractData = match serde_json::from_str(&response_text) {
+            Ok(data) => data,
+            Err(_) => {
+                // If it fails, try to deserialize as error response
+                let error: SourcifyErrorResponse = serde_json::from_str(&response_text)
+                    .map_err(|e| EtherscanError::Unknown(format!(
+                        "Failed to parse Sourcify response: {}. Response: {}",
+                        e, response_text
+                    )))?;
+                let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
+                    "Unknown Sourcify API error".to_string()
+                } else {
+                    format!("Sourcify API error: {} - {}", error.custom_code, error.message)
+                };
+                return Err(EtherscanError::Unknown(error_msg));
             }
-            SourcifyContractResponse::Error(error) => Err(EtherscanError::Unknown(format!(
-                "Sourcify API error: {} - {}",
-                error.custom_code, error.message
-            ))),
-        }
+        };
+
+        let sources_map = data.sources.ok_or_else(|| {
+            EtherscanError::Unknown("Sourcify response missing sources field".to_string())
+        })?;
+
+        // Convert sources map to SourceCodeMetadata::Sources format
+        let sources: HashMap<String, SourceCodeEntry> = sources_map
+            .into_iter()
+            .map(|(path, content)| (path, SourceCodeEntry { content }))
+            .collect();
+
+        let source_code = SourceCodeMetadata::Sources(sources);
+
+        let contract_name = data
+            .compilation
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "Contract".to_string());
+
+        let compiler_version = data
+            .compilation
+            .as_ref()
+            .map(|c| c.compiler_version.clone())
+            .unwrap_or_default();
+
+        let abi = data.abi.map(|a| Box::<str>::from(a.get()).into()).unwrap_or_default();
+
+        // Extract compiler_settings from compilation if available
+        let constructor_arguments = Bytes::default();
+        let optimization_used = data
+            .compilation
+            .as_ref()
+            .and_then(|c| c.compiler_settings.as_ref())
+            .and_then(|s| s.get("optimizer"))
+            .and_then(|o| o.get("enabled"))
+            .and_then(|e| e.as_bool())
+            .map(|b| if b { 1 } else { 0 })
+            .unwrap_or(0);
+
+        let runs = data
+            .compilation
+            .as_ref()
+            .and_then(|c| c.compiler_settings.as_ref())
+            .and_then(|s| s.get("optimizer"))
+            .and_then(|o| o.get("runs"))
+            .and_then(|r| r.as_u64())
+            .unwrap_or(0);
+
+        Ok(ContractMetadata {
+            items: vec![Metadata {
+                source_code,
+                abi,
+                contract_name,
+                compiler_version,
+                optimization_used,
+                runs,
+                constructor_arguments,
+                evm_version: String::new(),
+                library: String::new(),
+                license_type: String::new(),
+                proxy: 0,
+                implementation: None,
+                swarm_source: String::new(),
+            }],
+        })
     }
 
     async fn contract_creation_data(
@@ -867,45 +904,58 @@ impl ExplorerClient for SourcifyClient {
         let response = self.client.get(&url).send().await?;
 
         let status = response.status();
+        trace!("Sourcify API response (creation_data): status={:?}, url={}", status, url);
+
         match status {
             StatusCode::NOT_FOUND => return Err(EtherscanError::ContractCodeNotVerified(address)),
             StatusCode::TOO_MANY_REQUESTS => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
 
+        // Read response body once
+        let response_text = response.text().await?;
+        trace!("Sourcify API response body (creation_data): {}", response_text);
+
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
             return Err(EtherscanError::Unknown(format!(
-                "Sourcify API error (status {status}): {error_text}"
+                "Sourcify API error (status {status}): {response_text}"
             )));
         }
 
-        let response_data: SourcifyContractResponse = response.json().await?;
-
-        match response_data {
-            SourcifyContractResponse::Success(data) => {
-                let data = *data;
-                // Sourcify may not always provide creation transaction hash
-                // Use zero hash as fallback if not available
-                let tx_hash = data
-                    .creation_transaction_hash
-                    .and_then(|h| h.parse().ok())
-                    .unwrap_or(TxHash::ZERO);
-
-                let creator =
-                    data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
-
-                Ok(ContractCreationData {
-                    contract_address: address,
-                    contract_creator: creator,
-                    transaction_hash: tx_hash,
-                })
+        // Try to deserialize as success response first
+        let data: SourcifyContractData = match serde_json::from_str(&response_text) {
+            Ok(data) => data,
+            Err(_) => {
+                // If it fails, try to deserialize as error response
+                let error: SourcifyErrorResponse = serde_json::from_str(&response_text)
+                    .map_err(|e| EtherscanError::Unknown(format!(
+                        "Failed to parse Sourcify response: {}. Response: {}",
+                        e, response_text
+                    )))?;
+                let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
+                    "Unknown Sourcify API error".to_string()
+                } else {
+                    format!("Sourcify API error: {} - {}", error.custom_code, error.message)
+                };
+                return Err(EtherscanError::Unknown(error_msg));
             }
-            SourcifyContractResponse::Error(error) => Err(EtherscanError::Unknown(format!(
-                "Sourcify API error: {} - {}",
-                error.custom_code, error.message
-            ))),
-        }
+        };
+
+        // Sourcify may not always provide creation transaction hash
+        // Use zero hash as fallback if not available
+        let tx_hash = data
+            .creation_transaction_hash
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(TxHash::ZERO);
+
+        let creator =
+            data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
+
+        Ok(ContractCreationData {
+            contract_address: address,
+            contract_creator: creator,
+            transaction_hash: tx_hash,
+        })
     }
 }
 
