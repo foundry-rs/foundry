@@ -561,8 +561,9 @@ impl TestResult {
         reason: Option<String>,
         raw_call_result: RawCallResult,
     ) {
-        self.kind =
-            TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };
+        self.kind = TestKind::Unit {
+            gas: raw_call_result.gas_used.saturating_sub(raw_call_result.stipend),
+        };
 
         extend!(self, raw_call_result, TraceKind::Execution);
 
