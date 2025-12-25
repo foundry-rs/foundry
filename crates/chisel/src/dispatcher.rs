@@ -173,7 +173,7 @@ impl ChiselDispatcher {
         )?;
         if !identifier.is_empty() {
             for (_, trace) in &mut result.traces {
-                decoder.identify(trace, &mut identifier);
+                decoder.identify(trace, &mut identifier).await;
             }
         }
         Ok(decoder)
