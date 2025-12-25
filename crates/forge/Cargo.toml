@@ -88,6 +88,7 @@ clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
+url.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
