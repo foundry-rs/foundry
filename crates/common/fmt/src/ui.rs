@@ -34,6 +34,27 @@ pub trait UIfmt {
     fn pretty(&self) -> String;
 }
 
+/// Trim only leading empty lines without removing indentation
+fn trim_leading_empty_lines(s: &str) -> String {
+    let mut lines = s.lines();
+
+    while let Some(line) = lines.next() {
+        if !line.trim().is_empty() {
+            let mut result = String::new();
+            result.push_str(line);
+
+            for rest in lines {
+                result.push('\n');
+                result.push_str(rest);
+            }
+
+            return result;
+        }
+    }
+
+    String::new()
+}
+
 impl<T: UIfmt> UIfmt for &T {
     fn pretty(&self) -> String {
         (*self).pretty()
@@ -506,7 +527,7 @@ type                 {}
                     ",
                     tx.hash.pretty(),
                     tx.ty(),
-                    tx.inner.fields.pretty().trim_start(),
+                    trim_leading_empty_lines(&tx.inner.fields.pretty()),
                 )
             }
         }
@@ -755,7 +776,7 @@ effectiveGasPrice    {}
             self.inner.signer().pretty(),
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
-            self.inner.pretty().trim_start(),
+            trim_leading_empty_lines(&self.inner.pretty()),
         )
     }
 }
@@ -1094,6 +1115,13 @@ mod tests {
     use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
     use std::str::FromStr;
+    #[test]
+    fn trim_leading_empty_lines_preserves_indentation() {
+        let input = "\n\n    foo\n    bar\n";
+        let output = trim_leading_empty_lines(input);
+
+        assert_eq!(output, "    foo\n    bar");
+    }
 
     #[test]
     fn format_date_time() {
