@@ -796,7 +796,11 @@ impl ExplorerClient for SourcifyClient {
         &self,
         address: Address,
     ) -> std::result::Result<ContractMetadata, EtherscanError> {
-        let url = self.get_contract_url(address, "sources,abi,compilation");
+        // Request all fields including creation data to cache them
+        let url = self.get_contract_url(
+            address,
+            "sources,abi,compilation,creationTransactionHash,creatorAddress",
+        );
         let response = self.client.get(&url).send().await?;
 
         let status = response.status();
@@ -861,6 +865,19 @@ impl ExplorerClient for SourcifyClient {
 
         let abi = data.abi.map(|a| Box::<str>::from(a.get()).into()).unwrap_or_default();
 
+        // Cache creation data for later use in contract_creation_data
+        let tx_hash =
+            data.creation_transaction_hash.and_then(|h| h.parse().ok()).unwrap_or(TxHash::ZERO);
+        let creator = data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
+        let creation_data = ContractCreationData {
+            contract_address: address,
+            contract_creator: creator,
+            transaction_hash: tx_hash,
+        };
+        if let Ok(mut cache) = self.cached_creation_data.lock() {
+            *cache = Some(creation_data);
+        }
+
         // Extract compiler_settings from compilation if available
         let constructor_arguments = Bytes::default();
         let optimization_used = data
@@ -913,120 +930,17 @@ impl ExplorerClient for SourcifyClient {
             return Ok(*cached_data);
         }
 
-        // Fetch creation data from API
-        // Note: Sourcify may not always provide these fields, so we use fallback values
-        let url = self.get_contract_url(address, "creationTransactionHash,creatorAddress");
-        let response = match self.client.get(&url).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                trace!("Failed to fetch creation data from Sourcify: {e}, using fallback values");
-                // If request fails, use fallback values
-                let creation_data = ContractCreationData {
-                    contract_address: address,
-                    contract_creator: Address::ZERO,
-                    transaction_hash: TxHash::ZERO,
-                };
-                if let Ok(mut cache) = self.cached_creation_data.lock() {
-                    *cache = Some(creation_data);
-                }
-                return Ok(creation_data);
-            }
+        // If cache is empty or address doesn't match, use fallback values
+        // This should rarely happen since we cache in contract_source_code
+        trace!("Creation data not in cache for address {address}, using fallback values");
+        let creation_data = ContractCreationData {
+            contract_address: address,
+            contract_creator: Address::ZERO,
+            transaction_hash: TxHash::ZERO,
         };
-
-        let status = response.status();
-        trace!("Sourcify API response (creation_data): status={:?}, url={}", status, url);
-
-        match status {
-            StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST => {
-                // These fields may not be available for this contract, use fallback values
-                trace!("Creation data fields not available for contract, using fallback values");
-                let creation_data = ContractCreationData {
-                    contract_address: address,
-                    contract_creator: Address::ZERO,
-                    transaction_hash: TxHash::ZERO,
-                };
-                if let Ok(mut cache) = self.cached_creation_data.lock() {
-                    *cache = Some(creation_data);
-                }
-                return Ok(creation_data);
-            }
-            StatusCode::TOO_MANY_REQUESTS => return Err(EtherscanError::RateLimitExceeded),
-            _ => {}
+        if let Ok(mut cache) = self.cached_creation_data.lock() {
+            *cache = Some(creation_data);
         }
-
-        // Read response body once
-        let response_text = match response.text().await {
-            Ok(text) => text,
-            Err(e) => {
-                trace!("Failed to read response body: {e}, using fallback values");
-                let creation_data = ContractCreationData {
-                    contract_address: address,
-                    contract_creator: Address::ZERO,
-                    transaction_hash: TxHash::ZERO,
-                };
-                if let Ok(mut cache) = self.cached_creation_data.lock() {
-                    *cache = Some(creation_data);
-                }
-                return Ok(creation_data);
-            }
-        };
-        trace!("Sourcify API response body (creation_data): {}", response_text);
-
-        if !status.is_success() {
-            // If status is not success, use fallback values instead of error
-            trace!("Sourcify API returned non-success status {status}, using fallback values");
-            let creation_data = ContractCreationData {
-                contract_address: address,
-                contract_creator: Address::ZERO,
-                transaction_hash: TxHash::ZERO,
-            };
-            if let Ok(mut cache) = self.cached_creation_data.lock() {
-                *cache = Some(creation_data);
-            }
-            return Ok(creation_data);
-        }
-
-        // Try to deserialize as success response
-        let data: SourcifyContractData = match serde_json::from_str(&response_text) {
-            Ok(data) => data,
-            Err(_) => {
-                // If deserialization fails, try error response, but still use fallback values
-                let _error: SourcifyErrorResponse = match serde_json::from_str(&response_text) {
-                    Ok(e) => e,
-                    Err(_) => {
-                        // Can't parse as either success or error, use fallback
-                        trace!("Failed to parse Sourcify response, using fallback values");
-                        let creation_data = ContractCreationData {
-                            contract_address: address,
-                            contract_creator: Address::ZERO,
-                            transaction_hash: TxHash::ZERO,
-                        };
-                        if let Ok(mut cache) = self.cached_creation_data.lock() {
-                            *cache = Some(creation_data);
-                        }
-                        return Ok(creation_data);
-                    }
-                };
-                // Even if we got an error response, use fallback values
-                trace!("Sourcify returned error response, using fallback values");
-                let creation_data = ContractCreationData {
-                    contract_address: address,
-                    contract_creator: Address::ZERO,
-                    transaction_hash: TxHash::ZERO,
-                };
-                if let Ok(mut cache) = self.cached_creation_data.lock() {
-                    *cache = Some(creation_data);
-                }
-                return Ok(creation_data);
-            }
-        };
-
-        // Sourcify may not always provide creation transaction hash
-        // Use zero hash as fallback if not available
-        let tx_hash =
-            data.creation_transaction_hash.and_then(|h| h.parse().ok()).unwrap_or(TxHash::ZERO);
-
-        let creator = data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
 
         let creation_data = ContractCreationData {
             contract_address: address,
