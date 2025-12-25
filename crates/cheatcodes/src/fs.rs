@@ -441,10 +441,13 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
             version = parts.next();
         }
 
-        let version = if let Some(version) = version {
-            Some(Version::parse(version).map_err(|e| fmt_err!("failed parsing version: {e}"))?)
+        let (version, profile) = if let Some(version) = version {
+            match Version::parse(version) {
+                Ok(v) => (Some(v), None),
+                Err(_) => (None, Some(version)),
+            }
         } else {
-            None
+            (None, None)
         };
 
         // Use available artifacts list if present
@@ -469,6 +472,11 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         && (id.version.minor != version.minor
                             || id.version.major != version.major
                             || id.version.patch != version.patch)
+                    {
+                        return false;
+                    }
+                    if let Some(profile) = profile
+                        && id.profile != profile
                     {
                         return false;
                     }
@@ -900,18 +908,41 @@ mod tests {
     fn test_ffi_hex() {
         let msg = b"gm";
         let cheats = cheats();
+
+        #[cfg(not(windows))]
         let args = ["echo".to_string(), hex::encode(msg)];
+        #[cfg(windows)]
+        let args = ["cmd".to_string(), "/c".to_string(), "echo".to_string(), hex::encode(msg)];
+
         let output = ffi(&cheats, &args).unwrap();
-        assert_eq!(output.stdout, Bytes::from(msg));
+        // cmd /c echo adds a newline \r\n
+        let out = output.stdout;
+        #[cfg(windows)]
+        let out = Bytes::from(out.strip_suffix(b"\r\n").unwrap_or(&out).to_vec());
+        #[cfg(not(windows))]
+        let out = Bytes::from(out.strip_suffix(b"\n").unwrap_or(&out).to_vec());
+
+        assert_eq!(out, Bytes::from(msg.as_slice()));
     }
 
     #[test]
     fn test_ffi_string() {
         let msg = "gm";
         let cheats = cheats();
+
+        #[cfg(not(windows))]
         let args = ["echo".to_string(), msg.to_string()];
+        #[cfg(windows)]
+        let args = ["cmd".to_string(), "/c".to_string(), "echo".to_string(), msg.to_string()];
+
         let output = ffi(&cheats, &args).unwrap();
-        assert_eq!(output.stdout, Bytes::from(msg.as_bytes()));
+        let out = output.stdout;
+        #[cfg(windows)]
+        let out = Bytes::from(out.strip_suffix(b"\r\n").unwrap_or(&out).to_vec());
+        #[cfg(not(windows))]
+        let out = Bytes::from(out.strip_suffix(b"\n").unwrap_or(&out).to_vec());
+
+        assert_eq!(out, Bytes::from(msg.as_bytes()));
     }
 
     #[test]

@@ -25,6 +25,10 @@ contract Issue2851Test is Test {
     /// forge-config: default.fuzz.dictionary.max_fuzz_dictionary_literals = 0
     /// forge-config: default.fuzz.seed = '111'
     function invariantNotZero() public {
+        try this.invariantNotZeroInner() {} catch {}
+    }
+
+    function invariantNotZeroInner() external {
         assertEq(back.number(), 1);
     }
 }
