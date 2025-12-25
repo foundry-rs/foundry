@@ -942,17 +942,6 @@ impl ExplorerClient for SourcifyClient {
             *cache = Some(creation_data);
         }
 
-        let creation_data = ContractCreationData {
-            contract_address: address,
-            contract_creator: creator,
-            transaction_hash: tx_hash,
-        };
-
-        // Cache the result
-        if let Ok(mut cache) = self.cached_creation_data.lock() {
-            *cache = Some(creation_data);
-        }
-
         Ok(creation_data)
     }
 }
