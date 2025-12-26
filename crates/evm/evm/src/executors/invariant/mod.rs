@@ -1031,8 +1031,9 @@ pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result
     }
 
     // Perform the raw call.
+    let value = tx.call_details.value.unwrap_or(U256::ZERO);
     let mut call_result = executor
-        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), U256::ZERO)
+        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
 
     // Propagate block adjustments to call result which will be committed.
