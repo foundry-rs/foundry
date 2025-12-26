@@ -37,7 +37,11 @@ impl SessionSource {
             Ok((bytecode.into_owned(), output.final_pc(contract)?))
         })?;
 
-        let Some(final_pc) = final_pc else { return Ok(Default::default()) };
+        let Some(final_pc) = final_pc else {
+            // If final_pc is None, the run() function is empty or has no executable statements.
+            // Return a successful result instead of a failed one.
+            return Ok(ChiselResult { success: true, ..Default::default() });
+        };
 
         let mut runner = self.build_runner(final_pc).await?;
         runner.run(bytecode)

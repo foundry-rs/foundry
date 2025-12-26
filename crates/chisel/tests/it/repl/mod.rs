@@ -252,3 +252,11 @@ repl_test!(test_int_formatting, |repl| {
         repl.expect(&format!("Hex: 0x{}e", "f".repeat(size_minus_1)));
     }
 });
+
+// Issue #12924: Test variable declaration with assembly block assignment.
+repl_test!(test_assembly_variable_assignment, |repl| {
+    repl.sendln("address addr;");
+    repl.sendln("assembly { addr := not(0) }");
+    repl.sendln("addr");
+    repl.expect("0xffffffffffffffffffffffffffffffffffffffff");
+});
