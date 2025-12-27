@@ -226,7 +226,6 @@ impl RunArgs {
                 InternalTraceMode::None
             })
             .with_state_changes(shell::verbosity() > 4);
-
         let mut executor = TracingExecutor::new(
             env.clone(),
             fork,
