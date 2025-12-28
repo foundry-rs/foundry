@@ -33,8 +33,8 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TxEnvelope, Typed2718,
+    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    TrieAccount, TxEnvelope, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -1981,7 +1981,8 @@ impl Backend {
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer
                         | GethDebugBuiltInTracerType::MuxTracer
-                        | GethDebugBuiltInTracerType::FlatCallTracer => {
+                        | GethDebugBuiltInTracerType::FlatCallTracer
+                        | GethDebugBuiltInTracerType::Erc7562Tracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
@@ -2569,7 +2570,7 @@ impl Backend {
         &self,
         address: Address,
         block_request: Option<BlockRequest>,
-    ) -> Result<Account, BlockchainError> {
+    ) -> Result<TrieAccount, BlockchainError> {
         self.with_database_at(block_request, |block_db, _| {
             let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
             let account = db.get(&address).cloned().unwrap_or_default();
@@ -2577,7 +2578,7 @@ impl Backend {
             let code_hash = account.info.code_hash;
             let balance = account.info.balance;
             let nonce = account.info.nonce;
-            Ok(Account { balance, nonce, code_hash, storage_root })
+            Ok(TrieAccount { balance, nonce, code_hash, storage_root })
         })
         .await?
     }
@@ -2951,6 +2952,7 @@ impl Backend {
                     }
                     GethDebugBuiltInTracerType::NoopTracer
                     | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::Erc7562Tracer
                     | GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
