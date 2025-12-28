@@ -29,7 +29,7 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
 };
-use alloy_consensus::{Account, Blob, Transaction, TxEip4844Variant, transaction::Recovered};
+use alloy_consensus::{Blob, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
@@ -751,7 +751,7 @@ impl EthApi {
         &self,
         address: Address,
         block_number: Option<BlockId>,
-    ) -> Result<Account> {
+    ) -> Result<TrieAccount> {
         node_info!("eth_getAccount");
         let block_request = self.block_request(block_number).await?;
 
