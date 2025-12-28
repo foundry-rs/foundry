@@ -1,7 +1,6 @@
 use crate::eth::{
     EthApi,
     error::{BlockchainError, Result},
-    macros::node_info,
 };
 use alloy_consensus::Transaction as TransactionTrait;
 use alloy_network::{
@@ -32,7 +31,7 @@ impl EthApi {
         &self,
         number: BlockNumber,
     ) -> Result<Option<AnyRpcBlock>> {
-        node_info!("erigon_getHeaderByNumber");
+        self.log_rpc_method("erigon_getHeaderByNumber");
 
         self.backend.block_by_number(number).await
     }
@@ -40,7 +39,7 @@ impl EthApi {
     /// As per the latest Otterscan source code, at least version 8 is needed.
     /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2>
     pub async fn ots_get_api_level(&self) -> Result<u64> {
-        node_info!("ots_getApiLevel");
+        self.log_rpc_method("ots_getApiLevel");
 
         // as required by current otterscan's source code
         Ok(8)
@@ -49,7 +48,7 @@ impl EthApi {
     /// Trace internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
     /// certain transaction.
     pub async fn ots_get_internal_operations(&self, hash: B256) -> Result<Vec<InternalOperation>> {
-        node_info!("ots_getInternalOperations");
+        self.log_rpc_method("ots_getInternalOperations");
 
         self.backend
             .mined_transaction(hash)
@@ -59,7 +58,7 @@ impl EthApi {
 
     /// Check if an ETH address contains code at a certain block number.
     pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
-        node_info!("ots_hasCode");
+        self.log_rpc_method("ots_hasCode");
         let block_id = Some(BlockId::Number(block_number));
         Ok(!self.get_code(address, block_id).await?.is_empty())
     }
@@ -69,7 +68,7 @@ impl EthApi {
     ///
     /// Follows format specified in the [`ots_traceTransaction`](https://docs.otterscan.io/api-docs/ots-api#ots_tracetransaction) spec.
     pub async fn ots_trace_transaction(&self, hash: B256) -> Result<Vec<TraceEntry>> {
-        node_info!("ots_traceTransaction");
+        self.log_rpc_method("ots_traceTransaction");
         let traces = self
             .backend
             .trace_transaction(hash)
@@ -82,7 +81,7 @@ impl EthApi {
 
     /// Given a transaction hash, returns its raw revert reason.
     pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
-        node_info!("ots_getTransactionError");
+        self.log_rpc_method("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash)
             && !receipt.inner.as_ref().status()
@@ -100,7 +99,7 @@ impl EthApi {
         &self,
         number: BlockNumber,
     ) -> Result<BlockDetails<AnyRpcHeader>> {
-        node_info!("ots_getBlockDetails");
+        self.log_rpc_method("ots_getBlockDetails");
 
         if let Some(block) = self.backend.block_by_number(number).await? {
             let ots_block = self.build_ots_block_details(block).await?;
@@ -117,7 +116,7 @@ impl EthApi {
         &self,
         hash: B256,
     ) -> Result<BlockDetails<AnyRpcHeader>> {
-        node_info!("ots_getBlockDetailsByHash");
+        self.log_rpc_method("ots_getBlockDetailsByHash");
 
         if let Some(block) = self.backend.block_by_hash(hash).await? {
             let ots_block = self.build_ots_block_details(block).await?;
@@ -135,7 +134,7 @@ impl EthApi {
         page: usize,
         page_size: usize,
     ) -> Result<OtsBlockTransactions<AnyRpcTransaction, AnyRpcHeader>> {
-        node_info!("ots_getBlockTransactions");
+        self.log_rpc_method("ots_getBlockTransactions");
 
         match self.backend.block_by_number_full(number.into()).await? {
             Some(block) => self.build_ots_block_tx(block, page, page_size).await,
@@ -150,7 +149,7 @@ impl EthApi {
         block_number: u64,
         page_size: usize,
     ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
-        node_info!("ots_searchTransactionsBefore");
+        self.log_rpc_method("ots_searchTransactionsBefore");
 
         let best = self.backend.best_number();
         // we go from given block (defaulting to best) down to first block
@@ -194,7 +193,7 @@ impl EthApi {
         block_number: u64,
         page_size: usize,
     ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
-        node_info!("ots_searchTransactionsAfter");
+        self.log_rpc_method("ots_searchTransactionsAfter");
 
         let best = self.backend.best_number();
         // we go from the first post-fork block, up to the tip
@@ -245,7 +244,7 @@ impl EthApi {
         address: Address,
         nonce: U256,
     ) -> Result<Option<B256>> {
-        node_info!("ots_getTransactionBySenderAndNonce");
+        self.log_rpc_method("ots_getTransactionBySenderAndNonce");
 
         let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
         let to = self.backend.best_number();
@@ -266,7 +265,7 @@ impl EthApi {
     /// Given an ETH contract address, returns the tx hash and the direct address who created the
     /// contract.
     pub async fn ots_get_contract_creator(&self, addr: Address) -> Result<Option<ContractCreator>> {
-        node_info!("ots_getContractCreator");
+        self.log_rpc_method("ots_getContractCreator");
 
         let from = self.get_fork().map(|f| f.block_number()).unwrap_or_default();
         let to = self.backend.best_number();

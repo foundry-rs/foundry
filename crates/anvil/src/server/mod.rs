@@ -31,7 +31,11 @@ pub async fn serve_on(
     api: EthApi,
     config: ServerConfig,
 ) -> io::Result<()> {
-    axum::serve(tcp_listener, router(api, config).into_make_service()).await
+    axum::serve(
+        tcp_listener,
+        router(api, config).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
 }
 
 /// Configures an [`axum::Router`] that handles [`EthApi`] related JSON-RPC calls via HTTP and WS,

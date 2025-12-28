@@ -142,7 +142,7 @@ impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection
         let handler = self.compat_helper();
         self.processing.push(Box::pin(async move {
             match req {
-                Ok(req) => handle_request(req, handler)
+                Ok(req) => handle_request(req, handler, None)
                     .await
                     .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
                 Err(err) => {

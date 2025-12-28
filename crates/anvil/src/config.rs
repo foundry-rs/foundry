@@ -208,6 +208,8 @@ pub struct NodeConfig {
     pub silent: bool,
     /// The path where states are cached.
     pub cache_path: Option<PathBuf>,
+    /// Whether RPC request/response payload logging (via `rpc_log`) is enabled.
+    pub rpc_log: bool,
 }
 
 impl NodeConfig {
@@ -501,6 +503,7 @@ impl Default for NodeConfig {
             networks: Default::default(),
             silent: false,
             cache_path: None,
+            rpc_log: false,
         }
     }
 }
@@ -512,6 +515,7 @@ impl NodeConfig {
         self.memory_limit = mems_value;
         self
     }
+
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> u64 {
         self.base_fee
@@ -1048,6 +1052,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
+        self
+    }
+
+    /// Sets whether RPC payload logging is enabled.
+    #[must_use]
+    pub fn with_rpc_logging(mut self, rpc_log: bool) -> Self {
+        self.rpc_log = rpc_log;
         self
     }
 

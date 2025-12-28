@@ -74,7 +74,12 @@ use anvil_core::{
     },
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::RpcError,
+    request::{Id as RpcId, RequestParams, Version},
+    response::ResponseResult,
+};
+use chrono::{DateTime, Utc};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
@@ -92,7 +97,16 @@ use revm::{
     interpreter::{InstructionResult, return_ok, return_revert},
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
-use std::{sync::Arc, time::Duration};
+use serde_json::Value;
+use std::{
+    borrow::Cow,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio::{
     sync::mpsc::{UnboundedReceiver, unbounded_channel},
     try_join,
@@ -100,6 +114,119 @@ use tokio::{
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
+
+/// Context information for RPC call logging.
+///
+/// This struct carries metadata about an RPC call to provide rich context when logging
+/// requests and responses. It is used by the RPC logging system to append contextual
+/// information to log messages, making it easier to trace and debug individual RPC calls.
+///
+/// # Fields
+///
+/// * `id` - The RPC request ID from the JSON-RPC request
+/// * `method` - The RPC method name being called (e.g., "eth_getBalance")
+/// * `peer_addr` - The socket address of the client making the request
+/// * `timestamp` - The timestamp when the request was received
+///
+/// # Usage
+///
+/// When verbose RPC logging is enabled, this context is used to format log labels with
+/// additional metadata. For example, a log message might be formatted as:
+/// ```text
+/// RPC request [id=1, method=eth_getBalance, peer=127.0.0.1:8545, ts=2025-12-19T00:00:00Z]: {...}
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct RpcCallLogContext {
+    pub id: Option<RpcId>,
+    pub method: Option<String>,
+    pub peer_addr: Option<SocketAddr>,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub jsonrpc_version: Option<Version>,
+    pub params: Option<RequestParams>,
+}
+
+impl RpcCallLogContext {
+    /// Creates a formatted suffix string containing available context information.
+    ///
+    /// This method builds a comma-separated string from the non-None fields in the context.
+    /// Each field is formatted as `key=value`. If no fields are present, returns `None`.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(String)` - A comma-separated list of context fields (e.g., "id=1, method=eth_call")
+    /// * `None` - If all context fields are empty
+    fn label_suffix(&self) -> Option<String> {
+        let mut parts = Vec::new();
+
+        if let Some(id) = self.id.as_ref() {
+            parts.push(format!("id={id}"));
+        }
+
+        if let Some(method) = self.method.as_ref() {
+            parts.push(format!("method={method}"));
+        }
+
+        if let Some(peer_addr) = self.peer_addr {
+            parts.push(format!("peer={peer_addr}"));
+        }
+
+        if let Some(timestamp) = self.timestamp.as_ref() {
+            parts.push(format!("ts={}", timestamp.to_rfc3339()));
+        }
+
+        (!parts.is_empty()).then(|| parts.join(", "))
+    }
+
+    /// Formats a log label by appending context information in square brackets.
+    ///
+    /// If context information is available, it appends it to the base label in the format
+    /// `"base [context]"`. If no context is available, returns the base label unchanged.
+    ///
+    /// # Arguments
+    ///
+    /// * `base` - The base label string (e.g., "RPC request")
+    ///
+    /// # Returns
+    ///
+    /// A `Cow<str>` containing either:
+    /// * The base label with context appended (owned) - e.g., "RPC request [id=1, method=eth_call]"
+    /// * The base label unchanged (borrowed) - if no context is available
+    fn format_label<'a>(&self, base: &'a str) -> Cow<'a, str> {
+        match self.label_suffix() {
+            Some(suffix) => Cow::Owned(format!("{base} [{suffix}]")),
+            None => Cow::Borrowed(base),
+        }
+    }
+
+    /// Constructs the raw JSON-RPC request from stored context data.
+    ///
+    /// This method lazily builds the full JSON-RPC request payload only when needed
+    /// (e.g., for verbose logging). It requires jsonrpc_version, method, params, and id
+    /// to be present in the context.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Value)` - The constructed JSON-RPC request object
+    /// * `None` - If any required field is missing
+    pub(crate) fn to_raw_json(&self) -> Option<Value> {
+        let jsonrpc = self.jsonrpc_version.as_ref()?;
+        let method = self.method.as_ref()?;
+        let params = self.params.as_ref()?;
+        let id = self.id.as_ref()?;
+
+        // Convert RequestParams to Value only when actually constructing the JSON.
+        // Note: This clone is necessary because RequestParams::into() consumes self.
+        // A potential future optimization would be to implement From<&RequestParams> for Value.
+        let params_value: serde_json::Value = params.clone().into();
+
+        Some(serde_json::json!({
+            "jsonrpc": jsonrpc,
+            "method": method,
+            "params": params_value,
+            "id": id,
+        }))
+    }
+}
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
@@ -134,6 +261,8 @@ pub struct EthApi {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
+    /// Whether RPC payload logging is enabled.
+    rpc_payload_logging: Arc<AtomicBool>,
 }
 
 impl EthApi {
@@ -149,6 +278,7 @@ impl EthApi {
         logger: LoggingManager,
         filters: Filters,
         transactions_order: TransactionOrder,
+        rpc_payload_logging: bool,
     ) -> Self {
         Self {
             pool,
@@ -163,12 +293,40 @@ impl EthApi {
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
+            rpc_payload_logging: Arc::new(AtomicBool::new(rpc_payload_logging)),
         }
     }
 
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
+        self.execute_with_raw(request, None, RpcCallLogContext::default()).await
+    }
+
+    /// Executes the [EthRequest] with optional raw JSON request data and logging context.
+    ///
+    /// This method extends [`Self::execute`] by accepting the raw JSON-RPC request payload and metadata
+    /// for verbose RPC logging. When verbose logging is enabled, both the request and response
+    /// payloads are logged with contextual information (RPC ID, method, peer address, timestamp).
+    ///
+    /// # Parameters
+    ///
+    /// * `request` - The parsed [EthRequest] to execute
+    /// * `raw_request` - Optional raw JSON value from the original RPC request for logging
+    /// * `context` - Metadata about the RPC call (ID, method, peer address, timestamp)
+    ///
+    /// # Usage
+    ///
+    /// This method should be called by RPC handlers that have access to the raw request payload
+    /// and want to enable verbose logging. For simple execution without logging context, use
+    /// [`Self::execute`] instead.
+    pub async fn execute_with_raw(
+        &self,
+        request: EthRequest,
+        raw_request: Option<Value>,
+        context: RpcCallLogContext,
+    ) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
+        self.log_rpc_payload("RPC request", raw_request.as_ref(), &request, &context);
         let response = match request.clone() {
             EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
@@ -523,13 +681,111 @@ impl EthApi {
             }
         };
 
+        self.log_rpc_payload_with_serialization("RPC response", &response, &context);
+
         if let ResponseResult::Error(err) = &response {
-            node_info!("\nRPC request failed:");
-            node_info!("    Request: {:?}", request);
+            let label = context.format_label("\nRPC request failed");
+            node_info!("{label}:");
+            // Try to use provided raw request, or lazily construct it from context
+            let resolved_raw = raw_request.or_else(|| context.to_raw_json());
+            if let Some(raw) = resolved_raw {
+                match serde_json::to_string(&raw) {
+                    Ok(serialized) => node_info!("    Request: {serialized}"),
+                    Err(_) => node_info!("    Request: {:?}", request),
+                }
+            } else {
+                node_info!("    Request: {:?}", request);
+            }
             node_info!("    Error: {}\n", err);
         }
 
         response
+    }
+
+    fn should_log_rpc_payloads(&self) -> bool {
+        self.logger.is_enabled() && self.rpc_payload_logging.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn log_rpc_method(&self, method: &str) {
+        if !self.should_log_rpc_payloads() {
+            node_info!("{method}");
+        }
+    }
+
+    /// Logs an RPC payload (request or response) with contextual information.
+    ///
+    /// This helper method is used for verbose RPC logging. It checks whether verbose RPC logging
+    /// is enabled before proceeding. If enabled, it attempts to use the provided JSON value,
+    /// or lazily constructs it from the context. If neither is available, it falls back to the
+    /// debug representation. The log output includes contextual metadata from [RpcCallLogContext]
+    /// (RPC ID, method, peer, timestamp).
+    ///
+    /// # Parameters
+    ///
+    /// * `label` - Base label for the log entry (e.g., "RPC request", "RPC response")
+    /// * `json_value` - Optional JSON representation of the payload for clean serialization
+    /// * `debug_value` - The typed value to log if JSON serialization is not available
+    /// * `context` - Metadata about the RPC call for enriching the log output (also used for
+    ///   lazy JSON construction if `json_value` is None)
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - The type of the debug_value, must implement [std::fmt::Debug]
+    ///
+    /// This method can be called unconditionally; it will only log if verbose RPC logging
+    /// is enabled (via [`Self::should_log_rpc_payloads`]).
+    fn log_rpc_payload<T>(
+        &self,
+        label: &str,
+        json_value: Option<&Value>,
+        debug_value: &T,
+        context: &RpcCallLogContext,
+    ) where
+        T: std::fmt::Debug,
+    {
+        if !self.should_log_rpc_payloads() {
+            return;
+        }
+        // Lazily construct raw JSON from context if not provided
+        let resolved_json = json_value.cloned().or_else(|| context.to_raw_json());
+        let payload = match resolved_json.as_ref() {
+            Some(value) => {
+                serde_json::to_string(value).unwrap_or_else(|_| format!("{debug_value:?}"))
+            }
+            None => format!("{debug_value:?}"),
+        };
+        let label = context.format_label(label);
+        node_info!("{label}: {payload}");
+    }
+
+    /// Logs an RPC payload with automatic serialization.
+    ///
+    /// This is a convenience wrapper around [`Self::log_rpc_payload`] that handles serialization
+    /// of the debug value to JSON. This is useful when you don't have a pre-serialized JSON
+    /// value and want the method to handle lazy serialization only when logging is enabled.
+    ///
+    /// # Parameters
+    ///
+    /// * `label` - Base label for the log entry (e.g., "RPC response")
+    /// * `debug_value` - The value to serialize and log
+    /// * `context` - Metadata about the RPC call for enriching the log output
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - The type of the debug_value, must implement both [std::fmt::Debug] and [serde::Serialize]
+    fn log_rpc_payload_with_serialization<T>(
+        &self,
+        label: &str,
+        debug_value: &T,
+        context: &RpcCallLogContext,
+    ) where
+        T: std::fmt::Debug + serde::Serialize,
+    {
+        if !self.should_log_rpc_payloads() {
+            return;
+        }
+        let json_value = serde_json::to_value(debug_value).ok();
+        self.log_rpc_payload(label, json_value.as_ref(), debug_value, context);
     }
 
     fn sign_request(&self, from: &Address, request: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
@@ -582,7 +838,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `web3_clientVersion`
     pub fn client_version(&self) -> Result<String> {
-        node_info!("web3_clientVersion");
+        self.log_rpc_method("web3_clientVersion");
         Ok(CLIENT_VERSION.to_string())
     }
 
@@ -590,7 +846,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `web3_sha3`
     pub fn sha3(&self, bytes: Bytes) -> Result<String> {
-        node_info!("web3_sha3");
+        self.log_rpc_method("web3_sha3");
         let hash = alloy_primitives::keccak256(bytes.as_ref());
         Ok(alloy_primitives::hex::encode_prefixed(&hash[..]))
     }
@@ -599,7 +855,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_protocolVersion`
     pub fn protocol_version(&self) -> Result<u64> {
-        node_info!("eth_protocolVersion");
+        self.log_rpc_method("eth_protocolVersion");
         Ok(1)
     }
 
@@ -607,7 +863,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_hashrate`
     pub fn hashrate(&self) -> Result<U256> {
-        node_info!("eth_hashrate");
+        self.log_rpc_method("eth_hashrate");
         Ok(U256::ZERO)
     }
 
@@ -615,7 +871,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_coinbase`
     pub fn author(&self) -> Result<Address> {
-        node_info!("eth_coinbase");
+        self.log_rpc_method("eth_coinbase");
         Ok(self.backend.coinbase())
     }
 
@@ -623,7 +879,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_mining`
     pub fn is_mining(&self) -> Result<bool> {
-        node_info!("eth_mining");
+        self.log_rpc_method("eth_mining");
         Ok(self.is_mining)
     }
 
@@ -633,7 +889,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_chainId`
     pub fn eth_chain_id(&self) -> Result<Option<U64>> {
-        node_info!("eth_chainId");
+        self.log_rpc_method("eth_chainId");
         Ok(Some(self.backend.chain_id().to::<U64>()))
     }
 
@@ -641,7 +897,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_networkId`
     pub fn network_id(&self) -> Result<Option<String>> {
-        node_info!("eth_networkId");
+        self.log_rpc_method("eth_networkId");
         let chain_id = self.backend.chain_id().to::<u64>();
         Ok(Some(format!("{chain_id}")))
     }
@@ -650,13 +906,13 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `net_listening`
     pub fn net_listening(&self) -> Result<bool> {
-        node_info!("net_listening");
+        self.log_rpc_method("net_listening");
         Ok(self.net_listening)
     }
 
     /// Returns the current gas price
     fn eth_gas_price(&self) -> Result<U256> {
-        node_info!("eth_gasPrice");
+        self.log_rpc_method("eth_gasPrice");
         Ok(U256::from(self.gas_price()))
     }
 
@@ -702,7 +958,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_accounts`
     pub fn accounts(&self) -> Result<Vec<Address>> {
-        node_info!("eth_accounts");
+        self.log_rpc_method("eth_accounts");
         let mut unique = HashSet::new();
         let mut accounts: Vec<Address> = Vec::new();
         for signer in self.signers.iter() {
@@ -722,7 +978,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_blockNumber`
     pub fn block_number(&self) -> Result<U256> {
-        node_info!("eth_blockNumber");
+        self.log_rpc_method("eth_blockNumber");
         Ok(U256::from(self.backend.best_number()))
     }
 
@@ -730,7 +986,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
     pub async fn balance(&self, address: Address, block_number: Option<BlockId>) -> Result<U256> {
-        node_info!("eth_getBalance");
+        self.log_rpc_method("eth_getBalance");
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
@@ -752,7 +1008,7 @@ impl EthApi {
         address: Address,
         block_number: Option<BlockId>,
     ) -> Result<Account> {
-        node_info!("eth_getAccount");
+        self.log_rpc_method("eth_getAccount");
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
@@ -774,7 +1030,7 @@ impl EthApi {
         address: Address,
         block_number: Option<BlockId>,
     ) -> Result<alloy_rpc_types::eth::AccountInfo> {
-        node_info!("eth_getAccountInfo");
+        self.log_rpc_method("eth_getAccountInfo");
 
         if let Some(fork) = self.get_fork() {
             let block_request = self.block_request(block_number).await?;
@@ -822,7 +1078,7 @@ impl EthApi {
         index: U256,
         block_number: Option<BlockId>,
     ) -> Result<B256> {
-        node_info!("eth_getStorageAt");
+        self.log_rpc_method("eth_getStorageAt");
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
@@ -842,7 +1098,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
     pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>> {
-        node_info!("eth_getBlockByHash");
+        self.log_rpc_method("eth_getBlockByHash");
         self.backend.block_by_hash(hash).await
     }
 
@@ -850,7 +1106,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
     pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<AnyRpcBlock>> {
-        node_info!("eth_getBlockByHash");
+        self.log_rpc_method("eth_getBlockByHash");
         self.backend.block_by_hash_full(hash).await
     }
 
@@ -858,7 +1114,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
-        node_info!("eth_getBlockByNumber");
+        self.log_rpc_method("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(Some(self.pending_block().await));
         }
@@ -870,7 +1126,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
-        node_info!("eth_getBlockByNumber");
+        self.log_rpc_method("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(self.pending_block_full().await);
         }
@@ -888,7 +1144,7 @@ impl EthApi {
         address: Address,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
-        node_info!("eth_getTransactionCount");
+        self.log_rpc_method("eth_getTransactionCount");
         self.get_transaction_count(address, block_number).await.map(U256::from)
     }
 
@@ -896,7 +1152,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByHash`
     pub async fn block_transaction_count_by_hash(&self, hash: B256) -> Result<Option<U256>> {
-        node_info!("eth_getBlockTransactionCountByHash");
+        self.log_rpc_method("eth_getBlockTransactionCountByHash");
         let block = self.backend.block_by_hash(hash).await?;
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
@@ -913,7 +1169,7 @@ impl EthApi {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<U256>> {
-        node_info!("eth_getBlockTransactionCountByNumber");
+        self.log_rpc_method("eth_getBlockTransactionCountByNumber");
         let block_request = self.block_request(Some(block_number.into())).await?;
         if let BlockRequest::Pending(txs) = block_request {
             let block = self.backend.pending_block(txs).await;
@@ -932,7 +1188,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockHash`
     pub async fn block_uncles_count_by_hash(&self, hash: B256) -> Result<U256> {
-        node_info!("eth_getUncleCountByBlockHash");
+        self.log_rpc_method("eth_getUncleCountByBlockHash");
         let block =
             self.backend.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
         Ok(U256::from(block.uncles.len()))
@@ -942,7 +1198,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockNumber`
     pub async fn block_uncles_count_by_number(&self, block_number: BlockNumber) -> Result<U256> {
-        node_info!("eth_getUncleCountByBlockNumber");
+        self.log_rpc_method("eth_getUncleCountByBlockNumber");
         let block = self
             .backend
             .block_by_number(block_number)
@@ -955,7 +1211,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getCode`
     pub async fn get_code(&self, address: Address, block_number: Option<BlockId>) -> Result<Bytes> {
-        node_info!("eth_getCode");
+        self.log_rpc_method("eth_getCode");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
@@ -977,7 +1233,7 @@ impl EthApi {
         keys: Vec<B256>,
         block_number: Option<BlockId>,
     ) -> Result<EIP1186AccountProofResponse> {
-        node_info!("eth_getProof");
+        self.log_rpc_method("eth_getProof");
         let block_request = self.block_request(block_number).await?;
 
         // If we're in forking mode, or still on the forked block (no blocks mined yet) then we can
@@ -1001,7 +1257,7 @@ impl EthApi {
         _address: Address,
         _data: serde_json::Value,
     ) -> Result<String> {
-        node_info!("eth_signTypedData");
+        self.log_rpc_method("eth_signTypedData");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -1013,7 +1269,7 @@ impl EthApi {
         _address: Address,
         _data: serde_json::Value,
     ) -> Result<String> {
-        node_info!("eth_signTypedData_v3");
+        self.log_rpc_method("eth_signTypedData_v3");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -1021,7 +1277,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_signTypedData_v4`
     pub async fn sign_typed_data_v4(&self, address: Address, data: &TypedData) -> Result<String> {
-        node_info!("eth_signTypedData_v4");
+        self.log_rpc_method("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
         let signature = alloy_primitives::hex::encode(signature.as_bytes());
@@ -1032,7 +1288,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_sign`
     pub async fn sign(&self, address: Address, content: impl AsRef<[u8]>) -> Result<String> {
-        node_info!("eth_sign");
+        self.log_rpc_method("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature =
             alloy_primitives::hex::encode(signer.sign(address, content.as_ref()).await?.as_bytes());
@@ -1046,7 +1302,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<String> {
-        node_info!("eth_signTransaction");
+        self.log_rpc_method("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
@@ -1067,7 +1323,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
-        node_info!("eth_sendTransaction");
+        self.log_rpc_method("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
@@ -1137,7 +1393,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<FoundryTxReceipt> {
-        node_info!("eth_sendTransactionSync");
+        self.log_rpc_method("eth_sendTransactionSync");
         let hash = self.send_transaction(request).await?;
 
         let receipt = self.check_transaction_inclusion(hash).await?;
@@ -1149,7 +1405,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
     pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
-        node_info!("eth_sendRawTransaction");
+        self.log_rpc_method("eth_sendRawTransaction");
         let mut data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
@@ -1187,7 +1443,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
     pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<FoundryTxReceipt> {
-        node_info!("eth_sendRawTransactionSync");
+        self.log_rpc_method("eth_sendRawTransactionSync");
 
         let hash = self.send_raw_transaction(tx).await?;
         let receipt = self.check_transaction_inclusion(hash).await?;
@@ -1204,7 +1460,7 @@ impl EthApi {
         block_number: Option<BlockId>,
         overrides: EvmOverrides,
     ) -> Result<Bytes> {
-        node_info!("eth_call");
+        self.log_rpc_method("eth_call");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
@@ -1243,7 +1499,7 @@ impl EthApi {
         request: SimulatePayload,
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
-        node_info!("eth_simulateV1");
+        self.log_rpc_method("eth_simulateV1");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
@@ -1282,7 +1538,7 @@ impl EthApi {
         mut request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
     ) -> Result<AccessListResult> {
-        node_info!("eth_createAccessList");
+        self.log_rpc_method("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
@@ -1332,7 +1588,7 @@ impl EthApi {
         block_number: Option<BlockId>,
         overrides: EvmOverrides,
     ) -> Result<U256> {
-        node_info!("eth_estimateGas");
+        self.log_rpc_method("eth_estimateGas");
         self.do_estimate_gas(
             request,
             block_number.or_else(|| Some(BlockNumber::Pending.into())),
@@ -1397,13 +1653,13 @@ impl EthApi {
         &self,
         hash: B256,
     ) -> Result<Option<alloy_consensus::Blob>> {
-        node_info!("anvil_getBlobByHash");
+        self.log_rpc_method("anvil_getBlobByHash");
         Ok(self.backend.get_blob_by_versioned_hash(hash)?)
     }
 
     /// Handler for RPC call: `anvil_getBlobsByTransactionHash`
     pub fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
-        node_info!("anvil_getBlobsByTransactionHash");
+        self.log_rpc_method("anvil_getBlobsByTransactionHash");
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
     }
 
@@ -1413,7 +1669,7 @@ impl EthApi {
         block_id: impl Into<BlockId>,
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<Blob>>> {
-        node_info!("anvil_getBlobsByBlockId");
+        self.log_rpc_method("anvil_getBlobsByBlockId");
         Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
     }
 
@@ -1422,7 +1678,7 @@ impl EthApi {
         &self,
         block_id: BlockId,
     ) -> Result<Option<BlobTransactionSidecar>> {
-        node_info!("anvil_getBlobSidecarsByBlockId");
+        self.log_rpc_method("anvil_getBlobSidecarsByBlockId");
         Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
     }
 
@@ -1441,7 +1697,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
     pub async fn transaction_by_hash(&self, hash: B256) -> Result<Option<AnyRpcTransaction>> {
-        node_info!("eth_getTransactionByHash");
+        self.log_rpc_method("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
             let tx = transaction_build(
@@ -1474,7 +1730,7 @@ impl EthApi {
         hash: B256,
         index: Index,
     ) -> Result<Option<AnyRpcTransaction>> {
-        node_info!("eth_getTransactionByBlockHashAndIndex");
+        self.log_rpc_method("eth_getTransactionByBlockHashAndIndex");
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
 
@@ -1486,7 +1742,7 @@ impl EthApi {
         block: BlockNumber,
         idx: Index,
     ) -> Result<Option<AnyRpcTransaction>> {
-        node_info!("eth_getTransactionByBlockNumberAndIndex");
+        self.log_rpc_method("eth_getTransactionByBlockNumberAndIndex");
         self.backend.transaction_by_block_number_and_index(block, idx).await
     }
 
@@ -1579,7 +1835,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<FoundryTxReceipt>> {
-        node_info!("eth_getTransactionReceipt");
+        self.log_rpc_method("eth_getTransactionReceipt");
         self.backend.transaction_receipt(hash).await
     }
 
@@ -1587,7 +1843,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
     pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<FoundryTxReceipt>>> {
-        node_info!("eth_getBlockReceipts");
+        self.log_rpc_method("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
 
@@ -1599,7 +1855,7 @@ impl EthApi {
         block_hash: B256,
         idx: Index,
     ) -> Result<Option<AnyRpcBlock>> {
-        node_info!("eth_getUncleByBlockHashAndIndex");
+        self.log_rpc_method("eth_getUncleByBlockHashAndIndex");
         let number =
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
         if let Some(fork) = self.get_fork()
@@ -1619,7 +1875,7 @@ impl EthApi {
         block_number: BlockNumber,
         idx: Index,
     ) -> Result<Option<AnyRpcBlock>> {
-        node_info!("eth_getUncleByBlockNumberAndIndex");
+        self.log_rpc_method("eth_getUncleByBlockNumberAndIndex");
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(number)
@@ -1634,7 +1890,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getLogs`
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>> {
-        node_info!("eth_getLogs");
+        self.log_rpc_method("eth_getLogs");
         self.backend.logs(filter).await
     }
 
@@ -1642,7 +1898,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getWork`
     pub fn work(&self) -> Result<Work> {
-        node_info!("eth_getWork");
+        self.log_rpc_method("eth_getWork");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -1650,7 +1906,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_syncing`
     pub fn syncing(&self) -> Result<bool> {
-        node_info!("eth_syncing");
+        self.log_rpc_method("eth_syncing");
         Ok(false)
     }
 
@@ -1665,7 +1921,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_config`
     pub fn config(&self) -> Result<EthConfig> {
-        node_info!("eth_config");
+        self.log_rpc_method("eth_config");
         Ok(EthConfig {
             current: EthForkConfig {
                 activation_time: 0,
@@ -1684,7 +1940,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_submitWork`
     pub fn submit_work(&self, _: B64, _: B256, _: B256) -> Result<bool> {
-        node_info!("eth_submitWork");
+        self.log_rpc_method("eth_submitWork");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -1692,7 +1948,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_submitHashrate`
     pub fn submit_hashrate(&self, _: U256, _: B256) -> Result<bool> {
-        node_info!("eth_submitHashrate");
+        self.log_rpc_method("eth_submitHashrate");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -1705,7 +1961,7 @@ impl EthApi {
         newest_block: BlockNumber,
         reward_percentiles: Vec<f64>,
     ) -> Result<FeeHistory> {
-        node_info!("eth_feeHistory");
+        self.log_rpc_method("eth_feeHistory");
         // max number of blocks in the requested range
 
         let current = self.backend.best_number();
@@ -1804,7 +2060,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
-        node_info!("eth_maxPriorityFeePerGas");
+        self.log_rpc_method("eth_maxPriorityFeePerGas");
         Ok(U256::from(self.lowest_suggestion_tip()))
     }
 
@@ -1827,7 +2083,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_newFilter`
     pub async fn new_filter(&self, filter: Filter) -> Result<String> {
-        node_info!("eth_newFilter");
+        self.log_rpc_method("eth_newFilter");
         // all logs that are already available that match the filter if the filter's block range is
         // in the past
         let historic = if filter.block_option.get_from_block().is_some() {
@@ -1848,7 +2104,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_newBlockFilter`
     pub async fn new_block_filter(&self) -> Result<String> {
-        node_info!("eth_newBlockFilter");
+        self.log_rpc_method("eth_newBlockFilter");
         let filter = EthFilter::Blocks(self.new_block_notifications());
         Ok(self.filters.add_filter(filter).await)
     }
@@ -1857,7 +2113,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_newPendingTransactionFilter`
     pub async fn new_pending_transaction_filter(&self) -> Result<String> {
-        node_info!("eth_newPendingTransactionFilter");
+        self.log_rpc_method("eth_newPendingTransactionFilter");
         let filter = EthFilter::PendingTransactions(self.new_ready_transactions());
         Ok(self.filters.add_filter(filter).await)
     }
@@ -1866,7 +2122,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getFilterChanges`
     pub async fn get_filter_changes(&self, id: &str) -> ResponseResult {
-        node_info!("eth_getFilterChanges");
+        self.log_rpc_method("eth_getFilterChanges");
         self.filters.get_filter_changes(id).await
     }
 
@@ -1874,7 +2130,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getFilterLogs`
     pub async fn get_filter_logs(&self, id: &str) -> Result<Vec<Log>> {
-        node_info!("eth_getFilterLogs");
+        self.log_rpc_method("eth_getFilterLogs");
         if let Some(filter) = self.filters.get_log_filter(id).await {
             self.backend.logs(filter).await
         } else {
@@ -1884,7 +2140,7 @@ impl EthApi {
 
     /// Handler for ETH RPC call: `eth_uninstallFilter`
     pub async fn uninstall_filter(&self, id: &str) -> Result<bool> {
-        node_info!("eth_uninstallFilter");
+        self.log_rpc_method("eth_uninstallFilter");
         Ok(self.filters.uninstall_filter(id).await.is_some())
     }
 
@@ -1892,7 +2148,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `debug_getRawTransaction`
     pub async fn raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
-        node_info!("debug_getRawTransaction");
+        self.log_rpc_method("debug_getRawTransaction");
         self.inner_raw_transaction(hash).await
     }
 
@@ -1904,7 +2160,7 @@ impl EthApi {
         block_hash: B256,
         index: Index,
     ) -> Result<Option<Bytes>> {
-        node_info!("eth_getRawTransactionByBlockHashAndIndex");
+        self.log_rpc_method("eth_getRawTransactionByBlockHashAndIndex");
         match self.backend.transaction_by_block_hash_and_index(block_hash, index).await? {
             Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
@@ -1919,7 +2175,7 @@ impl EthApi {
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Bytes>> {
-        node_info!("eth_getRawTransactionByBlockNumberAndIndex");
+        self.log_rpc_method("eth_getRawTransactionByBlockNumberAndIndex");
         match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
             Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
@@ -1934,7 +2190,7 @@ impl EthApi {
         tx_hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace> {
-        node_info!("debug_traceTransaction");
+        self.log_rpc_method("debug_traceTransaction");
         self.backend.debug_trace_transaction(tx_hash, opts).await
     }
 
@@ -1947,7 +2203,7 @@ impl EthApi {
         block_number: Option<BlockId>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace> {
-        node_info!("debug_traceCall");
+        self.log_rpc_method("debug_traceCall");
         let block_request = self.block_request(block_number).await?;
         let fees = FeeDetails::new(
             request.gas_price,
@@ -1970,7 +2226,7 @@ impl EthApi {
         hash: B256,
         block_id: Option<BlockId>,
     ) -> Result<Option<Bytes>> {
-        node_info!("debug_codeByHash");
+        self.log_rpc_method("debug_codeByHash");
         self.backend.debug_code_by_hash(hash, block_id).await
     }
 
@@ -1987,7 +2243,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `trace_transaction`
     pub async fn trace_transaction(&self, tx_hash: B256) -> Result<Vec<LocalizedTransactionTrace>> {
-        node_info!("trace_transaction");
+        self.log_rpc_method("trace_transaction");
         self.backend.trace_transaction(tx_hash).await
     }
 
@@ -1995,7 +2251,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `trace_block`
     pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<LocalizedTransactionTrace>> {
-        node_info!("trace_block");
+        self.log_rpc_method("trace_block");
         self.backend.trace_block(block).await
     }
 
@@ -2006,7 +2262,7 @@ impl EthApi {
         &self,
         filter: TraceFilter,
     ) -> Result<Vec<LocalizedTransactionTrace>> {
-        node_info!("trace_filter");
+        self.log_rpc_method("trace_filter");
         self.backend.trace_filter(filter).await
     }
 }
@@ -2018,7 +2274,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
-        node_info!("anvil_impersonateAccount");
+        self.log_rpc_method("anvil_impersonateAccount");
         self.backend.impersonate(address);
         Ok(())
     }
@@ -2027,7 +2283,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
-        node_info!("anvil_stopImpersonatingAccount");
+        self.log_rpc_method("anvil_stopImpersonatingAccount");
         self.backend.stop_impersonating(address);
         Ok(())
     }
@@ -2036,7 +2292,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
     pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
-        node_info!("anvil_autoImpersonateAccount");
+        self.log_rpc_method("anvil_autoImpersonateAccount");
         self.backend.auto_impersonate_account(enabled);
         Ok(())
     }
@@ -2047,7 +2303,7 @@ impl EthApi {
         signature: Bytes,
         address: Address,
     ) -> Result<()> {
-        node_info!("anvil_impersonateSignature");
+        self.log_rpc_method("anvil_impersonateSignature");
         self.backend.impersonate_signature(signature, address).await
     }
 
@@ -2055,7 +2311,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_getAutomine`
     pub fn anvil_get_auto_mine(&self) -> Result<bool> {
-        node_info!("anvil_getAutomine");
+        self.log_rpc_method("anvil_getAutomine");
         Ok(self.miner.is_auto_mine())
     }
 
@@ -2063,7 +2319,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_getIntervalMining`.
     pub fn anvil_get_interval_mining(&self) -> Result<Option<u64>> {
-        node_info!("anvil_getIntervalMining");
+        self.log_rpc_method("anvil_getIntervalMining");
         Ok(self.miner.get_interval())
     }
 
@@ -2072,7 +2328,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `evm_setAutomine`
     pub async fn anvil_set_auto_mine(&self, enable_automine: bool) -> Result<()> {
-        node_info!("evm_setAutomine");
+        self.log_rpc_method("evm_setAutomine");
         if self.miner.is_auto_mine() {
             if enable_automine {
                 return Ok(());
@@ -2090,7 +2346,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_mine`
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
-        node_info!("anvil_mine");
+        self.log_rpc_method("anvil_mine");
         let interval = interval.map(|i| i.to::<u64>());
         let blocks = num_blocks.unwrap_or(U256::from(1));
         if blocks.is_zero() {
@@ -2117,7 +2373,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `evm_setIntervalMining`
     pub fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
-        node_info!("evm_setIntervalMining");
+        self.log_rpc_method("evm_setIntervalMining");
         let mining_mode = if secs == 0 {
             MiningMode::None
         } else {
@@ -2136,7 +2392,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_dropTransaction`
     pub async fn anvil_drop_transaction(&self, tx_hash: B256) -> Result<Option<B256>> {
-        node_info!("anvil_dropTransaction");
+        self.log_rpc_method("anvil_dropTransaction");
         Ok(self.pool.drop_transaction(tx_hash).map(|tx| tx.hash()))
     }
 
@@ -2144,7 +2400,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_dropAllTransactions`
     pub async fn anvil_drop_all_transactions(&self) -> Result<()> {
-        node_info!("anvil_dropAllTransactions");
+        self.log_rpc_method("anvil_dropAllTransactions");
         self.pool.clear();
         Ok(())
     }
@@ -2156,7 +2412,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         self.reset_instance_id();
-        node_info!("anvil_reset");
+        self.log_rpc_method("anvil_reset");
         if let Some(forking) = forking {
             // if we're resetting the fork we need to reset the instance id
             self.backend.reset_fork(forking).await
@@ -2168,7 +2424,7 @@ impl EthApi {
     }
 
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
-        node_info!("anvil_setChainId");
+        self.log_rpc_method("anvil_setChainId");
         self.backend.set_chain_id(chain_id);
         Ok(())
     }
@@ -2177,7 +2433,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setBalance`
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
-        node_info!("anvil_setBalance");
+        self.log_rpc_method("anvil_setBalance");
         self.backend.set_balance(address, balance).await?;
         Ok(())
     }
@@ -2186,7 +2442,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_addBalance`
     pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
-        node_info!("anvil_addBalance");
+        self.log_rpc_method("anvil_addBalance");
         let current_balance = self.backend.get_balance(address, None).await?;
         self.backend.set_balance(address, current_balance + balance).await?;
         Ok(())
@@ -2268,7 +2524,7 @@ impl EthApi {
         token_address: Address,
         balance: U256,
     ) -> Result<()> {
-        node_info!("anvil_dealERC20");
+        self.log_rpc_method("anvil_dealERC20");
 
         sol! {
             #[sol(rpc)]
@@ -2306,7 +2562,7 @@ impl EthApi {
         token_address: Address,
         amount: U256,
     ) -> Result<()> {
-        node_info!("anvil_setERC20Allowance");
+        self.log_rpc_method("anvil_setERC20Allowance");
 
         sol! {
             #[sol(rpc)]
@@ -2338,7 +2594,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
-        node_info!("anvil_setCode");
+        self.log_rpc_method("anvil_setCode");
         self.backend.set_code(address, code).await?;
         Ok(())
     }
@@ -2347,7 +2603,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setNonce`
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
-        node_info!("anvil_setNonce");
+        self.log_rpc_method("anvil_setNonce");
         self.backend.set_nonce(address, nonce).await?;
         Ok(())
     }
@@ -2361,7 +2617,7 @@ impl EthApi {
         slot: U256,
         val: B256,
     ) -> Result<bool> {
-        node_info!("anvil_setStorageAt");
+        self.log_rpc_method("anvil_setStorageAt");
         self.backend.set_storage_at(address, slot, val).await?;
         Ok(true)
     }
@@ -2370,7 +2626,8 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setLoggingEnabled`
     pub async fn anvil_set_logging(&self, enable: bool) -> Result<()> {
-        node_info!("anvil_setLoggingEnabled");
+        self.log_rpc_method("anvil_setLoggingEnabled");
+        self.rpc_payload_logging.store(enable, Ordering::Relaxed);
         self.logger.set_enabled(enable);
         Ok(())
     }
@@ -2379,7 +2636,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setMinGasPrice`
     pub async fn anvil_set_min_gas_price(&self, gas: U256) -> Result<()> {
-        node_info!("anvil_setMinGasPrice");
+        self.log_rpc_method("anvil_setMinGasPrice");
         if self.backend.is_eip1559() {
             return Err(RpcError::invalid_params(
                 "anvil_setMinGasPrice is not supported when EIP-1559 is active",
@@ -2394,7 +2651,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
     pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
-        node_info!("anvil_setNextBlockBaseFeePerGas");
+        self.log_rpc_method("anvil_setNextBlockBaseFeePerGas");
         if !self.backend.is_eip1559() {
             return Err(RpcError::invalid_params(
                 "anvil_setNextBlockBaseFeePerGas is only supported when EIP-1559 is active",
@@ -2409,7 +2666,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setCoinbase`
     pub async fn anvil_set_coinbase(&self, address: Address) -> Result<()> {
-        node_info!("anvil_setCoinbase");
+        self.log_rpc_method("anvil_setCoinbase");
         self.backend.set_coinbase(address);
         Ok(())
     }
@@ -2422,7 +2679,7 @@ impl EthApi {
         &self,
         preserve_historical_states: Option<bool>,
     ) -> Result<Bytes> {
-        node_info!("anvil_dumpState");
+        self.log_rpc_method("anvil_dumpState");
         self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
     }
 
@@ -2439,7 +2696,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
-        node_info!("anvil_loadState");
+        self.log_rpc_method("anvil_loadState");
         self.backend.load_state_bytes(buf).await
     }
 
@@ -2447,7 +2704,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_nodeInfo`
     pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
-        node_info!("anvil_nodeInfo");
+        self.log_rpc_method("anvil_nodeInfo");
 
         let env = self.backend.env().read();
         let fork_config = self.backend.get_fork();
@@ -2487,7 +2744,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_metadata`
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
-        node_info!("anvil_metadata");
+        self.log_rpc_method("anvil_metadata");
         let fork_config = self.backend.get_fork();
 
         Ok(Metadata {
@@ -2506,7 +2763,7 @@ impl EthApi {
     }
 
     pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
-        node_info!("anvil_removePoolTransactions");
+        self.log_rpc_method("anvil_removePoolTransactions");
         self.pool.remove_transactions_by_address(address);
         Ok(())
     }
@@ -2525,7 +2782,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_reorg`
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
-        node_info!("anvil_reorg");
+        self.log_rpc_method("anvil_reorg");
         let depth = options.depth;
         let tx_block_pairs = options.tx_block_pairs;
 
@@ -2635,7 +2892,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_rollback`
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
-        node_info!("anvil_rollback");
+        self.log_rpc_method("anvil_rollback");
         let depth = depth.unwrap_or(1);
 
         // Check reorg depth doesn't exceed current chain height
@@ -2658,7 +2915,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
-        node_info!("evm_snapshot");
+        self.log_rpc_method("evm_snapshot");
         Ok(self.backend.create_state_snapshot().await)
     }
 
@@ -2667,7 +2924,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
-        node_info!("evm_revert");
+        self.log_rpc_method("evm_revert");
         self.backend.revert_state_snapshot(id).await
     }
 
@@ -2675,7 +2932,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_increaseTime`
     pub async fn evm_increase_time(&self, seconds: U256) -> Result<i64> {
-        node_info!("evm_increaseTime");
+        self.log_rpc_method("evm_increaseTime");
         Ok(self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX)) as i64)
     }
 
@@ -2683,7 +2940,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_setNextBlockTimestamp`
     pub fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
-        node_info!("evm_setNextBlockTimestamp");
+        self.log_rpc_method("evm_setNextBlockTimestamp");
         self.backend.time().set_next_block_timestamp(seconds)
     }
 
@@ -2692,7 +2949,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
-        node_info!("evm_setTime");
+        self.log_rpc_method("evm_setTime");
         let now = self.backend.time().current_call_timestamp();
         self.backend.time().reset(timestamp);
 
@@ -2705,7 +2962,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_setBlockGasLimit`
     pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
-        node_info!("evm_setBlockGasLimit");
+        self.log_rpc_method("evm_setBlockGasLimit");
         self.backend.set_gas_limit(gas_limit.to());
         Ok(true)
     }
@@ -2714,7 +2971,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setBlockTimestampInterval`
     pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
-        node_info!("anvil_setBlockTimestampInterval");
+        self.log_rpc_method("anvil_setBlockTimestampInterval");
         self.backend.time().set_block_timestamp_interval(seconds);
         Ok(())
     }
@@ -2723,7 +2980,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_removeBlockTimestampInterval`
     pub fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
-        node_info!("anvil_removeBlockTimestampInterval");
+        self.log_rpc_method("anvil_removeBlockTimestampInterval");
         Ok(self.backend.time().remove_block_timestamp_interval())
     }
 
@@ -2734,7 +2991,7 @@ impl EthApi {
     /// This will mine the blocks regardless of the configured mining mode.
     /// **Note**: ganache returns `0x0` here as placeholder for additional meta-data in the future.
     pub async fn evm_mine(&self, opts: Option<MineOptions>) -> Result<String> {
-        node_info!("evm_mine");
+        self.log_rpc_method("evm_mine");
 
         self.do_evm_mine(opts).await?;
 
@@ -2751,7 +3008,7 @@ impl EthApi {
     /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
     /// and `ganache` may change the `0x0` placeholder.
     pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
-        node_info!("evm_mine_detailed");
+        self.log_rpc_method("evm_mine_detailed");
 
         let mined_blocks = self.do_evm_mine(opts).await?;
 
@@ -2798,7 +3055,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_setBlock`
     pub fn anvil_set_block(&self, block_number: u64) -> Result<()> {
-        node_info!("anvil_setBlock");
+        self.log_rpc_method("anvil_setBlock");
         self.backend.set_block_number(block_number);
         Ok(())
     }
@@ -2807,7 +3064,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
     pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
-        node_info!("anvil_setRpcUrl");
+        self.log_rpc_method("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
             let mut config = fork.config.write();
             // let interval = config.provider.get_interval();
@@ -2833,7 +3090,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_enableTraces`
     pub async fn anvil_enable_traces(&self) -> Result<()> {
-        node_info!("anvil_enableTraces");
+        self.log_rpc_method("anvil_enableTraces");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -2844,7 +3101,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
-        node_info!("eth_sendUnsignedTransaction");
+        self.log_rpc_method("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
         let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
 
@@ -2874,7 +3131,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `txpool_status`
     pub async fn txpool_status(&self) -> Result<TxpoolStatus> {
-        node_info!("txpool_status");
+        self.log_rpc_method("txpool_status");
         Ok(self.pool.txpool_status())
     }
 
@@ -2885,7 +3142,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `txpool_inspect`
     pub async fn txpool_inspect(&self) -> Result<TxpoolInspect> {
-        node_info!("txpool_inspect");
+        self.log_rpc_method("txpool_inspect");
         let mut inspect = TxpoolInspect::default();
 
         fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
@@ -2923,7 +3180,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `txpool_inspect`
     pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
-        node_info!("txpool_content");
+        self.log_rpc_method("txpool_content");
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
         fn convert(tx: Arc<PoolTransaction>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
@@ -2969,7 +3226,7 @@ impl EthApi {
     ///
     /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
     pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
-        node_info!("wallet_getCapabilities");
+        self.log_rpc_method("wallet_getCapabilities");
         Ok(self.backend.get_capabilities())
     }
 
@@ -2977,13 +3234,13 @@ impl EthApi {
     ///
     /// This entails that the executor will now be able to sponsor transactions to this address.
     pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
-        node_info!("anvil_addCapability");
+        self.log_rpc_method("anvil_addCapability");
         self.backend.add_capability(address);
         Ok(())
     }
 
     pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
-        node_info!("anvil_setExecutor");
+        self.log_rpc_method("anvil_setExecutor");
         self.backend.set_executor(executor_pk)
     }
 }
