@@ -722,6 +722,10 @@ pub enum EthRequest {
     /// Set the executor (sponsor) wallet
     #[serde(rename = "anvil_setExecutor", with = "sequence")]
     AnvilSetExecutor(String),
+
+    /// Returns a decoded CallTraceArena for a transaction
+    #[serde(rename = "anvil_revmTrace", with = "sequence")]
+    AnvilRevmTrace(B256),
 }
 
 /// Represents ethereum JSON-RPC API

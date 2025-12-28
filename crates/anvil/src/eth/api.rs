@@ -76,7 +76,7 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm::decode::RevertDecoder;
+use foundry_evm::{decode::RevertDecoder, traces::CallTraceArena};
 use foundry_primitives::{
     FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
 };
@@ -521,6 +521,7 @@ impl EthApi {
             EthRequest::AnvilSetExecutor(executor_pk) => {
                 self.anvil_set_executor(executor_pk).to_rpc_result()
             }
+            EthRequest::AnvilRevmTrace(hash) => self.anvil_revm_trace(hash).await.to_rpc_result(),
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -2835,6 +2836,14 @@ impl EthApi {
     pub async fn anvil_enable_traces(&self) -> Result<()> {
         node_info!("anvil_enableTraces");
         Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Returns the decoded CallTraceArena for a transaction
+    ///
+    /// Handler for RPC call: `anvil_revmTrace`
+    pub async fn anvil_revm_trace(&self, hash: B256) -> Result<CallTraceArena> {
+        node_info!("anvil_revmTrace");
+        self.backend.anvil_revm_trace(hash).await
     }
 
     /// Execute a transaction regardless of signature status

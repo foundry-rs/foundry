@@ -1274,3 +1274,44 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
         _ => unreachable!(),
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_revm_trace_simple() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+
+    // Send a simple transfer transaction
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let trace_replay: serde_json::Value =
+        provider.raw_request("anvil_revmTrace".into(), (receipt.transaction_hash,)).await.unwrap();
+
+    // Verify trace structure
+    assert!(trace_replay.is_object());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_revm_trace_nonexistent_tx() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Try to trace a non-existent transaction
+    let fake_hash = alloy_primitives::B256::ZERO;
+    let result: Result<serde_json::Value, _> =
+        provider.raw_request("anvil_revmTrace".into(), (fake_hash, true)).await;
+
+    // Should return an error
+    assert!(result.is_err());
+}

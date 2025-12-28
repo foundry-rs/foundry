@@ -1,6 +1,7 @@
 use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_changes};
+use alloy_chains::Chain;
 use alloy_consensus::Transaction;
-use alloy_network::{AnyNetwork, TransactionResponse};
+use alloy_network::{AnyNetwork, ReceiptResponse, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
@@ -27,7 +28,7 @@ use foundry_evm::{
     core::env::AsEnvMut,
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode, Traces},
+    traces::{InternalTraceMode, SparsedTraceArena, TraceMode, Traces},
     utils::configure_tx_env,
 };
 use futures::TryFutureExt;
@@ -60,6 +61,13 @@ pub struct RunArgs {
     /// May result in different results than the live execution!
     #[arg(long)]
     quick: bool,
+
+    /// Use Anvil's anvil_revmTrace RPC to fetch the trace in a single request.
+    ///
+    /// This is much faster than replaying the transaction locally as it reduces
+    /// hundreds of network requests to just one. Only works when connected to an Anvil instance.
+    #[arg(long)]
+    anvil: bool,
 
     /// Whether to replay system transactions.
     #[arg(long, alias = "sys")]
@@ -135,11 +143,59 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
+        let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let provider = foundry_cli::utils::get_provider_builder(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
             .build()?;
 
-        let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
+        // If --anvil flag is set, fetch trace from Anvil directly
+        if self.anvil {
+            if !shell::is_json() {
+                sh_println!("Fetching trace from Anvil via anvil_revmTrace RPC...")?;
+            }
+
+            let (arena, receipt, chain_id) = tokio::join!(
+                provider.raw_request("anvil_revmTrace".into(), (tx_hash,)),
+                provider.get_transaction_receipt(tx_hash),
+                provider.get_chain_id(),
+            );
+
+            let arena: foundry_evm::traces::CallTraceArena = arena.wrap_err("Failed to fetch trace from Anvil. Make sure you're connected to an Anvil instance.")?;
+
+            // Get gas_used from the transaction receipt
+            let receipt = receipt?
+                .ok_or_else(|| eyre::eyre!("Receipt not found for transaction: {:?}", tx_hash))?;
+
+            let chain = Chain::from_id(chain_id?);
+
+            // Wrap the arena in SparsedTraceArena
+            let sparsed_arena = SparsedTraceArena { arena, ignored: HashMap::default() };
+
+            let result = TraceResult {
+                success: receipt.status(),
+                traces: Some(vec![(foundry_evm::traces::TraceKind::Execution, sparsed_arena)]),
+                gas_used: receipt.gas_used(),
+            };
+
+            // No need to create executor or fetch bytecodes - just render the traces
+            // The decoder will fetch bytecodes from Etherscan if needed
+            handle_traces(
+                result,
+                &config,
+                chain,
+                &HashMap::default(),
+                label,
+                with_local_artifacts,
+                debug,
+                decode_internal,
+                disable_labels,
+                self.trace_depth,
+            )
+            .await?;
+
+            return Ok(());
+        }
+
         let tx = provider
             .get_transaction_by_hash(tx_hash)
             .await

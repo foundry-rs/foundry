@@ -99,7 +99,7 @@ use foundry_evm::{
     decode::RevertDecoder,
     inspectors::AccessListInspector,
     traces::{
-        CallTraceDecoder, FourByteInspector, GethTraceBuilder, TracingInspector,
+        CallTraceArena, CallTraceDecoder, FourByteInspector, GethTraceBuilder, TracingInspector,
         TracingInspectorConfig,
     },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
@@ -2686,6 +2686,30 @@ impl Backend {
         }
 
         Ok(GethTrace::Default(Default::default()))
+    }
+
+    /// Returns the decoded CallTraceArena for a transaction.
+    ///
+    /// If `replay_block_until_transaction` is true, replays all previous transactions
+    /// in the block to establish correct state. Otherwise, executes the transaction
+    /// against the parent block state.
+    pub async fn anvil_revm_trace(&self, hash: B256) -> Result<CallTraceArena, BlockchainError> {
+        // Check if transaction exists locally (scoped to drop lock immediately)
+        let tx_exists_locally = { self.blockchain.storage.read().transactions.contains_key(&hash) };
+        if !tx_exists_locally {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "revm trace can only be generated for local txs".to_string(),
+            ));
+        }
+
+        let arena = self.replay_tx_with_inspector(
+            hash,
+            AnvilInspector::default()
+                .with_tracing_config(TracingInspectorConfig::all().set_steps(false)),
+            |_, _, inspector, _, _| inspector.tracer.expect("tracer configured").into_traces(),
+        )?;
+
+        Ok(arena)
     }
 
     fn replay_tx_with_inspector<I, F, T>(
