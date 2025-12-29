@@ -115,4 +115,5 @@ jobs:
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
+          ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
         run: cargo nextest run ${{ matrix.flags }}
