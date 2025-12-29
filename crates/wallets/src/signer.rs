@@ -322,7 +322,7 @@ impl Signer for WalletSigner {
 #[async_trait]
 impl TxSigner<Signature> for WalletSigner {
     fn address(&self) -> Address {
-        delegate!(self, inner => alloy_signer::Signer::address(inner))
+        Signer::address(self)
     }
 
     async fn sign_transaction(
