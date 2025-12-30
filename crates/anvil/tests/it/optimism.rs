@@ -254,8 +254,8 @@ fn preserves_op_fields_in_convert_to_anvil_receipt() {
     let receipt: alloy_network::AnyTransactionReceipt =
         serde_json::from_value(receipt_json).expect("valid receipt json");
 
-    let converted = anvil_core::eth::transaction::convert_to_anvil_receipt(receipt)
-        .expect("conversion should succeed");
+    let converted =
+        foundry_primitives::FoundryTxReceipt::try_from(receipt).expect("conversion should succeed");
     let converted_json = serde_json::to_value(&converted).expect("serialize to json");
 
     for (key, expected) in [

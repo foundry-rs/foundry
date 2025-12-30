@@ -30,6 +30,7 @@ foundry-debugger.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
 forge-fmt.workspace = true
+foundry-primitives.workspace = true
 
 alloy-chains.workspace = true
 alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
@@ -58,7 +59,6 @@ alloy-ens = { workspace = true, features = ["provider"] }
 alloy-eips.workspace = true
 
 op-alloy-flz.workspace = true
-op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
 
 chrono.workspace = true
 eyre.workspace = true

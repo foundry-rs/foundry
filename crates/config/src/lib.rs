@@ -701,6 +701,12 @@ impl Config {
         "bind_json",
     ];
 
+    pub(crate) fn is_standalone_section<T: ?Sized + PartialEq<str>>(section: &T) -> bool {
+        section == Self::PROFILE_SECTION
+            || section == Self::EXTERNAL_SECTION
+            || Self::STANDALONE_SECTIONS.iter().any(|s| section == *s)
+    }
+
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
@@ -768,28 +774,40 @@ impl Config {
     }
 
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
-        let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
-        config.profile = figment.profile().clone();
-
-        // The `"profile"` profile contains all the profiles as keys.
-        let mut add_profile = |profile: &Profile| {
-            if !config.profiles.contains(profile) {
-                config.profiles.push(profile.clone());
+        // Helper to add a profile only if it's not already present
+        fn add_profile(profiles: &mut Vec<Profile>, profile: &Profile) {
+            if !profiles.contains(profile) {
+                profiles.push(profile.clone());
             }
-        };
+        }
+
+        let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
+        let active_profile = figment.profile().clone();
+
+        // Collect profiles from the profile section.
+        // The `"profile"` profile contains all the profiles as keys.
         let figment = figment.select(Self::PROFILE_SECTION);
         if let Ok(data) = figment.data()
             && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
         {
             for profile in profiles.keys() {
-                add_profile(&Profile::new(profile));
+                add_profile(&mut config.profiles, &Profile::new(profile));
             }
         }
-        add_profile(&Self::DEFAULT_PROFILE);
-        add_profile(&config.profile);
+
+        // Always include the default profile
+        add_profile(&mut config.profiles, &Self::DEFAULT_PROFILE);
+
+        // Ensure the active profile exists.
+        if config.profiles.contains(&active_profile) {
+            config.profile = active_profile;
+        } else {
+            return Err(ExtractConfigError::new(Error::from(format!(
+                "Profile {active_profile} does not exist"
+            ))));
+        }
 
         config.normalize_optimizer_settings();
-
         Ok(config)
     }
 
@@ -1597,8 +1615,19 @@ impl Config {
     /// Optionally updates the config with the given `chain`.
     ///
     /// See also [Self::get_etherscan_config_with_chain]
+    #[expect(clippy::disallowed_macros)]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
-        self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
+        self.get_etherscan_config_with_chain(chain)
+            .map_err(|e| {
+                // `sh_warn!` is a circular dependency, preventing us from using it here.
+                eprintln!(
+                    "{}: failed getting etherscan config: {e}",
+                    yansi::Paint::yellow("Warning"),
+                );
+            })
+            .ok()
+            .flatten()
+            .map(|c| c.key)
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -3343,6 +3372,27 @@ mod tests {
             let etherscan = config.get_etherscan_config().unwrap().unwrap();
             assert_eq!(etherscan.chain, Some(NamedChain::Sepolia.into()));
             assert_eq!(etherscan.key, "FX42Z3BBJJEWXWGYV2X1CIPRSCN");
+
+            Ok(())
+        });
+    }
+
+    // any invalid entry invalidates whole [etherscan] sections
+    #[test]
+    fn test_resolve_etherscan_with_invalid_name() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [etherscan]
+                mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+                an_invalid_name = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let etherscan_config = config.get_etherscan_config();
+            assert!(etherscan_config.is_none());
 
             Ok(())
         });
@@ -6372,6 +6422,24 @@ mod tests {
             assert!(cfg.warnings.iter().any(
                 |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
             ));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn fails_on_unknown_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_PROFILE", "foo");
+            let err = Config::load().expect_err("expected unknown profile to fail");
+            assert!(err.to_string().contains("Profile foo does not exist"));
+
             Ok(())
         });
     }
