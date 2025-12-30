@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 pub mod celo;
 
 #[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkConfigs {
     /// Enable Optimism network features.
     #[arg(help_heading = "Networks", long, conflicts_with = "celo")]

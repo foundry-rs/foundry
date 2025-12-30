@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 /// Contains the config for `forge bind-json`
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BindJsonConfig {
     /// Path for the generated bindings file.
     pub out: PathBuf,

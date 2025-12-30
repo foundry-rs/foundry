@@ -9,6 +9,7 @@ use yansi::Paint;
 
 /// Contains the config and rule set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LinterConfig {
     /// Specifies which lints to run based on severity.
     ///

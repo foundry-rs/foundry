@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 /// Contains for fuzz testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,

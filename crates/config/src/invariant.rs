@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 /// Contains for invariant testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,

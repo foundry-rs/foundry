@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 /// Keeps possible overrides for default settings which users may configure to construct additional
 /// settings profile.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SettingsOverrides {
     pub name: String,
     pub via_ir: Option<bool>,
@@ -67,6 +68,7 @@ pub enum RestrictionsError {
 /// Only purpose of this type is to accept user input to later construct
 /// `RestrictionsWithVersion<MultiCompilerRestrictions>`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CompilationRestrictions {
     pub paths: GlobMatcher,
     pub version: Option<VersionReq>,

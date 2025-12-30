@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 /// Contains the config for parsing and rendering docs
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocConfig {
     /// Doc output path.
     pub out: PathBuf,
