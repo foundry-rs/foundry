@@ -1,3 +1,19 @@
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   |
+LL |         require(isOwner[msg.sender], "Not owner"); // _onlyOwner();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   |
+LL |         if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
+   |                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
 note[multi-contract-file]: prefer having only one contract, interface or library per file
   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
