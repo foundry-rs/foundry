@@ -1,7 +1,8 @@
 //! Helper functions for suggesting alternative values for a possibly erroneous user input.
 
 /// Filters multiple strings from a given list of possible values which are similar
-/// to the passed in value `v` within a certain confidence by least confidence.
+/// to the passed in value `v` (similarity > 0.8). Results are sorted by similarity
+/// in ascending order, so the last element has the highest similarity.
 ///
 /// The jaro winkler similarity boosts candidates that have a common prefix, which is often the case
 /// in the event of typos. Thus, in a list of possible values like ["foo", "bar"], the value "fop"
