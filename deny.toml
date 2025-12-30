@@ -105,8 +105,6 @@ allow-git = [
     "https://github.com/bluealloy/revm",
     # Only for tests.
     "https://github.com/rust-cli/rexpect",
-    # BPO hardfork fix
-    "https://github.com/cakevm/hardforks",
     # Tempo
     "https://github.com/tempoxyz/tempo",
     # Transitive dependency of Tempo
