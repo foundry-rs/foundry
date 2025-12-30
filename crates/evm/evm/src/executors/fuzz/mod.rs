@@ -1,9 +1,10 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
+    corpus::CorpusManager,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
+use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
@@ -28,7 +29,7 @@ use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
-use crate::executors::corpus::CorpusManager;
+
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Contains data collected during fuzz test runs.
@@ -333,6 +334,12 @@ impl FuzzedExecutor {
         calldata: Bytes,
         coverage_metrics: &mut CorpusManager,
     ) -> Result<FuzzOutcome, TestCaseError> {
+        // Sets the random seed for the run
+        if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
+            let seed = keccak256(&calldata);
+            cheats.set_seed(seed.into());
+        }
+
         let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
