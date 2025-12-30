@@ -408,6 +408,9 @@ idna_adapter = "=1.1.0"
 # https://github.com/rust-cli/rexpect/pull/106
 rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 
+## alloy-hardforks - temporay until https://github.com/alloy-rs/hardforks/pull/86 is merged and released
+alloy-hardforks = { git = "https://github.com/cakevm/hardforks", branch = "bpo" }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
