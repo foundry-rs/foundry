@@ -81,6 +81,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 # async
 tokio = { workspace = true, features = ["time"] }
+tokio-util.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
 async-trait.workspace = true

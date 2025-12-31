@@ -97,6 +97,7 @@ use tokio::{
     sync::mpsc::{UnboundedReceiver, unbounded_channel},
     try_join,
 };
+use tokio_util::sync::CancellationToken;
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -2989,7 +2990,14 @@ impl EthApi {
 }
 
 impl EthApi {
-    /// Executes the future on a new blocking task.
+    /// Executes the future on a new blocking task with cancellation support.
+    ///
+    /// This method spawns a blocking task to execute the given future. If the caller
+    /// drops the returned future (e.g., when a client disconnects), the spawned task
+    /// will be cancelled to prevent resource waste.
+    ///
+    /// This is particularly important in forking mode where operations can take
+    /// several seconds or longer due to remote RPC calls.
     async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
     where
         C: FnOnce(Self) -> F,
@@ -2999,13 +3007,36 @@ impl EthApi {
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
         let f = c(this);
-        tokio::task::spawn_blocking(move || {
+        let cancellation_token = CancellationToken::new();
+        let task_token = cancellation_token.clone();
+
+        let handle = tokio::task::spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async move {
-                let res = f.await;
-                let _ = tx.send(res);
+                tokio::select! {
+                    res = f => {
+                        let _ = tx.send(res);
+                    }
+                    _ = task_token.cancelled() => {
+                        // Task was cancelled, drop the result sender
+                        // This signals to the caller that the task was cancelled
+                        trace!(target: "node", "Blocking task cancelled");
+                    }
+                }
             })
         });
-        rx.await.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
+
+        tokio::select! {
+            result = rx => {
+                result.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
+            }
+            else => {
+                // The future was dropped (client disconnected), cancel the task
+                cancellation_token.cancel();
+                // Abort the blocking task to free up the thread
+                handle.abort();
+                Err(BlockchainError::Internal("request cancelled by client".to_string()))
+            }
+        }
     }
 
     /// Executes the `evm_mine` and returns the number of blocks mined
