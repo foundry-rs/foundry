@@ -245,7 +245,7 @@ impl FuzzedExecutor {
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
-        let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+        let (new_coverage, edges) = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
                 warp: None,
@@ -254,6 +254,7 @@ impl FuzzedExecutor {
                 call_details: CallDetails { target: address, calldata: calldata.clone() },
             }],
             new_coverage,
+            edges,
         );
 
         // Handle `vm.assume`.

@@ -67,7 +67,6 @@ const WORKER: &str = "worker";
 const CORPUS_DIR: &str = "corpus";
 const SYNC_DIR: &str = "sync";
 
-const FAVORABILITY_THRESHOLD: f64 = 0.3;
 const COVERAGE_MAP_SIZE: usize = 65536;
 
 /// Threshold for compressing corpus entries.
@@ -96,15 +95,13 @@ enum MutationType {
 struct CorpusEntry {
     // Unique corpus identifier.
     uuid: Uuid,
-    // Total mutations of corpus as primary source.
-    total_mutations: usize,
-    // New coverage found as a result of mutating this corpus.
-    new_finds_produced: usize,
+    // Unique edge indices this entry hits.
+    #[serde(skip_serializing)]
+    unique_edges_covered: Vec<usize>,
     // Corpus call sequence.
     #[serde(skip_serializing)]
     tx_seq: Vec<BasicTxDetails>,
-    // Whether this corpus is favored, i.e. producing new finds more often than
-    // `FAVORABILITY_THRESHOLD`.
+    // Whether this corpus is favored (part of minimal covering set).
     is_favored: bool,
     /// Timestamp of when this entry was written to disk in seconds.
     #[serde(skip_serializing)]
@@ -131,8 +128,7 @@ impl CorpusEntry {
     pub fn new_with(tx_seq: Vec<BasicTxDetails>, uuid: Uuid) -> Self {
         Self {
             uuid,
-            total_mutations: 0,
-            new_finds_produced: 0,
+            unique_edges_covered: Vec::new(),
             tx_seq,
             is_favored: false,
             timestamp: SystemTime::now()
@@ -140,6 +136,28 @@ impl CorpusEntry {
                 .expect("time went backwards")
                 .as_secs(),
         }
+    }
+
+    /// Creates a corpus entry with edges covered.
+    pub fn with_edges(tx_seq: Vec<BasicTxDetails>, edges_covered: Vec<usize>) -> Self {
+        Self {
+            uuid: Uuid::new_v4(),
+            unique_edges_covered: edges_covered,
+            tx_seq,
+            is_favored: false,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_secs(),
+        }
+    }
+
+    // TODO HashSet?
+
+    pub fn set_edges(&mut self, mut edges_covered: Vec<usize>) {
+        edges_covered.sort_unstable();
+        edges_covered.dedup();
+        self.unique_edges_covered = edges_covered;
     }
 
     fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<()> {
@@ -227,17 +245,7 @@ impl CorpusMetrics {
             self.cumulative_features_seen += 1;
         }
     }
-
-    /// Updates campaign favored items.
-    pub fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
-        if is_favored && !corpus_favored {
-            self.favored_items += 1;
-        } else if !is_favored && corpus_favored {
-            self.favored_items -= 1;
-        }
-    }
 }
-
 /// Per-worker corpus manager.
 pub struct WorkerCorpus {
     /// Worker Id
@@ -247,6 +255,8 @@ pub struct WorkerCorpus {
     in_memory_corpus: Vec<CorpusEntry>,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
+    /// Tracks the best corpus for each edge
+    top_rated: Vec<Option<(Uuid, usize)>>,
     /// Number of failed replays from initial corpus
     pub(crate) failed_replays: usize,
     /// Worker Metrics
@@ -302,13 +312,31 @@ impl WorkerCorpus {
             worker_dir
         });
 
-        let mut in_memory_corpus = vec![];
+        let mut in_memory_corpus: Vec<CorpusEntry> = vec![];
         let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        let mut top_rated = vec![None; COVERAGE_MAP_SIZE];
         let mut metrics = CorpusMetrics::default();
         let mut failed_replays = 0;
 
+        let mut worker = Self {
+            id,
+            in_memory_corpus,
+            history_map,
+            top_rated,
+            failed_replays,
+            metrics,
+            tx_generator,
+            mutation_generator,
+            current_mutated: None,
+            config: config.into(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir,
+            last_sync_metrics: Default::default(),
+        };
+
         if id == 0
-            && let Some(corpus_dir) = &config.corpus_dir
+            && let Some(corpus_dir) = &worker.config.corpus_dir
         {
             // Master worker loads the initial corpus, if it exists.
             // Then, [distribute]s it to workers.
@@ -320,13 +348,15 @@ impl WorkerCorpus {
                 }
                 // Warm up history map from loaded sequences.
                 let mut executor = executor.clone();
+                let mut cumulative_edges = Vec::new();
                 for tx in &tx_seq {
                     if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
-                        let (new_coverage, is_edge) =
-                            call_result.merge_edge_coverage(&mut history_map);
+                        let (new_coverage, is_edge, edges) =
+                            call_result.merge_edge_coverage_detailed(&mut worker.history_map);
+                        cumulative_edges.extend(edges);
                         if new_coverage {
-                            metrics.update_seen(is_edge);
+                            worker.metrics.update_seen(is_edge);
                         }
 
                         // Commit only when running invariant / stateful tests.
@@ -344,7 +374,7 @@ impl WorkerCorpus {
                     }
                 }
 
-                metrics.corpus_count += 1;
+                worker.metrics.corpus_count += 1;
 
                 debug!(
                     target: "corpus",
@@ -354,60 +384,38 @@ impl WorkerCorpus {
                 );
 
                 // Populate in memory corpus with the sequence from corpus file.
-                in_memory_corpus.push(CorpusEntry::new_with(tx_seq, entry.uuid));
+                let mut corpus_entry = CorpusEntry::new_with(tx_seq, entry.uuid);
+                corpus_entry.set_edges(cumulative_edges);
+
+                worker.update_top_rated(&corpus_entry);
+
+                worker.in_memory_corpus.push(corpus_entry);
             }
         }
 
-        Ok(Self {
-            id,
-            in_memory_corpus,
-            history_map,
-            failed_replays,
-            metrics,
-            tx_generator,
-            mutation_generator,
-            current_mutated: None,
-            config: config.into(),
-            new_entry_indices: Default::default(),
-            last_sync_timestamp: 0,
-            worker_dir,
-            last_sync_metrics: Default::default(),
-        })
+        // Compute favored set after loading corpus
+        worker.recompute_favored_and_cull_corpus()?;
+
+        Ok(worker)
     }
 
     /// Updates stats for the given call sequence, if new coverage produced.
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
     #[instrument(skip_all)]
-    pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
+    pub fn process_inputs(
+        &mut self,
+        inputs: &[BasicTxDetails],
+        new_coverage: bool,
+        edges_covered: Vec<usize>,
+    ) {
         let Some(worker_corpus) = &self.worker_dir else {
             return;
         };
         let worker_corpus = worker_corpus.join(CORPUS_DIR);
 
-        // Update stats of current mutated primary corpus.
-        if let Some(uuid) = &self.current_mutated {
-            if let Some(corpus) =
-                self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid == *uuid)
-            {
-                corpus.total_mutations += 1;
-                if new_coverage {
-                    corpus.new_finds_produced += 1
-                }
-                let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
-                    > FAVORABILITY_THRESHOLD;
-                self.metrics.update_favored(is_favored, corpus.is_favored);
-                corpus.is_favored = is_favored;
-
-                trace!(
-                    target: "corpus",
-                    "updated corpus {}, total mutations: {}, new finds: {}",
-                    corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
-                );
-            }
-
-            self.current_mutated = None;
-        }
+        // Clear current mutated tracking
+        self.current_mutated = None;
 
         // Collect inputs only if current run produced new coverage.
         if !new_coverage {
@@ -415,7 +423,10 @@ impl WorkerCorpus {
         }
 
         assert!(!inputs.is_empty());
-        let corpus = CorpusEntry::new(inputs.to_vec());
+        let corpus = CorpusEntry::with_edges(inputs.to_vec(), edges_covered);
+
+        // Update top_rated before adding to corpus
+        self.update_top_rated(&corpus);
 
         // Persist to disk.
         let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
@@ -441,20 +452,106 @@ impl WorkerCorpus {
     }
 
     /// Collects coverage from call result and updates metrics.
-    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
+    /// Returns (new_coverage_found, edges_hit)
+    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> (bool, Vec<usize>) {
         if !self.config.collect_edge_coverage() {
-            return false;
+            return (false, Vec::new());
         }
 
-        let (new_coverage, is_edge) = call_result.merge_edge_coverage(&mut self.history_map);
+        let (new_coverage, is_edge, edges) =
+            call_result.merge_edge_coverage_detailed(&mut self.history_map);
         if new_coverage {
             self.metrics.update_seen(is_edge);
         }
-        new_coverage
+        (new_coverage, edges)
     }
 
-    /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
-    /// configured max mutations value. Used by invariant test campaigns.
+    /// Updates top_rated entries when a new corpus is added.
+    /// If the new corpus covers an edge with lower cost than the current
+    /// top_rated entry, it becomes the new top_rated for that edge.
+    fn update_top_rated(&mut self, new_corpus: &CorpusEntry) {
+        for &edge_idx in &new_corpus.unique_edges_covered {
+            match &mut self.top_rated[edge_idx] {
+                // No corpus covers this edge yet
+                None => {
+                    self.top_rated[edge_idx] = Some((new_corpus.uuid, new_corpus.tx_seq.len()));
+                }
+                // Check if new corpus is cheaper
+                Some((best_uuid, best_cost)) => {
+                    if new_corpus.tx_seq.len() < *best_cost {
+                        *best_uuid = new_corpus.uuid;
+                        *best_cost = new_corpus.tx_seq.len();
+                    }
+                }
+            };
+        }
+    }
+
+    /// Recomputes which corpus entries are favored.
+    /// Uses greedy set cover: prioritize rare edges, pick the smallest
+    /// corpus that covers each, mark it favored, repeat.
+    fn recompute_favored_and_cull_corpus(&mut self) -> Result<()> {
+        if self.in_memory_corpus.is_empty() {
+            return Ok(());
+        }
+
+        // Step 1: Reset all favored flags
+        for corpus in &mut self.in_memory_corpus {
+            corpus.is_favored = false;
+        }
+
+        // Step 2: Build list of (edge_index, rarity) for edges we've seen
+        // Rarity = how many corpus entries cover this edge
+        let mut edge_rarity: Vec<(usize, usize)> = Vec::new();
+
+        for edge_idx in 0..COVERAGE_MAP_SIZE {
+            // Only consider edges that have a top_rated entry
+            if self.top_rated[edge_idx].is_some() {
+                let count = self
+                    .in_memory_corpus
+                    .iter()
+                    .filter(|c| c.unique_edges_covered.contains(&edge_idx))
+                    .count();
+
+                if count > 0 {
+                    edge_rarity.push((edge_idx, count));
+                }
+            }
+        }
+
+        // Step 3: Sort by rarity (rarest edges first)
+        edge_rarity.sort_by_key(|&(_, count)| count);
+
+        // Step 4: Track which edges we've covered
+        let mut covered = vec![false; COVERAGE_MAP_SIZE];
+
+        // Step 5: Greedy selection
+        for (edge_idx, _) in edge_rarity {
+            if covered[edge_idx] {
+                continue; // Already covered by a favored corpus
+            }
+
+            // Get the top_rated corpus for this edge
+            if let Some((uuid, _)) = self.top_rated[edge_idx] {
+                if let Some(corpus) = self.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid) {
+                    // Mark this corpus as favored
+                    corpus.is_favored = true;
+
+                    // Mark all edges this corpus covers as covered
+                    for &e in &corpus.unique_edges_covered {
+                        covered[e] = true;
+                    }
+                }
+            }
+        }
+
+        // Step 6: Update metrics
+        self.metrics.favored_items = self.in_memory_corpus.iter().filter(|c| c.is_favored).count();
+
+        self.cull_corpus()
+    }
+
+    /// Generates new call sequence from in memory corpus. Used by invariant test campaigns
     #[instrument(skip_all)]
     pub fn new_inputs(
         &mut self,
@@ -472,8 +569,6 @@ impl WorkerCorpus {
         };
 
         if !self.in_memory_corpus.is_empty() {
-            self.evict_oldest_corpus()?;
-
             let mutation_type = self
                 .mutation_generator
                 .new_tree(test_runner)
@@ -582,8 +677,8 @@ impl WorkerCorpus {
         Ok(new_seq)
     }
 
-    /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
-    /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
+    /// Generates a new input from the shared in memory corpus. Used by fuzz (stateless) test
+    /// campaigns.
     #[instrument(skip_all)]
     pub fn new_input(
         &mut self,
@@ -595,8 +690,6 @@ impl WorkerCorpus {
         if !self.config.is_coverage_guided() {
             return Ok(self.new_tx(test_runner)?.call_details.calldata);
         }
-
-        self.evict_oldest_corpus()?;
 
         let tx = if !self.in_memory_corpus.is_empty() {
             let corpus = &self.in_memory_corpus
@@ -650,15 +743,13 @@ impl WorkerCorpus {
         Ok(sequence[depth].clone())
     }
 
-    /// Flush the oldest corpus mutated more than configured max mutations unless they are
-    /// favored.
-    fn evict_oldest_corpus(&mut self) -> Result<()> {
+    /// Flush the non-favored corpus entries when the corpus size exceeds the minimum.
+    fn cull_corpus(&mut self) -> Result<()> {
         if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
-            && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
-                corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
-            })
+            && let Some(index) = self.in_memory_corpus.iter().position(|corpus| !corpus.is_favored)
         {
             let corpus = &self.in_memory_corpus[index];
+            let evicted_uuid = corpus.uuid;
 
             trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
 
@@ -674,6 +765,29 @@ impl WorkerCorpus {
                     *i != index // Remove if it's the deleted index, keep otherwise.
                 }
             });
+
+            // Update top_rated entries that pointed to the evicted corpus
+            for edge_idx in 0..COVERAGE_MAP_SIZE {
+                if let Some((uuid, _)) = self.top_rated[edge_idx] {
+                    if uuid == evicted_uuid {
+                        // Find the next best corpus for this edge
+                        self.top_rated[edge_idx] = self
+                            .in_memory_corpus
+                            .iter()
+                            .filter(|c| c.unique_edges_covered.contains(&edge_idx))
+                            .min_by_key(|c| c.tx_seq.len())
+                            .map(|c| (c.uuid, c.tx_seq.len()));
+
+                        // If we evicted a non-favored corpus, there must be another corpus
+                        // covering this edge (otherwise the evicted corpus would be favored)
+                        assert!(
+                            self.top_rated[edge_idx].is_some(),
+                            "evicted non-favored corpus was the only one covering edge {}",
+                            edge_idx
+                        );
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -773,6 +887,7 @@ impl WorkerCorpus {
         let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
             let mut new_coverage_on_sync = false;
+            let mut corpus_edges = Vec::new();
             for tx in &tx_seq {
                 if !Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                     continue;
@@ -781,12 +896,13 @@ impl WorkerCorpus {
                 let mut call_result = execute_tx(&mut executor, tx)?;
 
                 // Check if this provides new coverage.
-                let (new_coverage, is_edge) =
-                    call_result.merge_edge_coverage(&mut self.history_map);
+                let (new_coverage, is_edge, edges) =
+                    call_result.merge_edge_coverage_detailed(&mut self.history_map);
 
                 if new_coverage {
                     self.metrics.update_seen(is_edge);
                     new_coverage_on_sync = true;
+                    corpus_edges.extend(edges);
                 }
 
                 // Commit only for stateful tests.
@@ -817,7 +933,13 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_existing(tx_seq.to_vec(), entry.path.clone())?;
+                let mut corpus_entry =
+                    CorpusEntry::new_existing(tx_seq.to_vec(), entry.path.clone())?;
+                corpus_entry.unique_edges_covered = corpus_edges;
+
+                // Update top_rated before adding
+                self.update_top_rated(&corpus_entry);
+
                 self.in_memory_corpus.push(corpus_entry);
             } else {
                 // Remove the file as it did not generate new coverage.
@@ -829,6 +951,7 @@ impl WorkerCorpus {
             }
         }
 
+        self.recompute_favored_and_cull_corpus()?;
         Ok(())
     }
 
@@ -1017,7 +1140,7 @@ impl WorkerCorpus {
     }
 }
 
-fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
+fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> + use<> {
     let dir = match std::fs::read_dir(path) {
         Ok(dir) => dir,
         Err(err) => {
@@ -1094,7 +1217,7 @@ fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
 mod tests {
     use super::*;
     use alloy_primitives::Address;
-    use std::fs;
+    use std::{fs, vec};
 
     fn basic_tx() -> BasicTxDetails {
         BasicTxDetails {
@@ -1142,6 +1265,7 @@ mod tests {
             current_mutated: Some(seed_uuid),
             failed_replays: 0,
             history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            top_rated: vec![None; COVERAGE_MAP_SIZE],
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1153,67 +1277,192 @@ mod tests {
     }
 
     #[test]
-    fn favored_sets_true_and_metrics_increment_when_ratio_gt_threshold() {
-        let (mut manager, uuid) = new_manager_with_single_corpus();
-        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        corpus.total_mutations = 4;
-        corpus.new_finds_produced = 2; // ratio currently 0.5 if both increment → 3/5 = 0.6 > 0.3.
-        corpus.is_favored = false;
+    fn top_rated_tracks_smallest_corpus_per_edge() {
+        let tx_gen = Just(basic_tx()).boxed();
+        let config = FuzzCorpusConfig {
+            corpus_dir: Some(temp_corpus_dir()),
+            corpus_gzip: false,
+            corpus_min_mutations: 0,
+            corpus_min_size: 0,
+            ..Default::default()
+        };
 
-        // Ensure metrics start at 0.
-        assert_eq!(manager.metrics.favored_items, 0);
+        // Create corpus A covering edges [0, 1, 2] with cost 5
+        let corpus_a = CorpusEntry::with_edges(vec![basic_tx(); 5], vec![0, 1, 2]);
+        let uuid_a = corpus_a.uuid;
 
-        // Mark this as the currently mutated corpus and process a run with new coverage.
-        manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], true);
+        // Create corpus B covering edges [1, 2, 3] with cost 3
+        let corpus_b = CorpusEntry::with_edges(vec![basic_tx(); 3], vec![1, 2, 3]);
+        let uuid_b = corpus_b.uuid;
 
-        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
-        assert!(corpus.is_favored, "expected favored to be true when ratio > threshold");
-        assert_eq!(
-            manager.metrics.favored_items, 1,
-            "favored_items should increment on false→true"
-        );
+        let corpus_root = temp_corpus_dir();
+        let _ = fs::create_dir_all(&corpus_root);
+
+        let mut manager = WorkerCorpus {
+            id: 0,
+            tx_generator: tx_gen,
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config: config.into(),
+            in_memory_corpus: vec![],
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            top_rated: vec![None; COVERAGE_MAP_SIZE],
+            metrics: CorpusMetrics::default(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir: Some(corpus_root),
+            last_sync_metrics: CorpusMetrics::default(),
+        };
+
+        // Add corpus A
+        manager.update_top_rated(&corpus_a);
+        manager.in_memory_corpus.push(corpus_a);
+
+        // Verify top_rated[0] = A, top_rated[1] = A, top_rated[2] = A
+        assert_eq!(manager.top_rated[0], Some((uuid_a, 5)));
+        assert_eq!(manager.top_rated[1], Some((uuid_a, 5)));
+        assert_eq!(manager.top_rated[2], Some((uuid_a, 5)));
+
+        // Add corpus B
+        manager.update_top_rated(&corpus_b);
+        manager.in_memory_corpus.push(corpus_b);
+
+        // Verify top_rated[0] = A (only A covers it)
+        // top_rated[1] = B (B is cheaper: cost 3 < 5)
+        // top_rated[2] = B (B is cheaper: cost 3 < 5)
+        // top_rated[3] = B (only B covers it)
+        assert_eq!(manager.top_rated[0], Some((uuid_a, 5)));
+        assert_eq!(manager.top_rated[1], Some((uuid_b, 3)));
+        assert_eq!(manager.top_rated[2], Some((uuid_b, 3)));
+        assert_eq!(manager.top_rated[3], Some((uuid_b, 3)));
     }
 
     #[test]
-    fn favored_sets_false_and_metrics_decrement_when_ratio_lt_threshold() {
-        let (mut manager, uuid) = new_manager_with_single_corpus();
-        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        corpus.total_mutations = 9;
-        corpus.new_finds_produced = 3; // 3/9 = 0.333.. > 0.3; after +1: 3/10 = 0.3 => not favored.
-        corpus.is_favored = true; // Start as favored.
+    fn cull_queue_selects_minimal_covering_set() {
+        let tx_gen = Just(basic_tx()).boxed();
+        let config = FuzzCorpusConfig {
+            corpus_dir: Some(temp_corpus_dir()),
+            corpus_gzip: false,
+            corpus_min_mutations: 0,
+            corpus_min_size: 0,
+            ..Default::default()
+        };
 
-        manager.metrics.favored_items = 1;
+        // Create corpus A covering edges [0, 1] with cost 2
+        let corpus_a = CorpusEntry::with_edges(vec![basic_tx(); 2], vec![0, 1]);
+        let uuid_a = corpus_a.uuid;
 
-        // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
-        manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], false);
+        // Create corpus B covering edges [1, 2] with cost 2
+        let corpus_b = CorpusEntry::with_edges(vec![basic_tx(); 2], vec![1, 2]);
+        let uuid_b = corpus_b.uuid;
 
-        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
-        assert!(!corpus.is_favored, "expected favored to be false when ratio < threshold");
-        assert_eq!(
-            manager.metrics.favored_items, 0,
-            "favored_items should decrement on true→false"
-        );
-    }
+        // Create corpus C covering edges [0, 1, 2] with cost 5
+        let corpus_c = CorpusEntry::with_edges(vec![basic_tx(); 5], vec![0, 1, 2]);
+        let uuid_c = corpus_c.uuid;
 
-    #[test]
-    fn favored_is_false_on_ratio_equal_threshold() {
-        let (mut manager, uuid) = new_manager_with_single_corpus();
-        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        // After this call with new_coverage=true, totals become 10 and 3 → 0.3.
-        corpus.total_mutations = 9;
-        corpus.new_finds_produced = 2;
-        corpus.is_favored = false;
+        let corpus_root = temp_corpus_dir();
+        let _ = fs::create_dir_all(&corpus_root);
 
-        manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], true);
+        let mut manager = WorkerCorpus {
+            id: 0,
+            tx_generator: tx_gen,
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config: config.into(),
+            in_memory_corpus: vec![corpus_a, corpus_b, corpus_c],
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            top_rated: vec![None; COVERAGE_MAP_SIZE],
+            metrics: CorpusMetrics::default(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir: Some(corpus_root),
+            last_sync_metrics: CorpusMetrics::default(),
+        };
 
-        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
+        // Update top_rated for all corpus entries
+        let corpus_entries: Vec<_> = manager.in_memory_corpus.clone();
+        for corpus in &corpus_entries {
+            manager.update_top_rated(corpus);
+        }
+
+        let _ = manager.recompute_favored_and_cull_corpus();
+
+        // Verify A and B are favored, C is not (A+B cover everything cheaper)
+        let corpus_a = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid_a).unwrap();
+        let corpus_b = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid_b).unwrap();
         assert!(
-            !(corpus.is_favored),
-            "with strict '>' comparison, favored must be false when ratio == threshold"
+            manager.in_memory_corpus.iter().find(|c| c.uuid == uuid_c).is_none(),
+            "corpus C should be culled"
         );
+
+        assert!(corpus_a.is_favored, "corpus A should be favored");
+        assert!(corpus_b.is_favored, "corpus B should be favored");
+
+        // Verify metrics
+        assert_eq!(manager.metrics.favored_items, 2);
+    }
+
+    #[test]
+    fn eviction_updates_top_rated() {
+        let tx_gen = Just(basic_tx()).boxed();
+        let config = FuzzCorpusConfig {
+            corpus_dir: Some(temp_corpus_dir()),
+            corpus_gzip: false,
+            corpus_min_mutations: 0,
+            corpus_min_size: 1,
+            ..Default::default()
+        };
+
+        // Create corpus A covering edge [0] with cost 2
+        let mut corpus_a = CorpusEntry::with_edges(vec![basic_tx(); 2], vec![0]);
+        corpus_a.is_favored = false; // Make it non-favored so it can be evicted
+        let uuid_a = corpus_a.uuid;
+
+        // Create corpus B covering edge [0] with cost 3 (higher cost)
+        let mut corpus_b = CorpusEntry::with_edges(vec![basic_tx(); 3], vec![0]);
+        corpus_b.is_favored = true; // Make it favored so it won't be evicted
+        let uuid_b = corpus_b.uuid;
+
+        let corpus_root = temp_corpus_dir();
+        let _ = fs::create_dir_all(&corpus_root);
+
+        let mut manager = WorkerCorpus {
+            id: 0,
+            tx_generator: tx_gen,
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config: config.into(),
+            in_memory_corpus: vec![corpus_a, corpus_b],
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            top_rated: vec![None; COVERAGE_MAP_SIZE],
+            metrics: CorpusMetrics::default(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir: Some(corpus_root),
+            last_sync_metrics: CorpusMetrics::default(),
+        };
+
+        // Update top_rated - A should be top rated because it's cheaper
+        let corpus_entries: Vec<_> = manager.in_memory_corpus.clone();
+        for corpus in &corpus_entries {
+            manager.update_top_rated(corpus);
+        }
+
+        // Verify top_rated[0] = A
+        assert_eq!(manager.top_rated[0], Some((uuid_a, 2)));
+
+        // Evict A (it's not favored)
+        manager.cull_corpus().unwrap();
+
+        // Verify A was removed
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != uuid_a));
+
+        // Verify top_rated[0] = B (after A was evicted)
+        assert_eq!(manager.top_rated[0], Some((uuid_b, 3)));
     }
 
     #[test]
@@ -1227,14 +1476,14 @@ mod tests {
             ..Default::default()
         };
 
-        let mut favored = CorpusEntry::new(vec![basic_tx()]);
-        favored.total_mutations = 2;
-        favored.is_favored = true;
+        // Create two corpus covering the same edge, with different costs
+        // The cheaper one (cost=1) will be favored after recompute_favored_and_cull_corpus
+        let mut favored = CorpusEntry::with_edges(vec![basic_tx()], vec![0]);
+        favored.is_favored = false;
+        let favored_uuid = favored.uuid;
 
-        let mut non_favored = CorpusEntry::new(vec![basic_tx()]);
-        non_favored.total_mutations = 2;
+        let mut non_favored = CorpusEntry::with_edges(vec![basic_tx(); 2], vec![0]);
         non_favored.is_favored = false;
-        let non_favored_uuid = non_favored.uuid;
 
         let corpus_root = temp_corpus_dir();
         let worker_subdir = corpus_root.join("worker0");
@@ -1249,6 +1498,7 @@ mod tests {
             current_mutated: None,
             failed_replays: 0,
             history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            top_rated: vec![None; COVERAGE_MAP_SIZE],
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1256,16 +1506,23 @@ mod tests {
             last_sync_metrics: CorpusMetrics::default(),
         };
 
+        // Update top_rated and compute initial favored set
+        let corpus_entries: Vec<_> = manager.in_memory_corpus.clone();
+        for corpus in &corpus_entries {
+            manager.update_top_rated(corpus);
+        }
+
+        let _ = manager.recompute_favored_and_cull_corpus();
+
         // First eviction should remove the non-favored one.
-        manager.evict_oldest_corpus().unwrap();
         assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert!(manager.in_memory_corpus[0].uuid == favored_uuid);
         assert!(manager.in_memory_corpus.iter().all(|c| c.is_favored));
 
-        // Attempt eviction again: only favored remains → should not remove.
-        manager.evict_oldest_corpus().unwrap();
-        assert_eq!(manager.in_memory_corpus.len(), 1, "favored corpus must not be evicted");
-
-        // Ensure the evicted one was the non-favored uuid.
-        assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
+        // Culling should be idempotent.
+        manager.cull_corpus().unwrap();
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert!(manager.in_memory_corpus[0].uuid == favored_uuid);
+        assert!(manager.in_memory_corpus.iter().all(|c| c.is_favored));
     }
 }
