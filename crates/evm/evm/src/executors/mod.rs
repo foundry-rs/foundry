@@ -1006,6 +1006,50 @@ impl RawCallResult {
         }
         (new_coverage, is_edge)
     }
+    /// Returns (new_coverage_found, is_new_edge, edges_hit)
+    pub fn merge_edge_coverage_detailed(
+        &mut self,
+        history_map: &mut [u8],
+    ) -> (bool, bool, Vec<usize>) {
+        let mut edges_hit = Vec::new();
+        let mut new_coverage = false;
+        let mut is_edge = false;
+
+        if let Some(coverage_map) = &self.edge_coverage {
+            for (idx, &hit_count) in coverage_map.iter().enumerate() {
+                if hit_count > 0 {
+                    edges_hit.push(idx);
+
+                    // Convert hitcount into bucket count
+                    let bucket = match hit_count {
+                        0 => 0,
+                        1 => 1,
+                        2 => 2,
+                        3 => 4,
+                        4..=7 => 8,
+                        8..=15 => 16,
+                        16..=31 => 32,
+                        32..=127 => 64,
+                        _ => 128,
+                    };
+                    let prev_bucket = history_map[idx];
+
+                    if prev_bucket == 0 {
+                        // New edge entirely
+                        new_coverage = true;
+                        is_edge = true;
+                        history_map[idx] = bucket;
+                    } else if bucket > prev_bucket {
+                        // New hit count bucket (feature)
+                        new_coverage = true;
+                        history_map[idx] = bucket;
+                    }
+                }
+            }
+        }
+
+        (new_coverage, is_edge, edges_hit)
+    }
 }
 
 /// The result of a call.

@@ -1184,6 +1184,7 @@ fn test_paths(
 ) -> (PathBuf, PathBuf) {
     let contract = contract_name.split(':').next_back().unwrap();
     // Update config with corpus dir for current test.
+    // FIXME: collapse folder structure to reduce storage
     corpus_config.with_test(contract, test_name);
 
     let failures_dir = canonicalized(persist_dir.join("failures").join(contract));

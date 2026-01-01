@@ -381,6 +381,7 @@ impl<'a> InvariantExecutor<'a> {
                 return Err(eyre!("call reverted"));
             }
 
+            let mut cumulative_edges = Vec::new();
             while current_run.depth < self.config.depth {
                 // Check if the timeout has been reached.
                 if timer.is_timed_out() {
@@ -407,9 +408,9 @@ impl<'a> InvariantExecutor<'a> {
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_line_coverage(call_result.line_coverage.clone());
                 // Collect edge coverage and set the flag in the current run.
-                if corpus_manager.merge_edge_coverage(&mut call_result) {
-                    current_run.new_coverage = true;
-                }
+                let (new_cov, edges) = corpus_manager.merge_edge_coverage(&mut call_result);
+                cumulative_edges.extend(edges);
+                current_run.new_coverage |= new_cov;
 
                 if discarded {
                     current_run.inputs.pop();
@@ -492,7 +493,13 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             // Extend corpus with current run data.
-            corpus_manager.process_inputs(&current_run.inputs, current_run.new_coverage);
+            // FIXME: this should be done above and save the shortest sequence that brings new
+            // coverage
+            corpus_manager.process_inputs(
+                &current_run.inputs,
+                current_run.new_coverage,
+                cumulative_edges,
+            );
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
@@ -623,6 +630,7 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
+        // TODO complete parallelization of invariants.
         let worker = WorkerCorpus::new(
             0,
             self.config.corpus.clone(),
