@@ -92,14 +92,49 @@ use revm::{
     interpreter::{InstructionResult, return_ok, return_revert},
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, task::Poll, pin::Pin};
 use tokio::{
     sync::mpsc::{UnboundedReceiver, unbounded_channel},
+    task::JoinHandle,
     try_join,
 };
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
+
+/// A future wrapper that aborts a spawned task when dropped.
+///
+/// This is used to ensure that blocking tasks are cancelled when the client disconnects.
+struct AbortOnDrop<T> {
+    handle: JoinHandle<()>,
+    rx: oneshot::Receiver<T>,
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        // If the future is dropped before completion, abort the blocking task
+        if !self.handle.is_finished() {
+            trace!(target: "node", "Aborting blocking task due to dropped future");
+            self.handle.abort();
+        }
+    }
+}
+
+impl<T> std::future::Future for AbortOnDrop<T> {
+    type Output = Result<T, BlockchainError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        // Try to receive the result from the blocking task
+        match Pin::new(&mut self.rx).poll(cx) {
+            Poll::Ready(Ok(result)) => Poll::Ready(Ok(result)),
+            Poll::Ready(Err(_)) => {
+                // Channel was closed without sending a result, task must have panicked
+                Poll::Ready(Err(BlockchainError::Internal("blocking task panicked".to_string())))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
@@ -2989,7 +3024,19 @@ impl EthApi {
 }
 
 impl EthApi {
-    /// Executes the future on a new blocking task.
+    /// Executes the future on a new blocking task with abort-on-drop support.
+    ///
+    /// This method spawns a blocking task to execute the given future. If the caller
+    /// drops the returned future (e.g., when a client disconnects), the spawned task
+    /// will be aborted to prevent resource waste.
+    ///
+    /// This is particularly important in forking mode where operations can take
+    /// several seconds or longer due to remote RPC calls.
+    ///
+    /// Note: Since the actual work is done in synchronous code (EVM execution, database
+    /// operations), we use JoinHandle::abort() to forcefully terminate the blocking task
+    /// when the client disconnects. While this is not as clean as cooperative cancellation,
+    /// it's necessary because the synchronous code has no await points to check for cancellation.
     async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
     where
         C: FnOnce(Self) -> F,
@@ -2999,13 +3046,19 @@ impl EthApi {
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
         let f = c(this);
-        tokio::task::spawn_blocking(move || {
+
+        // Spawn the blocking task and keep the handle for potential abortion
+        let handle = tokio::task::spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async move {
                 let res = f.await;
                 let _ = tx.send(res);
             })
         });
-        rx.await.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
+
+        // Create a wrapper future that will abort the task if dropped
+        let abort_on_drop = AbortOnDrop { handle, rx };
+        
+        abort_on_drop.await
     }
 
     /// Executes the `evm_mine` and returns the number of blocks mined
