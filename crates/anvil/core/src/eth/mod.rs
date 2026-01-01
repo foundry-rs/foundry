@@ -210,7 +210,7 @@ pub enum EthRequest {
     GetGenesisTime(()),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
-    EthGetTransactionByBlockHashAndIndex(TxHash, Index),
+    EthGetTransactionByBlockHashAndIndex(B256, Index),
 
     #[serde(rename = "eth_getTransactionByBlockNumberAndIndex")]
     EthGetTransactionByBlockNumberAndIndex(BlockNumber, Index),
@@ -219,7 +219,7 @@ pub enum EthRequest {
     EthGetRawTransactionByHash(TxHash),
 
     #[serde(rename = "eth_getRawTransactionByBlockHashAndIndex")]
-    EthGetRawTransactionByBlockHashAndIndex(TxHash, Index),
+    EthGetRawTransactionByBlockHashAndIndex(B256, Index),
 
     #[serde(rename = "eth_getRawTransactionByBlockNumberAndIndex")]
     EthGetRawTransactionByBlockNumberAndIndex(BlockNumber, Index),

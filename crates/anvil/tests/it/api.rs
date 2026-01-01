@@ -571,7 +571,7 @@ async fn test_fill_transaction_eip4844_blob_fee() {
 
     // EIP-4844 blob transaction with sidecar but no blob fee
     let mut tx_req = TransactionRequest::default().with_from(from).with_to(Address::random());
-    tx_req.sidecar = Some(sidecar);
+    tx_req.sidecar = Some(sidecar.into());
     tx_req.transaction_type = Some(3); // EIP-4844
 
     let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
@@ -602,7 +602,7 @@ async fn test_fill_transaction_eip4844_preserves_blob_fee() {
         .with_from(from)
         .with_to(Address::random())
         .with_max_fee_per_blob_gas(provided_blob_fee);
-    tx_req.sidecar = Some(sidecar);
+    tx_req.sidecar = Some(sidecar.into());
     tx_req.transaction_type = Some(3); // EIP-4844
 
     let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
