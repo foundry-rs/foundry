@@ -3026,17 +3026,11 @@ impl EthApi {
 impl EthApi {
     /// Executes the future on a new blocking task with abort-on-drop support.
     ///
-    /// This method spawns a blocking task to execute the given future. If the caller
-    /// drops the returned future (e.g., when a client disconnects), the spawned task
-    /// will be aborted to prevent resource waste.
+    /// If the caller drops the returned future (e.g., when a client disconnects),
+    /// the spawned task will be aborted to prevent resource waste.
     ///
-    /// This is particularly important in forking mode where operations can take
-    /// several seconds or longer due to remote RPC calls.
-    ///
-    /// Note: Since the actual work is done in synchronous code (EVM execution, database
-    /// operations), we use JoinHandle::abort() to forcefully terminate the blocking task
-    /// when the client disconnects. While this is not as clean as cooperative cancellation,
-    /// it's necessary because the synchronous code has no await points to check for cancellation.
+    /// Uses JoinHandle::abort() for forceful termination since the underlying
+    /// sync code has no await points for cooperative cancellation.
     async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
     where
         C: FnOnce(Self) -> F,
