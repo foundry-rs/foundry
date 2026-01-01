@@ -2,7 +2,7 @@ use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_chan
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, U256,
+    Address, Bytes, U256,
     map::{AddressSet, HashMap},
 };
 use alloy_provider::Provider;
@@ -183,7 +183,7 @@ impl RunArgs {
         env.evm_env.cfg_env.limit_contract_code_size = None;
         env.evm_env.block_env.number = U256::from(tx_block_number);
 
-        let mut parent_beacon_block_root: FixedBytes<32> = FixedBytes::default();
+        let mut parent_beacon_block_root = None;
 
         if let Some(block) = &block {
             env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
@@ -194,13 +194,7 @@ impl RunArgs {
             env.evm_env.block_env.gas_limit = block.header.gas_limit;
 
             if env.evm_env.cfg_env.spec >= SpecId::CANCUN {
-                if let Some(beacon_root) = block.header.parent_beacon_block_root {
-                    parent_beacon_block_root = beacon_root;
-                } else {
-                    return Err(eyre::eyre!(
-                        "ParentBeaconBlockRoot is missing for Cancun or later blocks"
-                    ));
-                }
+                parent_beacon_block_root = block.header.parent_beacon_block_root;
             }
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
@@ -236,7 +230,7 @@ impl RunArgs {
             None,
         )?;
 
-        if parent_beacon_block_root != FixedBytes::default() {
+        if let Some(parent_beacon_block_root) = parent_beacon_block_root {
             let timestamp: u64 = env.evm_env.block_env.timestamp.try_into().unwrap_or(0);
             executor.process_beacon_block_root(timestamp, parent_beacon_block_root)?;
         }
