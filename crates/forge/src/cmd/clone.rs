@@ -822,17 +822,16 @@ impl ExplorerClient for SourcifyClient {
             )));
         }
 
-        // Try to deserialize as success response first
-        let data: SourcifyContractData = match serde_json::from_str(&response_text) {
-            Ok(data) => data,
-            Err(_) => {
-                // If it fails, try to deserialize as error response
-                let error: SourcifyErrorResponse =
-                    serde_json::from_str(&response_text).map_err(|e| {
-                        EtherscanError::Unknown(format!(
-                            "Failed to parse Sourcify response: {e}. Response: {response_text}"
-                        ))
-                    })?;
+        // Use the untagged enum to properly handle both success and error responses
+        let response: SourcifyContractResponse = serde_json::from_str(&response_text).map_err(|e| {
+            EtherscanError::Unknown(format!(
+                "Failed to parse Sourcify response: {e}. Response: {response_text}"
+            ))
+        })?;
+
+        let data = match response {
+            SourcifyContractResponse::Success(data) => data,
+            SourcifyContractResponse::Error(error) => {
                 let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
                     "Unknown Sourcify API error".to_string()
                 } else {
