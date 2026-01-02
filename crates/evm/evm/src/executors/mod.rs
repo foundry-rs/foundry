@@ -31,6 +31,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use monad_revm::MonadSpecId;
 use revm::{
     bytecode::Bytecode,
     context::{BlockEnv, TxEnv},
@@ -40,7 +41,6 @@ use revm::{
     },
     database::{DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
-    primitives::hardfork::SpecId,
 };
 use std::{
     borrow::Cow,
@@ -179,12 +179,12 @@ impl Executor {
     }
 
     /// Returns the EVM spec ID.
-    pub fn spec_id(&self) -> SpecId {
+    pub fn spec_id(&self) -> MonadSpecId {
         self.env.evm_env.cfg_env.spec
     }
 
     /// Sets the EVM spec ID.
-    pub fn set_spec_id(&mut self, spec_id: SpecId) {
+    pub fn set_spec_id(&mut self, spec_id: MonadSpecId) {
         self.env.evm_env.cfg_env.spec = spec_id;
     }
 
@@ -1052,7 +1052,7 @@ fn convert_executed_result(
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas(
-        env.evm_env.cfg_env.spec,
+        env.evm_env.cfg_env.spec.into(),
         &env.tx.data,
         env.tx.kind.is_create(),
         env.tx.access_list.len().try_into()?,

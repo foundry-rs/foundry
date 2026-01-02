@@ -6,10 +6,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
+use monad_revm::MonadContext;
 use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
 
@@ -45,15 +45,18 @@ pub mod utils;
 
 /// An extension trait that allows us to add additional hooks to Inspector for later use in
 /// handlers.
+///
+/// This trait is bound to `MonadContext` for Monad-specific EVM execution with custom gas costs
+/// and precompiles.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> {
+pub trait InspectorExt: for<'a> Inspector<MonadContext<&'a mut dyn DatabaseExt>> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
     /// factory.
     fn should_use_create2_factory(
         &mut self,
-        _context: &mut EthEvmContext<&mut dyn DatabaseExt>,
+        _context: &mut MonadContext<&mut dyn DatabaseExt>,
         _inputs: &CreateInputs,
     ) -> bool {
         false

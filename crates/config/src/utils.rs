@@ -7,6 +7,7 @@ use foundry_compilers::artifacts::{
     EvmVersion,
     remappings::{Remapping, RemappingError},
 };
+use monad_revm::MonadSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
@@ -300,4 +301,15 @@ pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
         EvmVersion::Prague => SpecId::PRAGUE,
         EvmVersion::Osaka => SpecId::OSAKA,
     }
+}
+
+/// Returns the [MonadSpecId] derived from [EvmVersion].
+///
+/// This converts the EVM version to a Monad-specific hardfork identifier.
+/// The conversion goes through [SpecId] and then maps to [MonadSpecId].
+///
+/// When new Monad hardforks are added, update the `From<SpecId> for MonadSpecId`
+/// implementation in `monad-revm` to handle the mapping.
+pub fn monad_spec_id(evm_version: EvmVersion) -> MonadSpecId {
+    MonadSpecId::from(evm_spec_id(evm_version))
 }

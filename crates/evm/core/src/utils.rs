@@ -28,8 +28,12 @@ pub fn cold_path() {
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    env: EnvMut<'_>,
+///
+/// Note: For Monad, most of these Ethereum-specific quirks don't apply since Monad is
+/// post-merge from genesis and isn't Mainnet/BSC/Arbitrum. Forge doesn't call this function.
+/// Anvil uses this with SpecId for multi-chain fork support.
+pub fn apply_chain_and_block_specific_env_changes<N: Network, Spec>(
+    env: EnvMut<'_, Spec>,
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {

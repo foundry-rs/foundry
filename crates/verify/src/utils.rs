@@ -3,7 +3,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{
     Provider,
-    network::{AnyNetwork, AnyRpcBlock},
+    network::AnyRpcBlock,
 };
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -20,12 +20,13 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, executors::TracingExecutor,
-    opts::EvmOpts, traces::TraceMode, utils::apply_chain_and_block_specific_env_changes,
+    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor,
+    opts::EvmOpts, traces::TraceMode,
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
+use monad_revm::MonadSpecId;
+use revm::{bytecode::Bytecode, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -287,20 +288,21 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock, config: NetworkConfigs) {
+pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock, _config: NetworkConfigs) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
-    apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block, config);
+    // Note: apply_chain_and_block_specific_env_changes is not called for Monad
+    // since Monad is post-merge from genesis and doesn't need Ethereum-specific quirks
 }
 
 pub fn deploy_contract(
     executor: &mut TracingExecutor,
     env: &Env,
-    spec_id: SpecId,
+    spec_id: MonadSpecId,
     to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
     let env = Env::new_with_spec_id(

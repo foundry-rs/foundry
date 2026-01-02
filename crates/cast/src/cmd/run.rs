@@ -1,6 +1,6 @@
-use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_changes};
+use crate::debug::handle_traces;
 use alloy_consensus::Transaction;
-use alloy_network::{AnyNetwork, TransactionResponse};
+use alloy_network::TransactionResponse;
 use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
@@ -194,11 +194,11 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Prague);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork>(
-                env.as_env_mut(),
-                block,
-                config.networks,
-            );
+
+            // Note: apply_chain_and_block_specific_env_changes is not called for Monad
+            // since Monad is post-merge from genesis and doesn't need Ethereum-specific quirks
+            // (Mainnet merge transition, BSC prevrandao, Arbitrum L1 block number, etc.)
+            let _ = config.networks;
         }
 
         let trace_mode = TraceMode::Call

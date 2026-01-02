@@ -4258,6 +4258,7 @@ dependencies = [
  "inferno",
  "itertools 0.14.0",
  "mockall",
+ "monad-revm",
  "opener",
  "parking_lot",
  "paste",
@@ -4376,6 +4377,7 @@ dependencies = [
  "futures",
  "indicatif",
  "itertools 0.14.0",
+ "monad-revm",
  "parking_lot",
  "revm-inspectors",
  "semver 1.0.27",
@@ -4441,6 +4443,7 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",
+ "monad-revm",
  "regex",
  "reqwest",
  "revm",
@@ -4535,6 +4538,7 @@ dependencies = [
  "jsonpath_lib",
  "k256",
  "memchr",
+ "monad-revm",
  "p256",
  "parking_lot",
  "proptest",
@@ -4806,6 +4810,7 @@ dependencies = [
  "heck",
  "itertools 0.14.0",
  "mesc",
+ "monad-revm",
  "number_prefix",
  "path-slash",
  "rayon",
@@ -4867,6 +4872,7 @@ dependencies = [
  "foundry-evm-networks",
  "foundry-evm-traces",
  "indicatif",
+ "monad-revm",
  "parking_lot",
  "proptest",
  "revm",
@@ -6747,6 +6753,7 @@ version = "0.1.0"
 dependencies = [
  "auto_impl",
  "revm",
+ "serde",
 ]
 
 [[package]]

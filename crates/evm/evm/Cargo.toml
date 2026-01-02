@@ -46,6 +46,7 @@ revm = { workspace = true, default-features = false, features = [
     "c-kzg",
 ] }
 revm-inspectors.workspace = true
+monad-revm.workspace = true
 
 eyre.workspace = true
 parking_lot.workspace = true
