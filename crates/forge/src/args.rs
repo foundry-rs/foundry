@@ -76,6 +76,13 @@ pub fn run_command(args: Forge) -> Result<()> {
                 global.block_on(cmd.run()).map(drop)
             }
         }
+        ForgeSubcommand::Check(cmd) => {
+            if cmd.is_watch() {
+                global.block_on(watch::watch_check(cmd))
+            } else {
+                global.block_on(cmd.run())
+            }
+        }
         ForgeSubcommand::VerifyContract(args) => global.block_on(args.run()),
         ForgeSubcommand::VerifyCheck(args) => global.block_on(args.run()),
         ForgeSubcommand::VerifyBytecode(cmd) => global.block_on(cmd.run()),
