@@ -4973,7 +4973,9 @@ name = "foundry-evm-networks"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
+ "alloy-eips",
  "alloy-evm",
+ "alloy-op-hardforks",
  "alloy-primitives",
  "clap",
  "revm",
