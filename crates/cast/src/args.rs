@@ -757,6 +757,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }
+        CastSubcommand::Trace(cmd) => cmd.run().await?,
     };
 
     /// Prints slice of tokens using [`format_tokens`] or [`serialize_value_as_json`] depending
