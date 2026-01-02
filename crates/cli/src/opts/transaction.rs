@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use super::TempoOpts;
 use crate::utils::{parse_ether_value, parse_json};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, U64, U256, hex};
@@ -97,6 +98,9 @@ pub struct TransactionOpts {
     /// the `cast access-list` command.
     #[arg(long, value_parser = parse_json::<AccessList>)]
     pub access_list: Option<Option<AccessList>>,
+
+    #[command(flatten)]
+    pub tempo: TempoOpts,
 }
 
 #[cfg(test)]
