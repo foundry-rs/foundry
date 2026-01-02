@@ -6,7 +6,10 @@ pub use late::{LateLintPass, LateLintVisitor};
 
 use foundry_common::comments::inline_config::InlineConfig;
 use foundry_compilers::Language;
-use foundry_config::{DenyLevel, lint::Severity};
+use foundry_config::{
+    DenyLevel,
+    lint::{LintSpecificConfig, Severity},
+};
 use solar::{
     interface::{
         Session, Span,
@@ -55,7 +58,7 @@ pub struct LintContext<'s, 'c> {
 
 pub struct LinterConfig<'s> {
     pub inline: &'s InlineConfig<Vec<String>>,
-    pub mixed_case_exceptions: &'s [String],
+    pub lint_specific: &'s LintSpecificConfig,
 }
 
 impl<'s, 'c> LintContext<'s, 'c> {
