@@ -13,7 +13,7 @@ use alloy_provider::{Provider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use eyre::{Context, Result, bail};
-use forge_verify::provider::VerificationProviderType;
+use forge_verify::{VerifierArgs, provider::VerificationProviderType};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
@@ -21,7 +21,7 @@ use foundry_common::{
     provider::{RetryProvider, get_http_provider, try_get_http_provider},
     shell,
 };
-use foundry_config::Config;
+use foundry_config::{Config, ResolvedEtherscanConfig};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 
@@ -536,17 +536,155 @@ impl BundledState {
 
     pub fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
-            if self.args.verifier.verifier == VerificationProviderType::Etherscan
-                && self
-                    .script_config
-                    .config
-                    .get_etherscan_api_key(Some(sequence.chain.into()))
-                    .is_none()
-            {
-                eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
-            }
+            verify_chain_preflight(
+                &self.script_config.config,
+                &self.args.verifier,
+                sequence.chain,
+            )?;
         }
 
         Ok(())
+    }
+}
+
+fn verify_chain_preflight(config: &Config, verifier: &VerifierArgs, chain_id: u64) -> Result<()> {
+    if verifier.verifier != VerificationProviderType::Etherscan {
+        return Ok(());
+    }
+
+    if verifier.verifier_url.is_some() {
+        return Ok(());
+    }
+
+    let chain = Chain::from_id(chain_id);
+
+    match config.get_etherscan_config_with_chain(Some(chain)) {
+        Ok(Some(resolved)) => {
+            if resolved.api_url.is_empty() && resolved.key.is_empty() {
+                eyre::bail!("Missing etherscan key for chain {chain_id}");
+            }
+            Ok(())
+        }
+        Ok(None) | Err(_) => {
+            if let Some(custom) = first_resolved_etherscan_config(config)
+                && !custom.api_url.is_empty()
+                && !custom.key.is_empty()
+            {
+                return Ok(());
+            }
+            if config.get_etherscan_api_key(Some(chain)).is_none() {
+                eyre::bail!("Missing etherscan key for chain {chain_id}");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn first_resolved_etherscan_config(config: &Config) -> Option<ResolvedEtherscanConfig> {
+    let resolved = config.etherscan.clone().resolved();
+    resolved.iter().find_map(|(_, entry)| entry.clone().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn load_config(contents: &str) -> Config {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("foundry.toml"), contents).unwrap();
+        Config::load_with_root(dir.path()).unwrap()
+    }
+
+    fn etherscan_args(verifier_url: Option<&str>) -> VerifierArgs {
+        VerifierArgs {
+            verifier: VerificationProviderType::Etherscan,
+            verifier_api_key: None,
+            verifier_url: verifier_url.map(|url| url.to_string()),
+        }
+    }
+
+    #[test]
+    fn verify_preflight_allows_custom_verifier_url() {
+        let config = Config::default();
+        let args = etherscan_args(Some("https://custom-verifier.api"));
+
+        assert!(verify_chain_preflight(&config, &args, 233).is_ok());
+    }
+
+    #[test]
+    fn verify_preflight_uses_custom_config_url_with_explicit_chain() {
+        let config = load_config(
+            r#"
+            [profile.default]
+            src = "src"
+
+            [etherscan]
+            imuachain_testnet = { key = "test-key", chain = 233, url = "https://exoscan.org/api" }
+            "#,
+        );
+        let args = etherscan_args(None);
+
+        assert!(verify_chain_preflight(&config, &args, 233).is_ok());
+    }
+
+    #[test]
+    fn verify_preflight_uses_custom_config_url_without_chain() {
+        let config = load_config(
+            r#"
+            [profile.default]
+            src = "src"
+
+            [etherscan]
+            imuachain_testnet = { key = "test-key", url = "https://exoscan.org/api" }
+            "#,
+        );
+        let args = etherscan_args(None);
+
+        assert!(verify_chain_preflight(&config, &args, 233).is_ok());
+    }
+
+    #[test]
+    fn verify_preflight_errors_without_config() {
+        let config = load_config(
+            r#"
+            [profile.default]
+            src = "src"
+            "#,
+        );
+        let args = etherscan_args(None);
+
+        let err = verify_chain_preflight(&config, &args, 233).unwrap_err();
+        assert!(err.to_string().contains("Missing etherscan key for chain 233"));
+    }
+
+    #[test]
+    fn verify_preflight_uses_global_api_key() {
+        let config = load_config(
+            r#"
+            [profile.default]
+            src = "src"
+
+            etherscan_api_key = "mainnet-key"
+            "#,
+        );
+        let args = etherscan_args(None);
+
+        assert!(verify_chain_preflight(&config, &args, Chain::mainnet().id()).is_ok());
+    }
+
+    #[test]
+    fn verify_preflight_skips_non_etherscan_provider() {
+        let config = load_config(
+            r#"
+            [profile.default]
+            src = "src"
+            "#,
+        );
+        let mut args = etherscan_args(None);
+        args.verifier = VerificationProviderType::Sourcify;
+
+        assert!(verify_chain_preflight(&config, &args, 233).is_ok());
     }
 }
