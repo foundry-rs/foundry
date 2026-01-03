@@ -364,6 +364,10 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
         }
 
+        if let Some(nonce_key) = tx_opts.tempo.sequence_key {
+            tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
+        }
+
         Ok(Self {
             provider,
             tx,
@@ -493,7 +497,8 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
     /// Returns whether this builder will produce a Tempo transaction.
     pub fn is_tempo(&self) -> bool {
-        self.tx.other.contains_key("feeToken")
+        // TODO: Replace this with `FoundryTransactionRequest::is_tempo`
+        self.tx.other.contains_key("feeToken") || self.tx.other.contains_key("nonceKey")
     }
 
     async fn _build(

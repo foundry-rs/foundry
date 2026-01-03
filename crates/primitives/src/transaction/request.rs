@@ -67,11 +67,23 @@ impl FoundryTransactionRequest {
     pub fn is_tempo(&self) -> bool {
         self.as_ref().transaction_type == Some(TEMPO_TX_TYPE_ID)
             || self.as_ref().other.contains_key("feeToken")
+            || self.as_ref().other.contains_key("nonceKey")
     }
 
     /// Get the Tempo fee token from OtherFields if present.
-    pub fn get_tempo_fee_token(&self) -> Option<Address> {
+    fn get_tempo_fee_token(&self) -> Option<Address> {
         self.as_ref().other.get_deserialized::<Address>("feeToken").transpose().ok().flatten()
+    }
+
+    /// Get the Tempo nonce sequence key from OtherFields if present.
+    fn get_tempo_nonce_key(&self) -> U256 {
+        self.as_ref()
+            .other
+            .get_deserialized::<U256>("nonceKey")
+            .transpose()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
     }
 
     /// Check if all necessary keys are present to build a Tempo transaction, returning a list of
@@ -194,7 +206,7 @@ impl FoundryTransactionRequest {
                 max_fee_per_gas: self.max_fee_per_gas().unwrap_or_default(),
                 max_priority_fee_per_gas: self.max_priority_fee_per_gas().unwrap_or_default(),
                 gas_limit: self.gas_limit().unwrap_or_default(),
-                nonce_key: U256::ZERO, // Use protocol nonce space
+                nonce_key: self.get_tempo_nonce_key(),
                 nonce: self.nonce().unwrap_or_default(),
                 calls: vec![Call {
                     to: self.kind().unwrap_or_default(),
@@ -248,6 +260,7 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                 if let Some(fee_token) = tx.fee_token {
                     other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
                 }
+                other.insert("nonceKey".to_string(), serde_json::to_value(tx.nonce_key).unwrap());
                 let first_call = tx.calls.first();
                 let mut inner = TransactionRequest::default()
                     .with_chain_id(tx.chain_id)
