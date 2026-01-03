@@ -306,13 +306,13 @@ impl ProjectCompiler {
             eyre::ensure!(
                 !size_report.exceeds_runtime_size_limit(),
                 "some contracts exceed the runtime size limit \
-                 (EIP-170: {CONTRACT_RUNTIME_SIZE_LIMIT} bytes)"
+                 (Monad: {CONTRACT_RUNTIME_SIZE_LIMIT} bytes)"
             );
-            // Check size limits only if not ignoring EIP-3860
+            // Check size limits only if not ignoring initcode size limit
             eyre::ensure!(
                 self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
                 "some contracts exceed the initcode size limit \
-                 (EIP-3860: {CONTRACT_INITCODE_SIZE_LIMIT} bytes)"
+                 (Monad: {CONTRACT_INITCODE_SIZE_LIMIT} bytes)"
             );
         }
 
@@ -320,11 +320,11 @@ impl ProjectCompiler {
     }
 }
 
-// https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
+// Monad uses 128KB runtime limit instead of Ethereum's 24KB (EIP-170)
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 131072;
 
-// https://eips.ethereum.org/EIPS/eip-3860
-const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
+// Monad uses 256KB initcode limit instead of Ethereum's 49152 (EIP-3860)
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = 262144;
 
 /// Contracts with info about their size
 pub struct SizeReport {
@@ -424,14 +424,14 @@ impl SizeReport {
             let init_margin = CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize;
 
             let runtime_color = match contract.runtime_size {
-                ..18_000 => Color::Reset,
-                18_000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
+                ..95_000 => Color::Reset,
+                95_000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
                 _ => Color::Red,
             };
 
             let init_color = match contract.init_size {
-                ..36_000 => Color::Reset,
-                36_000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
+                ..190_000 => Color::Reset,
+                190_000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
                 _ => Color::Red,
             };
 
