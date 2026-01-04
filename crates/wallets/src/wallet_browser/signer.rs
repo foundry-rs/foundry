@@ -177,7 +177,7 @@ impl Signer for BrowserSigner {
 #[async_trait]
 impl TxSigner<Signature> for BrowserSigner {
     fn address(&self) -> Address {
-        self.address
+        Signer::address(self)
     }
 
     async fn sign_transaction(
