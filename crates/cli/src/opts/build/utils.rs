@@ -91,9 +91,18 @@ pub fn get_solar_sources_from_compile_output(
     config: &Config,
     output: &ProjectCompileOutput,
     target_paths: Option<&[PathBuf]>,
+    ignored_paths: Option<&[PathBuf]>,
 ) -> Result<SolcVersionedInput> {
     let is_solidity_file = |path: &Path| -> bool {
         path.extension().and_then(|s| s.to_str()).is_some_and(|ext| SOLC_EXTENSIONS.contains(&ext))
+    };
+
+    let is_ignored = |path: &Path| -> bool {
+        if let Some(ignored) = ignored_paths {
+            ignored.iter().any(|ignored_path| path == ignored_path)
+        } else {
+            false
+        }
     };
 
     // Collect source path targets
@@ -111,7 +120,10 @@ pub fn get_solar_sources_from_compile_output(
         while let Some(path) = queue.pop_front() {
             if source_paths.insert(path.clone()) {
                 for import in output.graph().imports(path.as_path()) {
-                    queue.push_back(import.to_path_buf());
+                    // Skip ignored imports to prevent solar from trying to compile them
+                    if !is_ignored(import) {
+                        queue.push_back(import.to_path_buf());
+                    }
                 }
             }
         }
@@ -166,7 +178,7 @@ pub fn configure_pcx_from_compile_output(
     output: &ProjectCompileOutput,
     target_paths: Option<&[PathBuf]>,
 ) -> Result<()> {
-    let solc = get_solar_sources_from_compile_output(config, output, target_paths)?;
+    let solc = get_solar_sources_from_compile_output(config, output, target_paths, None)?;
     configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
     Ok(())
 }

@@ -108,7 +108,8 @@ impl LintArgs {
             .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
 
         let output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
-        let solar_sources = get_solar_sources_from_compile_output(&config, &output, Some(&input))?;
+        let solar_sources =
+            get_solar_sources_from_compile_output(&config, &output, Some(&input), Some(&ignored))?;
         if solar_sources.input.sources.is_empty() {
             return Err(eyre!(
                 "unable to lint. Solar only supports Solidity versions prior to 0.8.0"
