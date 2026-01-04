@@ -334,9 +334,19 @@ fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>
         }
         Ok(Either::Left(decoded))
     } else {
+        validate_regex_pattern(pattern)?;
         let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
         Ok(Either::Right(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
     }
+}
+
+fn validate_regex_pattern(pattern: &str) -> Result<()> {
+    for ch in pattern.chars() {
+        if ch.is_alphanumeric() && !ch.is_ascii_hexdigit() {
+            return Err(eyre::eyre!("pattern '{}' contains non-hex character '{}'", pattern, ch));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -368,6 +378,14 @@ mod tests {
         let addr = wallet.address();
         let addr = format!("{addr:x}");
         assert!(addr.ends_with("00"));
+    }
+
+    #[test]
+    fn rejects_invalid_pattern() {
+        let args: VanityArgs = VanityArgs::parse_from(["foundry-cli", "--starts-with", "deadbeeg"]);
+        let result = args.run();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-hex character"));
     }
 
     #[test]
