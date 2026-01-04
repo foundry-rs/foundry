@@ -19,7 +19,7 @@ pub use bytecode::VerifyBytecodeArgs;
 pub mod retry;
 pub use retry::RetryArgs;
 
-mod sourcify;
+pub mod sourcify;
 
 pub mod verify;
 pub use verify::{VerifierArgs, VerifyArgs, VerifyCheckArgs};
