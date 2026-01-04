@@ -229,6 +229,36 @@ pub struct MultiWalletOpts {
     /// See: <https://docs.turnkey.com/getting-started/quickstart>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
     pub turnkey: bool,
+
+    /// Use a browser wallet.
+    #[arg(long, help_heading = "Wallet options - browser")]
+    pub browser: bool,
+
+    /// Port for the browser wallet server.
+    #[arg(
+        long,
+        help_heading = "Wallet options - browser",
+        value_name = "PORT",
+        default_value = "9545",
+        requires = "browser"
+    )]
+    pub browser_port: u16,
+
+    /// Whether to open the browser for wallet connection.
+    #[arg(
+        long,
+        help_heading = "Wallet options - browser",
+        default_value_t = false,
+        requires = "browser"
+    )]
+    pub browser_disable_open: bool,
+
+    /// Enable development mode for the browser wallet.
+    /// This relaxes certain security features for local development.
+    ///
+    /// **WARNING**: This should only be used in a development environment.
+    #[arg(long, help_heading = "Wallet options - browser", hide = true)]
+    pub browser_development: bool,
 }
 
 impl MultiWalletOpts {
@@ -251,6 +281,9 @@ impl MultiWalletOpts {
         }
         if let Some(turnkey_signers) = self.turnkey_signers()? {
             signers.extend(turnkey_signers);
+        }
+        if let Some(browser_signer) = self.browser_signer().await? {
+            signers.push(browser_signer);
         }
         if let Some((pending_keystores, unlocked)) = self.keystores()? {
             pending.extend(pending_keystores);
@@ -476,6 +509,20 @@ impl MultiWalletOpts {
         }
 
         Ok(None)
+    }
+
+    pub async fn browser_signer(&self) -> Result<Option<WalletSigner>> {
+        if self.browser {
+            let browser_signer = WalletSigner::from_browser(
+                self.browser_port,
+                !self.browser_disable_open,
+                self.browser_development,
+            )
+            .await?;
+            Ok(Some(browser_signer))
+        } else {
+            Ok(None)
+        }
     }
 }
 
