@@ -12,6 +12,7 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 
@@ -505,7 +506,7 @@ type                 {}
                     ",
                     tx.hash.pretty(),
                     tx.ty(),
-                    tx.inner.fields.pretty(),
+                    tx.inner.fields.pretty().trim_start(),
                 )
             }
         }
@@ -754,7 +755,7 @@ effectiveGasPrice    {}
             self.inner.signer().pretty(),
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
-            self.inner.pretty(),
+            self.inner.pretty().trim_start(),
         )
     }
 }
@@ -821,6 +822,94 @@ impl UIfmt for SignedAuthorization {
                 "{{recoveredAuthority: <error: {e}>, signedAuthority: {signed_authorization}}}",
             ),
         }
+    }
+}
+
+impl<T> UIfmt for FoundryReceiptEnvelope<T>
+where
+    T: UIfmt + Clone + core::fmt::Debug + PartialEq + Eq,
+{
+    fn pretty(&self) -> String {
+        let receipt = self.as_receipt();
+        let deposit_info = match self {
+            Self::Deposit(d) => {
+                format!(
+                    "
+depositNonce         {}
+depositReceiptVersion {}",
+                    d.receipt.deposit_nonce.pretty(),
+                    d.receipt.deposit_receipt_version.pretty()
+                )
+            }
+            _ => String::new(),
+        };
+
+        format!(
+            "
+status               {}
+cumulativeGasUsed    {}
+logs                 {}
+logsBloom            {}
+type                 {}{}",
+            receipt.status.pretty(),
+            receipt.cumulative_gas_used.pretty(),
+            receipt.logs.pretty(),
+            self.logs_bloom().pretty(),
+            self.tx_type() as u8,
+            deposit_info
+        )
+    }
+}
+
+impl UIfmt for FoundryTxReceipt {
+    fn pretty(&self) -> String {
+        let receipt = &self.0.inner;
+        let other = &self.0.other;
+
+        let mut pretty = format!(
+            "
+blockHash            {}
+blockNumber          {}
+contractAddress      {}
+cumulativeGasUsed    {}
+effectiveGasPrice    {}
+from                 {}
+gasUsed              {}
+logs                 {}
+logsBloom            {}
+root                 {}
+status               {}
+transactionHash      {}
+transactionIndex     {}
+type                 {}
+blobGasPrice         {}
+blobGasUsed          {}",
+            receipt.block_hash.pretty(),
+            receipt.block_number.pretty(),
+            receipt.contract_address.pretty(),
+            receipt.inner.cumulative_gas_used().pretty(),
+            receipt.effective_gas_price.pretty(),
+            receipt.from.pretty(),
+            receipt.gas_used.pretty(),
+            serde_json::to_string(receipt.inner.logs()).unwrap(),
+            receipt.inner.logs_bloom().pretty(),
+            self.state_root().pretty(),
+            receipt.inner.status().pretty(),
+            receipt.transaction_hash.pretty(),
+            receipt.transaction_index.pretty(),
+            receipt.inner.tx_type() as u8,
+            receipt.blob_gas_price.pretty(),
+            receipt.blob_gas_used.pretty()
+        );
+
+        if let Some(to) = receipt.to {
+            pretty.push_str(&format!("\nto                   {}", to.pretty()));
+        }
+
+        // additional captured fields
+        pretty.push_str(&other.pretty());
+
+        pretty
     }
 }
 
@@ -1532,5 +1621,115 @@ l1GasUsed            1600
             signed_authorization.pretty(),
             r#"{recoveredAuthority: 0xf3eaBD0de6Ca1aE7fC4D81FfD6C9a40e5D5D7e30, signedAuthority: {"chainId":"0x1","address":"0x000000000000000000000000000000000000dead","nonce":"0x2a","yParity":"0x1","r":"0x14","s":"0x1e"}}"#
         );
+    }
+
+    #[test]
+    fn can_pretty_print_tempo_tx() {
+        let s = r#"{
+            "type":"0x76",
+            "chainId":"0xa5bd",
+            "feeToken":"0x20c0000000000000000000000000000000000001",
+            "maxPriorityFeePerGas":"0x0",
+            "maxFeePerGas":"0x2cb417800",
+            "gas":"0x2d178",
+            "calls":[
+                {
+                    "data":null,
+                    "input":"0x095ea7b3000000000000000000000000dec00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680",
+                    "to":"0x20c0000000000000000000000000000000000000",
+                    "value":"0x0"
+                },
+                {
+                    "data":null,
+                    "input":"0xf8856c0f00000000000000000000000020c000000000000000000000000000000000000000000000000000000000000020c00000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000097d330",
+                    "to":"0xdec0000000000000000000000000000000000000",
+                    "value":"0x0"
+                }
+            ],
+            "accessList":[],
+            "nonceKey":"0x0",
+            "nonce":"0x0",
+            "feePayerSignature":null,
+            "validBefore":null,
+            "validAfter":null,
+            "keyAuthorization":null,
+            "aaAuthorizationList":[],
+            "signature":{
+                "pubKeyX":"0xaacc80b21e45fb11f349424dce3a2f23547f60c0ff2f8bcaede2a247545ce8dd",
+                "pubKeyY":"0x87abf0dbb7a5c9507efae2e43833356651b45ac576c2e61cec4e9c0f41fcbf6e",
+                "r":"0xcfd45c3b19745a42f80b134dcb02a8ba099a0e4e7be1984da54734aa81d8f29f",
+                "s":"0x74bb9170ae6d25bd510c83fe35895ee5712efe13980a5edc8094c534e23af85e",
+                "type":"webAuthn",
+                "webauthnData":"0x7b98b7a8e6c68d7eac741a52e6fdae0560ce3c16ef5427ad46d7a54d0ed86dd41d000000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2238453071464a7a50585167546e645473643649456659457776323173516e626966374c4741776e4b43626b222c226f726967696e223a2268747470733a2f2f74656d706f2d6465782e76657263656c2e617070222c2263726f73734f726967696e223a66616c73657d"
+            },
+            "hash":"0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd",
+            "blockHash":"0xc82b23589ceef5341ed307d33554714db6f9eefd4187a9ca8abc910a325b4689",
+            "blockNumber":"0x321fde",
+            "transactionIndex":"0x0",
+            "from":"0x566ff0f4a6114f8072ecdc8a7a8a13d8d0c6b45f",
+            "gasPrice":"0x2540be400"
+        }"#;
+
+        let tx: AnyRpcTransaction = serde_json::from_str(s).unwrap();
+
+        assert_eq!(
+            tx.pretty().trim(),
+            r#"
+blockHash            0xc82b23589ceef5341ed307d33554714db6f9eefd4187a9ca8abc910a325b4689
+blockNumber          3284958
+from                 0x566Ff0f4a6114F8072ecDC8A7A8A13d8d0C6B45F
+transactionIndex     0
+effectiveGasPrice    10000000000
+hash                 0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd
+type                 118
+aaAuthorizationList  []
+accessList           []
+calls                [{"data":null,"input":"0x095ea7b3000000000000000000000000dec00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680","to":"0x20c0000000000000000000000000000000000000","value":"0x0"},{"data":null,"input":"0xf8856c0f00000000000000000000000020c000000000000000000000000000000000000000000000000000000000000020c00000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000097d330","to":"0xdec0000000000000000000000000000000000000","value":"0x0"}]
+chainId              42429
+feePayerSignature    null
+feeToken             0x20C0000000000000000000000000000000000001
+gas                  184696
+gasPrice             10000000000
+keyAuthorization     null
+maxFeePerGas         12000000000
+maxPriorityFeePerGas 0
+nonce                0
+nonceKey             0
+signature            {"pubKeyX":"0xaacc80b21e45fb11f349424dce3a2f23547f60c0ff2f8bcaede2a247545ce8dd","pubKeyY":"0x87abf0dbb7a5c9507efae2e43833356651b45ac576c2e61cec4e9c0f41fcbf6e","r":"0xcfd45c3b19745a42f80b134dcb02a8ba099a0e4e7be1984da54734aa81d8f29f","s":"0x74bb9170ae6d25bd510c83fe35895ee5712efe13980a5edc8094c534e23af85e","type":"webAuthn","webauthnData":"0x7b98b7a8e6c68d7eac741a52e6fdae0560ce3c16ef5427ad46d7a54d0ed86dd41d000000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2238453071464a7a50585167546e645473643649456659457776323173516e626966374c4741776e4b43626b222c226f726967696e223a2268747470733a2f2f74656d706f2d6465782e76657263656c2e617070222c2263726f73734f726967696e223a66616c73657d"}
+validAfter           null
+validBefore          null
+"#
+                .trim()
+        );
+    }
+
+    #[test]
+    fn test_foundry_tx_receipt_uifmt() {
+        use alloy_network::AnyTransactionReceipt;
+        use foundry_primitives::FoundryTxReceipt;
+
+        // Test UIfmt implementation for FoundryTxReceipt
+        let s = r#"{"type":"0x2","status":"0x1","cumulativeGasUsed":"0x5208","logs":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x1234567890123456789012345678901234567890123456789012345678901234","transactionIndex":"0x0","blockHash":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd","blockNumber":"0x1","gasUsed":"0x5208","effectiveGasPrice":"0x3b9aca00","from":"0x1234567890123456789012345678901234567890","to":"0x0987654321098765432109876543210987654321","contractAddress":null}"#;
+        let any_receipt: AnyTransactionReceipt = serde_json::from_str(s).unwrap();
+        let foundry_receipt = FoundryTxReceipt::try_from(any_receipt).unwrap();
+
+        let pretty_output = foundry_receipt.pretty();
+
+        // Check that essential fields are present in the output
+        assert!(pretty_output.contains("blockHash"));
+        assert!(pretty_output.contains("blockNumber"));
+        assert!(pretty_output.contains("status"));
+        assert!(pretty_output.contains("gasUsed"));
+        assert!(pretty_output.contains("transactionHash"));
+        assert!(pretty_output.contains("type"));
+
+        // Verify the transaction hash appears in the output
+        assert!(
+            pretty_output
+                .contains("0x1234567890123456789012345678901234567890123456789012345678901234")
+        );
+
+        // Verify status is pretty printed correctly (boolean true for successful transaction)
+        assert!(pretty_output.contains("true"));
     }
 }

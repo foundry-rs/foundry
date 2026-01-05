@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
+use tempo_primitives::TempoSignature;
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -106,6 +107,7 @@ impl Signer for DevSigner {
             FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
             }
+            FoundryTypedTx::Tempo(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
         }
     }
 }
@@ -126,6 +128,10 @@ pub fn build_typed_transaction(
         FoundryTypedTx::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
         FoundryTypedTx::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
         FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+        FoundryTypedTx::Tempo(tx) => {
+            let tempo_sig: TempoSignature = signature.into();
+            FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))
+        }
     };
 
     Ok(tx)

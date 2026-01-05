@@ -139,7 +139,7 @@ First, let's initialize a new `counter` example repository:
 forge init counter
 ```
 
-Next `cd` into `counter` and build :
+Next `cd` into `counter` and build:
 
 ```sh
 forge build
@@ -294,6 +294,12 @@ More documentation can be found in the [chisel](https://getfoundry.sh/chisel/ove
 
 Foundry is highly configurable, allowing you to tailor it to your needs. Configuration is managed via a file called [`foundry.toml`](./crates/config) located in the root of your project or any parent directory. For a full list of configuration options, refer to the [config package documentation](./crates/config/README.md#all-options).
 
+You can find additional [setup and configurations guides](https://getfoundry.sh/config/overview) in the [Foundry Docs][foundry-docs] and in the [config crate](./crates/config/README.md):
+
+- [Configuring with `foundry.toml`](https://getfoundry.sh/config/overview)
+- [Setting up VSCode][vscode-setup]
+- [Shell autocompletions][shell-setup]
+
 **Profiles and Namespaces**
 
 - Configuration can be organized into **profiles**, which are arbitrarily namespaced for flexibility.
@@ -303,36 +309,34 @@ Foundry is highly configurable, allowing you to tailor it to your needs. Configu
 
 ---
 
-You can find additional [setup and configurations guides](https://getfoundry.sh/config/overview) in the [Foundry Docs][foundry-docs] and in the [config crate](./crates/config/README.md):
-
-- [Configuring with `foundry.toml`](https://getfoundry.sh/config/overview)
-- [Setting up VSCode][vscode-setup]
-- [Shell autocompletions][shell-setup]
-
 ## Contributing
 
-See our [contributing guidelines](./CONTRIBUTING.md).
-
-## Getting Help
-
-First, see if the answer to your question can be found in the [Foundry Docs][foundry-docs], or in the relevant crate.
-
-If the answer is not there:
-
-- Join the [support Telegram][tg-support-url] to get help, or
-- Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new) with your question, or
-- Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
+Contributions are welcome and highly appreciated. To get started, check out the [contributing guidelines](./CONTRIBUTING.md).
 
 If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
 
-## License
+## Support
 
-Licensed under either of [Apache License](./LICENSE-APACHE), Version
-2.0 or [MIT License](./LICENSE-MIT) at your option.
+Having trouble? See if the answer to your question can be found in the [Foundry Docs][foundry-docs].
 
+If the answer is not there:
+- Join the [support Telegram][tg-support-url] to get help, or
+- Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
+
+#### License
+
+<sup>
+Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
+2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.
+</sup>
+
+<br>
+
+<sub>
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in these crates by you, as defined in the Apache-2.0 license,
 shall be dual licensed as above, without any additional terms or conditions.
+</sub>
 
 ## Acknowledgements
 

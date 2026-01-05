@@ -16,6 +16,7 @@ use futures::FutureExt;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use url::Url;
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 
@@ -187,8 +188,11 @@ impl VerificationProvider for SourcifyVerificationProvider {
 }
 
 impl SourcifyVerificationProvider {
-    fn get_base_url(verifier_url: Option<&str>) -> &str {
-        verifier_url.unwrap_or(SOURCIFY_URL)
+    fn get_base_url(verifier_url: Option<&str>) -> Url {
+        // note(onbjerg): a little ugly but makes this infallible as we guarantee `SOURCIFY_URL` to
+        // be well formatted
+        Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
+            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap())
     }
 
     fn get_verify_url(

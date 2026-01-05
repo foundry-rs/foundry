@@ -4,27 +4,30 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, AnyTypedTransaction, TransactionBuilder, TransactionBuilder4844,
-    TransactionBuilder7702,
+    AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
 };
-use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
-use alloy_provider::Provider;
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
+use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
 use clap::Args;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
     utils::{self, LoadConfig, get_provider_builder, parse_function_args},
 };
-use foundry_common::{fmt::format_tokens, provider::RetryProviderWithSigner};
+use foundry_common::{
+    TransactionReceiptWithRevertReason, fmt::*, get_pretty_tx_receipt_attr,
+    provider::RetryProviderWithSigner, shell,
+};
 use foundry_config::{Chain, Config};
+use foundry_primitives::{FoundryTransactionRequest, FoundryTypedTx};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
-use std::{fmt::Write, time::Duration};
+use std::{fmt::Write, str::FromStr, time::Duration};
 
 #[derive(Debug, Clone, Args)]
 pub struct SendTxOpts {
@@ -157,6 +160,148 @@ pub struct InputState {
     func: Option<Function>,
 }
 
+pub struct CastTxSender<P> {
+    provider: P,
+}
+
+impl<P: Provider<AnyNetwork>> CastTxSender<P> {
+    /// Creates a new Cast instance responsible for sending transactions.
+    pub fn new(provider: P) -> Self {
+        Self { provider }
+    }
+
+    /// Sends a transaction and waits for receipt synchronously
+    pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
+        let mut receipt: TransactionReceiptWithRevertReason =
+            self.provider.send_transaction_sync(tx).await?.into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, None)
+    }
+
+    /// Sends a transaction to the specified address
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::tx::CastTxSender;
+    /// use alloy_primitives::{Address, U256, Bytes};
+    /// use alloy_serde::WithOtherFields;
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
+    /// use std::str::FromStr;
+    /// use alloy_sol_types::{sol, SolCall};    ///
+    ///
+    /// sol!(
+    ///     function greet(string greeting) public;
+    /// );
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
+    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
+    /// let bytes = Bytes::from_iter(greeting.iter());
+    /// let gas = U256::from_str("200000").unwrap();
+    /// let value = U256::from_str("1").unwrap();
+    /// let nonce = U256::from_str("1").unwrap();
+    /// let tx = TransactionRequest::default().to(to).input(bytes.into()).from(from);
+    /// let tx = WithOtherFields::new(tx);
+    /// let cast = CastTxSender::new(provider);
+    /// let data = cast.send(tx).await?;
+    /// println!("{:#?}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn send(
+        &self,
+        tx: WithOtherFields<TransactionRequest>,
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+        let res = self.provider.send_transaction(tx).await?;
+
+        Ok(res)
+    }
+
+    /// Sends a raw RLP-encoded transaction via `eth_sendRawTransaction`.
+    ///
+    /// Used for transaction types that the standard Alloy network stack doesn't understand
+    /// (e.g., Tempo transactions).
+    pub async fn send_raw(&self, raw_tx: &[u8]) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+        let res = self.provider.send_raw_transaction(raw_tx).await?;
+        Ok(res)
+    }
+
+    /// # Example
+    ///
+    /// ```
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
+    /// use cast::tx::CastTxSender;
+    ///
+    /// async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
+    /// let cast = CastTxSender::new(provider);
+    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
+    /// println!("{}", receipt);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn receipt(
+        &self,
+        tx_hash: String,
+        field: Option<String>,
+        confs: u64,
+        timeout: Option<u64>,
+        cast_async: bool,
+    ) -> Result<String> {
+        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+
+        let mut receipt: TransactionReceiptWithRevertReason =
+            match self.provider.get_transaction_receipt(tx_hash).await? {
+                Some(r) => r,
+                None => {
+                    // if the async flag is provided, immediately exit if no tx is found, otherwise
+                    // try to poll for it
+                    if cast_async {
+                        eyre::bail!("tx not found: {:?}", tx_hash)
+                    } else {
+                        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
+                            .with_required_confirmations(confs)
+                            .with_timeout(timeout.map(Duration::from_secs))
+                            .get_receipt()
+                            .await?
+                    }
+                }
+            }
+            .into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, field)
+    }
+
+    /// Helper method to format transaction receipts consistently
+    fn format_receipt(
+        &self,
+        receipt: TransactionReceiptWithRevertReason,
+        field: Option<String>,
+    ) -> Result<String> {
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(&receipt, field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
+        } else if shell::is_json() {
+            // to_value first to sort json object keys
+            serde_json::to_value(&receipt)?.to_string()
+        } else {
+            receipt.pretty()
+        })
+    }
+}
+
 /// Builder type constructing [TransactionRequest] from cast send/mktx inputs.
 ///
 /// It is implemented as a stateful builder with expected state transition of [InitState] ->
@@ -212,6 +357,15 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
 
         if let Some(nonce) = tx_opts.nonce {
             tx.set_nonce(nonce.to());
+        }
+
+        // Set Tempo fee token if provided
+        if let Some(fee_token) = tx_opts.tempo.fee_token {
+            tx.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
+        }
+
+        if let Some(nonce_key) = tx_opts.tempo.sequence_key {
+            tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
         }
 
         Ok(Self {
@@ -301,13 +455,14 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
 }
 
 impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
-    /// Builds [TransactionRequest] and fills missing fields. Returns a transaction which is ready
-    /// to be broadcasted.
+    /// Builds a [FoundryTransactionRequest] and fills missing fields. Returns a transaction which
+    /// is ready to be broadcasted.
     pub async fn build(
         self,
         sender: impl Into<SenderKind<'_>>,
-    ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(sender, true, false).await
+    ) -> Result<(FoundryTransactionRequest, Option<Function>)> {
+        let (tx, func) = self._build(sender, true, false).await?;
+        Ok((FoundryTransactionRequest::new(tx), func))
     }
 
     /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
@@ -324,11 +479,26 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
     /// Returns the hex encoded string representation of the transaction.
     pub async fn build_unsigned_raw(self, from: Address) -> Result<String> {
         let (tx, _) = self._build(SenderKind::Address(from), true, true).await?;
-        let tx = tx.build_unsigned()?;
-        match tx {
-            AnyTypedTransaction::Ethereum(t) => Ok(hex::encode_prefixed(t.encoded_for_signing())),
-            _ => eyre::bail!("Cannot generate unsigned transaction for non-Ethereum transactions"),
-        }
+        let ftx = FoundryTransactionRequest::new(tx);
+
+        let tx = ftx.build_unsigned()?;
+        Ok(hex::encode_prefixed(match tx {
+            FoundryTypedTx::Legacy(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip1559(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip2930(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip4844(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip7702(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Tempo(t) => t.encoded_for_signing(),
+            _ => eyre::bail!(
+                "Cannot generate unsigned transaction for transaction: unknown transaction type"
+            ),
+        }))
+    }
+
+    /// Returns whether this builder will produce a Tempo transaction.
+    pub fn is_tempo(&self) -> bool {
+        // TODO: Replace this with `FoundryTransactionRequest::is_tempo`
+        self.tx.other.contains_key("feeToken") || self.tx.other.contains_key("nonceKey")
     }
 
     async fn _build(

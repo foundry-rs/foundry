@@ -1,10 +1,9 @@
 use crate::{
-    AccountGenerator, CHAIN_ID, EthereumHardfork, NodeConfig,
+    AccountGenerator, CHAIN_ID, NodeConfig,
     config::{DEFAULT_MNEMONIC, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
-use alloy_op_hardforks::OpHardfork;
 use alloy_primitives::{B256, U256, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
@@ -12,6 +11,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
+use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};

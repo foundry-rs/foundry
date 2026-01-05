@@ -165,9 +165,9 @@ impl Create2Args {
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
-        let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        if let Some(threads) = threads {
-            n_threads = n_threads.min(threads);
+        let mut n_threads = threads.unwrap_or(0);
+        if n_threads == 0 {
+            n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         }
         if cfg!(test) {
             n_threads = n_threads.min(2);

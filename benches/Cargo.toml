@@ -25,7 +25,6 @@ eyre.workspace = true
 color-eyre.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tempfile.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 rayon.workspace = true
 clap = { version = "4", features = ["derive"] }

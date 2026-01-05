@@ -25,7 +25,5 @@ similar = { version = "2", features = ["inline"] }
 foundry-test-utils.workspace = true
 
 itertools.workspace = true
-similar-asserts.workspace = true
 toml.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 snapbox.workspace = true

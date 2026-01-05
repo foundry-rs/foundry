@@ -62,7 +62,6 @@ tracing-subscriber.workspace = true
 [target.'cfg(unix)'.dev-dependencies]
 foundry-test-utils.workspace = true
 rexpect = "0.6"
-tokio.workspace = true
 
 [features]
 default = ["jemalloc"]

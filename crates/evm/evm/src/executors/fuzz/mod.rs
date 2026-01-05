@@ -237,12 +237,12 @@ impl FuzzedExecutor {
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
         &self,
+        executor: &Executor,
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
     ) -> Result<FuzzOutcome, TestCaseError> {
-        let mut call = self
-            .executor
+        let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
@@ -275,7 +275,7 @@ impl FuzzedExecutor {
         {
             true
         } else {
-            self.executor.is_raw_call_mut_success(address, &mut call, false)
+            executor.is_raw_call_mut_success(address, &mut call, false)
         };
 
         if success {
@@ -464,6 +464,7 @@ impl FuzzedExecutor {
         let sync_threshold = SYNC_INTERVAL + sync_offset;
         let mut runs_since_sync = sync_threshold; // Always sync at the start.
         let mut last_metrics_report = Instant::now();
+        let mut executor = self.executor.clone();
         // Continue while:
         // 1. Global state allows (not timed out, not at global limit, no failure found)
         // 2. Worker hasn't reached its specific run limit
@@ -480,7 +481,7 @@ impl FuzzedExecutor {
                     let timer = Instant::now();
                     corpus.sync(
                         self.num_workers,
-                        &self.executor,
+                        &executor,
                         Some(func),
                         None,
                         &shared_state.global_corpus_metrics,
@@ -516,10 +517,16 @@ impl FuzzedExecutor {
             };
 
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            match self.single_fuzz(address, input, &mut corpus) {
+            match self.single_fuzz(&executor, address, input, &mut corpus) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
                         let total_runs = inc_runs();
+
+                        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
+                            && let Some(seed) = self.config.seed
+                        {
+                            cheats.set_seed(seed.wrapping_add(U256::from(worker.runs)));
+                        }
 
                         if worker_id == 0 && self.config.corpus.collect_edge_coverage() {
                             if let Some(progress) = progress {

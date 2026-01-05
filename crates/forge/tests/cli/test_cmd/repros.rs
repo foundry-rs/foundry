@@ -752,3 +752,31 @@ Ran 1 test for test/Issue8383.t.sol:Issue8383Test
 ...
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/9272
+forgetest_init!(issue_9272, |prj, cmd| {
+    prj.update_config(|config| {
+        config.allow_paths.push("..".into());
+    });
+
+    prj.add_source(
+        "Contract.sol",
+        r#"
+pragma solidity ^0.8.0;
+import '../Missing.sol';
+contract Contract {}
+"#,
+    );
+
+    // We expect a compilation error due to the missing import
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "Missing.sol" not found: File not found. Searched the following locations: [..]
+ParserError: Source "Missing.sol" not found: File not found. Searched the following locations: [..]
+ [FILE]:4:1:
+  |
+4 | import '../Missing.sol';
+  | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+"#]]);
+});

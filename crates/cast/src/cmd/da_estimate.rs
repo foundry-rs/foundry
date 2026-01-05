@@ -9,7 +9,7 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{self, LoadConfig},
 };
-use op_alloy_consensus::OpTxEnvelope;
+use foundry_primitives::FoundryTxEnvelope;
 
 /// CLI arguments for `cast da-estimate`.
 #[derive(Debug, Parser)]
@@ -36,8 +36,8 @@ impl DAEstimateArgs {
         let tx_count = block.transactions.len();
         let mut da_estimate = 0;
         for tx in block.into_transactions_iter() {
-            // try to convert into opstack transaction
-            let tx = OpTxEnvelope::try_from(tx)?;
+            // convert into FoundryTxEnvelope to support all foundry tx types
+            let tx = FoundryTxEnvelope::try_from(tx)?;
             da_estimate += op_alloy_flz::tx_estimated_size_fjord(&tx.encoded_2718());
         }
 
