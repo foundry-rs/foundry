@@ -319,10 +319,17 @@ impl ResolvedEtherscanConfig {
             .with_client(client)
             .with_api_key(api_key)
             .with_cache(cache, Duration::from_secs(24 * 60 * 60));
-        if let Some(browser_url) = browser_url {
+        if let Some(ref browser_url) = browser_url {
             client_builder = client_builder.with_url(browser_url)?;
         }
-        client_builder.chain(chain)?.build()
+
+        // Use the provided URL (either custom from foundry.toml or chain's default from resolve())
+        client_builder = client_builder.with_api_url(api_url.clone())?;
+        // Fallback: Use api_url as browser URL if browser_url is not set
+        if browser_url.is_none() {
+            client_builder = client_builder.with_url(api_url)?;
+        }
+        client_builder.build()
     }
 }
 
