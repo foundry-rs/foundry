@@ -952,7 +952,8 @@ impl<'sess> State<'sess, '_> {
     {
         self.comments
             .iter()
-            .take_while(|c| pos_lo < c.pos() && c.pos() < pos_hi)
+            .take_while(|c| c.pos() < pos_hi)
+            .filter(|c| c.pos() > pos_lo)
             .find(|c| !c.style.is_blank())
     }
 
