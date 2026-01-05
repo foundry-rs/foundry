@@ -4,7 +4,7 @@ use crate::cmd::{
     creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, erc20::Erc20Subcommand,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    txpool::TxPoolSubcommands, validate_auth::ValidateAuthArgs, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1118,6 +1118,10 @@ pub enum CastSubcommand {
     /// Recovery an EIP-7702 authority from a Authorization JSON string.
     #[command(visible_aliases = &["decode-auth"])]
     RecoverAuthority { auth: String },
+
+    /// Validate EIP-7702 authorizations in a transaction and print validity status.
+    #[command(name = "validate-auth", visible_aliases = &["va", "validate-auths"])]
+    ValidateAuth(ValidateAuthArgs),
 
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]

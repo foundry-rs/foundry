@@ -752,6 +752,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;
             sh_println!("{}", auth.recover_authority()?)?;
         }
+        CastSubcommand::ValidateAuth(cmd) => {
+            cmd.run().await?;
+        }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
