@@ -678,6 +678,33 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+// Validates BPO1 blob gas price calculation during fork transaction replay.
+// Block 24127158 has a blob tx at index 0, target tx at index 1.
+// Forking at the target tx replays the blob tx with correct BPO1 blob base fee calculation.
+forgetest_init!(fork_tx_replay_bpo1_blob_base_fee, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_test(
+        "BlobFork.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BlobForkTest is Test {
+    function test_fork_with_blob_replay() public {
+        // Fork at tx index 1 in block 24127158, which replays blob tx at index 0
+        bytes32 txHash = 0xa0f349b16e0f338ee760a9954ff5dbf2a402cff3320f3fe2c3755aee8babc335;
+        vm.createSelectFork("<url>", txHash);
+        // If we get here, blob tx replay succeeded
+        assertTrue(true);
+    }
+}
+    "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args(["test", "-vvvv"]).assert_success();
+});
+
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
     prj.add_test(

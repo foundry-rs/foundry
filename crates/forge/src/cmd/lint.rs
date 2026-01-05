@@ -86,13 +86,14 @@ impl LintArgs {
         };
 
         // Override default lint config with user-defined lints
-        let (include, exclude) = match &self.lint {
-            Some(cli_lints) => (Some(parse_lints(cli_lints)?), None),
-            None => (None, Some(parse_lints(&config.lint.exclude_lints)?)),
+        // When --only-lint is used, bypass the severity filter by setting it to None
+        let (include, exclude, severity) = match &self.lint {
+            Some(cli_lints) => (Some(parse_lints(cli_lints)?), None, vec![]),
+            None => {
+                let severity = self.severity.clone().unwrap_or(config.lint.severity.clone());
+                (None, Some(parse_lints(&config.lint.exclude_lints)?), severity)
+            }
         };
-
-        // Override default severity config with user-defined severity
-        let severity = self.severity.unwrap_or(config.lint.severity.clone());
 
         if project.compiler.solc.is_none() {
             return Err(eyre!("linting not supported for this language"));
