@@ -172,7 +172,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     resp.result
                 );
 
-                if resp.result == "Pending in queue" {
+                if resp.result == "Pending in queue"
+                    || resp.result.starts_with("Error: contract does not exist")
+                {
                     return Err(RetryError::Retry(eyre!("Verification is still pending...")));
                 }
 

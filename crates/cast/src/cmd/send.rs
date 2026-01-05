@@ -1,7 +1,8 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
+use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet};
+use alloy_network::{AnyNetwork, EthereumWallet, NetworkWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -11,10 +12,7 @@ use eyre::{Result, eyre};
 use foundry_cli::{opts::TransactionOpts, utils, utils::LoadConfig};
 use foundry_wallets::WalletSigner;
 
-use crate::{
-    Cast,
-    tx::{self, CastTxBuilder, SendTxOpts},
-};
+use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -135,6 +133,14 @@ impl SendTxArgs {
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
+        // Check if this is a Tempo transaction - requires special handling for local signing
+        let is_tempo = builder.is_tempo();
+
+        // Tempo transactions with browser wallets are not supported
+        if is_tempo && send_tx.eth.wallet.browser {
+            return Err(eyre!("Tempo transactions are not supported with browser wallets."));
+        }
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
@@ -163,7 +169,7 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
-                tx,
+                tx.into_inner(),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -186,12 +192,63 @@ impl SendTxArgs {
                 && let WalletSigner::Browser(ref browser_signer) = signer
             {
                 let (tx_request, _) = builder.build(from).await?;
-                let tx_hash = browser_signer.send_transaction_via_browser(tx_request.inner).await?;
+                let tx_hash = browser_signer
+                    .send_transaction_via_browser(tx_request.into_inner().inner)
+                    .await?;
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;
                 } else {
-                    let receipt = Cast::new(&provider)
+                    let receipt = CastTxSender::new(&provider)
+                        .receipt(
+                            format!("{tx_hash:#x}"),
+                            None,
+                            send_tx.confirmations,
+                            Some(timeout),
+                            false,
+                        )
+                        .await?;
+                    sh_println!("{receipt}")?;
+                }
+
+                return Ok(());
+            }
+
+            // Tempo transactions need to be signed locally and sent as raw transactions
+            // because EthereumWallet doesn't understand type 0x76
+            // TODO(onbjerg): All of this is a side effect of a few things, most notably that we do
+            // not use `FoundryNetwork` and `FoundryTransactionRequest` everywhere, which is
+            // downstream of the fact that we use `EthereumWallet` everywhere.
+            if is_tempo {
+                let (ftx, _) = builder.build(&signer).await?;
+
+                // Sign using NetworkWallet<FoundryNetwork>
+                let signed_tx = signer.sign_request(ftx).await?;
+
+                // Encode and send raw
+                let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
+                signed_tx.encode_2718(&mut raw_tx);
+
+                let cast = CastTxSender::new(&provider);
+                let pending_tx = cast.send_raw(&raw_tx).await?;
+                let tx_hash = pending_tx.inner().tx_hash();
+
+                if send_tx.cast_async {
+                    sh_println!("{tx_hash:#x}")?;
+                } else if send_tx.sync {
+                    // For sync mode, we already have the hash, just wait for receipt
+                    let receipt = cast
+                        .receipt(
+                            format!("{tx_hash:#x}"),
+                            None,
+                            send_tx.confirmations,
+                            Some(timeout),
+                            false,
+                        )
+                        .await?;
+                    sh_println!("{receipt}")?;
+                } else {
+                    let receipt = cast
                         .receipt(
                             format!("{tx_hash:#x}"),
                             None,
@@ -215,7 +272,7 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
-                tx_request,
+                tx_request.into_inner(),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -234,7 +291,7 @@ pub(crate) async fn cast_send<P: Provider<AnyNetwork>>(
     confs: u64,
     timeout: u64,
 ) -> Result<()> {
-    let cast = Cast::new(&provider);
+    let cast = CastTxSender::new(&provider);
 
     if sync {
         // Send transaction and wait for receipt synchronously

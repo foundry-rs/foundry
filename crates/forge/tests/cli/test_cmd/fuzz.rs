@@ -833,3 +833,38 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     test_literal(600, "testFuzz_String", "string", "\"xyzzy\"", 35);
     test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79", 19); // abi.encodePacked("xyzzy")
 });
+
+// Tests that `vm.randomUint()` produces different values across fuzz runs.
+// Regression test for https://github.com/foundry-rs/foundry/issues/12817
+//
+// The issue was that `vm.randomUint()` would produce the same sequence of values
+// in every fuzz run because the RNG was seeded identically for each run.
+// This test verifies that with many fuzz runs and a small range, we eventually
+// hit value 0, which proves the RNG varies across runs.
+forgetest_init!(test_fuzz_random_uint_varies_across_runs, |prj, cmd| {
+    prj.add_test(
+        "RandomFuzzTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RandomFuzzTest is Test {
+    function testFuzz_randomUint_shouldFail(uint256) public {
+        uint256 rand = vm.randomUint(0, 4);
+        assertTrue(rand != 0, "hit value 0");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--fuzz-seed", "1", "--mt", "testFuzz_randomUint_shouldFail"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/RandomFuzzTest.t.sol:RandomFuzzTest
+[FAIL: hit value 0; counterexample: [..]] testFuzz_randomUint_shouldFail(uint256) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+});
