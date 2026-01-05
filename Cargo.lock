@@ -83,12 +83,38 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3dcd2b4e208ce5477de90ccdcbd4bde2c8fb06af49a443974e92bb8f2c5e93f"
 dependencies = [
- "alloy-eips",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-trie",
- "alloy-tx-macros",
+ "alloy-tx-macros 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "auto_impl",
+ "borsh",
+ "c-kzg",
+ "derive_more",
+ "either",
+ "k256",
+ "once_cell",
+ "rand 0.8.5",
+ "secp256k1 0.30.0",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "alloy-consensus"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-trie",
+ "alloy-tx-macros 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "auto_impl",
  "borsh",
  "c-kzg",
@@ -110,31 +136,43 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee5655f234985f5ab1e31bef7e02ed11f0a899468cf3300e061e1b96e9e11de0"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+]
+
+[[package]]
+name = "alloy-consensus-any"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "serde",
 ]
 
 [[package]]
 name = "alloy-contract"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f01b6d8e5b4f3222aaf7f18613a7292e2fbc9163fe120649cd1b078ca534349"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
  "alloy-json-abi",
- "alloy-network",
- "alloy-network-primitives",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network-primitives 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-pubsub",
- "alloy-rpc-types-eth",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "futures",
  "futures-util",
  "serde_json",
@@ -188,11 +226,10 @@ dependencies = [
 [[package]]
 name = "alloy-eip5792"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdb31eba85ca1ac2f9df9170ffda56b470816b899c8be577a5b4c6a830368682"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "alloy-primitives",
- "alloy-serde",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "serde",
  "serde_json",
 ]
@@ -222,7 +259,7 @@ dependencies = [
  "alloy-eip7702",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "auto_impl",
  "borsh",
  "c-kzg",
@@ -237,14 +274,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-eips"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-eip2124",
+ "alloy-eip2930",
+ "alloy-eip7702",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "auto_impl",
+ "borsh",
+ "c-kzg",
+ "derive_more",
+ "either",
+ "serde",
+ "serde_with",
+ "sha2",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "alloy-ens"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ddbb0d31df814ea588fc61034c3f3d21dc3678e65e26a50fff21fd35b4d0d3b"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "alloy-contract",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
  "async-trait",
  "thiserror 2.0.17",
@@ -256,13 +314,13 @@ version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6ccc4c702c840148af1ce784cc5c6ed9274a020ef32417c5b1dbeab8c317673"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-hardforks",
  "alloy-op-hardforks",
  "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
+ "alloy-rpc-types-engine 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-sol-types",
  "auto_impl",
  "derive_more",
@@ -278,13 +336,25 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe3192fca2eb0b0c4b122b3c2d8254496b88a4e810558dddd3ea2f30ad9469df"
 dependencies = [
- "alloy-eips",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-trie",
  "borsh",
  "serde",
  "serde_with",
+]
+
+[[package]]
+name = "alloy-genesis"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-primitives",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-trie",
+ "serde",
 ]
 
 [[package]]
@@ -328,21 +398,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-json-rpc"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "http 1.4.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
 name = "alloy-network"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1e22ff194b1e34b4defd1e257e3fe4dce0eee37451c7757a1510d6b23e7379a"
 dependencies = [
- "alloy-consensus",
- "alloy-consensus-any",
- "alloy-eips",
- "alloy-json-rpc",
- "alloy-network-primitives",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-consensus-any 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-json-rpc 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-network-primitives 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
- "alloy-rpc-types-any",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "alloy-signer",
+ "alloy-rpc-types-any 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-signer 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-sol-types",
+ "async-trait",
+ "auto_impl",
+ "derive_more",
+ "futures-utils-wasm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "alloy-network"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-consensus-any 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network-primitives 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-primitives",
+ "alloy-rpc-types-any 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
  "async-trait",
  "auto_impl",
@@ -359,10 +468,22 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8a6cbb9f431bdad294eebb5af9b293d6979e633bfe5468d1e87c1421a858265"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+]
+
+[[package]]
+name = "alloy-network-primitives"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-primitives",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "serde",
 ]
 
@@ -372,8 +493,8 @@ version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f640da852f93ddaa3b9a602b7ca41d80e0023f77a67b68aaaf511c32f1fe0ce"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-evm",
  "alloy-op-hardforks",
  "alloy-primitives",
@@ -434,21 +555,56 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f5dde1abc3d582e53d139904fcdd8b2103f0bd03e8f2acb4292edbbaeaa7e6e"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
- "alloy-eips",
- "alloy-json-rpc",
- "alloy-network",
- "alloy-network-primitives",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-json-rpc 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-network 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-network-primitives 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-primitives",
+ "alloy-rpc-client 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-signer 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-sol-types",
+ "alloy-transport 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-stream",
+ "async-trait",
+ "auto_impl",
+ "dashmap",
+ "either",
+ "futures",
+ "futures-utils-wasm",
+ "lru 0.13.0",
+ "parking_lot",
+ "pin-project 1.1.10",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "wasmtimer",
+]
+
+[[package]]
+name = "alloy-provider"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network-primitives 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
  "alloy-pubsub",
- "alloy-rpc-client",
+ "alloy-rpc-client 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rpc-types-debug",
- "alloy-rpc-types-eth",
- "alloy-rpc-types-trace",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types-trace 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rpc-types-txpool",
- "alloy-signer",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-transport-http",
  "alloy-transport-ipc",
  "alloy-transport-ws",
@@ -475,12 +631,11 @@ dependencies = [
 [[package]]
 name = "alloy-pubsub"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acbfe0a3c553a027f722185fb574124d205147fffb309cae52d0a2094f076887"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-json-rpc",
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "auto_impl",
  "bimap",
  "futures",
@@ -522,10 +677,29 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a94bdef2710322c6770be08689fee0878c2ad75615b8fc40e05d7f3c9618c0b"
 dependencies = [
- "alloy-json-rpc",
+ "alloy-json-rpc 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-primitives",
+ "alloy-transport 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures",
+ "pin-project 1.1.10",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tracing",
+ "wasmtimer",
+]
+
+[[package]]
+name = "alloy-rpc-client"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
  "alloy-pubsub",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-transport-http",
  "alloy-transport-ipc",
  "alloy-transport-ws",
@@ -549,24 +723,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "811a573c8080e1b492d488e6a240ec5dd7677d7167e91ce9cb4d0ec1fcac8027"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-types-engine 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+]
+
+[[package]]
+name = "alloy-rpc-types"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-primitives",
  "alloy-rpc-types-anvil",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-rpc-types-trace",
+ "alloy-rpc-types-engine 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types-trace 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rpc-types-txpool",
- "alloy-serde",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "serde",
 ]
 
 [[package]]
 name = "alloy-rpc-types-anvil"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "838ca94be532a929f27961851000ec8bbbaeb06e2a2bcca44fac7855a2fe0f6f"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "serde",
 ]
 
@@ -576,20 +761,29 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12df0b34551ca2eab8ec83b56cb709ee5da991737282180d354a659b907f00dc"
 dependencies = [
- "alloy-consensus-any",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-consensus-any 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "alloy-rpc-types-any"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-consensus-any 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
 ]
 
 [[package]]
 name = "alloy-rpc-types-beacon"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32598a2443750a2e884c1b48efccaeeaae75e7eb4e0f13df9146b78107b4c301"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-rpc-types-engine",
+ "alloy-rpc-types-engine 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "derive_more",
  "serde",
  "serde_json",
@@ -600,8 +794,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types-debug"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c49a3a168a5bf18f1cf7ed5723a650aebe714edf7665b53dacf5707716733d0"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "alloy-primitives",
  "derive_more",
@@ -615,14 +808,31 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffe16cd1dea6089902ec609e04261a9ae6d11ec66005ba24c1f97f0eefbc0fa9"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more",
  "ethereum_ssz 0.9.1",
  "ethereum_ssz_derive",
+ "jsonwebtoken",
+ "rand 0.8.5",
+ "serde",
+ "strum 0.27.2",
+]
+
+[[package]]
+name = "alloy-rpc-types-engine"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "derive_more",
  "jsonwebtoken",
  "rand 0.8.5",
  "serde",
@@ -635,15 +845,35 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7f9f130511b8632686dfe6f9909b38d7ae4c68de3ce17d28991400646a39b25"
 dependencies = [
- "alloy-consensus",
- "alloy-consensus-any",
- "alloy-eips",
- "alloy-network-primitives",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-consensus-any 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-network-primitives 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-sol-types",
  "itertools 0.14.0",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "alloy-rpc-types-eth"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-consensus-any 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network-primitives 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-sol-types",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -657,8 +887,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cafe859944638c5d57d1a3a0034cdb5d07c98c37de8adce5508f28834acf958f"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "alloy-rpc-types-trace"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -667,12 +910,11 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types-txpool"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afaa06544e36f223b99b1415a12911230fd527994f020736c3c7950d5080208e"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "serde",
 ]
 
@@ -688,10 +930,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-serde"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-primitives",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "alloy-signer"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acff6b251740ef473932386d3b71657d3825daebf2217fb41a7ef676229225d4"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "auto_impl",
+ "either",
+ "elliptic-curve",
+ "k256",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "alloy-signer"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -707,13 +973,12 @@ dependencies = [
 [[package]]
 name = "alloy-signer-aws"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4111255269e2d96b7e064ffa98f94ebc51c8e18d43501a10808c316e6d5a4d6"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-consensus",
- "alloy-network",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-signer",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "async-trait",
  "aws-config",
  "aws-sdk-kms",
@@ -726,13 +991,12 @@ dependencies = [
 [[package]]
 name = "alloy-signer-gcp"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3fe5d26c2e1144aa89d65a0f1d1faec4dbf4c3ea1f7375888274c6609de2234"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-consensus",
- "alloy-network",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-signer",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "async-trait",
  "gcloud-sdk",
  "k256",
@@ -744,14 +1008,13 @@ dependencies = [
 [[package]]
 name = "alloy-signer-ledger"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "018fe424516f3bad2aefca5ee556a9c75301d68ab5377e296f85d33d6dc446c0"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-signer",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
  "async-trait",
  "coins-ledger",
@@ -764,13 +1027,12 @@ dependencies = [
 [[package]]
 name = "alloy-signer-local"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9129ef31975d987114c27c9930ee817cf3952355834d47f2fdf4596404507e8"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-consensus",
- "alloy-network",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-signer",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "async-trait",
  "coins-bip32",
  "coins-bip39",
@@ -784,13 +1046,12 @@ dependencies = [
 [[package]]
 name = "alloy-signer-trezor"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af231a5e9b07e54cd3142ad51bd07cbb95b4ccb4db991897a0ab9e7ed052286f"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-consensus",
- "alloy-network",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-signer",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "async-trait",
  "semver 1.0.27",
  "thiserror 2.0.17",
@@ -801,13 +1062,12 @@ dependencies = [
 [[package]]
 name = "alloy-signer-turnkey"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dae31a1578b3dedbc7c07aa5376d399adcf883caca7fdd56151b7618df72634"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-consensus",
- "alloy-network",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-signer",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "async-trait",
  "thiserror 2.0.17",
  "tracing",
@@ -893,7 +1153,29 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec1fb08ee484e615f24867c0b154fff5722bb00176102a16868c6532b7c3623"
 dependencies = [
- "alloy-json-rpc",
+ "alloy-json-rpc 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "auto_impl",
+ "base64 0.22.1",
+ "derive_more",
+ "futures",
+ "futures-utils-wasm",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tower",
+ "tracing",
+ "url",
+ "wasmtimer",
+]
+
+[[package]]
+name = "alloy-transport"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
+dependencies = [
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "auto_impl",
  "base64 0.22.1",
  "derive_more",
@@ -913,11 +1195,10 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64b722073c76f2de7e118d546ee1921c50710f97feb32aed50db94cfa5b663e1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-json-rpc",
- "alloy-transport",
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "reqwest",
  "serde_json",
  "tower",
@@ -928,12 +1209,11 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ipc"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdedcf401aab4b96d8b5e6638b79d04a6afb96c0bfcb50a2324fbadfe65c47b3"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
- "alloy-json-rpc",
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-pubsub",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "bytes",
  "futures",
  "interprocess",
@@ -948,11 +1228,10 @@ dependencies = [
 [[package]]
 name = "alloy-transport-ws"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "942210908f0c56941097f5653a5f334546940e6fd9073495b257e52216469feb"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "alloy-pubsub",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "futures",
  "http 1.4.0",
  "serde_json",
@@ -983,6 +1262,17 @@ name = "alloy-tx-macros"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04950a13cc4209d8e9b78f306e87782466bad8538c94324702d061ff03e211c9"
+dependencies = [
+ "darling 0.21.3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.113",
+]
+
+[[package]]
+name = "alloy-tx-macros"
+version = "1.2.1"
+source = "git+https://github.com/lean-apple/alloy?branch=update-trezor#e375858e5f17384f3b424ed35ed0e75ba5b9ace7"
 dependencies = [
  "darling 0.21.3",
  "proc-macro2",
@@ -1110,27 +1400,27 @@ name = "anvil"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-contract",
  "alloy-dyn-abi",
  "alloy-eip5792",
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-evm",
- "alloy-genesis",
- "alloy-network",
+ "alloy-genesis 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-op-evm",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-pubsub",
  "alloy-rlp",
- "alloy-rpc-types",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rpc-types-beacon",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "alloy-signer",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-signer-local",
  "alloy-sol-types",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-trie",
  "anvil-core",
  "anvil-rpc",
@@ -1179,14 +1469,14 @@ dependencies = [
 name = "anvil-core"
 version = "1.5.1"
 dependencies = [
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
  "alloy-eip5792",
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types",
- "alloy-serde",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "bytes",
  "foundry-common",
  "foundry-evm",
@@ -2582,25 +2872,25 @@ name = "cast"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-contract",
  "alloy-dyn-abi",
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-ens",
  "alloy-hardforks",
  "alloy-json-abi",
- "alloy-json-rpc",
- "alloy-network",
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rlp",
- "alloy-rpc-types",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rpc-types-beacon",
- "alloy-serde",
- "alloy-signer",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-signer-local",
  "alloy-sol-types",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "anvil",
  "chrono",
  "clap",
@@ -4250,14 +4540,14 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-hardforks",
  "alloy-json-abi",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-serde",
- "alloy-signer",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-signer-local",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "anvil",
  "axum",
  "chrono",
@@ -4378,16 +4668,16 @@ name = "forge-script"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-json-abi",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-serde",
- "alloy-signer",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "clap",
  "dialoguer",
  "dunce",
@@ -4422,7 +4712,7 @@ dependencies = [
 name = "forge-script-sequence"
 version = "1.5.1"
 dependencies = [
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
  "eyre",
  "foundry-common",
@@ -4456,8 +4746,8 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "async-trait",
  "clap",
  "eyre",
@@ -4533,18 +4823,18 @@ name = "foundry-cheatcodes"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
  "alloy-ens",
  "alloy-evm",
- "alloy-genesis",
+ "alloy-genesis 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-json-abi",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rlp",
- "alloy-rpc-types",
- "alloy-signer",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-signer-local",
  "alloy-sol-types",
  "base64 0.22.1",
@@ -4597,11 +4887,11 @@ version = "1.5.1"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-ens",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-rlp",
  "cfg-if",
  "clap",
@@ -4644,20 +4934,20 @@ name = "foundry-common"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-json-abi",
- "alloy-json-rpc",
- "alloy-network",
+ "alloy-json-rpc 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-pubsub",
- "alloy-rpc-client",
- "alloy-rpc-types",
- "alloy-serde",
+ "alloy-rpc-client 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
- "alloy-transport",
+ "alloy-transport 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-transport-http",
  "alloy-transport-ipc",
  "alloy-transport-ws",
@@ -4699,12 +4989,12 @@ dependencies = [
 name = "foundry-common-fmt"
 version = "1.5.1"
 dependencies = [
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-rpc-types",
- "alloy-serde",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "chrono",
  "eyre",
  "foundry-macros",
@@ -4884,7 +5174,7 @@ dependencies = [
  "alloy-evm",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
  "eyre",
  "foundry-cheatcodes",
@@ -4925,18 +5215,18 @@ name = "foundry-evm-core"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
  "alloy-evm",
- "alloy-genesis",
+ "alloy-genesis 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-hardforks",
  "alloy-json-abi",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-op-evm",
  "alloy-op-hardforks",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-sol-types",
  "auto_impl",
  "eyre",
@@ -5007,7 +5297,7 @@ name = "foundry-evm-networks"
 version = "1.5.1"
 dependencies = [
  "alloy-chains",
- "alloy-eips",
+ "alloy-eips 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-evm",
  "alloy-op-hardforks",
  "alloy-primitives",
@@ -5055,11 +5345,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df2fd495cf7337b247d960f90355329cc625fe27fe7da9fe5e598c42df21526"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-hardforks",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
+ "alloy-provider 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "eyre",
  "futures",
  "parking_lot",
@@ -5097,14 +5387,14 @@ dependencies = [
 name = "foundry-primitives"
 version = "1.5.1"
 dependencies = [
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-evm",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-rpc-types-eth 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-serde 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "derive_more",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
@@ -5134,7 +5424,7 @@ name = "foundry-test-utils"
 version = "1.5.1"
 dependencies = [
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "eyre",
  "fd-lock",
  "foundry-block-explorers",
@@ -5160,12 +5450,12 @@ dependencies = [
 name = "foundry-wallets"
 version = "1.5.1"
 dependencies = [
- "alloy-consensus",
+ "alloy-consensus 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-dyn-abi",
- "alloy-network",
+ "alloy-network 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-primitives",
- "alloy-rpc-types",
- "alloy-signer",
+ "alloy-rpc-types 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
+ "alloy-signer 1.2.1 (git+https://github.com/lean-apple/alloy?branch=update-trezor)",
  "alloy-signer-aws",
  "alloy-signer-gcp",
  "alloy-signer-ledger",
@@ -7169,13 +7459,13 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "736381a95471d23e267263cfcee9e1d96d30b9754a94a2819148f83379de8a86"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-network",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-network 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more",
  "serde",
  "thiserror 2.0.17",
@@ -7193,12 +7483,12 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4034183dca6bff6632e7c24c92e75ff5f0eabb58144edb4d8241814851334d47"
 dependencies = [
- "alloy-consensus",
- "alloy-network",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-network 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-eth",
- "alloy-signer",
+ "alloy-provider 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-signer 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
 ]
@@ -7209,11 +7499,11 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6753d90efbaa8ea8bcb89c1737408ca85fa60d7adb875049d3f382c063666f86"
 dependencies = [
- "alloy-network",
+ "alloy-network 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-engine",
- "alloy-transport",
+ "alloy-provider 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-engine 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-transport 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "async-trait",
  "op-alloy-rpc-types-engine",
 ]
@@ -7224,12 +7514,12 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddd87c6b9e5b6eee8d6b76f41b04368dca0e9f38d83338e5b00e730c282098a4"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-network-primitives",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-network-primitives 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more",
  "op-alloy-consensus",
  "serde",
@@ -7243,12 +7533,12 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77727699310a18cdeed32da3928c709e2704043b6584ed416397d5da65694efc"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types-engine",
- "alloy-serde",
+ "alloy-rpc-types-engine 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more",
  "ethereum_ssz 0.9.1",
  "ethereum_ssz_derive",
@@ -7986,9 +8276,9 @@ dependencies = [
 
 [[package]]
 name = "protobuf"
-version = "3.3.0"
+version = "3.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b65f4a8ec18723a734e5dc09c173e0abf9690432da5340285d536edcb4dac190"
+checksum = "d65a1d4ddae7d8b5de68153b48f6aa3bba8cb002b243dbdbc55a5afbc98f99f4"
 dependencies = [
  "once_cell",
  "protobuf-support",
@@ -7997,9 +8287,9 @@ dependencies = [
 
 [[package]]
 name = "protobuf-support"
-version = "3.3.0"
+version = "3.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6872f4d4f4b98303239a2b5838f5bbbb77b01ffc892d627957f37a22d7cfe69c"
+checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
 dependencies = [
  "thiserror 1.0.69",
 ]
@@ -8412,9 +8702,9 @@ name = "reth-codecs"
 version = "1.9.3"
 source = "git+https://github.com/paradigmxyz/reth?rev=64909d3#64909d33e6b7ab60774e37f5508fb5ad17f41897"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-genesis",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-genesis 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-trie",
  "bytes",
@@ -8440,12 +8730,12 @@ name = "reth-ethereum-primitives"
 version = "1.9.3"
 source = "git+https://github.com/paradigmxyz/reth?rev=64909d3#64909d33e6b7ab60774e37f5508fb5ad17f41897"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types-eth",
- "alloy-serde",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "reth-codecs",
  "reth-primitives-traits",
  "serde",
@@ -8456,12 +8746,12 @@ name = "reth-primitives-traits"
 version = "1.9.3"
 source = "git+https://github.com/paradigmxyz/reth?rev=64909d3#64909d33e6b7ab60774e37f5508fb5ad17f41897"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-genesis",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-genesis 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types-eth",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-trie",
  "auto_impl",
  "bytes",
@@ -8555,7 +8845,7 @@ version = "9.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "980d8d6bba78c5dd35b83abbb6585b0b902eb25ea4448ed7bfba6283b0337191"
 dependencies = [
- "alloy-eips",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "revm-bytecode",
  "revm-database-interface",
  "revm-primitives",
@@ -8620,8 +8910,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01def7351cd9af844150b8e88980bcd11304f33ce23c3d7c25f2a8dab87c1345"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-rpc-types-trace",
+ "alloy-rpc-types-eth 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-rpc-types-trace 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-sol-types",
  "anstyle",
  "boa_engine",
@@ -10176,11 +10466,11 @@ name = "tempo-primitives"
 version = "0.7.5"
 source = "git+https://github.com/tempoxyz/tempo?tag=v0.7.5#d1c2d656fb657e3c6f46a8bc3889bdb595d45576"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
+ "alloy-consensus 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-eips 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-serde",
+ "alloy-serde 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "base64 0.22.1",
  "derive_more",
  "p256",
@@ -10836,15 +11126,15 @@ dependencies = [
 
 [[package]]
 name = "trezor-client"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10636211ab89c96ed2824adc5ec0d081e1080aeacc24c37abb318dcb31dcc779"
+checksum = "87873db279766278a7e56b01139943e00a45afc079fc8fa6651e949f2234c3f6"
 dependencies = [
  "byteorder",
  "hex",
  "protobuf",
  "rusb",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tracing",
 ]
 
