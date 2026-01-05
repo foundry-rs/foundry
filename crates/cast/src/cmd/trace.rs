@@ -9,7 +9,6 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::stdin;
-use op_alloy_consensus::OpTxEnvelope;
 
 /// CLI arguments for `cast trace`.
 #[derive(Debug, Parser)]
@@ -55,8 +54,7 @@ impl TraceArgs {
                 hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))?
             } else if is_json {
                 let tx: AnyRpcTransaction = serde_json::from_str(trimmed)?;
-                let envelope = tx.try_into_either::<OpTxEnvelope>()?;
-                envelope.encoded_2718().to_vec()
+                tx.inner.inner.encoded_2718().to_vec()
             } else {
                 hex::decode(trimmed)?
             };
