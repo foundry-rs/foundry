@@ -41,7 +41,6 @@ use alloy_consensus::{
 use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
     BlockNumHash, Encodable2718,
-    eip1559::BaseFeeParams,
     eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
     eip7840::BlobParams,
     eip7910::SystemContract,
@@ -1857,7 +1856,7 @@ impl Backend {
                 block_env.basefee = simulated_block
                     .inner
                     .header
-                    .next_block_base_fee(BaseFeeParams::ethereum())
+                    .next_block_base_fee(self.fees.base_fee_params())
                     .unwrap_or_default();
 
                 block_res.push(simulated_block);
