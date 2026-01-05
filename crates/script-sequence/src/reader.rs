@@ -58,7 +58,18 @@ impl BroadcastReader {
 
             if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 // Ignore -latest to avoid duplicating broadcast entries
-                if path.components().any(|c| c.as_os_str().to_string_lossy().contains("-latest")) {
+                // Check if filename ends with "-latest.json" or parent directory ends with
+                // "-latest"
+                let should_skip = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| name.ends_with("-latest.json"))
+                    || path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|name| name.ends_with("-latest"));
+                if should_skip {
                     continue;
                 }
 
