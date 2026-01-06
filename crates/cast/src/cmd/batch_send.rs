@@ -1,4 +1,7 @@
-use crate::tx::{CastTxBuilder, CastTxSender, SendTxOpts};
+use crate::{
+    tx::{CastTxBuilder, CastTxSender, SendTxOpts},
+    tx_spec::TxSpec,
+};
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{U64, utils::parse_ether};
 use alloy_provider::Provider;
@@ -17,7 +20,7 @@ pub struct BatchSendArgs {
     ///   --tx "0x123:0.1ether"  (ETH transfer)
     ///   --tx "0x456::transfer(address,uint256):0x789,1000"  (contract call)
     ///   --tx "0xabc::0x123def"  (raw data)
-    #[arg(long = "tx", value_name = "SPEC", value_delimiter = ',')]
+    #[arg(long = "tx", value_name = "SPEC", value_delimiter = ';')]
     pub transactions: Vec<String>,
 
     #[command(flatten)]
@@ -33,82 +36,6 @@ pub struct BatchSendArgs {
     /// Starting nonce (auto-detected if not provided)
     #[arg(long)]
     pub start_nonce: Option<u64>,
-}
-
-/// Parsed transaction specification
-#[derive(Debug, Clone)]
-pub struct TxSpec {
-    pub to: String,
-    pub value: Option<String>,
-    pub sig: Option<String>,
-    pub args: Vec<String>,
-}
-
-impl TxSpec {
-    /// Parse transaction spec in format: to\\[:value\\]\\[:sig\\[:args\\]\\]
-    fn parse(spec: &str) -> Result<Self> {
-        let parts: Vec<&str> = spec.split(':').collect();
-
-        if parts.is_empty() {
-            return Err(eyre!("Empty transaction specification"));
-        }
-
-        let to = parts[0].to_string();
-        if to.is_empty() {
-            return Err(eyre!("Missing destination address"));
-        }
-
-        let mut value = None;
-        let mut sig = None;
-        let mut args = Vec::new();
-
-        match parts.len() {
-            1 => {
-                // Just address: "0x123"
-            }
-            2 => {
-                // Address + value OR raw data: "0x123:0.1ether" or "0x123:0x123abc"
-                let second = parts[1];
-                if second.starts_with("0x") && second.len() > 10 {
-                    // Looks like raw data
-                    sig = Some(second.to_string());
-                } else if !second.is_empty() {
-                    // Looks like value
-                    value = Some(second.to_string());
-                }
-            }
-            3 => {
-                // Address + value + sig: "0x123:0.1ether:transfer(address,uint256)"
-                // OR Address + empty + sig: "0x123::transfer(address,uint256)"
-                if !parts[1].is_empty() {
-                    value = Some(parts[1].to_string());
-                }
-                if !parts[2].is_empty() {
-                    sig = Some(parts[2].to_string());
-                }
-            }
-            4 => {
-                // Address + value + sig + args:
-                // "0x123:0.1ether:transfer(address,uint256):0x789,1000"
-                if !parts[1].is_empty() {
-                    value = Some(parts[1].to_string());
-                }
-                if !parts[2].is_empty() {
-                    sig = Some(parts[2].to_string());
-                }
-                if !parts[3].is_empty() {
-                    args = parts[3].split(',').map(|s| s.trim().to_string()).collect();
-                }
-            }
-            _ => {
-                return Err(eyre!(
-                    "Invalid transaction specification format. Expected: to[:value][:sig[:args]]"
-                ));
-            }
-        }
-
-        Ok(Self { to, value, sig, args })
-    }
 }
 
 impl BatchSendArgs {
