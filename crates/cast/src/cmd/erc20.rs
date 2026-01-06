@@ -7,15 +7,18 @@ use crate::{
 };
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_primitives::U256;
+use alloy_network::TransactionBuilder;
+use alloy_primitives::{U64, U256};
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use clap::Parser;
+use clap::{Args, Parser};
 use foundry_cli::{
     opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
+    utils::{LoadConfig, get_chain, get_provider},
 };
 #[doc(hidden)]
-pub use foundry_config::utils::*;
+pub use foundry_config::{Chain, utils::*};
 
 sol! {
     #[sol(rpc)]
@@ -34,6 +37,54 @@ sol! {
     }
 }
 
+/// Transaction options for ERC20 operations.
+///
+/// This struct contains only the transaction options relevant to ERC20 token interactions
+#[derive(Debug, Clone, Args)]
+pub struct Erc20TxOpts {
+    /// Gas limit for the transaction.
+    #[arg(long, env = "ETH_GAS_LIMIT")]
+    pub gas_limit: Option<U256>,
+
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_GAS_PRICE")]
+    pub gas_price: Option<U256>,
+
+    /// Max priority fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
+    pub priority_gas_price: Option<U256>,
+
+    /// Nonce for the transaction.
+    #[arg(long)]
+    pub nonce: Option<U64>,
+}
+
+/// Apply transaction options to a transaction request for ERC20 operations.
+fn apply_tx_opts(
+    tx: &mut WithOtherFields<TransactionRequest>,
+    tx_opts: &Erc20TxOpts,
+    is_legacy: bool,
+) {
+    if let Some(gas_limit) = tx_opts.gas_limit {
+        tx.set_gas_limit(gas_limit.to());
+    }
+
+    if let Some(gas_price) = tx_opts.gas_price {
+        if is_legacy {
+            tx.set_gas_price(gas_price.to());
+        } else {
+            tx.set_max_fee_per_gas(gas_price.to());
+        }
+    }
+
+    if !is_legacy && let Some(priority_fee) = tx_opts.priority_gas_price {
+        tx.set_max_priority_fee_per_gas(priority_fee.to());
+    }
+
+    if let Some(nonce) = tx_opts.nonce {
+        tx.set_nonce(nonce.to());
+    }
+}
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
@@ -72,6 +123,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         send_tx: SendTxOpts,
+
+        #[command(flatten)]
+        tx: Erc20TxOpts,
     },
 
     /// Approve ERC20 token spending.
@@ -90,6 +144,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         send_tx: SendTxOpts,
+
+        #[command(flatten)]
+        tx: Erc20TxOpts,
     },
 
     /// Query ERC20 token allowance.
@@ -191,6 +248,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         send_tx: SendTxOpts,
+
+        #[command(flatten)]
+        tx: Erc20TxOpts,
     },
 
     /// Burn ERC20 tokens.
@@ -205,6 +265,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         send_tx: SendTxOpts,
+
+        #[command(flatten)]
+        tx: Erc20TxOpts,
     },
 }
 
@@ -300,11 +363,19 @@ impl Erc20Subcommand {
                 sh_println!("{}", format_uint_exp(total_supply))?
             }
             // State-changing
-            Self::Transfer { token, to, amount, send_tx, .. } => {
+            Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
                 let provider = signing_provider(&send_tx).await?;
-                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
+
+                // Apply transaction options using helper
+                apply_tx_opts(
+                    &mut tx,
+                    &tx_opts,
+                    get_chain(config.chain, &provider).await?.is_legacy(),
+                );
+
                 cast_send(
                     provider,
                     tx,
@@ -315,11 +386,19 @@ impl Erc20Subcommand {
                 )
                 .await?
             }
-            Self::Approve { token, spender, amount, send_tx, .. } => {
+            Self::Approve { token, spender, amount, send_tx, tx: tx_opts, .. } => {
                 let provider = signing_provider(&send_tx).await?;
-                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
+
+                // Apply transaction options using helper
+                apply_tx_opts(
+                    &mut tx,
+                    &tx_opts,
+                    get_chain(config.chain, &provider).await?.is_legacy(),
+                );
+
                 cast_send(
                     provider,
                     tx,
@@ -330,11 +409,19 @@ impl Erc20Subcommand {
                 )
                 .await?
             }
-            Self::Mint { token, to, amount, send_tx, .. } => {
+            Self::Mint { token, to, amount, send_tx, tx: tx_opts, .. } => {
                 let provider = signing_provider(&send_tx).await?;
-                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
+
+                // Apply transaction options using helper
+                apply_tx_opts(
+                    &mut tx,
+                    &tx_opts,
+                    get_chain(config.chain, &provider).await?.is_legacy(),
+                );
+
                 cast_send(
                     provider,
                     tx,
@@ -345,11 +432,19 @@ impl Erc20Subcommand {
                 )
                 .await?
             }
-            Self::Burn { token, amount, send_tx, .. } => {
+            Self::Burn { token, amount, send_tx, tx: tx_opts, .. } => {
                 let provider = signing_provider(&send_tx).await?;
-                let tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .burn(U256::from_str(&amount)?)
                     .into_transaction_request();
+
+                // Apply transaction options using helper
+                apply_tx_opts(
+                    &mut tx,
+                    &tx_opts,
+                    get_chain(config.chain, &provider).await?.is_legacy(),
+                );
+
                 cast_send(
                     provider,
                     tx,
