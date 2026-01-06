@@ -16,7 +16,7 @@ use std::str::FromStr;
 /// CLI arguments for `cast batch-mktx`.
 #[derive(Debug, Parser)]
 pub struct BatchMakeTxArgs {
-    /// Transaction specifications in format: to[:value][:sig[:args]]
+    /// Transaction specifications in format: to\[:value\]\[:sig\[:args\]\]
     ///
     /// Examples:
     ///   --tx "0x123:0.1ether"  (ETH transfer)
