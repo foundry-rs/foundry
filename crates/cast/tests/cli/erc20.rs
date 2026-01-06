@@ -328,8 +328,21 @@ forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
 
     let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
 
-    // Transfer with a nonce far in the future (current is 0, we set to 100)
-    // This should cause the transaction to fail or be rejected
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            &transfer_amount.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    // Transfer with nonce too low
     cmd.cast_fuse()
         .args([
             "erc20",
@@ -342,11 +355,11 @@ forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
             "--private-key",
             anvil_const::PK1,
             "--nonce",
-            "100", // Way ahead of actual nonce
+            "0", // Too low nonce
         ])
         .assert_failure();
 
     // Verify transfer did NOT occur
     let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
-    assert_eq!(balance, U256::ZERO);
+    assert_eq!(balance, transfer_amount); // 2nd transfer failed
 });
