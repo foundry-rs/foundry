@@ -14,7 +14,7 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use clap::{Args, Parser};
 use foundry_cli::{
-    opts::RpcOpts,
+    opts::{RpcOpts, TempoOpts},
     utils::{LoadConfig, get_chain, get_provider},
 };
 #[doc(hidden)]
@@ -57,6 +57,9 @@ pub struct Erc20TxOpts {
     /// Nonce for the transaction.
     #[arg(long)]
     pub nonce: Option<U64>,
+
+    #[command(flatten)]
+    pub tempo: TempoOpts,
 }
 
 /// Apply transaction options to a transaction request for ERC20 operations.
@@ -83,6 +86,15 @@ fn apply_tx_opts(
 
     if let Some(nonce) = tx_opts.nonce {
         tx.set_nonce(nonce.to());
+    }
+
+    // Apply Tempo-specific options
+    if let Some(fee_token) = tx_opts.tempo.fee_token {
+        tx.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
+    }
+
+    if let Some(nonce_key) = tx_opts.tempo.sequence_key {
+        tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
     }
 }
 /// Interact with ERC20 tokens.
