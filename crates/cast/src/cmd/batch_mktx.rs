@@ -54,7 +54,7 @@ pub struct TxSpec {
 }
 
 impl TxSpec {
-    /// Parse transaction spec in format: to[:value][:sig[:args]]
+    /// Parse transaction spec in format: to\\[:value\\]\\[:sig\\[:args\\]\\]
     fn parse(spec: &str) -> Result<Self> {
         let parts: Vec<&str> = spec.split(':').collect();
 
