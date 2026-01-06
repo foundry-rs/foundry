@@ -3,7 +3,7 @@
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
-use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
+use alloy_primitives::{FixedBytes, B64, Bytes, I256, U256, keccak256, map::HashMap};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_sol_types::SolValue;
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
@@ -162,7 +162,7 @@ impl Cheatcode for randomBytesCall {
 impl Cheatcode for randomBytes4Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let rand_u32 = state.rng().next_u32();
-        Ok(B32::from(rand_u32).abi_encode())
+        Ok(FixedBytes::<4>::from(rand_u32.to_be_bytes()).abi_encode())
     }
 }
 
