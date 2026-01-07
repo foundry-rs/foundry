@@ -911,6 +911,9 @@ impl RawCallResult {
     }
 
     /// Unpacks an execution result.
+    #[deprecated(
+        note = "use RawCallResult::from_evm_result(Result<RawCallResult, EvmError>) instead"
+    )]
     pub fn from_execution_result(r: Result<Self, ExecutionErr>) -> (Self, Option<String>) {
         match r {
             Ok(r) => (r, None),
