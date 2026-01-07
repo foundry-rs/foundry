@@ -13,6 +13,7 @@ use crate::{
     },
 };
 use alloy_primitives::U256;
+use monad_revm::MonadSpecId;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
@@ -336,7 +337,7 @@ impl TestArgs {
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
             .initial_balance(evm_opts.initial_balance)
-            .evm_spec(config.evm_spec_id())
+            .evm_spec(MonadSpecId::Monad)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)

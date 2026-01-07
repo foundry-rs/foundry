@@ -1,4 +1,4 @@
-use crate::{AsEnvMut, Env, EvmEnv, utils::apply_chain_and_block_specific_env_changes};
+use crate::{Env, EvmEnv};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Network, Provider, network::BlockResponse};
@@ -64,7 +64,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
 
     let cfg = configure_env(chain_id, memory_limit, disable_block_gas_limit, enable_tx_gas_limit);
 
-    let mut env = Env {
+    let env = Env {
         evm_env: EvmEnv {
             cfg_env: cfg,
             block_env: BlockEnv {
@@ -87,7 +87,8 @@ pub async fn environment<N: Network, P: Provider<N>>(
         },
     };
 
-    apply_chain_and_block_specific_env_changes::<N>(env.as_env_mut(), &block, configs);
+    // Note: apply_chain_and_block_specific_env_changes is not called for Monad
+    let _ = configs; // Suppress unused warning - configs may be used for future Monad-specific handling
 
     Ok((env, block))
 }
@@ -100,13 +101,16 @@ async fn option_try_or_else<T, E>(
 }
 
 /// Configures the environment for the given chain id and memory limit.
+///
+/// Returns a `CfgEnv<MonadSpecId>` for Monad-specific EVM execution.
 pub fn configure_env(
     chain_id: u64,
     memory_limit: u64,
     disable_block_gas_limit: bool,
     enable_tx_gas_limit: bool,
-) -> CfgEnv {
-    let mut cfg = CfgEnv::default();
+) -> crate::env::MonadCfg {
+    use monad_revm::MonadSpecId;
+    let mut cfg = CfgEnv::<MonadSpecId>::default();
     cfg.chain_id = chain_id;
     cfg.memory_limit = memory_limit;
     cfg.limit_contract_code_size = Some(usize::MAX);

@@ -1058,7 +1058,7 @@ impl<'a> FunctionRunner<'a> {
                 address,
                 &ITest::beforeTestSetupCall { testSelector: func.selector() },
             ) {
-                debug!(?calldata, spec=%self.executor.spec_id(), "applying before_test_setup");
+                debug!(?calldata, spec=?self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
                 match self.executor.to_mut().transact_raw(
                     self.tcfg.sender,

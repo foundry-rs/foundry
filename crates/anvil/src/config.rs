@@ -1365,7 +1365,7 @@ latest block number: {latest_block}"
         };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork>(
+        apply_chain_and_block_specific_env_changes::<AnyNetwork, SpecId>(
             env.as_env_mut(),
             &block,
             self.networks,

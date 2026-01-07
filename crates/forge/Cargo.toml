@@ -64,6 +64,7 @@ alloy-signer.workspace = true
 alloy-transport.workspace = true
 
 revm.workspace = true
+monad-revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true

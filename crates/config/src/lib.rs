@@ -40,6 +40,7 @@ use foundry_compilers::{
     solc::{CliSettings, SolcLanguage, SolcSettings},
 };
 use regex::Regex;
+use monad_revm::MonadSpecId;
 use revm::primitives::hardfork::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -1276,8 +1277,17 @@ impl Config {
     }
 
     /// Returns the [SpecId] derived from the configured [EvmVersion]
+    ///
+    /// Used by anvil for Ethereum/Optimism chain support.
     pub fn evm_spec_id(&self) -> SpecId {
         evm_spec_id(self.evm_version)
+    }
+
+    /// Returns the [MonadSpecId] derived from the configured [EvmVersion]
+    ///
+    /// Used by forge/script/cast/chisel for Monad EVM execution.
+    pub fn monad_spec_id(&self) -> MonadSpecId {
+        monad_spec_id(self.evm_version)
     }
 
     /// Returns whether the compiler version should be auto-detected

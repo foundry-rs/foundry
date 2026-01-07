@@ -15,12 +15,13 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
+use monad_revm::MonadSpecId;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{HashMap as Map, hardfork::SpecId},
+    primitives::HashMap as Map,
     state::{Account, AccountInfo},
 };
 use std::{borrow::Cow, collections::BTreeMap};
@@ -49,14 +50,14 @@ pub struct CowBackend<'a> {
     pub backend: Cow<'a, Backend>,
     /// Keeps track of whether the backed is already initialized
     is_initialized: bool,
-    /// The [SpecId] of the current backend.
-    spec_id: SpecId,
+    /// The [MonadSpecId] of the current backend.
+    spec_id: MonadSpecId,
 }
 
 impl<'a> CowBackend<'a> {
     /// Creates a new `CowBackend` with the given `Backend`.
     pub fn new_borrowed(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::default() }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: MonadSpecId::default() }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -78,7 +79,8 @@ impl<'a> CowBackend<'a> {
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
-        *env = evm.as_env_mut().to_owned();
+        // Update env with any changes made during execution
+        *env = evm.env();
 
         Ok(res)
     }

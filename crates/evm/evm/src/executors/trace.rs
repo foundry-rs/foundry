@@ -6,11 +6,12 @@ use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{Chain, Config, utils::evm_spec_id};
+use foundry_config::{Chain, Config};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceMode;
-use revm::{primitives::hardfork::SpecId, state::Bytecode};
+use monad_revm::MonadSpecId;
+use revm::state::Bytecode;
 use std::ops::{Deref, DerefMut};
 
 /// A default executor with tracing enabled
@@ -35,7 +36,8 @@ impl TracingExecutor {
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
-            .spec_id(evm_spec_id(version.unwrap_or_default()))
+            // Monad always uses the single MonadSpecId::Monad spec
+            .spec_id(MonadSpecId::Monad)
             .build(env, db);
 
         // Apply the state overrides.
@@ -71,7 +73,7 @@ impl TracingExecutor {
     }
 
     /// Returns the spec id of the executor
-    pub fn spec_id(&self) -> SpecId {
+    pub fn spec_id(&self) -> MonadSpecId {
         self.executor.spec_id()
     }
 

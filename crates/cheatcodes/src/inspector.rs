@@ -21,7 +21,7 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecar;
-use alloy_evm::eth::EthEvmContext;
+use monad_revm::MonadContext;
 use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
@@ -50,6 +50,7 @@ use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
+use monad_revm::MonadSpecId;
 use revm::{
     Inspector, Journal,
     bytecode::opcode as op,
@@ -61,7 +62,6 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
-    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
@@ -79,7 +79,7 @@ mod utils;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
-pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
+pub type Ecx<'a, 'b, 'c> = &'a mut MonadContext<&'b mut (dyn DatabaseExt + 'c)>;
 
 /// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
 /// [Cheatcodes].
@@ -138,7 +138,7 @@ where
     let mut inspector = executor.get_inspector(ccx.state);
     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
 
-    let ctx = EthEvmContext {
+    let ctx: MonadContext<&mut dyn DatabaseExt> = revm::Context {
         block: ccx.ecx.block.clone(),
         cfg: ccx.ecx.cfg.clone(),
         tx: ccx.ecx.tx.clone(),
@@ -515,7 +515,7 @@ pub struct Cheatcodes {
     /// Used to determine whether the broadcasted call has dynamic gas limit.
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
-    pub execution_evm_version: Option<SpecId>,
+    pub execution_evm_version: Option<MonadSpecId>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1114,7 +1114,7 @@ impl Cheatcodes {
     }
 }
 
-impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
+impl Inspector<MonadContext<&mut dyn DatabaseExt>> for Cheatcodes {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
