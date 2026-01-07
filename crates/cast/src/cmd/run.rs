@@ -196,8 +196,6 @@ impl RunArgs {
             }
 
             // Note: apply_chain_and_block_specific_env_changes is not called for Monad
-            // since Monad is post-merge from genesis and doesn't need Ethereum-specific quirks
-            // (Mainnet merge transition, BSC prevrandao, Arbitrum L1 block number, etc.)
             let _ = config.networks;
         }
 

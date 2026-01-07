@@ -88,8 +88,6 @@ pub async fn environment<N: Network, P: Provider<N>>(
     };
 
     // Note: apply_chain_and_block_specific_env_changes is not called for Monad
-    // since Monad is post-merge from genesis and doesn't need Ethereum-specific quirks
-    // (Mainnet merge transition, BSC prevrandao, Arbitrum L1 block number, etc.)
     let _ = configs; // Suppress unused warning - configs may be used for future Monad-specific handling
 
     Ok((env, block))

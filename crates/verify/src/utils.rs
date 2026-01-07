@@ -296,7 +296,6 @@ pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock, _config: N
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
     // Note: apply_chain_and_block_specific_env_changes is not called for Monad
-    // since Monad is post-merge from genesis and doesn't need Ethereum-specific quirks
 }
 
 pub fn deploy_contract(
