@@ -4,7 +4,7 @@ use crate::{
     abi::{Multicall, SimpleStorage, VendingMachine},
     utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
-use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559};
+use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559, BlobTransactionSidecar};
 use alloy_network::{
     EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync,
 };
@@ -567,7 +567,7 @@ async fn test_fill_transaction_eip4844_blob_fee() {
 
     let mut builder = SidecarBuilder::<SimpleCoder>::new();
     builder.ingest(b"dummy blob");
-    let sidecar = builder.build().unwrap();
+    let sidecar : BlobTransactionSidecar = builder.build().unwrap();
 
     // EIP-4844 blob transaction with sidecar but no blob fee
     let mut tx_req = TransactionRequest::default().with_from(from).with_to(Address::random());
@@ -595,7 +595,7 @@ async fn test_fill_transaction_eip4844_preserves_blob_fee() {
 
     let mut builder = SidecarBuilder::<SimpleCoder>::new();
     builder.ingest(b"dummy blob");
-    let sidecar = builder.build().unwrap();
+    let sidecar : BlobTransactionSidecar = builder.build().unwrap();
 
     // EIP-4844 blob transaction with blob fee already set
     let mut tx_req = TransactionRequest::default()
