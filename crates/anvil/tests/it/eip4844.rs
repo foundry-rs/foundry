@@ -1,5 +1,5 @@
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction, BlobTransactionSidecar};
+use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder, Transaction};
 use alloy_eips::{
     Typed2718,
     eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN},
@@ -62,7 +62,7 @@ async fn can_send_eip4844_transaction_fork() {
     let bob = accounts[1];
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
-    let sidecar  : BlobTransactionSidecar= sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
 
     let tx = TransactionRequest::default()
         .with_from(alice)
@@ -89,7 +89,7 @@ async fn can_send_eip4844_transaction_eth_send_transaction() {
     let bob = accounts[1];
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
-    let sidecar : BlobTransactionSidecar = sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
 
     let tx = TransactionRequest::default()
         .with_from(alice)
@@ -417,7 +417,7 @@ async fn can_get_blobs_by_versioned_hash() {
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
 
-    let sidecar : BlobTransactionSidecar = sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
@@ -455,7 +455,7 @@ async fn can_get_blobs_by_tx_hash() {
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
 
-    let sidecar : BlobTransactionSidecar= sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
