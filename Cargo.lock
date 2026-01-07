@@ -212,6 +212,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-eip7928"
+version = "0.2.0"
+source = "git+https://github.com/rakita/alloy-eips.git?rev=734beaf#734beafea409bdd87b3a4e33ac72ac68654bb8dd"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "borsh",
+ "serde",
+]
+
+[[package]]
 name = "alloy-eips"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -405,9 +416,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
-version = "1.4.1"
+version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "355bf68a433e0fd7f7d33d5a9fc2583fde70bf5c530f63b80845f8da5505cf28"
+checksum = "f6a0fb18dd5fb43ec5f0f6a20be1ce0287c79825827de5744afaa6c957737c33"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -426,6 +437,7 @@ dependencies = [
  "proptest",
  "proptest-derive",
  "rand 0.9.2",
+ "rapidhash",
  "ruint",
  "rustc-hash",
  "serde",
@@ -2104,12 +2116,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "az"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b7e4c2464d97fe331d41de9d5db0def0a96f4d823b8b32a2efd503578988973"
-
-[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3003,7 +3009,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3634,7 +3640,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3939,7 +3945,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4109,7 +4115,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5452,16 +5458,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gmp-mpfr-sys"
-version = "1.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60f8970a75c006bb2f8ae79c6768a116dd215fa8346a87aed99bf9d82ca43394"
-dependencies = [
- "libc",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6153,7 +6149,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6753,7 +6749,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "auto_impl",
  "revm",
@@ -6888,7 +6884,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7228,7 +7224,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "auto_impl",
  "revm",
@@ -8076,7 +8072,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8179,6 +8175,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
 dependencies = [
  "rand_core 0.9.3",
+]
+
+[[package]]
+name = "rapidhash"
+version = "4.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2988730ee014541157f48ce4dcc603940e00915edc3c7f9a8d78092256bb2493"
+dependencies = [
+ "rand 0.9.2",
+ "rustversion",
 ]
 
 [[package]]
@@ -8363,7 +8369,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "33.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -8381,7 +8387,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "7.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "bitvec",
  "phf 0.13.1",
@@ -8392,7 +8398,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "12.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -8408,7 +8414,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "13.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -8423,7 +8429,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "9.0.6"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -8436,7 +8442,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "8.0.5"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "auto_impl",
  "either",
@@ -8449,7 +8455,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -8467,7 +8473,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "auto_impl",
  "either",
@@ -8504,7 +8510,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "31.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -8516,7 +8522,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "31.0.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -8532,7 +8538,6 @@ dependencies = [
  "p256",
  "revm-primitives",
  "ripemd",
- "rug",
  "secp256k1 0.31.1",
  "sha2",
 ]
@@ -8540,7 +8545,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "21.0.2"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -8551,8 +8556,9 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "8.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#e738e8da353745d100642aa84601d8c1f4f76979"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f50f1becb36536ce1f5687c176061b334fd1cfed"
 dependencies = [
+ "alloy-eip7928",
  "bitflags 2.10.0",
  "revm-bytecode",
  "revm-primitives",
@@ -8642,18 +8648,6 @@ checksum = "a7cc970b249fbe527d6e02e0a227762c9108b2f49d81094fe357ffc6d14d7f6f"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rug"
-version = "1.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58ad2e973fe3c3214251a840a621812a4f40468da814b1a3d6947d433c2af11f"
-dependencies = [
- "az",
- "gmp-mpfr-sys",
- "libc",
- "libm",
 ]
 
 [[package]]
@@ -8771,7 +8765,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8784,7 +8778,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10031,7 +10025,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10051,7 +10045,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8c27177b12a6399ffc08b98f76f7c9a1f4fe9fc967c784c5a071fa8d93cf7e1"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11350,7 +11344,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
