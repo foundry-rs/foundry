@@ -3,12 +3,13 @@ use std::str::FromStr;
 use crate::{
     cmd::send::cast_send,
     format_uint_exp,
-    tx::{SendTxOpts, signing_provider},
+    tx::{CastTxSender, SendTxOpts, signing_provider},
 };
-use alloy_eips::BlockId;
+use alloy_eips::{BlockId, Encodable2718};
 use alloy_ens::NameOrAddress;
-use alloy_network::TransactionBuilder;
+use alloy_network::{AnyNetwork, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{U64, U256};
+use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
@@ -19,6 +20,7 @@ use foundry_cli::{
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
+use foundry_primitives::FoundryTransactionRequest;
 
 sol! {
     #[sol(rpc)]
@@ -96,6 +98,52 @@ fn apply_tx_opts(
     if let Some(nonce_key) = tx_opts.tempo.sequence_key {
         tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
     }
+}
+
+/// Send an ERC20 transaction, handling Tempo transactions specially if needed
+///
+/// TODO: Remove this temporary helper when we migrate to FoundryNetwork/FoundryTransactionRequest.
+async fn send_erc20_tx<P: Provider<AnyNetwork>>(
+    provider: P,
+    tx: WithOtherFields<TransactionRequest>,
+    send_tx: &SendTxOpts,
+    timeout: u64,
+) -> eyre::Result<()> {
+    // Same as in SendTxArgs::run(), Tempo transactions need to be signed locally and sent as raw
+    // transactions
+    if tx.other.contains_key("feeToken") || tx.other.contains_key("nonceKey") {
+        let signer = send_tx.eth.wallet.signer().await?;
+        let mut ftx = FoundryTransactionRequest::new(tx);
+        if ftx.chain_id().is_none() {
+            ftx.set_chain_id(provider.get_chain_id().await?);
+        }
+
+        // Sign using NetworkWallet<FoundryNetwork>
+        let signed_tx = signer.sign_request(ftx).await?;
+
+        // Encode and send raw
+        let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
+        signed_tx.encode_2718(&mut raw_tx);
+
+        let cast = CastTxSender::new(&provider);
+        let pending_tx = cast.send_raw(&raw_tx).await?;
+        let tx_hash = pending_tx.inner().tx_hash();
+
+        if send_tx.cast_async {
+            sh_println!("{tx_hash:#x}")?;
+        } else {
+            // For sync mode, we already have the hash, just wait for receipt
+            let receipt = cast
+                .receipt(format!("{tx_hash:#x}"), None, send_tx.confirmations, Some(timeout), false)
+                .await?;
+            sh_println!("{receipt}")?;
+        }
+
+        return Ok(());
+    }
+
+    // Use the normal cast_send path for non-Tempo transactions
+    cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout).await
 }
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
@@ -388,12 +436,10 @@ impl Erc20Subcommand {
                     get_chain(config.chain, &provider).await?.is_legacy(),
                 );
 
-                cast_send(
+                send_erc20_tx(
                     provider,
                     tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
+                    &send_tx,
                     send_tx.timeout.unwrap_or(config.transaction_timeout),
                 )
                 .await?
@@ -411,12 +457,10 @@ impl Erc20Subcommand {
                     get_chain(config.chain, &provider).await?.is_legacy(),
                 );
 
-                cast_send(
+                send_erc20_tx(
                     provider,
                     tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
+                    &send_tx,
                     send_tx.timeout.unwrap_or(config.transaction_timeout),
                 )
                 .await?
@@ -434,12 +478,10 @@ impl Erc20Subcommand {
                     get_chain(config.chain, &provider).await?.is_legacy(),
                 );
 
-                cast_send(
+                send_erc20_tx(
                     provider,
                     tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
+                    &send_tx,
                     send_tx.timeout.unwrap_or(config.transaction_timeout),
                 )
                 .await?
@@ -457,12 +499,10 @@ impl Erc20Subcommand {
                     get_chain(config.chain, &provider).await?.is_legacy(),
                 );
 
-                cast_send(
+                send_erc20_tx(
                     provider,
                     tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
+                    &send_tx,
                     send_tx.timeout.unwrap_or(config.transaction_timeout),
                 )
                 .await?
