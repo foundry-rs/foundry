@@ -70,6 +70,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
     }
 
     fn add_help<'a>(&self, diag: DiagBuilder<'a, ()>, help: &'static str) -> DiagBuilder<'a, ()> {
+        // Avoid ANSI characters when using a JSON emitter
         if self.with_json_emitter { diag.help(help) } else { diag.help(hyperlink(help)) }
     }
 
