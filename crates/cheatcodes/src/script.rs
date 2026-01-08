@@ -321,12 +321,6 @@ impl Wallets {
     }
 
     /// Locks inner Mutex and adds a signer to the [MultiWallet].
-    pub fn add_private_key(&self, private_key: &B256) -> Result<()> {
-        self.add_local_signer(PrivateKeySigner::from_bytes(private_key)?);
-        Ok(())
-    }
-
-    /// Locks inner Mutex and adds a signer to the [MultiWallet].
     pub fn add_local_signer(&self, wallet: PrivateKeySigner) {
         self.inner.lock().multi_wallet.add_signer(WalletSigner::Local(wallet));
     }
