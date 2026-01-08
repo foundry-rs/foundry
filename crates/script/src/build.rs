@@ -19,7 +19,7 @@ use foundry_compilers::{
 };
 use foundry_evm::traces::debug::ContractSources;
 use foundry_linking::Linker;
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{iter, path::PathBuf, str::FromStr, sync::Arc};
 
 /// Container for the compiled contracts.
 #[derive(Debug)]
@@ -182,12 +182,11 @@ impl PreprocessedState {
             }
         };
 
-        #[expect(clippy::redundant_clone)]
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
         )
-        .chain([target_path.to_path_buf()]);
+        .chain(iter::once(target_path));
 
         let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
 
