@@ -463,11 +463,9 @@ mod tests {
     }
 
     fn link_test(path: impl AsRef<Path>, mut test_fn: impl FnMut(LinkerTest)) {
-        fn link_test(path: &Path, test_fn: &mut dyn FnMut(LinkerTest)) {
-            test_fn(LinkerTest::new(path, true));
-            test_fn(LinkerTest::new(path, false));
-        }
-        link_test(path.as_ref(), &mut test_fn);
+        let path = path.as_ref();
+        test_fn(LinkerTest::new(path, true));
+        test_fn(LinkerTest::new(path, false));
     }
 
     #[test]
