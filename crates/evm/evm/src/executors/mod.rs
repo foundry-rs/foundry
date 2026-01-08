@@ -910,17 +910,6 @@ impl RawCallResult {
         }
     }
 
-    /// Unpacks an execution result.
-    #[deprecated(
-        note = "use RawCallResult::from_evm_result(Result<RawCallResult, EvmError>) instead"
-    )]
-    pub fn from_execution_result(r: Result<Self, ExecutionErr>) -> (Self, Option<String>) {
-        match r {
-            Ok(r) => (r, None),
-            Err(e) => (e.raw, Some(e.reason)),
-        }
-    }
-
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
         if let Some(reason) = SkipReason::decode(&self.result) {
