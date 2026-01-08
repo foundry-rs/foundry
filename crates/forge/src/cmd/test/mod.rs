@@ -13,7 +13,6 @@ use crate::{
     },
 };
 use alloy_primitives::U256;
-use monad_revm::MonadSpecId;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
@@ -44,6 +43,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
+use monad_revm::MonadSpecId;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -337,7 +337,7 @@ impl TestArgs {
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
             .initial_balance(evm_opts.initial_balance)
-            .evm_spec(MonadSpecId::Monad)
+            .evm_spec(MonadSpecId::default())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)

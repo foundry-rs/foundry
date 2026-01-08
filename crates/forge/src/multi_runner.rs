@@ -30,8 +30,8 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_linking::{LinkOutput, Linker};
-use rayon::prelude::*;
 use monad_revm::MonadSpecId;
+use rayon::prelude::*;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -320,7 +320,7 @@ impl TestRunnerConfig {
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        self.spec_id = MonadSpecId::Monad;
+        self.spec_id = MonadSpecId::default();
         self.sender = config.sender;
         self.networks = config.networks;
         self.isolation = config.isolate;
@@ -601,7 +601,7 @@ impl MultiContractRunnerBuilder {
             tcfg: TestRunnerConfig {
                 evm_opts,
                 env,
-                spec_id: self.evm_spec.unwrap_or(MonadSpecId::Monad),
+                spec_id: self.evm_spec.unwrap_or_default(),
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,

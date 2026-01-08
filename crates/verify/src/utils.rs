@@ -1,10 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_provider::{
-    Provider,
-    network::AnyRpcBlock,
-};
+use alloy_provider::{Provider, network::AnyRpcBlock};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -20,12 +17,12 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor,
-    opts::EvmOpts, traces::TraceMode,
+    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
+    traces::TraceMode,
 };
 use foundry_evm_networks::NetworkConfigs;
-use reqwest::Url;
 use monad_revm::MonadSpecId;
+use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};

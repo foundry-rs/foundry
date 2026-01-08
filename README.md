@@ -1,3 +1,47 @@
+# Monad Foundry
+
+---
+
+Monad is a Layer-1 blockchain delivering high performance, true decentralization, and EVM compatibility. It supports a large globally distributed network (see the validator map), with intentionally minimal hardware requirements so that anyone may run a node. Performance comes from software architecture improvements rather than reliance on heavy hardware or node colocation. The result is an Ethereum-compatible Layer-1 blockchain with 10,000 tps of throughput, 400ms block frequency, and 800ms finality.
+
+`Monad Foundry` is a custom fork of Foundry that integrates Monad features directly into the familiar Foundry developer workflow.
+
+Get strated here to use Monad's features in Foundry.
+
+## Roadmap
+
+Monad Foundry is under active development! Expect a lot of new features to appear soon! 🔥
+
+### Anvil
+
+- [x] `--monad` flag to enable Monad EVM mode
+- [x] Cold access cost & precompiles (re-pricing)[https://docs.monad.xyz/developer-essentials/opcode-pricing]
+- [x] No gas refunds (charges `gas_limit × gas_price`)
+- [x] Increased bytecode limits (128KB code, 256KB initcode)
+- [x] Blob transaction rejection (EIP-4844 not supported)
+- [ ] Reserve balance for delegated EOAs
+- [ ] EIP-7702 restrictions (CREATE/CREATE2 banned for delegated EOAs)
+- [ ] Monad staking precompiles
+
+### Forge
+
+Forge commands (`forge test`, `forge script`, `forge debug`) always execute using Monad's EVM specification. There is no flag to switch, Monad gas costs and precompiles are applied by default.
+
+- [x] `forge test` executes with Monad EVM
+- [x] `forge script` executes with Monad EVM
+- [x] `forge debug` executes with Monad EVM
+- [ ] Monad staking precompiles
+
+### Cast
+
+- [x] Works with Monad anvil
+
+### Chisel
+
+- [x] Executes with Monad EVM specs & config
+
+
+
 <div align="center">
   <img src=".github/assets/banner.png" alt="Foundry banner" />
 

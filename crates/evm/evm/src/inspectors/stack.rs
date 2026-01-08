@@ -3,7 +3,6 @@ use super::{
     LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
 use alloy_evm::Evm;
-use monad_revm::MonadContext;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
@@ -19,6 +18,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use monad_revm::MonadContext;
 use revm::{
     Inspector,
     context::{

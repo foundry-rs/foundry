@@ -21,7 +21,6 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecar;
-use monad_revm::MonadContext;
 use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
@@ -48,9 +47,10 @@ use foundry_evm_traces::{
 };
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
+use monad_revm::MonadContext;
+use monad_revm::MonadSpecId;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
-use monad_revm::MonadSpecId;
 use revm::{
     Inspector, Journal,
     bytecode::opcode as op,

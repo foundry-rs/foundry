@@ -303,13 +303,13 @@ pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
     }
 }
 
-/// Returns the [MonadSpecId] derived from [EvmVersion].
+/// Returns the [MonadSpecId] for Monad EVM execution.
 ///
-/// This converts the EVM version to a Monad-specific hardfork identifier.
-/// The conversion goes through [SpecId] and then maps to [MonadSpecId].
+/// Monad hardforks are independent of Ethereum's `evm_version` (which is for
+/// the Solidity compiler). This always returns the latest Monad hardfork.
 ///
-/// When new Monad hardforks are added, update the `From<SpecId> for MonadSpecId`
-/// implementation in `monad-revm` to handle the mapping.
-pub fn monad_spec_id(evm_version: EvmVersion) -> MonadSpecId {
-    MonadSpecId::from(evm_spec_id(evm_version))
+/// When new Monad hardforks are added, consider adding a dedicated config
+/// option (e.g., `monad_hardfork`) for explicit hardfork selection.
+pub fn monad_spec_id(_evm_version: EvmVersion) -> MonadSpecId {
+    MonadSpecId::default()
 }

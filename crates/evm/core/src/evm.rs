@@ -12,19 +12,15 @@ use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadCfgEnv, MonadContext, MonadEvm as InnerMonadEvm, MonadSpecId,
-    instructions::MonadInstructions,
-    precompiles::MonadPrecompiles,
+    instructions::MonadInstructions, precompiles::MonadPrecompiles,
 };
 use revm::{
     Context, Journal,
     context::{
-        BlockEnv, ContextTr, CreateScheme, JournalTr, LocalContext,
-        LocalContextTr, TxEnv,
+        BlockEnv, ContextTr, CreateScheme, JournalTr, LocalContext, LocalContextTr, TxEnv,
         result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
     },
-    handler::{
-        EvmTr, FrameResult, FrameTr, Handler, ItemOrResult,
-    },
+    handler::{EvmTr, FrameResult, FrameTr, Handler, ItemOrResult},
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
@@ -62,8 +58,7 @@ pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     ctx.cfg.tx_chain_id_check = true;
 
     let mut evm = FoundryEvm {
-        inner: InnerMonadEvm::new(ctx, inspector)
-            .with_precompiles(get_precompiles(spec)),
+        inner: InnerMonadEvm::new(ctx, inspector).with_precompiles(get_precompiles(spec)),
     };
 
     evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
@@ -81,8 +76,7 @@ pub fn new_evm_with_existing_context<'a>(
     let spec = ctx.cfg.spec();
 
     let mut evm = FoundryEvm {
-        inner: InnerMonadEvm::new(ctx, inspector)
-            .with_precompiles(get_precompiles(spec)),
+        inner: InnerMonadEvm::new(ctx, inspector).with_precompiles(get_precompiles(spec)),
     };
 
     evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
@@ -153,8 +147,9 @@ impl<'db, I: InspectorExt> FoundryEvm<'db, I> {
         let mut handler = FoundryHandler::<I>::default();
 
         // Create first frame
-        let memory =
-            SharedMemory::new_with_buffer(self.inner.0.ctx().local().shared_memory_buffer().clone());
+        let memory = SharedMemory::new_with_buffer(
+            self.inner.0.ctx().local().shared_memory_buffer().clone(),
+        );
         let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
 
         // Run execution loop
@@ -186,7 +181,11 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     }
 
     fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        (&self.inner.0.ctx.journaled_state.database, &self.inner.0.inspector, &self.inner.0.precompiles)
+        (
+            &self.inner.0.ctx.journaled_state.database,
+            &self.inner.0.inspector,
+            &self.inner.0.precompiles,
+        )
     }
 
     fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
@@ -320,10 +319,12 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
 
                 // Push data about current override to the stack.
                 // Access journal depth through the context's journaled_state
-                self.create2_overrides.push((evm.0.ctx.journaled_state.depth(), call_inputs.clone()));
+                self.create2_overrides
+                    .push((evm.0.ctx.journaled_state.depth(), call_inputs.clone()));
 
                 // Sanity check that CREATE2 deployer exists.
-                let code_hash = evm.0.ctx.journaled_state.load_account(create2_deployer)?.info.code_hash;
+                let code_hash =
+                    evm.0.ctx.journaled_state.load_account(create2_deployer)?.info.code_hash;
                 if code_hash == KECCAK_EMPTY {
                     return Ok(Some(FrameResult::Call(CallOutcome {
                         result: InterpreterResult {
@@ -365,7 +366,11 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         result: FrameResult,
     ) -> FrameResult {
         // Access journal depth through the context's journaled_state
-        if self.create2_overrides.last().is_some_and(|(depth, _)| *depth == evm.0.ctx.journaled_state.depth()) {
+        if self
+            .create2_overrides
+            .last()
+            .is_some_and(|(depth, _)| *depth == evm.0.ctx.journaled_state.depth())
+        {
             let (_, call_inputs) = self.create2_overrides.pop().unwrap();
             let FrameResult::Call(mut call) = result else {
                 unreachable!("create2 override should be a call frame");

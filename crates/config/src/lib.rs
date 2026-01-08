@@ -39,8 +39,8 @@ use foundry_compilers::{
     multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcLanguage, SolcSettings},
 };
-use regex::Regex;
 use monad_revm::MonadSpecId;
+use regex::Regex;
 use revm::primitives::hardfork::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};

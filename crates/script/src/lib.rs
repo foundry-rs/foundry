@@ -53,8 +53,8 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{TraceMode, Traces},
 };
-use monad_revm::MonadSpecId;
 use foundry_wallets::MultiWalletOpts;
+use monad_revm::MonadSpecId;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -651,8 +651,8 @@ impl ScriptConfig {
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
-            // Use Monad's spec (always PRAGUE equivalent)
-            .spec_id(MonadSpecId::Monad)
+            // Use Monad's default spec (hardforks are independent of evm_version)
+            .spec_id(MonadSpecId::default())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 

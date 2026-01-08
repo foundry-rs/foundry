@@ -15,9 +15,9 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use monad_revm::MonadContext;
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
+use monad_revm::MonadContext;
 use spec::Status;
 
 pub use Vm::ForgeContext;

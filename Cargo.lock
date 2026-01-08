@@ -3004,7 +3004,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3940,7 +3940,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4110,7 +4110,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6154,7 +6154,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6754,7 +6754,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "auto_impl",
  "revm",
@@ -7229,7 +7229,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "auto_impl",
  "revm",
@@ -8077,7 +8077,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8374,7 +8374,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "33.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -8392,7 +8392,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "7.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "bitvec",
  "phf 0.13.1",
@@ -8403,7 +8403,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "12.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -8419,7 +8419,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "13.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -8434,7 +8434,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "9.0.6"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -8447,7 +8447,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "8.0.5"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "auto_impl",
  "either",
@@ -8460,7 +8460,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -8478,7 +8478,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "auto_impl",
  "either",
@@ -8515,7 +8515,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "31.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -8527,7 +8527,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "31.0.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -8551,7 +8551,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "21.0.2"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -8562,7 +8562,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "8.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#f6d9e1102f8af3b92b5364d5eb122c7c2d5d8732"
+source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#5b9f1c79a174cd03267f8be91a6d66501cd54f5c"
 dependencies = [
  "bitflags 2.10.0",
  "revm-bytecode",
@@ -8782,7 +8782,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8795,7 +8795,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10042,7 +10042,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11361,7 +11361,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

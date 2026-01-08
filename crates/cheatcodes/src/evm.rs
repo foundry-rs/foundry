@@ -30,8 +30,8 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TraceMode;
 use itertools::Itertools;
-use rand::Rng;
 use monad_revm::MonadSpecId;
+use rand::Rng;
 use revm::{
     bytecode::Bytecode,
     context::{Block, JournalTr},
@@ -1119,9 +1119,9 @@ impl Cheatcode for setEvmVersionCall {
         // Validate the EVM version string is valid
         let _ = EvmVersion::from_str(evm)
             .map_err(|_| Error::from(format!("invalid evm version {evm}")))?;
-        // For Monad, always use MonadSpecId::Monad (equivalent to PRAGUE)
-        // since that's the only supported spec on Monad
-        ccx.state.execution_evm_version = Some(MonadSpecId::Monad);
+        // For Monad, always use the default MonadSpecId (currently MonadEight, equivalent to PRAGUE)
+        // since Monad hardforks are independent of Ethereum's evm_version
+        ccx.state.execution_evm_version = Some(MonadSpecId::default());
         Ok(Default::default())
     }
 }

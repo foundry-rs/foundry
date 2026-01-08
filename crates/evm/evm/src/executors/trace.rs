@@ -36,8 +36,8 @@ impl TracingExecutor {
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
-            // Monad always uses the single MonadSpecId::Monad spec
-            .spec_id(MonadSpecId::Monad)
+            // Monad uses the default MonadSpecId (hardforks are independent of evm_version)
+            .spec_id(MonadSpecId::default())
             .build(env, db);
 
         // Apply the state overrides.

@@ -28,13 +28,13 @@ use foundry_cli::{
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
-use monad_revm::MonadSpecId;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::AsEnvMut,
     executors::EvmError,
     utils::{configure_tx_env, configure_tx_req_env},
 };
+use monad_revm::MonadSpecId;
 use revm::state::AccountInfo;
 use std::path::PathBuf;
 
@@ -274,8 +274,8 @@ impl VerifyBytecodeArgs {
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
                 &env,
-                // Use Monad's spec (always PRAGUE equivalent)
-                MonadSpecId::Monad,
+                // Use Monad's default spec (hardforks are independent of evm_version)
+                MonadSpecId::default(),
                 gen_tx_req.to,
             )?;
 
@@ -546,8 +546,8 @@ impl VerifyBytecodeArgs {
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
                 &env,
-                // Use Monad's spec (always PRAGUE equivalent)
-                MonadSpecId::Monad,
+                // Use Monad's default spec (hardforks are independent of evm_version)
+                MonadSpecId::default(),
                 transaction.to,
             )?;
 

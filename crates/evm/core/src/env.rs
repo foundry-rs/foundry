@@ -31,7 +31,12 @@ impl Env {
         Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
     }
 
-    pub fn new_with_spec_id(cfg: MonadCfg, block: BlockEnv, tx: TxEnv, spec_id: MonadSpecId) -> Self {
+    pub fn new_with_spec_id(
+        cfg: MonadCfg,
+        block: BlockEnv,
+        tx: TxEnv,
+        spec_id: MonadSpecId,
+    ) -> Self {
         let mut cfg = cfg;
         cfg.spec = spec_id;
 

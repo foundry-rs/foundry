@@ -507,9 +507,8 @@ where
         );
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
     } else if env.networks.is_monad() {
-        // TODO: update Monad spec id to MONAD
         let evm_env = EvmEnv::new(
-            env.evm_env.cfg_env.clone().with_spec(monad_revm::MonadSpecId::Monad),
+            env.evm_env.cfg_env.clone().with_spec(monad_revm::MonadSpecId::default()),
             env.evm_env.block_env.clone(),
         );
         EitherEvm::Monad(
