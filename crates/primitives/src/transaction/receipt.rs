@@ -44,7 +44,7 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
         deposit_receipt_version: Option<u64>,
     ) -> Self {
         let logs = logs.into_iter().collect::<Vec<_>>();
-        let logs_bloom = logs_bloom(logs.iter().map(|l| &l.inner).collect::<Vec<_>>());
+        let logs_bloom = logs_bloom(logs.iter().map(|l| &l.inner));
         let inner_receipt =
             Receipt { status: Eip658Value::Eip658(status), cumulative_gas_used, logs };
         match tx_type {
@@ -233,7 +233,7 @@ impl<T> FoundryReceiptEnvelope<T> {
 
 impl<T> TxReceipt for FoundryReceiptEnvelope<T>
 where
-    T: Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
+    T: Clone + core::fmt::Debug + Eq + Send + Sync,
 {
     type Log = T;
 
