@@ -1983,7 +1983,8 @@ impl Backend {
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer
                         | GethDebugBuiltInTracerType::MuxTracer
-                        | GethDebugBuiltInTracerType::FlatCallTracer => {
+                        | GethDebugBuiltInTracerType::FlatCallTracer
+                        | GethDebugBuiltInTracerType::Erc7562Tracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
@@ -2954,7 +2955,8 @@ impl Backend {
                     }
                     GethDebugBuiltInTracerType::NoopTracer
                     | GethDebugBuiltInTracerType::MuxTracer
-                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
+                    | GethDebugBuiltInTracerType::FlatCallTracer
+                    | GethDebugBuiltInTracerType::Erc7562Tracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }
