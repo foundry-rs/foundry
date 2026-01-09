@@ -567,20 +567,6 @@ impl SessionSource {
         self.clear_output();
     }
 
-    /// Clear the global-level code .
-    pub fn clear_global(&mut self) -> &mut Self {
-        String::clear(&mut self.global_code);
-        self.clear_output();
-        self
-    }
-
-    /// Clear the contract-level code .
-    pub fn clear_contract(&mut self) -> &mut Self {
-        String::clear(&mut self.contract_code);
-        self.clear_output();
-        self
-    }
-
     /// Clear the `run()` function code.
     pub fn clear_run(&mut self) -> &mut Self {
         String::clear(&mut self.run_code);
@@ -692,39 +678,6 @@ impl SessionSource {
         }
 
         Ok(intermediate_output)
-    }
-
-    /// Construct the source as a valid Forge script.
-    pub fn to_script_source(&self) -> String {
-        let Self {
-            contract_name,
-            global_code,
-            contract_code: top_level_code,
-            run_code,
-            config,
-            ..
-        } = self;
-
-        let script_import =
-            if !config.no_vm { "import {Script} from \"forge-std/Script.sol\";\n" } else { "" };
-
-        format!(
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0;
-
-{script_import}
-{global_code}
-
-contract {contract_name} is Script {{
-    {top_level_code}
-
-    /// @notice Script entry point
-    function run() public {{
-        {run_code}
-    }}
-}}"#,
-        )
     }
 
     /// Construct the REPL source.
