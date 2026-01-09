@@ -253,7 +253,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.25.2"
-source = "git+https://github.com/haythemsellami/evm?branch=main#3bd21c97844762f123dab8be92a4786f51e1f657"
+source = "git+https://github.com/haythemsellami/evm?branch=main#33aaf4f1f3c53fde583c826836aab25d723f7959"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -267,7 +267,7 @@ dependencies = [
  "derive_more",
  "op-alloy",
  "op-revm",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "thiserror 2.0.17",
 ]
 
@@ -327,12 +327,12 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.25.2"
-source = "git+https://github.com/haythemsellami/evm?branch=main#3bd21c97844762f123dab8be92a4786f51e1f657"
+source = "git+https://github.com/haythemsellami/evm?branch=main#33aaf4f1f3c53fde583c826836aab25d723f7959"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
+ "revm",
 ]
 
 [[package]]
@@ -377,7 +377,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.25.2"
-source = "git+https://github.com/haythemsellami/evm?branch=main#3bd21c97844762f123dab8be92a4786f51e1f657"
+source = "git+https://github.com/haythemsellami/evm?branch=main#33aaf4f1f3c53fde583c826836aab25d723f7959"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -387,7 +387,7 @@ dependencies = [
  "auto_impl",
  "op-alloy",
  "op-revm",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "thiserror 2.0.17",
 ]
 
@@ -1163,7 +1163,7 @@ dependencies = [
  "futures",
  "hyper",
  "itertools 0.14.0",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",
@@ -1171,7 +1171,7 @@ dependencies = [
  "rand 0.8.5",
  "rand 0.9.2",
  "reqwest",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "revm-inspectors",
  "serde",
  "serde_json",
@@ -1200,7 +1200,7 @@ dependencies = [
  "foundry-evm",
  "foundry-primitives",
  "rand 0.9.2",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -2636,7 +2636,7 @@ dependencies = [
  "rand 0.9.2",
  "rayon",
  "regex",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "rpassword",
  "semver 1.0.27",
  "serde",
@@ -3668,7 +3668,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3973,7 +3973,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4295,7 +4295,7 @@ dependencies = [
  "inferno",
  "itertools 0.14.0",
  "mockall",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "opener",
  "parking_lot",
  "paste",
@@ -4305,7 +4305,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "semver 1.0.27",
  "serde",
  "serde_json",
@@ -4414,7 +4414,7 @@ dependencies = [
  "futures",
  "indicatif",
  "itertools 0.14.0",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "parking_lot",
  "revm-inspectors",
  "semver 1.0.27",
@@ -4480,10 +4480,10 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "regex",
  "reqwest",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "semver 1.0.27",
  "serde",
  "serde_json",
@@ -4575,12 +4575,12 @@ dependencies = [
  "jsonpath_lib",
  "k256",
  "memchr",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "p256",
  "parking_lot",
  "proptest",
  "rand 0.9.2",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "revm-inspectors",
  "semver 1.0.27",
  "serde",
@@ -4692,7 +4692,7 @@ dependencies = [
  "path-slash",
  "regex",
  "reqwest",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "semver 1.0.27",
  "serde",
  "serde_json",
@@ -4720,7 +4720,7 @@ dependencies = [
  "chrono",
  "eyre",
  "foundry-macros",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
  "serde_json",
  "similar-asserts",
@@ -4847,13 +4847,13 @@ dependencies = [
  "heck",
  "itertools 0.14.0",
  "mesc",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "number_prefix",
  "path-slash",
  "rayon",
  "regex",
  "reqwest",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "semver 1.0.27",
  "serde",
  "serde_json",
@@ -4882,7 +4882,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-traces",
  "ratatui",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "revm-inspectors",
  "serde",
  "tracing",
@@ -4909,10 +4909,10 @@ dependencies = [
  "foundry-evm-networks",
  "foundry-evm-traces",
  "indicatif",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "parking_lot",
  "proptest",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "revm-inspectors",
  "serde",
  "serde_json",
@@ -4963,10 +4963,10 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",
- "monad-revm 0.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "monad-revm",
  "op-revm",
  "parking_lot",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "revm-inspectors",
  "serde",
  "serde_json",
@@ -4986,7 +4986,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-evm-core",
  "rayon",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "semver 1.0.27",
  "solar-compiler",
  "tracing",
@@ -5010,7 +5010,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand 0.9.2",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
  "solar-compiler",
  "thiserror 2.0.17",
@@ -5025,7 +5025,7 @@ dependencies = [
  "alloy-evm",
  "alloy-primitives",
  "clap",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
 ]
 
@@ -5050,7 +5050,7 @@ dependencies = [
  "memchr",
  "rayon",
  "reqwest",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "revm-inspectors",
  "serde",
  "serde_json",
@@ -5076,7 +5076,7 @@ dependencies = [
  "eyre",
  "futures",
  "parking_lot",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -5122,7 +5122,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
  "serde_json",
 ]
@@ -5419,8 +5419,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
 ]
 
 [[package]]
@@ -5811,7 +5811,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -5831,7 +5831,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -6188,7 +6188,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6791,17 +6791,7 @@ version = "0.1.0"
 source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dceb8d5a2e6be2af3b89f41de207"
 dependencies = [
  "auto_impl",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "monad-revm"
-version = "0.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "auto_impl",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm",
  "serde",
 ]
 
@@ -6933,7 +6923,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7276,7 +7266,7 @@ version = "14.1.0"
 source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dceb8d5a2e6be2af3b89f41de207"
 dependencies = [
  "auto_impl",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
 ]
 
@@ -7946,7 +7936,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -7959,7 +7949,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9120690fafc389a67ba3803df527d0ec9cbbc9cc45e4cc20b332996dfb672425"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -8082,7 +8072,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -8119,9 +8109,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8420,35 +8410,17 @@ name = "revm"
 version = "33.1.0"
 source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dceb8d5a2e6be2af3b89f41de207"
 dependencies = [
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-context 12.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-database 9.0.6 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-handler 14.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-inspector 14.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-interpreter 31.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-precompile 31.0.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
-]
-
-[[package]]
-name = "revm"
-version = "33.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-context 12.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-database 9.0.6 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-handler 14.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-inspector 14.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-interpreter 31.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-precompile 31.0.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-bytecode",
+ "revm-context",
+ "revm-context-interface",
+ "revm-database",
+ "revm-database-interface",
+ "revm-handler",
+ "revm-inspector",
+ "revm-interpreter",
+ "revm-precompile",
+ "revm-primitives",
+ "revm-state",
 ]
 
 [[package]]
@@ -8458,18 +8430,7 @@ source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dce
 dependencies = [
  "bitvec",
  "phf 0.13.1",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "revm-bytecode"
-version = "7.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "bitvec",
- "phf 0.13.1",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-primitives",
  "serde",
 ]
 
@@ -8481,27 +8442,11 @@ dependencies = [
  "bitvec",
  "cfg-if",
  "derive-where",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "revm-context"
-version = "12.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "bitvec",
- "cfg-if",
- "derive-where",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-bytecode",
+ "revm-context-interface",
+ "revm-database-interface",
+ "revm-primitives",
+ "revm-state",
  "serde",
 ]
 
@@ -8514,24 +8459,9 @@ dependencies = [
  "alloy-eip7702",
  "auto_impl",
  "either",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "revm-context-interface"
-version = "13.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "alloy-eip2930",
- "alloy-eip7702",
- "auto_impl",
- "either",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-database-interface",
+ "revm-primitives",
+ "revm-state",
  "serde",
 ]
 
@@ -8541,23 +8471,10 @@ version = "9.0.6"
 source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dceb8d5a2e6be2af3b89f41de207"
 dependencies = [
  "alloy-eips",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "revm-database"
-version = "9.0.6"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "alloy-eips",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-bytecode",
+ "revm-database-interface",
+ "revm-primitives",
+ "revm-state",
  "serde",
 ]
 
@@ -8568,21 +8485,8 @@ source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dce
 dependencies = [
  "auto_impl",
  "either",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "revm-database-interface"
-version = "8.0.5"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "auto_impl",
- "either",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-primitives",
+ "revm-state",
  "serde",
  "thiserror 2.0.17",
 ]
@@ -8594,32 +8498,14 @@ source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dce
 dependencies = [
  "auto_impl",
  "derive-where",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-context 12.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-interpreter 31.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-precompile 31.0.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "revm-handler"
-version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "auto_impl",
- "derive-where",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-context 12.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-interpreter 31.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-precompile 31.0.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-bytecode",
+ "revm-context",
+ "revm-context-interface",
+ "revm-database-interface",
+ "revm-interpreter",
+ "revm-precompile",
+ "revm-primitives",
+ "revm-state",
  "serde",
 ]
 
@@ -8630,29 +8516,12 @@ source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dce
 dependencies = [
  "auto_impl",
  "either",
- "revm-context 12.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-handler 14.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-interpreter 31.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "revm-inspector"
-version = "14.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "auto_impl",
- "either",
- "revm-context 12.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-database-interface 8.0.5 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-handler 14.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-interpreter 31.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-context",
+ "revm-database-interface",
+ "revm-handler",
+ "revm-interpreter",
+ "revm-primitives",
+ "revm-state",
  "serde",
  "serde_json",
 ]
@@ -8671,7 +8540,7 @@ dependencies = [
  "boa_engine",
  "boa_gc",
  "colorchoice",
- "revm 33.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
+ "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -8682,22 +8551,10 @@ name = "revm-interpreter"
 version = "31.1.0"
 source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dceb8d5a2e6be2af3b89f41de207"
 dependencies = [
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "revm-interpreter"
-version = "31.1.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-context-interface 13.1.0 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-state 8.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-bytecode",
+ "revm-context-interface",
+ "revm-primitives",
+ "revm-state",
  "serde",
 ]
 
@@ -8718,31 +8575,7 @@ dependencies = [
  "cfg-if",
  "k256",
  "p256",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "ripemd",
- "rug",
- "secp256k1 0.31.1",
- "sha2",
-]
-
-[[package]]
-name = "revm-precompile"
-version = "31.0.0"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "ark-bls12-381",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "arrayref",
- "aurora-engine-modexp",
- "blst",
- "c-kzg",
- "cfg-if",
- "k256",
- "p256",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-primitives",
  "ripemd",
  "rug",
  "secp256k1 0.31.1",
@@ -8761,35 +8594,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "revm-primitives"
-version = "21.0.2"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "alloy-primitives",
- "num_enum",
- "once_cell",
- "serde",
-]
-
-[[package]]
 name = "revm-state"
 version = "8.1.1"
 source = "git+https://github.com/haythemsellami/revm?branch=main#a151c03e3989dceb8d5a2e6be2af3b89f41de207"
 dependencies = [
  "bitflags 2.10.0",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=main)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=main)",
- "serde",
-]
-
-[[package]]
-name = "revm-state"
-version = "8.1.1"
-source = "git+https://github.com/haythemsellami/revm?branch=monad-revm#86d14810fcd2e14e845c54ba8c6501df929534dd"
-dependencies = [
- "bitflags 2.10.0",
- "revm-bytecode 7.1.1 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
- "revm-primitives 21.0.2 (git+https://github.com/haythemsellami/revm?branch=monad-revm)",
+ "revm-bytecode",
+ "revm-primitives",
  "serde",
 ]
 
@@ -9018,7 +8829,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9802,7 +9613,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9814,7 +9625,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.17",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9837,7 +9648,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.10.0",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -10152,7 +9963,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "thiserror 2.0.17",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
@@ -10266,7 +10077,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10286,7 +10097,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8c27177b12a6399ffc08b98f76f7c9a1f4fe9fc967c784c5a071fa8d93cf7e1"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11585,7 +11396,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11601,7 +11412,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
 dependencies = [
  "windows-collections",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-future",
  "windows-link 0.1.3",
  "windows-numerics",
@@ -11613,7 +11424,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -11630,25 +11441,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement",
- "windows-interface",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
-]
-
-[[package]]
 name = "windows-future"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
  "windows-threading",
 ]
@@ -11693,7 +11491,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
 ]
 
