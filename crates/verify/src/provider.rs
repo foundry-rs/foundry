@@ -189,6 +189,7 @@ impl VerificationProviderType {
         if self.is_etherscan() {
             if let Some(chain) = chain
                 && chain.etherscan_urls().is_none()
+                && !has_url
             {
                 eyre::bail!(EtherscanConfigError::UnknownChain(
                     "when using Etherscan verifier".to_string(),

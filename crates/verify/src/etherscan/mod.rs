@@ -21,7 +21,7 @@ use foundry_cli::{
 };
 use foundry_common::{abi::encode_function_args, retry::RetryError};
 use foundry_compilers::{Artifact, artifacts::BytecodeObject};
-use foundry_config::Config;
+use foundry_config::{Config, ResolvedEtherscanConfig};
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use regex::Regex;
 use semver::BuildMetadata;
@@ -265,9 +265,14 @@ impl EtherscanVerificationProvider {
         // API key passed.
         let is_etherscan = verifier_type.is_etherscan()
             || (verifier_type.is_sourcify() && etherscan_key.is_some());
-        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+        let mut etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+        if etherscan_config.is_none() {
+            etherscan_config = first_resolved_etherscan_config(config);
+        }
 
-        let etherscan_api_url = verifier_url.or(None).map(str::to_owned);
+        let etherscan_api_url = verifier_url
+            .map(str::to_owned)
+            .or_else(|| etherscan_config.as_ref().map(|c| c.api_url.clone()));
 
         let api_url = etherscan_api_url.as_deref();
         let base_url = etherscan_config
@@ -452,6 +457,11 @@ impl EtherscanVerificationProvider {
             eyre::bail!("Local bytecode doesn't match on-chain bytecode")
         }
     }
+}
+
+fn first_resolved_etherscan_config(config: &Config) -> Option<ResolvedEtherscanConfig> {
+    let resolved = config.etherscan.clone().resolved();
+    resolved.iter().find_map(|(_, entry)| entry.clone().ok())
 }
 
 #[cfg(test)]
