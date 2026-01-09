@@ -7,92 +7,85 @@ use crate::{
     Env, InspectorExt, backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_evm::{Evm, EvmEnv, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
+use monad_revm::{
+    MonadCfgEnv, MonadContext, MonadEvm as InnerMonadEvm, MonadSpecId,
+    instructions::MonadInstructions, precompiles::MonadPrecompiles,
+};
 use revm::{
     Context, Journal,
     context::{
-        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext,
-        LocalContextTr, TxEnv,
+        BlockEnv, ContextTr, CreateScheme, JournalTr, LocalContext, LocalContextTr, TxEnv,
         result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
     },
-    handler::{
-        EthFrame, EthPrecompiles, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult,
-        instructions::EthInstructions,
-    },
+    handler::{EvmTr, FrameResult, FrameTr, Handler, ItemOrResult},
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         FrameInput, Gas, InstructionResult, InterpreterResult, SharedMemory,
         interpreter::EthInterpreter, interpreter_action::FrameInit, return_ok,
     },
-    precompile::{PrecompileSpecId, Precompiles},
-    primitives::hardfork::SpecId,
 };
 
+/// Creates a new Monad EVM with the given inspector.
+///
+/// This function builds a `MonadContext` and wraps it in a `FoundryEvm` with
+/// Monad-specific gas costs, precompiles, and handler behavior.
 pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     db: &'db mut dyn DatabaseExt,
     env: Env,
     inspector: I,
 ) -> FoundryEvm<'db, I> {
-    let mut ctx = EthEvmContext {
+    let spec = env.evm_env.cfg_env.spec;
+    // Convert to MonadCfgEnv to apply Monad-specific defaults (128KB code size)
+    let monad_cfg = MonadCfgEnv::from(env.evm_env.cfg_env);
+
+    let mut ctx: MonadContext<&'db mut dyn DatabaseExt> = Context {
         journaled_state: {
             let mut journal = Journal::new(db);
-            journal.set_spec_id(env.evm_env.cfg_env.spec);
+            journal.set_spec_id(spec.into_eth_spec());
             journal
         },
         block: env.evm_env.block_env,
-        cfg: env.evm_env.cfg_env,
+        cfg: monad_cfg,
         tx: env.tx,
         chain: (),
         local: LocalContext::default(),
         error: Ok(()),
     };
     ctx.cfg.tx_chain_id_check = true;
-    let spec = ctx.cfg.spec;
 
     let mut evm = FoundryEvm {
-        inner: RevmEvm::new_with_inspector(
-            ctx,
-            inspector,
-            EthInstructions::default(),
-            get_precompiles(spec),
-        ),
+        inner: InnerMonadEvm::new(ctx, inspector).with_precompiles(get_precompiles(spec)),
     };
 
     evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
 }
 
+/// Creates a new Monad EVM with an existing context.
+///
+/// Used for nested execution (e.g., cheatcode execution).
 pub fn new_evm_with_existing_context<'a>(
-    ctx: EthEvmContext<&'a mut dyn DatabaseExt>,
+    ctx: MonadContext<&'a mut dyn DatabaseExt>,
     inspector: &'a mut dyn InspectorExt,
 ) -> FoundryEvm<'a, &'a mut dyn InspectorExt> {
-    let spec = ctx.cfg.spec;
+    use revm::context::Cfg;
+    let spec = ctx.cfg.spec();
 
     let mut evm = FoundryEvm {
-        inner: RevmEvm::new_with_inspector(
-            ctx,
-            inspector,
-            EthInstructions::default(),
-            get_precompiles(spec),
-        ),
+        inner: InnerMonadEvm::new(ctx, inspector).with_precompiles(get_precompiles(spec)),
     };
 
     evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
 }
 
-/// Get the precompiles for the given spec.
-fn get_precompiles(spec: SpecId) -> PrecompilesMap {
-    PrecompilesMap::from_static(
-        EthPrecompiles {
-            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
-            spec,
-        }
-        .precompiles,
-    )
+/// Get the Monad precompiles for the given spec.
+fn get_precompiles(spec: MonadSpecId) -> PrecompilesMap {
+    PrecompilesMap::from_static(MonadPrecompiles::new_with_spec(spec).precompiles())
 }
 
 /// Get the call inputs for the CREATE2 factory.
@@ -116,20 +109,35 @@ fn get_create2_factory_call_inputs(
     }
 }
 
+/// Foundry EVM wrapper around Monad EVM.
+///
+/// This provides Foundry-specific functionality on top of the Monad EVM,
+/// including CREATE2 factory support and custom execution handling.
 pub struct FoundryEvm<'db, I: InspectorExt> {
     #[allow(clippy::type_complexity)]
-    inner: RevmEvm<
-        EthEvmContext<&'db mut dyn DatabaseExt>,
+    inner: InnerMonadEvm<
+        MonadContext<&'db mut dyn DatabaseExt>,
         I,
-        EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
+        MonadInstructions<MonadContext<&'db mut dyn DatabaseExt>>,
         PrecompilesMap,
-        EthFrame<EthInterpreter>,
     >,
 }
+
 impl<'db, I: InspectorExt> FoundryEvm<'db, I> {
     /// Consumes the EVM and returns the inner context.
-    pub fn into_context(self) -> EthEvmContext<&'db mut dyn DatabaseExt> {
-        self.inner.ctx
+    pub fn into_context(self) -> MonadContext<&'db mut dyn DatabaseExt> {
+        self.inner.0.ctx
+    }
+
+    /// Returns a copy of the current environment.
+    pub fn env(&self) -> Env {
+        Env {
+            evm_env: EvmEnv {
+                cfg_env: self.inner.0.ctx.cfg.clone().into_inner(),
+                block_env: self.inner.0.ctx.block.clone(),
+            },
+            tx: self.inner.0.ctx.tx.clone(),
+        }
     }
 
     pub fn run_execution(
@@ -139,8 +147,9 @@ impl<'db, I: InspectorExt> FoundryEvm<'db, I> {
         let mut handler = FoundryHandler::<I>::default();
 
         // Create first frame
-        let memory =
-            SharedMemory::new_with_buffer(self.inner.ctx().local().shared_memory_buffer().clone());
+        let memory = SharedMemory::new_with_buffer(
+            self.inner.0.ctx().local().shared_memory_buffer().clone(),
+        );
         let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
 
         // Run execution loop
@@ -159,48 +168,52 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type DB = &'db mut dyn DatabaseExt;
     type Error = EVMError<DatabaseError>;
     type HaltReason = HaltReason;
-    type Spec = SpecId;
+    type Spec = MonadSpecId;
     type Tx = TxEnv;
     type BlockEnv = BlockEnv;
 
     fn block(&self) -> &BlockEnv {
-        &self.inner.block
+        &self.inner.0.ctx.block
     }
 
     fn chain_id(&self) -> u64 {
-        self.inner.ctx.cfg.chain_id
+        self.inner.0.ctx.cfg.chain_id
     }
 
     fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        (&self.inner.ctx.journaled_state.database, &self.inner.inspector, &self.inner.precompiles)
+        (
+            &self.inner.0.ctx.journaled_state.database,
+            &self.inner.0.inspector,
+            &self.inner.0.precompiles,
+        )
     }
 
     fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
         (
-            &mut self.inner.ctx.journaled_state.database,
-            &mut self.inner.inspector,
-            &mut self.inner.precompiles,
+            &mut self.inner.0.ctx.journaled_state.database,
+            &mut self.inner.0.inspector,
+            &mut self.inner.0.precompiles,
         )
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {
-        &mut self.inner.ctx.journaled_state.database
+        &mut self.inner.0.ctx.journaled_state.database
     }
 
     fn precompiles(&self) -> &Self::Precompiles {
-        &self.inner.precompiles
+        &self.inner.0.precompiles
     }
 
     fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
-        &mut self.inner.precompiles
+        &mut self.inner.0.precompiles
     }
 
     fn inspector(&self) -> &Self::Inspector {
-        &self.inner.inspector
+        &self.inner.0.inspector
     }
 
     fn inspector_mut(&mut self) -> &mut Self::Inspector {
-        &mut self.inner.inspector
+        &mut self.inner.0.inspector
     }
 
     fn set_inspector_enabled(&mut self, _enabled: bool) {
@@ -211,12 +224,12 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        self.inner.ctx.tx = tx;
+        self.inner.0.ctx.tx = tx;
 
         let mut handler = FoundryHandler::<I>::default();
         let result = handler.inspect_run(&mut self.inner)?;
 
-        Ok(ResultAndState::new(result, self.inner.ctx.journaled_state.inner.state.clone()))
+        Ok(ResultAndState::new(result, self.inner.0.ctx.journaled_state.inner.state.clone()))
     }
 
     fn transact_system_call(
@@ -232,26 +245,32 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     where
         Self: Sized,
     {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.ctx;
+        let Context { block: block_env, cfg: monad_cfg, journaled_state, .. } = self.inner.0.ctx;
+        // Convert MonadCfgEnv back to CfgEnv<MonadSpecId> for EvmEnv
+        let cfg_env = monad_cfg.into_inner();
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
 }
 
 impl<'db, I: InspectorExt> Deref for FoundryEvm<'db, I> {
-    type Target = Context<BlockEnv, TxEnv, CfgEnv, &'db mut dyn DatabaseExt>;
+    type Target = MonadContext<&'db mut dyn DatabaseExt>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner.ctx
+        &self.inner.0.ctx
     }
 }
 
 impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.ctx
+        &mut self.inner.0.ctx
     }
 }
 
+/// Foundry handler for Monad EVM execution.
+///
+/// This handler provides Foundry-specific behavior (CREATE2 factory support)
+/// on top of the Monad EVM's gas-limit charging model.
 pub struct FoundryHandler<'db, I: InspectorExt> {
     create2_overrides: Vec<(usize, CallInputs)>,
     _phantom: PhantomData<(&'db mut dyn DatabaseExt, I)>,
@@ -263,15 +282,13 @@ impl<I: InspectorExt> Default for FoundryHandler<'_, I> {
     }
 }
 
-// Blanket Handler implementation for FoundryHandler, needed for implementing the InspectorHandler
-// trait.
+// Handler implementation for FoundryHandler with Monad EVM.
 impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
-    type Evm = RevmEvm<
-        EthEvmContext<&'db mut dyn DatabaseExt>,
+    type Evm = InnerMonadEvm<
+        MonadContext<&'db mut dyn DatabaseExt>,
         I,
-        EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
+        MonadInstructions<MonadContext<&'db mut dyn DatabaseExt>>,
         PrecompilesMap,
-        EthFrame<EthInterpreter>,
     >;
     type Error = EVMError<DatabaseError>;
     type HaltReason = HaltReason;
@@ -288,22 +305,26 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         if let FrameInput::Create(inputs) = &init.frame_input
             && let CreateScheme::Create2 { salt } = inputs.scheme
         {
-            let (ctx, inspector) = evm.ctx_inspector();
+            // Access the inner Evm's context and inspector
+            let (ctx, inspector) = (&mut evm.0.ctx, &mut evm.0.inspector);
 
             if inspector.should_use_create2_factory(ctx, inputs) {
                 let gas_limit = inputs.gas_limit;
 
                 // Get CREATE2 deployer.
-                let create2_deployer = evm.inspector().create2_deployer();
+                let create2_deployer = evm.0.inspector.create2_deployer();
 
                 // Generate call inputs for CREATE2 factory.
                 let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
 
                 // Push data about current override to the stack.
-                self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
+                // Access journal depth through the context's journaled_state
+                self.create2_overrides
+                    .push((evm.0.ctx.journaled_state.depth(), call_inputs.clone()));
 
                 // Sanity check that CREATE2 deployer exists.
-                let code_hash = evm.journal_mut().load_account(create2_deployer)?.info.code_hash;
+                let code_hash =
+                    evm.0.ctx.journaled_state.load_account(create2_deployer)?.info.code_hash;
                 if code_hash == KECCAK_EMPTY {
                     return Ok(Some(FrameResult::Call(CallOutcome {
                         result: InterpreterResult {
@@ -344,7 +365,12 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         evm: &mut <Self as Handler>::Evm,
         result: FrameResult,
     ) -> FrameResult {
-        if self.create2_overrides.last().is_some_and(|(depth, _)| *depth == evm.journal().depth()) {
+        // Access journal depth through the context's journaled_state
+        if self
+            .create2_overrides
+            .last()
+            .is_some_and(|(depth, _)| *depth == evm.0.ctx.journaled_state.depth())
+        {
             let (_, call_inputs) = self.create2_overrides.pop().unwrap();
             let FrameResult::Call(mut call) = result else {
                 unreachable!("create2 override should be a call frame");

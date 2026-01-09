@@ -20,7 +20,7 @@ pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
-    context::JournalInner,
+    context::{JournalInner, journaled_state::account::JournaledAccountTr},
     context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
@@ -745,7 +745,8 @@ impl Backend {
     /// We need to track these mainly to prevent issues when switching between different evms
     pub(crate) fn initialize(&mut self, env: &Env) {
         self.set_caller(env.tx.caller);
-        self.set_spec_id(env.evm_env.cfg_env.spec);
+        // Convert MonadSpecId to SpecId for internal tracking
+        self.set_spec_id(env.evm_env.cfg_env.spec.into_eth_spec());
 
         let test_contract = match env.tx.kind {
             TxKind::Call(to) => to,
@@ -775,7 +776,8 @@ impl Backend {
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
-        *env = evm.as_env_mut().to_owned();
+        // Update env with any changes made during execution
+        *env = evm.env();
 
         Ok(res)
     }
@@ -1954,7 +1956,8 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
         env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
             excess_blob_gas,
-            get_blob_base_fee_update_fraction_by_spec_id(env.cfg.spec),
+            // Convert MonadSpecId to SpecId for blob base fee calculation
+            get_blob_base_fee_update_fraction_by_spec_id(env.cfg.spec.into_eth_spec()),
         ));
     }
 }

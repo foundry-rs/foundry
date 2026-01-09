@@ -52,6 +52,7 @@ use alloy_evm::{
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
+use alloy_monad_evm::MonadContext;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, ReceiptResponse, TransactionBuilder, UnknownTxEnvelope,
@@ -1182,7 +1183,8 @@ impl Backend {
     where
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
+            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector(WrapDatabaseRef(db), env, inspector);
@@ -2697,6 +2699,7 @@ impl Backend {
     where
         for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + Inspector<OpContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + Inspector<MonadContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + 'a,
         for<'a> F:
             FnOnce(ResultAndState<OpHaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, Env) -> T,

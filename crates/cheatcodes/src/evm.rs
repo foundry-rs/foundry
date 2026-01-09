@@ -30,6 +30,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TraceMode;
 use itertools::Itertools;
+use monad_revm::MonadSpecId;
 use rand::Rng;
 use revm::{
     bytecode::Bytecode,
@@ -46,7 +47,6 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::evm_spec_id;
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
@@ -465,7 +465,7 @@ impl Cheatcode for difficultyCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            ccx.ecx.cfg.spec < SpecId::MERGE,
+            ccx.ecx.cfg.spec.into_eth_spec() < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -487,7 +487,7 @@ impl Cheatcode for prevrandao_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::MERGE,
+            ccx.ecx.cfg.spec.into_eth_spec() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -500,7 +500,7 @@ impl Cheatcode for prevrandao_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::MERGE,
+            ccx.ecx.cfg.spec.into_eth_spec() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -513,7 +513,7 @@ impl Cheatcode for blobhashesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { hashes } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg.spec.into_eth_spec() >= SpecId::CANCUN,
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -528,7 +528,7 @@ impl Cheatcode for getBlobhashesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg.spec.into_eth_spec() >= SpecId::CANCUN,
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -579,14 +579,14 @@ impl Cheatcode for blobBaseFeeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg.spec.into_eth_spec() >= SpecId::CANCUN,
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
         ccx.ecx.block.set_blob_excess_gas_and_price(
             (*newBlobBaseFee).to(),
-            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg.spec),
+            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg.spec.into()),
         );
         Ok(Default::default())
     }
@@ -1116,18 +1116,21 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 impl Cheatcode for setEvmVersionCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { evm } = self;
-        let spec_id = evm_spec_id(
-            EvmVersion::from_str(evm)
-                .map_err(|_| Error::from(format!("invalid evm version {evm}")))?,
-        );
-        ccx.state.execution_evm_version = Some(spec_id);
+        // Validate the EVM version string is valid
+        let _ = EvmVersion::from_str(evm)
+            .map_err(|_| Error::from(format!("invalid evm version {evm}")))?;
+        // For Monad, always use the default MonadSpecId (currently MonadEight, equivalent to PRAGUE)
+        // since Monad hardforks are independent of Ethereum's evm_version
+        ccx.state.execution_evm_version = Some(MonadSpecId::default());
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for getEvmVersionCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        Ok(ccx.ecx.cfg.spec.to_string().to_lowercase().abi_encode())
+        // Convert MonadSpecId to &str and then to lowercase
+        let spec_str: &str = ccx.ecx.cfg.spec.into();
+        Ok(spec_str.to_lowercase().abi_encode())
     }
 }
 

@@ -30,8 +30,8 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_linking::{LinkOutput, Linker};
+use monad_revm::MonadSpecId;
 use rayon::prelude::*;
-use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -296,7 +296,7 @@ pub struct TestRunnerConfig {
     /// EVM environment.
     pub env: Env,
     /// EVM version.
-    pub spec_id: SpecId,
+    pub spec_id: MonadSpecId,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
@@ -320,7 +320,7 @@ impl TestRunnerConfig {
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        self.spec_id = config.evm_spec_id();
+        self.spec_id = MonadSpecId::default();
         self.sender = config.sender;
         self.networks = config.networks;
         self.isolation = config.isolate;
@@ -410,7 +410,7 @@ pub struct MultiContractRunnerBuilder {
     /// The initial balance for each one of the deployed smart contracts
     pub initial_balance: U256,
     /// The EVM spec to use
-    pub evm_spec: Option<SpecId>,
+    pub evm_spec: Option<MonadSpecId>,
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
     /// Project config.
@@ -456,7 +456,7 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn evm_spec(mut self, spec: SpecId) -> Self {
+    pub fn evm_spec(mut self, spec: MonadSpecId) -> Self {
         self.evm_spec = Some(spec);
         self
     }
@@ -601,7 +601,7 @@ impl MultiContractRunnerBuilder {
             tcfg: TestRunnerConfig {
                 evm_opts,
                 env,
-                spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
+                spec_id: self.evm_spec.unwrap_or_default(),
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,

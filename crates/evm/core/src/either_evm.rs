@@ -1,6 +1,8 @@
 use alloy_evm::{Database, EthEvm, Evm, EvmEnv, eth::EthEvmContext};
+use alloy_monad_evm::{MonadContext, MonadEvm};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
+use monad_revm::MonadSpecId;
 use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError};
 use revm::{
     DatabaseCommit, Inspector,
@@ -21,10 +23,11 @@ type EitherEvmResult<DBError, HaltReason, TxError> =
 type EitherExecResult<DBError, HaltReason, TxError> =
     Result<ExecutionResult<HaltReason>, EVMError<DBError, TxError>>;
 
-/// [`EitherEvm`] delegates its calls to one of the two evm implementations; either [`EthEvm`] or
-/// [`OpEvm`].
+/// [`EitherEvm`] delegates its calls to one of the two evm implementations; either [`EthEvm`] ,
+/// [`OpEvm`] or [`MonadEvm`].
 ///
 /// Calls are delegated to [`OpEvm`] only if optimism is enabled.
+/// Calls are delegated to [`MonadEvm`] only if monad is enabled.
 ///
 /// The call delegation is handled via its own implementation of the [`Evm`] trait.
 ///
@@ -33,6 +36,8 @@ type EitherExecResult<DBError, HaltReason, TxError> =
 /// However, the [`Evm::HaltReason`] and [`Evm::Error`] leverage the optimism [`OpHaltReason`] and
 /// [`OpTransactionError`] as these are supersets of the eth types. This makes it easier to map eth
 /// types to op types and also prevents ignoring of any error that maybe thrown by [`OpEvm`].
+///
+/// TODO: MonadHaltReason and MonadTransactionError?
 #[allow(clippy::large_enum_variant)]
 pub enum EitherEvm<DB, I, P>
 where
@@ -42,14 +47,17 @@ where
     Eth(EthEvm<DB, I, P>),
     /// [`OpEvm`] implementation.
     Op(OpEvm<DB, I, P>),
+    /// [`MonadEvm`] implementation.
+    Monad(MonadEvm<DB, I, P>),
 }
 
 impl<DB, I, P> EitherEvm<DB, I, P>
 where
     DB: Database,
-    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
     P: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>
-        + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>
+        + PrecompileProvider<MonadContext<DB>, Output = InterpreterResult>,
 {
     /// Converts the [`EthEvm::transact`] result to [`EitherEvmResult`].
     fn map_eth_result(
@@ -90,14 +98,31 @@ where
             EVMError::Custom(e) => EVMError::Custom(e),
         }
     }
+
+    /// Converts the [`MonadEvm::transact`] result to [`EitherEvmResult`].
+    ///
+    /// Monad uses standard `HaltReason`, so we map it to `OpHaltReason::Base`.
+    fn map_monad_result(
+        &self,
+        result: Result<ResultAndState, EVMError<DB::Error>>,
+    ) -> EitherEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
+        match result {
+            Ok(result) => Ok(ResultAndState {
+                result: result.result.map_haltreason(OpHaltReason::Base),
+                state: result.state,
+            }),
+            Err(e) => Err(self.map_eth_err(e)),
+        }
+    }
 }
 
 impl<DB, I, P> Evm for EitherEvm<DB, I, P>
 where
     DB: Database,
-    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
     P: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>
-        + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>
+        + PrecompileProvider<MonadContext<DB>, Output = InterpreterResult>,
 {
     type DB = DB;
     type Error = EVMError<DB::Error, OpTransactionError>;
@@ -112,6 +137,7 @@ where
         match self {
             Self::Eth(evm) => evm.block(),
             Self::Op(evm) => evm.block(),
+            Self::Monad(evm) => evm.block(),
         }
     }
 
@@ -119,6 +145,7 @@ where
         match self {
             Self::Eth(evm) => evm.chain_id(),
             Self::Op(evm) => evm.chain_id(),
+            Self::Monad(evm) => evm.chain_id(),
         }
     }
 
@@ -126,6 +153,7 @@ where
         match self {
             Self::Eth(evm) => evm.components(),
             Self::Op(evm) => evm.components(),
+            Self::Monad(evm) => evm.components(),
         }
     }
 
@@ -133,6 +161,7 @@ where
         match self {
             Self::Eth(evm) => evm.components_mut(),
             Self::Op(evm) => evm.components_mut(),
+            Self::Monad(evm) => evm.components_mut(),
         }
     }
 
@@ -140,6 +169,7 @@ where
         match self {
             Self::Eth(evm) => evm.db_mut(),
             Self::Op(evm) => evm.db_mut(),
+            Self::Monad(evm) => evm.db_mut(),
         }
     }
 
@@ -150,6 +180,7 @@ where
         match self {
             Self::Eth(evm) => evm.into_db(),
             Self::Op(evm) => evm.into_db(),
+            Self::Monad(evm) => evm.into_db(),
         }
     }
 
@@ -161,7 +192,11 @@ where
             Self::Eth(evm) => evm.finish(),
             Self::Op(evm) => {
                 let (db, env) = evm.finish();
-                (db, map_env(env))
+                (db, map_op_env(env))
+            }
+            Self::Monad(evm) => {
+                let (db, env) = evm.finish();
+                (db, map_monad_env(env))
             }
         }
     }
@@ -170,6 +205,7 @@ where
         match self {
             Self::Eth(evm) => evm.precompiles(),
             Self::Op(evm) => evm.precompiles(),
+            Self::Monad(evm) => evm.precompiles(),
         }
     }
 
@@ -177,6 +213,7 @@ where
         match self {
             Self::Eth(evm) => evm.precompiles_mut(),
             Self::Op(evm) => evm.precompiles_mut(),
+            Self::Monad(evm) => evm.precompiles_mut(),
         }
     }
 
@@ -184,6 +221,7 @@ where
         match self {
             Self::Eth(evm) => evm.inspector(),
             Self::Op(evm) => evm.inspector(),
+            Self::Monad(evm) => evm.inspector(),
         }
     }
 
@@ -191,6 +229,7 @@ where
         match self {
             Self::Eth(evm) => evm.inspector_mut(),
             Self::Op(evm) => evm.inspector_mut(),
+            Self::Monad(evm) => evm.inspector_mut(),
         }
     }
 
@@ -198,6 +237,7 @@ where
         match self {
             Self::Eth(evm) => evm.enable_inspector(),
             Self::Op(evm) => evm.enable_inspector(),
+            Self::Monad(evm) => evm.enable_inspector(),
         }
     }
 
@@ -205,6 +245,7 @@ where
         match self {
             Self::Eth(evm) => evm.disable_inspector(),
             Self::Op(evm) => evm.disable_inspector(),
+            Self::Monad(evm) => evm.disable_inspector(),
         }
     }
 
@@ -212,6 +253,7 @@ where
         match self {
             Self::Eth(evm) => evm.set_inspector_enabled(enabled),
             Self::Op(evm) => evm.set_inspector_enabled(enabled),
+            Self::Monad(evm) => evm.set_inspector_enabled(enabled),
         }
     }
 
@@ -221,7 +263,8 @@ where
     {
         match self {
             Self::Eth(evm) => evm.into_env(),
-            Self::Op(evm) => map_env(evm.into_env()),
+            Self::Op(evm) => map_op_env(evm.into_env()),
+            Self::Monad(evm) => map_monad_env(evm.into_env()),
         }
     }
 
@@ -235,6 +278,10 @@ where
                 self.map_eth_result(eth)
             }
             Self::Op(evm) => evm.transact(tx),
+            Self::Monad(evm) => {
+                let monad = evm.transact(tx.into_tx_env().base);
+                self.map_monad_result(monad)
+            }
         }
     }
 
@@ -251,6 +298,10 @@ where
                 self.map_exec_result(eth)
             }
             Self::Op(evm) => evm.transact_commit(tx),
+            Self::Monad(evm) => {
+                let monad = evm.transact_commit(tx.into_tx_env().base);
+                self.map_exec_result(monad)
+            }
         }
     }
 
@@ -264,6 +315,10 @@ where
                 self.map_eth_result(res)
             }
             Self::Op(evm) => evm.transact_raw(tx),
+            Self::Monad(evm) => {
+                let res = evm.transact_raw(tx.base);
+                self.map_monad_result(res)
+            }
         }
     }
 
@@ -279,12 +334,23 @@ where
                 self.map_eth_result(eth)
             }
             Self::Op(evm) => evm.transact_system_call(caller, contract, data),
+            Self::Monad(evm) => {
+                let monad = evm.transact_system_call(caller, contract, data);
+                self.map_monad_result(monad)
+            }
         }
     }
 }
 
 /// Maps [`EvmEnv<OpSpecId>`] to [`EvmEnv`].
-fn map_env(env: EvmEnv<OpSpecId>) -> EvmEnv {
+fn map_op_env(env: EvmEnv<OpSpecId>) -> EvmEnv {
+    let eth_spec_id = env.spec_id().into_eth_spec();
+    let cfg = env.cfg_env.with_spec(eth_spec_id);
+    EvmEnv { cfg_env: cfg, block_env: env.block_env }
+}
+
+/// Maps [`EvmEnv<MonadSpecId>`] to [`EvmEnv`].
+fn map_monad_env(env: EvmEnv<MonadSpecId>) -> EvmEnv {
     let eth_spec_id = env.spec_id().into_eth_spec();
     let cfg = env.cfg_env.with_spec(eth_spec_id);
     EvmEnv { cfg_env: cfg, block_env: env.block_env }

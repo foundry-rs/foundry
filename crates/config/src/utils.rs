@@ -7,6 +7,7 @@ use foundry_compilers::artifacts::{
     EvmVersion,
     remappings::{Remapping, RemappingError},
 };
+use monad_revm::MonadSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
@@ -300,4 +301,15 @@ pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
         EvmVersion::Prague => SpecId::PRAGUE,
         EvmVersion::Osaka => SpecId::OSAKA,
     }
+}
+
+/// Returns the [MonadSpecId] for Monad EVM execution.
+///
+/// Monad hardforks are independent of Ethereum's `evm_version` (which is for
+/// the Solidity compiler). This always returns the latest Monad hardfork.
+///
+/// When new Monad hardforks are added, consider adding a dedicated config
+/// option (e.g., `monad_hardfork`) for explicit hardfork selection.
+pub fn monad_spec_id(_evm_version: EvmVersion) -> MonadSpecId {
+    MonadSpecId::default()
 }

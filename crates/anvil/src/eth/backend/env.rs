@@ -2,7 +2,7 @@ use alloy_evm::EvmEnv;
 use foundry_evm::{EnvMut, core::AsEnvMut};
 use foundry_evm_networks::NetworkConfigs;
 use op_revm::OpTransaction;
-use revm::context::TxEnv;
+use revm::{context::TxEnv, primitives::hardfork::SpecId};
 
 /// Helper container type for [`EvmEnv`] and [`OpTransaction<TxEnd>`].
 #[derive(Clone, Debug, Default)]
@@ -19,8 +19,8 @@ impl Env {
     }
 }
 
-impl AsEnvMut for Env {
-    fn as_env_mut(&mut self) -> EnvMut<'_> {
+impl AsEnvMut<SpecId> for Env {
+    fn as_env_mut(&mut self) -> EnvMut<'_, SpecId> {
         EnvMut {
             block: &mut self.evm_env.block_env,
             cfg: &mut self.evm_env.cfg_env,
