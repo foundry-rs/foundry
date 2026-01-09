@@ -680,19 +680,21 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
         .output()
         .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))?;
 
-    // The stdout might be encoded on valid hex, or it might just be a string,
-    // so we need to determine which it is to avoid improperly encoding later.
-    let trimmed_stdout = String::from_utf8(output.stdout)?;
-    let trimmed_stdout = trimmed_stdout.trim();
-    let encoded_stdout = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        hex
-    } else {
-        trimmed_stdout.as_bytes().to_vec()
+    let std::process::Output { status, stdout, stderr } = output;
+
+    // The stdout might be valid hex, or it might just be a string. If it is not valid UTF-8,
+    // return raw bytes as-is (the `ffi` cheatcode returns `bytes`).
+    let encoded_stdout = match String::from_utf8(stdout) {
+        Ok(stdout) => {
+            let trimmed = stdout.trim();
+            if let Ok(hex) = hex::decode(trimmed) { hex } else { trimmed.as_bytes().to_vec() }
+        }
+        Err(err) => err.into_bytes(),
     };
     Ok(FfiResult {
-        exitCode: output.status.code().unwrap_or(69),
+        exitCode: status.code().unwrap_or(69),
         stdout: encoded_stdout.into(),
-        stderr: output.stderr.into(),
+        stderr: stderr.into(),
     })
 }
 
