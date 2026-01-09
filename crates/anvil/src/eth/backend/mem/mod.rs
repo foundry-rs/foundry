@@ -3267,7 +3267,7 @@ impl Backend {
             && let Ok(typed_tx) = FoundryTxEnvelope::try_from(tx)
             && let Some(sidecar) = typed_tx.sidecar()
         {
-            return Ok(Some(sidecar.sidecar.blobs.clone()));
+            return Ok(Some(sidecar.sidecar.blobs().to_vec()));
         }
 
         Ok(None)
@@ -3285,7 +3285,7 @@ impl Backend {
                 .iter()
                 .filter_map(|tx| tx.as_ref().sidecar())
                 .flat_map(|sidecar| {
-                    sidecar.sidecar.blobs.iter().zip(sidecar.sidecar.commitments.iter())
+                    sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.commitments().iter())
                 })
                 .filter(|(_, commitment)| {
                     // Filter blobs by versioned_hashes if provided
@@ -3306,10 +3306,10 @@ impl Backend {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
                         if versioned_hash == hash
                             && let Some(index) =
-                                sidecar.sidecar.commitments.iter().position(|commitment| {
+                                sidecar.sidecar.commitments().iter().position(|commitment| {
                                     kzg_to_versioned_hash(commitment.as_slice()) == *hash
                                 })
-                            && let Some(blob) = sidecar.sidecar.blobs.get(index)
+                            && let Some(blob) = sidecar.sidecar.blobs().get(index)
                         {
                             return Ok(Some(*blob));
                         }
