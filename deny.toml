@@ -10,9 +10,7 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2025-0137 `reciprocal_mg10` OOB, unused
     "RUSTSEC-2025-0137",
     # https://rustsec.org/advisories/RUSTSEC-2025-0141 bincode is unmaintained, need to transition all deps to wincode first
-    "RUSTSEC-2025-0141",
-    #  https://rustsec.org/advisories/RUSTSEC-2026-0002 lru unused directly: <https://github.com/alloy-rs/alloy/pull/3460>
-    "RUSTSEC-2026-0002",
+    "RUSTSEC-2025-0141"
 ]
 
 # This section is considered when running `cargo deny check bans`.
