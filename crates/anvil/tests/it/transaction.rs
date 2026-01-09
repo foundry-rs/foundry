@@ -165,7 +165,7 @@ async fn can_replace_transaction() {
 
     tx.set_gas_price(gas_price);
     // send transaction with lower gas price
-    let _lower_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+    let lower_priced_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
 
     tx.set_gas_price(gas_price + 1);
     // send the same transaction with higher gas price
