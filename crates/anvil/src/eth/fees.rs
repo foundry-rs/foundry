@@ -191,16 +191,6 @@ impl FeeManager {
     }
 }
 
-/// Calculate base fee for next block using Ethereum mainnet parameters.
-///
-/// See [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec.
-///
-/// Note: This uses Ethereum's base fee params. For network-specific calculations
-/// (e.g., Optimism), use [`FeeManager::get_next_block_base_fee_per_gas`] instead.
-pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u64 {
-    calc_next_block_base_fee(gas_used, gas_limit, base_fee, BaseFeeParams::ethereum())
-}
-
 /// An async service that takes care of the `FeeHistory` cache
 pub struct FeeHistoryService {
     /// blob parameters for the current spec
