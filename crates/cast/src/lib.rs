@@ -64,6 +64,7 @@ pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
 pub mod tx;
+pub mod tx_spec;
 
 use rlp_converter::Item;
 
