@@ -263,3 +263,103 @@ forgetest_async!(erc20_burn_success, |prj, cmd| {
     let total_supply: U256 = output.split_whitespace().next().unwrap().parse().unwrap();
     assert_eq!(total_supply, initial_supply - burn_amount);
 });
+
+// tests that `transfer` command works with gas options
+forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    let transfer_amount = U256::from(100_000_000_000_000_000_000u128); // 100 tokens
+
+    // Transfer with explicit gas limit and gas price
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            &transfer_amount.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+            "--gas-limit",
+            "100000",
+            "--gas-price",
+            "2000000000",
+        ])
+        .assert_success();
+
+    // Verify transfer succeeded
+    let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
+    assert_eq!(balance, transfer_amount);
+});
+
+// tests that `transfer` command fails with insufficient gas limit
+forgetest_async!(erc20_transfer_insufficient_gas, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
+
+    // Transfer with insufficient gas limit (ERC20 transfer needs ~50k gas)
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            &transfer_amount.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+            "--gas-limit",
+            "1000", // Way too low for ERC20 transfer
+        ])
+        .assert_failure();
+
+    // Verify transfer did NOT occur
+    let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
+    assert_eq!(balance, U256::ZERO);
+});
+
+// tests that `transfer` command fails with incorrect nonce
+forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            &transfer_amount.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    // Transfer with nonce too low
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            &transfer_amount.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+            "--nonce",
+            "0", // Too low nonce
+        ])
+        .assert_failure();
+
+    // Verify transfer did NOT occur
+    let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
+    assert_eq!(balance, transfer_amount); // 2nd transfer failed
+});
