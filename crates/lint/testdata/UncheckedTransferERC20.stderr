@@ -1,3 +1,86 @@
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |         require(token.transfer(to, amount), "Transfer failed");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |         require(success, "Transfer failed");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |             revert("TransferFrom failed");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL |             revert("Transfer failed");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | /         require(
+LL | |             amount > 0 && token.transfer(to, amount),
+LL | |             "Invalid amount or transfer failed"
+LL | |         );
+   | |_________^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | interface IERC20 {
+   |           ^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | interface IERC20Wrapper {
+   |           ^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | contract UncheckedTransfer {
+   |          ^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | library Currency {
+   |         ^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+  --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   |
+LL | contract UncheckedTransferUsingCurrencyLib {
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
 warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
   --> ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
    |

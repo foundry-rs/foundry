@@ -1,3 +1,43 @@
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         require(success, "Call failed");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |             revert("Call failed");
+   |             ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         require(success, "Static call failed");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         require(success, "Call must succeed");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         require(sent, "Send failed");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
 warning[unchecked-call]: Low-level calls should check the success return value
   --> ROOT/testdata/UncheckedCall.sol:LL:CC
    |
