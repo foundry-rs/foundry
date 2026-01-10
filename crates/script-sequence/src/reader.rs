@@ -94,10 +94,9 @@ impl BroadcastReader {
     pub fn read_latest(&self) -> eyre::Result<ScriptSequence> {
         let broadcasts = self.read()?;
 
-        // Find the broadcast with the latest timestamp
         let target = broadcasts
             .into_iter()
-            .max_by_key(|broadcast| broadcast.timestamp)
+            .next()
             .ok_or_else(|| eyre::eyre!("No broadcasts found"))?;
 
         Ok(target)
