@@ -120,4 +120,12 @@ contract ForkTest is Test {
     function testStorageCaching() public {
         vm.createSelectFork("mainnet", 19800000);
     }
+
+    // ensures forks keep the context' evm version
+    /// forge-config: default.evm_version = "cancun"
+    function testKeepsEvmVersion() public {
+        assertEq(vm.getEvmVersion(), "cancun");
+        vm.createSelectFork("mainnet", 23935694); // first block of fusaka hardfork
+        assertEq(vm.getEvmVersion(), "cancun");
+    }
 }
