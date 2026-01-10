@@ -699,10 +699,9 @@ ignore them in the `.gitignore` file."
     ///
     /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
     pub fn submodules_uninitialized(self) -> Result<bool> {
-        self.cmd()
-            .args(["submodule", "status"])
-            .get_stdout_lossy()
-            .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
+        // keep behavior consistent with `has_missing_dependencies`, but avoid duplicating the
+        // "submodule status has '-' prefix" logic.
+        self.has_missing_dependencies(std::iter::empty::<&OsStr>())
     }
 
     /// Initializes the git submodules.

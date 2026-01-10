@@ -603,29 +603,57 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
     let forge_std = lockfile.get(&PathBuf::from("lib/forge-std")).unwrap();
     assert!(forge_std.rev() == FORGE_STD_REVISION);
 
-    // cd into the forge-std submodule and reset the master branch
+    // cd into the forge-std submodule
     let forge_std_path = prj.root().join("lib/forge-std");
     let git = Git::new(&forge_std_path);
-    git.checkout(false, "master").unwrap();
-    // Get the master head commit
-    let origin_master_head = git.head().unwrap();
-    // Reset the master branch to HEAD~1
-    git.reset(true, "HEAD~1").unwrap();
-    let local_master_head = git.head().unwrap();
-    assert_ne!(origin_master_head, local_master_head, "Master head should have changed");
-    // Now checkout back to the release tag
-    git.checkout(false, forge_std.name()).unwrap();
-    assert!(git.head().unwrap() == forge_std.rev(), "Forge std should be at the release tag");
 
+    // Ensure we're on the release tag first (known starting point)
+    git.checkout(false, forge_std.name()).unwrap();
+    assert_eq!(git.head().unwrap(), forge_std.rev(), "Forge std should be at the release tag");
+
+    // Make sure origin/master is up to date, then resolve its commit hash deterministically.
+    git.fetch(false, "origin", Some("master")).unwrap();
+    let origin_master_head = git.get_rev("refs/remotes/origin/master", &forge_std_path).unwrap();
+
+    // Run update and assert the output matches the dynamically resolved hash.
     let expected_output = format!(
-        r#"Updated dep at 'lib/forge-std', (from: tag={}@{}, to: branch=master@{})
-"#,
+        "Updated dep at 'lib/forge-std', (from: tag={}@{}, to: branch=master@{})\n",
         forge_std.name(),
         forge_std.rev(),
         origin_master_head
     );
+
     cmd.forge_fuse()
         .args(["update", "foundry-rs/forge-std@master"])
         .assert_success()
         .stdout_eq(expected_output);
+
+    let git = Git::new(&forge_std_path);
+    assert_eq!(
+        git.head().unwrap(),
+        origin_master_head,
+        "Submodule HEAD should match resolved origin/master after update"
+    );
+
+    let root_git = Git::new(prj.root());
+    let submodules_after = root_git.submodules().unwrap();
+    let forge_sm = submodules_after
+        .0
+        .iter()
+        .find(|s| s.path().as_path() == Path::new("lib/forge-std"))
+        .expect("forge-std submodule should exist");
+    assert_eq!(
+        forge_sm.rev(),
+        origin_master_head,
+        "Root submodule status should match resolved origin/master after update"
+    );
+
+    let mut lockfile = Lockfile::new(prj.root());
+    lockfile.read().unwrap();
+    let forge_std_after = lockfile.get(&PathBuf::from("lib/forge-std")).unwrap();
+    assert_eq!(
+        forge_std_after.rev(),
+        origin_master_head,
+        "Lockfile rev should match resolved origin/master after update"
+    );
 });
