@@ -1,7 +1,7 @@
 use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes, U256};
 use eyre::eyre;
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_fuzz::{
@@ -451,8 +451,6 @@ impl CorpusManager {
                     let idx = rng.random_range(0..new_seq.len());
                     let tx = new_seq.get_mut(idx).unwrap();
                     if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        // TODO add call_value to call details and mutate it as well as sender some
-                        // of the time
                         if !function.inputs.is_empty() {
                             self.abi_mutate(tx, function, test_runner, fuzz_state)?;
                         }
@@ -628,6 +626,25 @@ impl CorpusManager {
 
         tx.call_details.calldata =
             function.abi_encode_input(&prev_inputs).map_err(|e| eyre!(e.to_string()))?.into();
+
+        // Mutate sender with 15% probability
+        if test_runner.rng().random_ratio(15, 100) {
+            tx.sender = Address::random();
+        }
+
+        // Mutate value with 15% probability
+        if test_runner.rng().random_ratio(15, 100) {
+            // Generate random value, biased towards smaller values for practical fuzzing
+            let value = match test_runner.rng().random_range(0..=10) {
+                0..=5 => U256::from(test_runner.rng().random_range(0..=1000)), // Small values
+                6..=8 => U256::from(test_runner.rng().random_range(0..=1_000_000_000_000_000u64)), // Medium values (up to 0.001 ETH)
+                9 => U256::from(test_runner.rng().random_range(0..=1_000_000_000_000_000_000u64)), // Large values (up to 1 ETH)
+                10 => U256::MAX, // Edge case
+                _ => unreachable!(),
+            };
+            tx.call_details.value = Some(value);
+        }
+
         Ok(())
     }
 }
@@ -646,6 +663,7 @@ mod tests {
             call_details: foundry_evm_fuzz::CallDetails {
                 target: Address::ZERO,
                 calldata: Bytes::new(),
+                value: None,
             },
         }
     }

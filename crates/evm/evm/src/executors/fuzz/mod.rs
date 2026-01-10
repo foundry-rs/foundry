@@ -117,7 +117,7 @@ impl FuzzedExecutor {
             warp: None,
             roll: None,
             sender: Default::default(),
-            call_details: CallDetails { target: Default::default(), calldata },
+            call_details: CallDetails { target: Default::default(), calldata, value: None },
         });
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
@@ -343,7 +343,7 @@ impl FuzzedExecutor {
                 warp: None,
                 roll: None,
                 sender: self.sender,
-                call_details: CallDetails { target: address, calldata: calldata.clone() },
+                call_details: CallDetails { target: address, calldata: calldata.clone(), value: None },
             }],
             new_coverage,
         );

@@ -53,6 +53,9 @@ pub struct CallDetails {
     pub target: Address,
     // The data of the transaction.
     pub calldata: Bytes,
+    // Ether value to send with the transaction.
+    #[serde(default)]
+    pub value: Option<U256>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
