@@ -2,6 +2,7 @@ use super::{
     creation_code::{fetch_creation_code_from_etherscan, parse_code_output},
     interface::load_abi_from_file,
 };
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use clap::Parser;
@@ -61,12 +62,16 @@ impl ArtifactArgs {
             fetch_abi_from_etherscan(contract, &config).await?
         };
 
-        let (abi, _) = abi.first().ok_or_else(|| eyre::eyre!("No ABI found"))?;
+        let abi = abi.first().map(|(abi, _)| abi.clone()).unwrap_or_else(JsonAbi::new);
 
         let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
-        let bytecode =
-            parse_code_output(bytecode, contract, &config, abi_path.as_deref(), true, false)
-                .await?;
+        // Only parse code output if we have an ABI with a constructor, otherwise use the full
+        // bytecode
+        let bytecode = if abi.constructor.is_some() {
+            parse_code_output(bytecode, contract, &config, abi_path.as_deref(), true, false).await?
+        } else {
+            bytecode
+        };
 
         let artifact = json!({
             "abi": abi,
