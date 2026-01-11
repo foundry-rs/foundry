@@ -65,10 +65,10 @@ impl ArtifactArgs {
         let abi = abi.first().map(|(abi, _)| abi.clone()).unwrap_or_else(JsonAbi::new);
 
         let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
-        // Only parse code output if we have an ABI with a constructor, otherwise use the full bytecode
+        // Only parse code output if we have an ABI with a constructor, otherwise use the full
+        // bytecode
         let bytecode = if abi.constructor.is_some() {
-            parse_code_output(bytecode, contract, &config, abi_path.as_deref(), true, false)
-                .await?
+            parse_code_output(bytecode, contract, &config, abi_path.as_deref(), true, false).await?
         } else {
             bytecode
         };
@@ -95,3 +95,4 @@ impl ArtifactArgs {
         Ok(())
     }
 }
+
