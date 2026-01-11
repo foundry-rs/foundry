@@ -103,8 +103,7 @@ impl FoundryReceiptEnvelope<Log> {
                 transaction_index: Some(transaction_index),
                 log_index: Some((next_log_index + index) as u64),
                 removed: false,
-            })
-            .collect::<Vec<_>>();
+            });
         FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
             self.status(),
             self.cumulative_gas_used(),
