@@ -95,4 +95,3 @@ impl ArtifactArgs {
         Ok(())
     }
 }
-
