@@ -104,7 +104,27 @@ impl SessionSource {
 
         let Some((stack, memory)) = &res.state else {
             // Show traces and logs, if there are any, and return an error
-            if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
+            let known_contracts = source.build().ok().and_then(|output| {
+                output.enter(|output_ref| {
+                    // Create ContractsByArtifact from the compiled artifacts
+                    Some(foundry_common::ContractsByArtifact::new(
+                        output_ref.output.artifact_ids().map(|(id, artifact)| {
+                            (
+                                id.clone(),
+                                foundry_compilers::artifacts::CompactContractBytecode {
+                                    abi: artifact.abi.clone(),
+                                    bytecode: artifact.bytecode.clone(),
+                                    deployed_bytecode: artifact.deployed_bytecode.clone(),
+                                },
+                            )
+                        }),
+                    ))
+                })
+            });
+            if let Ok(decoder) =
+                ChiselDispatcher::decode_traces(&source.config, &mut res, known_contracts.as_ref())
+                    .await
+            {
                 ChiselDispatcher::show_traces(&decoder, &mut res).await?;
             }
             let decoded_logs = decode_console_logs(&res.logs);
