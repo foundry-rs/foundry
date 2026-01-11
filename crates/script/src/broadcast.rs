@@ -104,7 +104,7 @@ impl<'a> SendTransactionKind<'a> {
                             warn!(
                                 "Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second..."
                             );
-                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                            tokio::time::sleep(Duration::from_millis(1000)).await;
                         }
                         Ordering::Equal => {
                             // Nonces are equal, we can proceed.
