@@ -30,7 +30,7 @@ pub use preprocessor::*;
 mod writer;
 pub use writer::{AsDoc, AsDocResult, BufWriter, Markdown};
 
-pub use mdbook;
+pub use mdbook_driver as mdbook;
 
 // old formatter dependencies
 pub mod solang_ext;

@@ -1,5 +1,5 @@
 use axum::{Router, routing::get_service};
-use forge_doc::mdbook::{MDBook, utils::fs::get_404_output_file};
+use forge_doc::mdbook::MDBook;
 use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
@@ -67,12 +67,12 @@ impl Server {
             .next()
             .ok_or_else(|| eyre::eyre!("no address found for {}", address))?;
         let build_dir = book.build_dir_for("html");
-        let input_404 = book
-            .config
-            .get("output.html.input-404")
-            .and_then(|v| v.as_str())
-            .map(ToString::to_string);
-        let file_404 = get_404_output_file(&input_404);
+        // Get the 404 file from HTML config
+        let file_404 = if let Some(html_config) = book.config.html_config() {
+            html_config.get_404_output_file()
+        } else {
+            String::from("404.html")
+        };
 
         let serving_url = format!("http://{address}");
         sh_println!("Serving on: {serving_url}")?;
