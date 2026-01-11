@@ -56,6 +56,9 @@ mod macros;
 pub mod utils;
 pub use utils::*;
 
+pub mod chain;
+pub use chain::{has_batch_support, has_different_gas_calc};
+
 mod endpoints;
 pub use endpoints::{
     ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, RpcEndpoints,
