@@ -109,7 +109,6 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     pb
 }
 
-
 /// Helpers for loading configuration.
 ///
 /// This is usually implemented through the macros defined in [`foundry_config`]. See

@@ -44,4 +44,3 @@ pub fn has_batch_support(chain_id: u64) -> bool {
     }
     true
 }
-

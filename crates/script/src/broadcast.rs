@@ -15,13 +15,12 @@ use alloy_serde::WithOtherFields;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
-use foundry_config::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     TransactionMaybeSigned,
     provider::{RetryProvider, get_http_provider, try_get_http_provider},
     shell,
 };
-use foundry_config::Config;
+use foundry_config::{Config, has_batch_support, has_different_gas_calc};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 
