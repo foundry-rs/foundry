@@ -216,18 +216,23 @@ impl ChiselDispatcher {
             let known_contracts = new_source.build().ok().and_then(|output| {
                 output.enter(|output_ref| {
                     // Create ContractsByArtifact from the compiled artifacts
-                    Some(ContractsByArtifact::new(output_ref.output.artifact_ids().map(
-                        |(id, artifact)| {
-                            (
-                                id.clone(),
-                                foundry_compilers::artifacts::CompactContractBytecode {
-                                    abi: artifact.abi.clone(),
-                                    bytecode: artifact.bytecode.clone(),
-                                    deployed_bytecode: artifact.deployed_bytecode.clone(),
-                                },
-                            )
-                        },
-                    )))
+                    Some(ContractsByArtifact::new(
+                        output_ref.output().artifact_ids().map(
+                            |(id, artifact): (
+                                foundry_compilers::ArtifactId,
+                                &foundry_compilers::artifacts::ConfigurableContractArtifact,
+                            )| {
+                                (
+                                    id.clone(),
+                                    foundry_compilers::artifacts::CompactContractBytecode {
+                                        abi: artifact.abi.clone(),
+                                        bytecode: artifact.bytecode.clone(),
+                                        deployed_bytecode: artifact.deployed_bytecode.clone(),
+                                    },
+                                )
+                            },
+                        ),
+                    ))
                 })
             });
             if let Ok(decoder) =
