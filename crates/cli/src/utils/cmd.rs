@@ -109,42 +109,6 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     pb
 }
 
-/// True if the network calculates gas costs differently.
-pub fn has_different_gas_calc(chain_id: u64) -> bool {
-    if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum()
-            || chain.is_elastic()
-            || matches!(
-                chain,
-                NamedChain::Acala
-                    | NamedChain::AcalaMandalaTestnet
-                    | NamedChain::AcalaTestnet
-                    | NamedChain::Etherlink
-                    | NamedChain::EtherlinkTestnet
-                    | NamedChain::Karura
-                    | NamedChain::KaruraTestnet
-                    | NamedChain::Mantle
-                    | NamedChain::MantleSepolia
-                    | NamedChain::Monad
-                    | NamedChain::MonadTestnet
-                    | NamedChain::Moonbase
-                    | NamedChain::Moonbeam
-                    | NamedChain::MoonbeamDev
-                    | NamedChain::Moonriver
-                    | NamedChain::Metis
-            );
-    }
-    false
-}
-
-/// True if it supports broadcasting in batches.
-pub fn has_batch_support(chain_id: u64) -> bool {
-    if let Some(chain) = Chain::from(chain_id).named() {
-        return !chain.is_arbitrum();
-    }
-    true
-}
-
 /// Helpers for loading configuration.
 ///
 /// This is usually implemented through the macros defined in [`foundry_config`]. See
