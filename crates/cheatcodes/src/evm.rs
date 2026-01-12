@@ -478,7 +478,15 @@ impl Cheatcode for feeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBasefee } = self;
         ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
-        ccx.ecx.block.basefee = newBasefee.saturating_to();
+
+        // Always set the override so contracts can read the value via BASEFEE opcode.
+        ccx.state.env_overrides.basefee = Some(newBasefee.saturating_to());
+
+        // Only modify the actual environment when not in isolation mode.
+        // In isolation mode, the environment is zeroed for fee-accounting purposes.
+        if !ccx.state.in_isolation_context {
+            ccx.ecx.block.basefee = newBasefee.saturating_to();
+        }
         Ok(Default::default())
     }
 }
@@ -517,9 +525,17 @@ impl Cheatcode for blobhashesCall {
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.tx.blob_hashes.clone_from(hashes);
-        // force this as 4844 txtype
-        ccx.ecx.tx.tx_type = EIP4844_TX_TYPE_ID;
+
+        // Always set the override so contracts can read the value via BLOBHASH opcode.
+        ccx.state.env_overrides.blob_hashes = Some(hashes.clone());
+
+        // Only modify the actual environment when not in isolation mode.
+        // In isolation mode, the environment is zeroed for fee-accounting purposes.
+        if !ccx.state.in_isolation_context {
+            ccx.ecx.tx.blob_hashes.clone_from(hashes);
+            // force this as 4844 txtype
+            ccx.ecx.tx.tx_type = EIP4844_TX_TYPE_ID;
+        }
         Ok(Default::default())
     }
 }
@@ -554,8 +570,16 @@ impl Cheatcode for getBlockNumberCall {
 impl Cheatcode for txGasPriceCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newGasPrice } = self;
-        ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
-        ccx.ecx.tx.gas_price = newGasPrice.saturating_to();
+        ensure!(*newGasPrice <= U256::from(u128::MAX), "gas price must be less than 2^128");
+
+        // Always set the override so contracts can read the value via GASPRICE opcode.
+        ccx.state.env_overrides.gas_price = Some(newGasPrice.saturating_to());
+
+        // Only modify the actual environment when not in isolation mode.
+        // In isolation mode, the environment is zeroed for fee-accounting purposes.
+        if !ccx.state.in_isolation_context {
+            ccx.ecx.tx.gas_price = newGasPrice.saturating_to();
+        }
         Ok(Default::default())
     }
 }
