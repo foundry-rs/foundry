@@ -143,20 +143,14 @@ where
         }
     }
 
-    fn into_db(self) -> Self::DB
-    where
-        Self: Sized,
-    {
+    fn into_db(self) -> Self::DB {
         match self {
             Self::Eth(evm) => evm.into_db(),
             Self::Op(evm) => evm.into_db(),
         }
     }
 
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>)
-    where
-        Self: Sized,
-    {
+    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
         match self {
             Self::Eth(evm) => evm.finish(),
             Self::Op(evm) => {
@@ -215,10 +209,7 @@ where
         }
     }
 
-    fn into_env(self) -> EvmEnv<Self::Spec>
-    where
-        Self: Sized,
-    {
+    fn into_env(self) -> EvmEnv<Self::Spec> {
         match self {
             Self::Eth(evm) => evm.into_env(),
             Self::Op(evm) => map_env(evm.into_env()),
