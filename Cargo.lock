@@ -5070,6 +5070,7 @@ name = "foundry-primitives"
 version = "1.5.1"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-evm",
  "alloy-network",
  "alloy-primitives",
