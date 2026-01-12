@@ -1,10 +1,16 @@
 # Monad Foundry
 
+&nbsp;
+
+![Monad Badge](monad-badge.svg)
+
+&nbsp;
+
 ---
 
 Monad is a Layer-1 blockchain delivering high performance, true decentralization, and EVM compatibility. It supports a large globally distributed network (see the validator map), with intentionally minimal hardware requirements so that anyone may run a node. Performance comes from software architecture improvements rather than reliance on heavy hardware or node colocation. The result is an Ethereum-compatible Layer-1 blockchain with 10,000 tps of throughput, 400ms block frequency, and 800ms finality.
 
-`Monad Foundry` is a custom fork of Foundry that integrates Monad features directly into the familiar Foundry developer workflow.
+`Monad Foundry` is a custom fork of Foundry that integrates Monad features directly into the familiar Foundry developer workflow. To read more about Monad EVM differences vs Ethereum mainnet, check out [Monad docs](https://docs.monad.xyz/developer-essentials/differences).
 
 Get strated here to use Monad's features in Foundry.
 
@@ -40,30 +46,33 @@ Forge commands (`forge test`, `forge script`, `forge debug`) always execute usin
 
 - [x] Executes with Monad EVM specs & config
 
+## Installation
 
+Getting started is very easy:
 
-<div align="center">
-  <img src=".github/assets/banner.png" alt="Foundry banner" />
+Install `foundryup`:
 
-&nbsp;
+```sh 
+curl -L https://foundry.paradigm.xyz | bash
+```
 
-[![Github Actions][gha-badge]][gha-url] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
-![Foundry](https://img.shields.io/badge/Foundry-grey?style=flat&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAElElEQVR4nH1VUUhUaRg9984YdzBpkqR0Z210rIESIXSabEbcHgydrpNRRj00kWaztj0U1MOW0MOIbD300IvLMqBpMTGYxdoqyoRNDUESBDWwUuPugCSSsTM7u0Oj1/+efdiMcmnP2/fDd77D4f/OB6xCa2urQZbllVICYGtqanK1tLS4AdgAyAAgyzJaW1sNq/ulT4twOGw4fPiwAGDp7Ow8VV1d7bVarRWxWCw/k8mgsbExm0wmZ+Lx+M/Xr1//CcAsSVmSJH01McLhsAEAnE5nx+Tk5B/xeJxOp5N9fX2sqqqixWLhnTt36HA4GIvFGI1GU3V1df5Pe/9D1t7eHkgkEuzo6GBPT49WWloq7Ha7fujQITocDu7atUs3m83i6tWr2okTJ/jixQuePn265zPScDhskGUZe/fubXv8+DFv3rypbdiwQaxbt46RSIT79u3j0NAQb926RVVVOT4+TqvVyvz8fD0YDC5NTk6ysbHxlCRJ/5KSlAAURyKRTFNTkwAg7t69S5/Px76+Pq7GyMgI9+/fz9HRUQIQO3bsEKOjo38DsJCUJADw+/0BVVW7otHo8ps3b4yvXr3CxMQETCYTTCYTNE0DAOTl5SGXy0FRFOzZswdmsxkVFRXLNTU1xmg0+kNvb+/3AGAcGBiI7969Wwcg6urq+OTJE967d49btmzh9PT0R3WJRIKBQIDBYJBTU1NsaGggAGGz2fTe3t5fAeQZAWwuLi4uP3nypOT1emEwGFBeXo7a2losLCygoaEB/f39MJlMCIVCkCQJBw8ehNVqhcfjQXNzs1RSUiKtX7++DEAZqqqq3KFQiABYUFDAM2fOkCQXFxdJkvfv32dhYSG9Xi+vXbvG2dnZj4oDgQCLioqoKAqHhobodDq/Mc7NzUklJSUIBoOw2WzYtm0blpeXsWbNGkxMTODp06doa2vD4OAgNm7cCIvFApLQdR3nzp3Dzp078fLlSxQVFeHdu3cAgIpHjx69/zBUX5k+MDBAt9vNY8eOsbu7m6lUigcOHKDL5WImkyHJz9TGYrEcALsMIPn69esZTdMIgM+ePUNXVxdu376NsrIyuN1uXLp0CWazGcPDw3C5XFBVFWfPnkVNTQ18Pp+ezWY5MzPzO4DfAABHjhzpJslUKqVdvHiR4+PjbG9vZy6XI0kuLS0xmUxSCEGS9Pv9LC0tpdFoZGVlpSaEoM/nuwIAKx/7q5GRkb9CoZBQVVWcP3+ez58/J0mm02kODg7ywoULjMViTKfTtNvtXLt2LTdt2qTncrnlsbGxLICvSUqfrl5HJBLh1NTUkhBCJ8mFhQX29/dTVVUWFBTwwYMH1HWdly9fpqIoeiKRWJqfn2d1dXWnLMuf7zMAHD16tGd+fn7FZy2bzYrKykodAAFQVVV9cXFRkNTevn3Lubk5trS0XPnfxHE4HN8ODw+nV/yanp6mx+Ohx+P5aIMQgmNjY3/W1tZ+t5rsSwG7+fjx4/76+vrm7du32woLC00AkE6n38fj8ZmHDx/+cuPGjR8BJL8YsCtYdQIMALYqilKvKEo9APuHty+egH8A3GfFDJXmxmMAAAAASUVORK5CYII%3D&link=https%3A%2F%2Fbook.getfoundry.sh%2F)
+Next, run:
 
-[gha-badge]: https://img.shields.io/github/actions/workflow/status/foundry-rs/foundry/test.yml?branch=master
-[gha-url]: https://github.com/foundry-rs/foundry/actions
-[tg-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
-[tg-url]: https://t.me/foundry_rs
-[tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
-[tg-support-url]: https://t.me/foundry_support
+```sh
+foundryup --repo haythemsellami/monad-foundry
 
-**[Install](https://getfoundry.sh/getting-started/installation)**
-| [Docs][foundry-docs]
-| [Developer Guidelines](./docs/dev/README.md)
-| [Contributing](./CONTRIBUTING.md)
-| [Crate Docs](https://foundry-rs.github.io/foundry)
+# then
 
-</div>
+foundryup --use haythemsellami-branch-master
+```
+
+It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel) from this repository.
+
+**Done!**
+
+For additional details see the [installation guide](https://getfoundry.sh/getting-started/installation) in the [Foundry Docs][foundry-docs].
+
+If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://getfoundry.sh/faq).
 
 ---
 
@@ -106,30 +115,6 @@ Foundry consists of:
 - **Streamlined CI/CD**
 
   - **Optimized CI**: Accelerate builds, run tests and execute scripts using [Foundry's GitHub action][foundry-gha].
-
-## Installation
-
-Getting started is very easy:
-
-Install `foundryup`:
-
-```
-curl -L https://foundry.paradigm.xyz | bash
-```
-
-Next, run `foundryup`.
-
-It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel).
-
-```
-foundryup
-```
-
-**Done!**
-
-For additional details see the [installation guide](https://getfoundry.sh/getting-started/installation) in the [Foundry Docs][foundry-docs].
-
-If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://getfoundry.sh/faq).
 
 ## How Fast?
 
