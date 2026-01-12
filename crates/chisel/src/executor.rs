@@ -114,7 +114,7 @@ impl SessionSource {
                                 &foundry_compilers::artifacts::ConfigurableContractArtifact,
                             )| {
                                 (
-                                    id.clone(),
+                                    id,
                                     foundry_compilers::artifacts::CompactContractBytecode {
                                         abi: artifact.abi.clone(),
                                         bytecode: artifact.bytecode.clone(),
