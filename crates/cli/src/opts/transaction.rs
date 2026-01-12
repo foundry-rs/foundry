@@ -78,10 +78,18 @@ pub struct TransactionOpts {
     pub legacy: bool,
 
     /// Send a EIP-4844 blob transaction.
+    ///
+    /// Note: This is the current default blob variant. After the Fusaka hardfork,
+    /// EIP-7594 (PeerDAS) will become the default blob variant.
     #[arg(long, conflicts_with = "legacy")]
     pub blob: bool,
 
-    /// Gas price for EIP-4844 blob transaction.
+    /// Send a blob transaction using EIP-7594 format instead of EIP-4844. Must be used with
+    /// `--blob`.
+    #[arg(long, conflicts_with = "legacy", requires = "blob", alias = "eip7594")]
+    pub peerdas: bool,
+
+    /// Gas price for EIP-4844/EIP-7594 blob transaction.
     #[arg(long, conflicts_with = "legacy", value_parser = parse_ether_value, env = "ETH_BLOB_GAS_PRICE", value_name = "BLOB_PRICE")]
     pub blob_gas_price: Option<U256>,
 
