@@ -12,10 +12,7 @@ use std::{
     fmt,
     io::{IsTerminal, prelude::*},
     ops::DerefMut,
-    sync::{
-        Mutex, OnceLock, PoisonError,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Mutex, OnceLock, PoisonError},
 };
 
 /// Returns the current color choice.
@@ -120,10 +117,6 @@ pub struct Shell {
 
     /// The verbosity level to use for message output.
     verbosity: Verbosity,
-
-    /// Flag that indicates the current line needs to be cleared before
-    /// printing. Used when a progress bar is currently displayed.
-    needs_clear: AtomicBool,
 }
 
 impl fmt::Debug for Shell {
@@ -199,7 +192,6 @@ impl Shell {
             output_format: format,
             output_mode: mode,
             verbosity,
-            needs_clear: AtomicBool::new(false),
         }
     }
 
@@ -210,7 +202,6 @@ impl Shell {
             output_format: OutputFormat::Text,
             output_mode: OutputMode::Quiet,
             verbosity: 0,
-            needs_clear: AtomicBool::new(false),
         }
     }
 
@@ -233,11 +224,6 @@ impl Shell {
             .unwrap_or_else(|_| panic!("attempted to set global shell twice"))
     }
 
-    /// Sets whether the next print should clear the current line and returns the previous value.
-    pub fn set_needs_clear(&self, needs_clear: bool) -> bool {
-        self.needs_clear.swap(needs_clear, Ordering::Relaxed)
-    }
-
     /// Returns `true` if the output format is JSON.
     pub fn is_json(&self) -> bool {
         self.output_format.is_json()
@@ -251,16 +237,6 @@ impl Shell {
     /// Returns `true` if the verbosity level is `Quiet`.
     pub fn is_quiet(&self) -> bool {
         self.output_mode.is_quiet()
-    }
-
-    /// Returns `true` if the `needs_clear` flag is set.
-    pub fn needs_clear(&self) -> bool {
-        self.needs_clear.load(Ordering::Relaxed)
-    }
-
-    /// Returns `true` if the `needs_clear` flag is unset.
-    pub fn is_cleared(&self) -> bool {
-        !self.needs_clear()
     }
 
     /// Gets the output format of the shell.
@@ -331,14 +307,7 @@ impl Shell {
     }
 
     /// Erase from cursor to end of line if needed.
-    pub fn maybe_err_erase_line(&mut self) {
-        if self.err_supports_color() && self.set_needs_clear(false) {
-            // This is the "EL - Erase in Line" sequence. It clears from the cursor
-            // to the end of line.
-            // https://en.wikipedia.org/wiki/ANSI_escape_code#CSI_sequences
-            let _ = self.output.stderr().write_all(b"\x1B[K");
-        }
-    }
+    pub fn maybe_err_erase_line(&mut self) {}
 
     /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
     /// This will render a message in [ERROR] style with a bold `Error: ` prefix.
