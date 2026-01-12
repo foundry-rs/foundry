@@ -1,11 +1,12 @@
 use crate::eth::error::BlockchainError;
-use alloy_consensus::{SignableTransaction, Signed};
+use alloy_consensus::{Sealed, SignableTransaction};
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
-use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
+use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
+use tempo_primitives::TempoSignature;
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -35,7 +36,7 @@ pub trait Signer: Send + Sync {
     /// signs a transaction request using the given account in request
     fn sign_transaction(
         &self,
-        request: TypedTransactionRequest,
+        request: FoundryTypedTx,
         address: &Address,
     ) -> Result<Signature, BlockchainError>;
 }
@@ -93,51 +94,44 @@ impl Signer for DevSigner {
 
     fn sign_transaction(
         &self,
-        request: TypedTransactionRequest,
+        request: FoundryTypedTx,
         address: &Address,
     ) -> Result<Signature, BlockchainError> {
         let signer = self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
         match request {
-            TypedTransactionRequest::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP7702(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::Deposit(_) => {
+            FoundryTypedTx::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip7702(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Eip4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
             }
+            FoundryTypedTx::Tempo(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
         }
     }
 }
 
-/// converts the `request` into a [`TypedTransactionRequest`] with the given signature
+/// converts the `request` into a [`FoundryTypedTx`] with the given signature
 ///
 /// # Errors
 ///
 /// This will fail if the `signature` contains an erroneous recovery id.
 pub fn build_typed_transaction(
-    request: TypedTransactionRequest,
+    request: FoundryTypedTx,
     signature: Signature,
-) -> Result<TypedTransaction, BlockchainError> {
+) -> Result<FoundryTxEnvelope, BlockchainError> {
     let tx = match request {
-        TypedTransactionRequest::Legacy(tx) => TypedTransaction::Legacy(tx.into_signed(signature)),
-        TypedTransactionRequest::EIP2930(tx) => {
-            TypedTransaction::EIP2930(tx.into_signed(signature))
+        FoundryTypedTx::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
+        FoundryTypedTx::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
+        FoundryTypedTx::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
+        FoundryTypedTx::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
+        FoundryTypedTx::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
+        FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+        FoundryTypedTx::Tempo(tx) => {
+            let tempo_sig: TempoSignature = signature.into();
+            FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))
         }
-        TypedTransactionRequest::EIP1559(tx) => {
-            TypedTransaction::EIP1559(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP7702(tx) => {
-            TypedTransaction::EIP7702(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP4844(tx) => {
-            let signed = tx.into_signed(signature);
-            // Convert from standard TxEip4844Variant to BlobTransactionSidecarVariant
-            let (variant, sig, hash) = signed.into_parts();
-            let blob_variant = variant.into();
-            TypedTransaction::EIP4844(Signed::new_unchecked(blob_variant, sig, hash))
-        }
-        TypedTransactionRequest::Deposit(tx) => TypedTransaction::Deposit(tx),
     };
 
     Ok(tx)

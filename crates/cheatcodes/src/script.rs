@@ -7,7 +7,7 @@ use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
-use foundry_wallets::{WalletSigner, multi_wallet::MultiWallet};
+use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
     bytecode::Bytecode,
@@ -318,12 +318,6 @@ impl Wallets {
         Arc::into_inner(self.inner)
             .map(|m| m.into_inner().multi_wallet)
             .unwrap_or_else(|| panic!("not all instances were dropped"))
-    }
-
-    /// Locks inner Mutex and adds a signer to the [MultiWallet].
-    pub fn add_private_key(&self, private_key: &B256) -> Result<()> {
-        self.add_local_signer(PrivateKeySigner::from_bytes(private_key)?);
-        Ok(())
     }
 
     /// Locks inner Mutex and adds a signer to the [MultiWallet].

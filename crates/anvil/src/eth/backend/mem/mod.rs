@@ -1,7 +1,6 @@
 //! In-memory blockchain backend.
-
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::executor::new_evm_with_inspector;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::PruneStateHistoryConfig,
@@ -27,7 +26,6 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
-    inject_custom_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -35,29 +33,26 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Blob, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEnvelope,
+    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    TrieAccount, TxEnvelope, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
 use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
-    Encodable2718,
-    eip1559::BaseFeeParams,
-    eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
-    eip7594::BlobTransactionSidecarVariant,
-    eip7840::BlobParams,
+    BlockNumHash, Encodable2718, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
     eip7910::SystemContract,
 };
 use alloy_evm::{
-    Database, Evm,
+    Database, Evm, FromRecoveredTx,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
-    EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
+    EthereumWallet, ReceiptResponse, TransactionBuilder, UnknownTxEnvelope,
+    UnknownTypedTransaction,
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
@@ -87,11 +82,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
-    transaction::{
-        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceipt, TypedReceiptRpc, TypedTransaction, has_optimism_fields,
-        transaction_request_to_typed,
-    },
+    transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
     wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
@@ -110,11 +101,13 @@ use foundry_evm::{
     },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
+use foundry_primitives::{
+    FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt,
+    get_deposit_tx_parts,
+};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
-use op_revm::{
-    OpContext, OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts,
-};
+use op_revm::{OpContext, OpHaltReason, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
@@ -133,7 +126,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     io::{Read, Write},
-    ops::Not,
+    ops::{Mul, Not},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -287,6 +280,13 @@ impl Backend {
                 genesis.number,
             )
         };
+
+        // Sync EVM block.number with genesis for non-fork mode.
+        // Fork mode syncs in setup_fork_db_config() instead.
+        if fork.read().is_none() {
+            let mut write_env = env.write();
+            write_env.evm_env.block_env.number = U256::from(genesis.number);
+        }
 
         let start_timestamp = if let Some(fork) = fork.read().as_ref() {
             fork.timestamp()
@@ -725,6 +725,11 @@ impl Backend {
         self.env.write().evm_env.cfg_env.chain_id = chain_id;
     }
 
+    /// Returns the genesis data for the Beacon API.
+    pub fn genesis_time(&self) -> u64 {
+        self.genesis.timestamp
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)
@@ -964,7 +969,7 @@ impl Backend {
                     if let Some(hash) = storage.hashes.remove(&n)
                         && let Some(block) = storage.blocks.remove(&hash)
                     {
-                        for tx in block.transactions {
+                        for tx in block.body.transactions {
                             let _ = storage.transactions.remove(&tx.hash());
                         }
                     }
@@ -1177,11 +1182,11 @@ impl Backend {
             + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        let mut evm = new_evm_with_inspector(WrapDatabaseRef(db), env, inspector);
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
-            inject_custom_precompiles(&mut evm, factory.precompiles());
+            evm.precompiles_mut().extend_precompiles(factory.precompiles());
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1207,11 +1212,14 @@ impl Backend {
         BlockchainError,
     > {
         let mut env = self.next_env();
-        env.tx = tx.pending_transaction.to_revm_tx_env();
+        env.tx = FromRecoveredTx::from_recovered_tx(
+            tx.pending_transaction.transaction.as_ref(),
+            *tx.pending_transaction.sender(),
+        );
 
         if env.networks.is_optimism() {
             env.tx.enveloped_tx =
-                Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
+                Some(alloy_rlp::encode(tx.pending_transaction.transaction.as_ref()).into());
         }
 
         let db = self.db.read().await;
@@ -1270,8 +1278,7 @@ impl Backend {
             db: &mut cache_db,
             validator: self,
             pending: pool_transactions.into_iter(),
-            block_env: env.evm_env.block_env.clone(),
-            cfg_env: env.evm_env.cfg_env,
+            evm_env: env.evm_env,
             parent_hash: storage.best_hash,
             gas_used: 0,
             blob_gas_used: 0,
@@ -1359,8 +1366,7 @@ impl Backend {
                     db: &mut **db,
                     validator: self,
                     pending: pool_transactions.into_iter(),
-                    block_env: env.evm_env.block_env.clone(),
-                    cfg_env: env.evm_env.cfg_env.clone(),
+                    evm_env: env.evm_env.clone(),
                     parent_hash: best_hash,
                     gas_used: 0,
                     blob_gas_used: 0,
@@ -1544,7 +1550,6 @@ impl Backend {
                     nonce,
                     sidecar: _,
                     chain_id,
-                    transaction_type,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
@@ -1621,21 +1626,7 @@ impl Backend {
         }
 
         // Deposit transaction?
-        if transaction_type == Some(DEPOSIT_TX_TYPE_ID) && has_optimism_fields(&other) {
-            let deposit = DepositTransactionParts {
-                source_hash: other
-                    .get_deserialized::<B256>("sourceHash")
-                    .map(|sh| sh.unwrap_or_default())
-                    .unwrap_or_default(),
-                mint: other
-                    .get_deserialized::<u128>("mint")
-                    .map(|m| m.unwrap_or_default())
-                    .or(None),
-                is_system_transaction: other
-                    .get_deserialized::<bool>("isSystemTx")
-                    .map(|st| st.unwrap_or_default())
-                    .unwrap_or_default(),
-            };
+        if let Ok(deposit) = get_deposit_tx_parts(&other) {
             env.tx.deposit = deposit;
         }
 
@@ -1750,10 +1741,14 @@ impl Backend {
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
-                    let request = transaction_request_to_typed(WithOtherFields::new(request))
-                        .ok_or(BlockchainError::MissingRequiredFields)?;
+
+                    let mut request = Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    request.prep_for_submission();
+
+                    let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
+
                     let tx = build_typed_transaction(
-                        request,
+                        typed_tx,
                         Signature::new(Default::default(), Default::default(), false),
                     )?;
                     let tx_hash = tx.hash();
@@ -1859,7 +1854,7 @@ impl Backend {
                 block_env.basefee = simulated_block
                     .inner
                     .header
-                    .next_block_base_fee(BaseFeeParams::ethereum())
+                    .next_block_base_fee(self.fees.base_fee_params())
                     .unwrap_or_default();
 
                 block_res.push(simulated_block);
@@ -1983,7 +1978,8 @@ impl Backend {
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer
                         | GethDebugBuiltInTracerType::MuxTracer
-                        | GethDebugBuiltInTracerType::FlatCallTracer => {
+                        | GethDebugBuiltInTracerType::FlatCallTracer
+                        | GethDebugBuiltInTracerType::Erc7562Tracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
@@ -2080,7 +2076,10 @@ impl Backend {
     }
 
     /// returns all receipts for the given transactions
-    fn get_receipts(&self, tx_hashes: impl IntoIterator<Item = TxHash>) -> Vec<TypedReceipt> {
+    fn get_receipts(
+        &self,
+        tx_hashes: impl IntoIterator<Item = TxHash>,
+    ) -> Vec<FoundryReceiptEnvelope> {
         let storage = self.blockchain.storage.read();
         let mut receipts = vec![];
 
@@ -2117,7 +2116,7 @@ impl Backend {
 
         let storage = self.blockchain.storage.read();
 
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             let Some(tx) = storage.transactions.get(&tx.hash()) else {
                 continue;
             };
@@ -2250,12 +2249,12 @@ impl Backend {
         &self,
         block: &Block,
     ) -> Option<Vec<AnyRpcTransaction>> {
-        let mut transactions = Vec::with_capacity(block.transactions.len());
+        let mut transactions = Vec::with_capacity(block.body.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
-        for hash in block.transactions.iter().map(|tx| tx.hash()) {
+        for hash in block.body.transactions.iter().map(|tx| tx.hash()) {
             let info = storage.transactions.get(&hash)?.info.clone();
-            let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+            let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
             let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
             transactions.push(tx);
@@ -2367,7 +2366,8 @@ impl Backend {
     pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
-        let Block { header, transactions, .. } = block;
+        let header = block.header.clone();
+        let transactions = block.body.transactions;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let Header { number, withdrawals_root, .. } = header;
@@ -2567,7 +2567,7 @@ impl Backend {
         &self,
         address: Address,
         block_request: Option<BlockRequest>,
-    ) -> Result<Account, BlockchainError> {
+    ) -> Result<TrieAccount, BlockchainError> {
         self.with_database_at(block_request, |block_db, _| {
             let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
             let account = db.get(&address).cloned().unwrap_or_default();
@@ -2575,7 +2575,7 @@ impl Backend {
             let code_hash = account.info.code_hash;
             let balance = account.info.balance;
             let nonce = account.info.nonce;
-            Ok(Account { balance, nonce, code_hash, storage_root })
+            Ok(TrieAccount { balance, nonce, code_hash, storage_root })
         })
         .await?
     }
@@ -2654,7 +2654,7 @@ impl Backend {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions {
+        for tx in block.body.transactions {
             traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
         }
         Some(traces)
@@ -2711,12 +2711,13 @@ impl Backend {
         };
 
         let index = block
+            .body
             .transactions
             .iter()
             .position(|tx| tx.hash() == hash)
             .expect("transaction not found in block");
 
-        let pool_txs: Vec<Arc<PoolTransaction>> = block.transactions[..index]
+        let pool_txs: Vec<Arc<PoolTransaction>> = block.body.transactions[..index]
             .iter()
             .map(|tx| {
                 let pending_tx =
@@ -2751,8 +2752,7 @@ impl Backend {
                 db: &mut cache_db,
                 validator: self,
                 pending: pool_txs.into_iter(),
-                block_env: env.evm_env.block_env.clone(),
-                cfg_env: env.evm_env.cfg_env.clone(),
+                evm_env: env.evm_env.clone(),
                 parent_hash: block.header.parent_hash,
                 gas_used: 0,
                 blob_gas_used: 0,
@@ -2768,11 +2768,14 @@ impl Backend {
 
             let _ = executor.execute();
 
-            let target_tx = block.transactions[index].clone();
+            let target_tx = block.body.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-            let mut tx_env = target_tx.to_revm_tx_env();
+            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+                target_tx.transaction.as_ref(),
+                *target_tx.sender(),
+            );
             if env.networks.is_optimism() {
-                tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
+                tx_env.enveloped_tx = Some(target_tx.transaction.encoded_2718().into());
             }
 
             let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
@@ -2946,6 +2949,7 @@ impl Backend {
                     }
                     GethDebugBuiltInTracerType::NoopTracer
                     | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::Erc7562Tracer
                     | GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
@@ -2994,7 +2998,7 @@ impl Backend {
     pub async fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> Result<Option<ReceiptResponse>, BlockchainError> {
+    ) -> Result<Option<FoundryTxReceipt>, BlockchainError> {
         if let Some(receipt) = self.mined_transaction_receipt(hash) {
             return Ok(Some(receipt.inner));
         }
@@ -3002,7 +3006,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let receipt = fork.transaction_receipt(hash).await?;
             let number = self.convert_block_number(
-                receipt.clone().and_then(|r| r.block_number).map(BlockNumber::from),
+                receipt.clone().and_then(|r| r.block_number()).map(BlockNumber::from),
             );
 
             if fork.predates_fork_inclusive(number) {
@@ -3063,7 +3067,7 @@ impl Backend {
     }
 
     /// Returns all receipts of the block
-    pub fn mined_receipts(&self, hash: B256) -> Option<Vec<TypedReceipt>> {
+    pub fn mined_receipts(&self, hash: B256) -> Option<Vec<FoundryReceiptEnvelope>> {
         let block = self.mined_block_by_hash(hash)?;
         let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
@@ -3075,11 +3079,11 @@ impl Backend {
     }
 
     /// Returns all transaction receipts of the block
-    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<ReceiptResponse>> {
+    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
         let mut receipts = Vec::new();
         let block = self.get_block(id)?;
 
-        for transaction in block.transactions {
+        for transaction in block.body.transactions {
             let receipt = self.mined_transaction_receipt(transaction.hash())?;
             receipts.push(receipt.inner);
         }
@@ -3094,107 +3098,29 @@ impl Backend {
 
         let index = info.transaction_index as usize;
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
-        let transaction = block.transactions[index].clone();
+        let transaction = block.body.transactions[index].clone();
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas;
         let blob_gas_price =
             alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
-        let blob_gas_used = transaction.blob_gas();
+        let blob_gas_used = transaction.blob_gas_used();
 
-        let effective_gas_price = match transaction.transaction {
-            TypedTransaction::Legacy(t) => t.tx().gas_price,
-            TypedTransaction::EIP2930(t) => t.tx().gas_price,
-            TypedTransaction::EIP1559(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().max_priority_fee_per_gas),
-            TypedTransaction::EIP4844(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().tx().max_priority_fee_per_gas),
-            TypedTransaction::EIP7702(t) => block
-                .header
-                .base_fee_per_gas
-                .map_or(self.base_fee() as u128, |g| g as u128)
-                .saturating_add(t.tx().max_priority_fee_per_gas),
-            TypedTransaction::Deposit(_) => 0_u128,
-        };
+        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas);
 
-        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
+        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
-        // specially
-        let (status, cumulative_gas_used, logs_source, logs_bloom) = match &tx_receipt {
-            TypedReceipt::Deposit(r) => (
-                r.receipt.inner.status,
-                r.receipt.inner.cumulative_gas_used,
-                r.receipt.inner.logs.to_vec(),
-                r.logs_bloom,
-            ),
-            _ => {
-                let receipt_ref = tx_receipt.as_receipt_with_bloom();
-                (
-                    receipt_ref.receipt.status,
-                    receipt_ref.receipt.cumulative_gas_used,
-                    receipt_ref.receipt.logs.to_vec(),
-                    receipt_ref.logs_bloom,
-                )
-            }
-        };
+        let tx_receipt = tx_receipt.convert_logs_rpc(
+            BlockNumHash::new(block.header.number, block_hash),
+            block.header.timestamp,
+            info.transaction_hash,
+            info.transaction_index,
+            next_log_index,
+        );
 
-        let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
-            status,
-            cumulative_gas_used,
-            logs: logs_source
-                .into_iter()
-                .enumerate()
-                .map(|(index, log)| alloy_rpc_types::Log {
-                    inner: log,
-                    block_hash: Some(block_hash),
-                    block_number: Some(block.header.number),
-                    block_timestamp: Some(block.header.timestamp),
-                    transaction_hash: Some(info.transaction_hash),
-                    transaction_index: Some(info.transaction_index),
-                    log_index: Some((next_log_index + index) as u64),
-                    removed: false,
-                })
-                .collect(),
-        };
-        let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom };
-
-        let inner = match tx_receipt {
-            TypedReceipt::EIP1559(_) => TypedReceiptRpc::EIP1559(receipt_with_bloom),
-            TypedReceipt::Legacy(_) => TypedReceiptRpc::Legacy(receipt_with_bloom),
-            TypedReceipt::EIP2930(_) => TypedReceiptRpc::EIP2930(receipt_with_bloom),
-            TypedReceipt::EIP4844(_) => TypedReceiptRpc::EIP4844(receipt_with_bloom),
-            TypedReceipt::EIP7702(_) => TypedReceiptRpc::EIP7702(receipt_with_bloom),
-            TypedReceipt::Deposit(r) => {
-                TypedReceiptRpc::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                    receipt: op_alloy_consensus::OpDepositReceipt {
-                        inner: Receipt {
-                            status: receipt_with_bloom.receipt.status,
-                            cumulative_gas_used: receipt_with_bloom.receipt.cumulative_gas_used,
-                            logs: receipt_with_bloom
-                                .receipt
-                                .logs
-                                .into_iter()
-                                .map(|l| l.inner)
-                                .collect(),
-                        },
-                        deposit_nonce: r.receipt.deposit_nonce,
-                        deposit_receipt_version: r.receipt.deposit_receipt_version,
-                    },
-                    logs_bloom: receipt_with_bloom.logs_bloom,
-                })
-            }
-        };
-
-        let inner = TransactionReceipt {
-            inner,
+        let receipt = TransactionReceipt {
+            inner: tx_receipt,
             transaction_hash: info.transaction_hash,
             transaction_index: Some(info.transaction_index),
             block_number: Some(block.header.number),
@@ -3208,7 +3134,7 @@ impl Backend {
             blob_gas_used,
         };
 
-        let inner = WithOtherFields { inner, other: Default::default() };
+        let inner = FoundryTxReceipt::new(receipt);
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
@@ -3216,7 +3142,7 @@ impl Backend {
     pub async fn block_receipts(
         &self,
         number: BlockId,
-    ) -> Result<Option<Vec<ReceiptResponse>>, BlockchainError> {
+    ) -> Result<Option<Vec<FoundryTxReceipt>>, BlockchainError> {
         if let Some(receipts) = self.mined_block_receipts(number) {
             return Ok(Some(receipts));
         }
@@ -3283,7 +3209,7 @@ impl Backend {
             let storage = self.blockchain.storage.read();
             let block = storage.blocks.get(&block_hash).cloned()?;
             let index: usize = index.into();
-            let tx = block.transactions.get(index)?.clone();
+            let tx = block.body.transactions.get(index)?.clone();
             let info = storage.transactions.get(&tx.hash())?.info.clone();
             (info, block, tx)
         };
@@ -3324,7 +3250,7 @@ impl Backend {
             let block = storage.blocks.get(&block_hash).cloned()?;
             (info, block)
         };
-        let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+        let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(
             Some(info.transaction_hash),
@@ -3338,10 +3264,10 @@ impl Backend {
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         // Try to get the mined transaction by hash
         if let Some(tx) = self.mined_transaction_by_hash(hash)
-            && let Ok(typed_tx) = TypedTransaction::try_from(tx)
+            && let Ok(typed_tx) = FoundryTxEnvelope::try_from(tx)
             && let Some(sidecar) = typed_tx.sidecar()
         {
-            return Ok(Some(sidecar.sidecar().blobs().to_vec()));
+            return Ok(Some(sidecar.sidecar.blobs().to_vec()));
         }
 
         Ok(None)
@@ -3354,11 +3280,12 @@ impl Backend {
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         Ok(self.get_block(id).map(|block| {
             block
+                .body
                 .transactions
                 .iter()
                 .filter_map(|tx| tx.as_ref().sidecar())
                 .flat_map(|sidecar| {
-                    sidecar.sidecar().blobs().iter().zip(sidecar.sidecar().commitments().iter())
+                    sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.commitments().iter())
                 })
                 .filter(|(_, commitment)| {
                     // Filter blobs by versioned_hashes if provided
@@ -3370,47 +3297,19 @@ impl Backend {
         }))
     }
 
-    pub fn get_blob_sidecars_by_block_id(
-        &self,
-        block_id: BlockId,
-    ) -> Result<Option<BlobTransactionSidecar>> {
-        if let Some(full_block) = self.get_full_block(block_id) {
-            let sidecar = full_block
-                .into_transactions_iter()
-                .map(TypedTransaction::try_from)
-                .filter_map(|typed_tx_result| {
-                    typed_tx_result.ok()?.sidecar().map(|sidecar| sidecar.sidecar().clone())
-                })
-                .fold(BlobTransactionSidecar::default(), |mut acc, sidecar| {
-                    acc.blobs.extend(sidecar.blobs());
-                    acc.commitments.extend(sidecar.commitments());
-                    match &sidecar {
-                        BlobTransactionSidecarVariant::Eip4844(eip4844_sidecar) => {
-                            acc.proofs.extend(eip4844_sidecar.proofs.clone());
-                        }
-                        BlobTransactionSidecarVariant::Eip7594(_) => {}
-                    }
-                    acc
-                });
-            Ok(Some(sidecar))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
-            for tx in &block.transactions {
+            for tx in &block.body.transactions {
                 let typed_tx = tx.as_ref();
                 if let Some(sidecar) = typed_tx.sidecar() {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
                         if versioned_hash == hash
                             && let Some(index) =
-                                sidecar.sidecar().commitments().iter().position(|commitment| {
+                                sidecar.sidecar.commitments().iter().position(|commitment| {
                                     kzg_to_versioned_hash(commitment.as_slice()) == *hash
                                 })
-                            && let Some(blob) = sidecar.sidecar().blobs().get(index)
+                            && let Some(blob) = sidecar.sidecar.blobs().get(index)
                         {
                             return Ok(Some(*blob));
                         }
@@ -3650,10 +3549,10 @@ impl TransactionValidator for Backend {
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id.to::<u64>() != tx_chain_id {
-                if let Some(legacy) = tx.as_legacy() {
+                if let FoundryTxEnvelope::Legacy(tx) = tx.as_ref() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON
-                        && legacy.tx().chain_id.is_none()
+                        && tx.chain_id().is_none()
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -3666,8 +3565,7 @@ impl TransactionValidator for Backend {
         }
 
         // Nonce validation
-        let is_deposit_tx =
-            matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
+        let is_deposit_tx = matches!(pending.transaction.as_ref(), FoundryTxEnvelope::Deposit(_));
         let nonce = tx.nonce();
         if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
@@ -3675,10 +3573,10 @@ impl TransactionValidator for Backend {
         }
 
         // EIP-4844 structural validation
-        if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
+        if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.is_eip4844() {
             // Heavy (blob validation) checks
-            let blob_tx = match &tx.transaction {
-                TypedTransaction::EIP4844(tx) => tx.tx(),
+            let blob_tx = match tx.as_ref() {
+                FoundryTxEnvelope::Eip4844(tx) => tx.tx(),
                 _ => unreachable!(),
             };
 
@@ -3733,13 +3631,13 @@ impl TransactionValidator for Backend {
 
             // EIP-1559 fee validation (London hard fork and later).
             if env.evm_env.cfg_env.spec >= SpecId::LONDON {
-                if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
-                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
+                if tx.max_fee_per_gas() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
+                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}", tx.max_fee_per_gas(), env.evm_env.block_env.basefee);
                     return Err(InvalidTransactionError::FeeCapTooLow);
                 }
 
-                if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
-                    (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+                if let (Some(max_priority_fee_per_gas), max_fee_per_gas) =
+                    (tx.as_ref().max_priority_fee_per_gas(), tx.as_ref().max_fee_per_gas())
                     && max_priority_fee_per_gas > max_fee_per_gas
                 {
                     warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
@@ -3749,8 +3647,8 @@ impl TransactionValidator for Backend {
 
             // EIP-4844 blob fee validation
             if env.evm_env.cfg_env.spec >= SpecId::CANCUN
-                && tx.transaction.is_eip4844()
-                && let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
+                && tx.is_eip4844()
+                && let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas()
                 && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
                 && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
             {
@@ -3761,10 +3659,16 @@ impl TransactionValidator for Backend {
                 ));
             }
 
-            let max_cost = tx.max_cost();
+            let max_cost =
+                (tx.gas_limit() as u128).saturating_mul(tx.max_fee_per_gas()).saturating_add(
+                    tx.blob_gas_used()
+                        .map(|g| g as u128)
+                        .unwrap_or(0)
+                        .mul(tx.max_fee_per_blob_gas().unwrap_or(0)),
+                );
             let value = tx.value();
-            match &tx.transaction {
-                TypedTransaction::Deposit(deposit_tx) => {
+            match tx.as_ref() {
+                FoundryTxEnvelope::Deposit(deposit_tx) => {
                     // Deposit transactions
                     // https://specs.optimism.io/protocol/deposits.html#execution
                     // 1. no gas cost check required since already have prepaid gas from L1
@@ -3783,7 +3687,7 @@ impl TransactionValidator for Backend {
                             InvalidTransactionError::InsufficientFunds
                         })?;
                     if account.balance < U256::from(req_funds) {
-                        warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
+                        warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
                         return Err(InvalidTransactionError::InsufficientFunds);
                     }
                 }
@@ -3814,7 +3718,7 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
-    if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
+    if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
         let dep_tx = deposit_tx;
 
         let ser = serde_json::to_value(dep_tx).expect("could not serialize TxDeposit");

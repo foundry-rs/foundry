@@ -1,7 +1,7 @@
-use crate::error::WalletSignerError;
-use alloy_consensus::SignableTransaction;
+use crate::{error::WalletSignerError, wallet_browser::signer::BrowserSigner};
+use alloy_consensus::{Sealed, SignableTransaction};
 use alloy_dyn_abi::TypedData;
-use alloy_network::TxSigner;
+use alloy_network::{NetworkWallet, TransactionBuilder, TxSigner};
 use alloy_primitives::{Address, B256, ChainId, Signature, hex};
 use alloy_signer::Signer;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
@@ -9,7 +9,11 @@ use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
-use std::{collections::HashSet, path::PathBuf};
+use foundry_primitives::{
+    FoundryNetwork, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTypedTx,
+};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
+use tempo_primitives::TempoSignature;
 use tracing::warn;
 
 #[cfg(feature = "aws-kms")]
@@ -24,6 +28,9 @@ use alloy_signer_gcp::{
     },
 };
 
+#[cfg(feature = "turnkey")]
+use alloy_signer_turnkey::TurnkeySigner;
+
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
 /// Wrapper enum around different signers.
@@ -35,12 +42,17 @@ pub enum WalletSigner {
     Ledger(LedgerSigner),
     /// Wrapper around Trezor signer.
     Trezor(TrezorSigner),
+    /// Wrapper around browser wallet.
+    Browser(BrowserSigner),
     /// Wrapper around AWS KMS signer.
     #[cfg(feature = "aws-kms")]
     Aws(AwsSigner),
     /// Wrapper around Google Cloud KMS signer.
     #[cfg(feature = "gcp-kms")]
     Gcp(GcpSigner),
+    /// Wrapper around Turnkey signer.
+    #[cfg(feature = "turnkey")]
+    Turnkey(TurnkeySigner),
 }
 
 impl WalletSigner {
@@ -52,6 +64,18 @@ impl WalletSigner {
     pub async fn from_trezor_path(path: TrezorHDPath) -> Result<Self> {
         let trezor = TrezorSigner::new(path, None).await?;
         Ok(Self::Trezor(trezor))
+    }
+
+    pub async fn from_browser(
+        port: u16,
+        open_browser: bool,
+        browser_development: bool,
+    ) -> Result<Self> {
+        let browser_signer =
+            BrowserSigner::new(port, open_browser, Duration::from_secs(300), browser_development)
+                .await
+                .map_err(|e| WalletSignerError::Browser(e.into()))?;
+        Ok(Self::Browser(browser_signer))
     }
 
     pub async fn from_aws(key_id: String) -> Result<Self> {
@@ -120,6 +144,30 @@ impl WalletSigner {
         }
     }
 
+    pub fn from_turnkey(
+        api_private_key: String,
+        organization_id: String,
+        address: Address,
+    ) -> Result<Self> {
+        #[cfg(feature = "turnkey")]
+        {
+            Ok(Self::Turnkey(TurnkeySigner::from_api_key(
+                &api_private_key,
+                organization_id,
+                address,
+                None,
+            )?))
+        }
+
+        #[cfg(not(feature = "turnkey"))]
+        {
+            let _ = api_private_key;
+            let _ = organization_id;
+            let _ = address;
+            Err(WalletSignerError::UnsupportedSigner("Turnkey"))
+        }
+    }
+
     pub fn from_private_key(private_key: &B256) -> Result<Self> {
         Ok(Self::Local(PrivateKeySigner::from_bytes(private_key)?))
     }
@@ -175,6 +223,9 @@ impl WalletSigner {
                     }
                 }
             }
+            Self::Browser(browser) => {
+                senders.insert(alloy_signer::Signer::address(browser));
+            }
             #[cfg(feature = "aws-kms")]
             Self::Aws(aws) => {
                 senders.insert(alloy_signer::Signer::address(aws));
@@ -182,6 +233,10 @@ impl WalletSigner {
             #[cfg(feature = "gcp-kms")]
             Self::Gcp(gcp) => {
                 senders.insert(alloy_signer::Signer::address(gcp));
+            }
+            #[cfg(feature = "turnkey")]
+            Self::Turnkey(turnkey) => {
+                senders.insert(alloy_signer::Signer::address(turnkey));
             }
         }
         Ok(senders.into_iter().collect())
@@ -215,10 +270,13 @@ macro_rules! delegate {
             Self::Local($inner) => $e,
             Self::Ledger($inner) => $e,
             Self::Trezor($inner) => $e,
+            Self::Browser($inner) => $e,
             #[cfg(feature = "aws-kms")]
             Self::Aws($inner) => $e,
             #[cfg(feature = "gcp-kms")]
             Self::Gcp($inner) => $e,
+            #[cfg(feature = "turnkey")]
+            Self::Turnkey($inner) => $e,
         }
     };
 }
@@ -268,14 +326,82 @@ impl Signer for WalletSigner {
 #[async_trait]
 impl TxSigner<Signature> for WalletSigner {
     fn address(&self) -> Address {
-        delegate!(self, inner => alloy_signer::Signer::address(inner))
+        Signer::address(self)
     }
 
     async fn sign_transaction(
         &self,
         tx: &mut dyn SignableTransaction<Signature>,
     ) -> alloy_signer::Result<Signature> {
-        delegate!(self, inner => inner.sign_transaction(tx)).await
+        delegate!(self, inner => TxSigner::sign_transaction(inner, tx)).await
+    }
+}
+
+impl NetworkWallet<FoundryNetwork> for WalletSigner {
+    fn default_signer_address(&self) -> Address {
+        alloy_signer::Signer::address(self)
+    }
+
+    fn has_signer_for(&self, address: &Address) -> bool {
+        self.default_signer_address() == *address
+    }
+
+    fn signer_addresses(&self) -> impl Iterator<Item = Address> {
+        std::iter::once(self.default_signer_address())
+    }
+
+    async fn sign_transaction_from(
+        &self,
+        sender: Address,
+        tx: FoundryTypedTx,
+    ) -> alloy_signer::Result<FoundryTxEnvelope> {
+        if sender != self.default_signer_address() {
+            return Err(alloy_signer::Error::other("Signer address mismatch"));
+        }
+
+        match tx {
+            FoundryTypedTx::Legacy(mut inner) => {
+                let sig = TxSigner::sign_transaction(self, &mut inner).await?;
+                Ok(FoundryTxEnvelope::Legacy(inner.into_signed(sig)))
+            }
+            FoundryTypedTx::Eip2930(mut inner) => {
+                let sig = TxSigner::sign_transaction(self, &mut inner).await?;
+                Ok(FoundryTxEnvelope::Eip2930(inner.into_signed(sig)))
+            }
+            FoundryTypedTx::Eip1559(mut inner) => {
+                let sig = TxSigner::sign_transaction(self, &mut inner).await?;
+                Ok(FoundryTxEnvelope::Eip1559(inner.into_signed(sig)))
+            }
+            FoundryTypedTx::Eip4844(mut inner) => {
+                let sig = TxSigner::sign_transaction(self, &mut inner).await?;
+                Ok(FoundryTxEnvelope::Eip4844(inner.into_signed(sig)))
+            }
+            FoundryTypedTx::Eip7702(mut inner) => {
+                let sig = TxSigner::sign_transaction(self, &mut inner).await?;
+                Ok(FoundryTxEnvelope::Eip7702(inner.into_signed(sig)))
+            }
+            FoundryTypedTx::Deposit(inner) => {
+                // Deposit transactions don't require signing
+                Ok(FoundryTxEnvelope::Deposit(Sealed::new(inner)))
+            }
+            FoundryTypedTx::Tempo(mut inner) => {
+                let sig = TxSigner::sign_transaction(self, &mut inner).await?;
+                let tempo_sig: TempoSignature = sig.into();
+                Ok(FoundryTxEnvelope::Tempo(inner.into_signed(tempo_sig)))
+            }
+        }
+    }
+
+    #[doc(hidden)]
+    async fn sign_request(
+        &self,
+        request: FoundryTransactionRequest,
+    ) -> alloy_signer::Result<FoundryTxEnvelope> {
+        let sender = request.from().unwrap_or_else(|| self.default_signer_address());
+        let tx = request.build_typed_tx().map_err(|_| {
+            alloy_signer::Error::other("Failed to build typed transaction from request")
+        })?;
+        self.sign_transaction_from(sender, tx).await
     }
 }
 

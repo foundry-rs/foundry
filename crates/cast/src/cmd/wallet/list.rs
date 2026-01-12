@@ -4,7 +4,7 @@ use std::env;
 
 use foundry_common::{fs, sh_err, sh_println};
 use foundry_config::Config;
-use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
+use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
 
 /// CLI arguments for `cast wallet list`.
 #[derive(Clone, Debug, Parser)]
@@ -38,6 +38,10 @@ pub struct ListArgs {
     #[arg(long, hide = !cfg!(feature = "gcp-kms"))]
     gcp: bool,
 
+    /// List accounts from Turnkey.
+    #[arg(long, hide = !cfg!(feature = "turnkey"))]
+    turnkey: bool,
+
     /// List all configured accounts.
     #[arg(long, group = "hw-wallets")]
     all: bool,
@@ -54,7 +58,14 @@ impl ListArgs {
             || self.all
             || (!self.ledger && !self.trezor && !self.aws && !self.gcp)
         {
-            let _ = self.list_local_senders();
+            match self.list_local_senders() {
+                Ok(()) => {}
+                Err(e) => {
+                    if !self.all {
+                        sh_err!("{}", e)?;
+                    }
+                }
+            }
         }
 
         // Create options for multi wallet - ledger, trezor and AWS
@@ -64,7 +75,9 @@ impl ListArgs {
             .trezor(self.trezor || self.all)
             .aws(self.aws || self.all)
             .gcp(self.gcp || (self.all && gcp_env_vars_set()))
+            .turnkey(self.turnkey || self.all)
             .interactives(0)
+            .interactive(false)
             .build()
             .expect("build multi wallet");
 

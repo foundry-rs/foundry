@@ -28,6 +28,8 @@ foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
+foundry-primitives.workspace = true
+tempo-primitives.workspace = true
 
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
@@ -45,6 +47,7 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
 alloy-rpc-types-beacon.workspace = true
+alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",
@@ -57,8 +60,6 @@ alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 alloy-trie.workspace = true
-alloy-hardforks.workspace = true
-alloy-op-hardforks.workspace = true
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 
 # revm
@@ -95,6 +96,7 @@ tempfile.workspace = true
 itertools.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
+ethereum_ssz.workspace = true
 
 # cli
 clap = { version = "4", features = [
@@ -102,7 +104,7 @@ clap = { version = "4", features = [
     "env",
     "wrap_help",
 ], optional = true }
-clap_complete = { workspace = true, optional = true}
+clap_complete = { workspace = true, optional = true }
 chrono.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }

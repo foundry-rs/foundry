@@ -1,6 +1,6 @@
 use crate::{
+    signer::{PendingSigner, WalletSigner},
     utils,
-    wallet_signer::{PendingSigner, WalletSigner},
 };
 use alloy_primitives::map::AddressHashMap;
 use alloy_signer::Signer;
@@ -86,20 +86,19 @@ macro_rules! create_hw_wallets {
 /// 5. Private Keys (cleartext in CLI)
 /// 6. Private Keys (interactively via secure prompt)
 /// 7. AWS KMS
+/// 8. Turnkey
 #[derive(Builder, Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWalletOpts {
     /// Open an interactive prompt to enter your private key.
     ///
     /// Takes a value for the number of keys to enter.
-    #[arg(
-        long,
-        short,
-        help_heading = "Wallet options - raw",
-        default_value = "0",
-        value_name = "NUM"
-    )]
+    #[arg(long, help_heading = "Wallet options - raw", default_value = "0", value_name = "NUM")]
     pub interactives: u32,
+
+    /// Open an interactive prompt to enter your private key.
+    #[arg(long, short, help_heading = "Wallet options - raw", conflicts_with = "interactives")]
+    pub interactive: bool,
 
     /// Use the provided private keys.
     #[arg(long, help_heading = "Wallet options - raw", value_name = "RAW_PRIVATE_KEYS")]
@@ -221,6 +220,15 @@ pub struct MultiWalletOpts {
     /// See: <https://cloud.google.com/kms/docs>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
     pub gcp: bool,
+
+    /// Use Turnkey.
+    ///
+    /// Ensure the following environment variables are set: TURNKEY_API_PRIVATE_KEY,
+    /// TURNKEY_ORGANIZATION_ID, TURNKEY_ADDRESS.
+    ///
+    /// See: <https://docs.turnkey.com/getting-started/quickstart>
+    #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
+    pub turnkey: bool,
 }
 
 impl MultiWalletOpts {
@@ -241,6 +249,9 @@ impl MultiWalletOpts {
         if let Some(gcp_signer) = self.gcp_signers().await? {
             signers.extend(gcp_signer);
         }
+        if let Some(turnkey_signers) = self.turnkey_signers()? {
+            signers.extend(turnkey_signers);
+        }
         if let Some((pending_keystores, unlocked)) = self.keystores()? {
             pending.extend(pending_keystores);
             signers.extend(unlocked);
@@ -250,6 +261,9 @@ impl MultiWalletOpts {
         }
         if let Some(mnemonics) = self.mnemonics()? {
             signers.extend(mnemonics);
+        }
+        if self.interactive {
+            pending.push(PendingSigner::Interactive);
         }
         if self.interactives > 0 {
             pending.extend(std::iter::repeat_n(
@@ -449,6 +463,20 @@ impl MultiWalletOpts {
 
         Ok(None)
     }
+
+    pub fn turnkey_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
+        #[cfg(feature = "turnkey")]
+        if self.turnkey {
+            let api_private_key = std::env::var("TURNKEY_API_PRIVATE_KEY")?;
+            let organization_id = std::env::var("TURNKEY_ORGANIZATION_ID")?;
+            let address = std::env::var("TURNKEY_ADDRESS")?.parse()?;
+
+            let signer = WalletSigner::from_turnkey(api_private_key, organization_id, address)?;
+            return Ok(Some(vec![signer]));
+        }
+
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -507,6 +535,7 @@ mod tests {
             ("ledger", "--mnemonic-indexes", 1),
             ("trezor", "--mnemonic-indexes", 2),
             ("aws", "--mnemonic-indexes", 10),
+            ("turnkey", "--mnemonic-indexes", 11),
         ];
 
         for test_case in wallet_options {
@@ -521,6 +550,7 @@ mod tests {
                 "ledger" => assert!(args.ledger),
                 "trezor" => assert!(args.trezor),
                 "aws" => assert!(args.aws),
+                "turnkey" => assert!(args.turnkey),
                 _ => panic!("Should have matched one of the previous wallet options"),
             }
 

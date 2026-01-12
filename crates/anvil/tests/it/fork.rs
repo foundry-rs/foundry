@@ -1878,6 +1878,7 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
                         Ok(revm::precompile::PrecompileOutput {
                             bytes: Bytes::copy_from_slice(input.data),
                             gas_used: 0,
+                            gas_refunded: 0,
                             reverted: false,
                         })
                     },

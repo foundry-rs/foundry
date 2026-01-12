@@ -50,6 +50,7 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
+foundry-wallets = { workspace = true, optional = true }
 
 alloy-chains.workspace = true
 alloy-dyn-abi.workspace = true
@@ -94,20 +95,17 @@ opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
-quick-junit = "0.5.1"
+quick-junit = "0.5.2"
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
-foundry-wallets.workspace = true
-futures.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 
-mockall = "0.13"
+mockall = "0.14"
 globset = "0.4"
-paste = "1.0"
 similar-asserts.workspace = true
 svm.workspace = true
 tempfile.workspace = true
@@ -120,6 +118,7 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
-aws-kms = ["foundry-wallets/aws-kms"]
-gcp-kms = ["foundry-wallets/gcp-kms"]
+aws-kms = ["dep:foundry-wallets", "foundry-wallets/aws-kms"]
+gcp-kms = ["dep:foundry-wallets", "foundry-wallets/gcp-kms"]
+turnkey = ["dep:foundry-wallets", "foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]

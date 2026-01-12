@@ -192,50 +192,52 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     pub extends: Option<Extends>,
 
-    /// path of the source contracts dir, like `src` or `contracts`
+    /// Path of the sources directory.
+    ///
+    /// Defaults to `src`.
     pub src: PathBuf,
-    /// path of the test dir
+    /// Path of the tests directory.
     pub test: PathBuf,
-    /// path of the script dir
+    /// Path of the scripts directory.
     pub script: PathBuf,
-    /// path to where artifacts shut be written to
+    /// Path to the artifacts directory.
     pub out: PathBuf,
-    /// all library folders to include, `lib`, `node_modules`
+    /// Paths to all library folders, such as `lib`, or `node_modules`.
     pub libs: Vec<PathBuf>,
-    /// `Remappings` to use for this repo
+    /// Remappings to use for this repo
     pub remappings: Vec<RelativeRemapping>,
-    /// Whether to autodetect remappings by scanning the `libs` folders recursively
+    /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
-    /// library addresses to link
+    /// Library addresses to link.
     pub libraries: Vec<String>,
-    /// whether to enable cache
+    /// Whether to enable the build cache.
     pub cache: bool,
-    /// whether to dynamically link tests
-    pub dynamic_test_linking: bool,
-    /// where the cache is stored if enabled
+    /// The path to the cache store.
     pub cache_path: PathBuf,
-    /// where the gas snapshots are stored
+    /// Whether to dynamically link tests.
+    pub dynamic_test_linking: bool,
+    /// Where the gas snapshots are stored.
     pub snapshots: PathBuf,
-    /// whether to check for differences against previously stored gas snapshots
+    /// Whether to check for differences against previously stored gas snapshots.
     pub gas_snapshot_check: bool,
-    /// whether to emit gas snapshots to disk
+    /// Whether to emit gas snapshots to disk.
     pub gas_snapshot_emit: bool,
-    /// where the broadcast logs are stored
+    /// The path to store broadcast logs at.
     pub broadcast: PathBuf,
-    /// additional solc allow paths for `--allow-paths`
+    /// Additional paths passed to `solc --allow-paths`.
     pub allow_paths: Vec<PathBuf>,
-    /// additional solc include paths for `--include-path`
+    /// Additional paths passed to `solc --include-path`.
     pub include_paths: Vec<PathBuf>,
-    /// glob patterns to skip
+    /// Glob patterns for file paths to skip when building and executing contracts.
     pub skip: Vec<GlobMatcher>,
-    /// whether to force a `project.clean()`
+    /// Whether to forcefully clean all project artifacts before running commands.
     pub force: bool,
-    /// evm version to use
+    /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
-    /// list of contracts to report gas of
+    /// List of contracts to generate gas reports for.
     pub gas_reports: Vec<String>,
-    /// list of contracts to ignore for gas reports
+    /// List of contracts to ignore for gas reports.
     pub gas_reports_ignore: Vec<String>,
     /// Whether to include gas reports for tests.
     pub gas_reports_include_tests: bool,
@@ -302,9 +304,9 @@ pub struct Config {
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
-    /// list of solidity error codes to always silence in the compiler output
+    /// List of solidity error codes to always silence in the compiler output.
     pub ignored_error_codes: Vec<SolidityErrorCode>,
-    /// list of file paths to ignore
+    /// List of file paths to ignore.
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
     /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
@@ -698,6 +700,12 @@ impl Config {
         "vyper",
         "bind_json",
     ];
+
+    pub(crate) fn is_standalone_section<T: ?Sized + PartialEq<str>>(section: &T) -> bool {
+        section == Self::PROFILE_SECTION
+            || section == Self::EXTERNAL_SECTION
+            || Self::STANDALONE_SECTIONS.iter().any(|s| section == *s)
+    }
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1595,8 +1603,19 @@ impl Config {
     /// Optionally updates the config with the given `chain`.
     ///
     /// See also [Self::get_etherscan_config_with_chain]
+    #[expect(clippy::disallowed_macros)]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
-        self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
+        self.get_etherscan_config_with_chain(chain)
+            .map_err(|e| {
+                // `sh_warn!` is a circular dependency, preventing us from using it here.
+                eprintln!(
+                    "{}: failed getting etherscan config: {e}",
+                    yansi::Paint::yellow("Warning"),
+                );
+            })
+            .ok()
+            .flatten()
+            .map(|c| c.key)
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -3341,6 +3360,27 @@ mod tests {
             let etherscan = config.get_etherscan_config().unwrap().unwrap();
             assert_eq!(etherscan.chain, Some(NamedChain::Sepolia.into()));
             assert_eq!(etherscan.key, "FX42Z3BBJJEWXWGYV2X1CIPRSCN");
+
+            Ok(())
+        });
+    }
+
+    // any invalid entry invalidates whole [etherscan] sections
+    #[test]
+    fn test_resolve_etherscan_with_invalid_name() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [etherscan]
+                mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+                an_invalid_name = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let etherscan_config = config.get_etherscan_config();
+            assert!(etherscan_config.is_none());
 
             Ok(())
         });
@@ -6370,6 +6410,59 @@ mod tests {
             assert!(cfg.warnings.iter().any(
                 |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
             ));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn fails_on_ambiguous_version_in_compilation_restrictions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                version = "0.8.11"
+                "#,
+            )?;
+
+            let err = Config::load().expect_err("expected bare version to fail");
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("Invalid version format '0.8.11'")
+                    && err_msg.contains("Bare version numbers are ambiguous"),
+                "Expected error about ambiguous version, got: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn accepts_explicit_version_requirements() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                version = "=0.8.11"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "test/*.sol"
+                version = ">=0.8.11"
+                "#,
+            )?;
+
+            let config = Config::load().expect("should accept explicit version requirements");
+            assert_eq!(config.compilation_restrictions.len(), 2);
+
             Ok(())
         });
     }

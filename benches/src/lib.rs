@@ -1,12 +1,12 @@
+//! Foundry benchmark runner.
+
 use crate::results::{HyperfineOutput, HyperfineResult};
 use eyre::{Result, WrapErr};
 use foundry_common::{sh_eprintln, sh_println};
 use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    env,
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
@@ -57,7 +57,7 @@ impl FromStr for RepoConfig {
         } else {
             // Create new config with custom rev or default
             // Name should follow the format: org-repo (with hyphen)
-            RepoConfig {
+            Self {
                 name: format!("{org}-{repo}"),
                 org: org.to_string(),
                 repo: repo.to_string(),
@@ -159,7 +159,7 @@ impl BenchmarkProject {
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
-        Ok(BenchmarkProject { name: config.name.to_string(), root_path, temp_project })
+        Ok(Self { name: config.name.to_string(), root_path, temp_project })
     }
 
     /// Install npm dependencies if package.json exists
@@ -493,45 +493,4 @@ pub fn get_forge_version_details() -> Result<String> {
         // Fallback to just the first line if format is unexpected
         Ok(lines.first().unwrap_or(&"unknown").to_string())
     }
-}
-
-/// Get Foundry versions to benchmark from environment variable or default
-///
-/// Reads from FOUNDRY_BENCH_VERSIONS environment variable if set,
-/// otherwise returns the default versions from FOUNDRY_VERSIONS constant.
-///
-/// The environment variable should be a comma-separated list of versions,
-/// e.g., "stable,nightly,v1.2.0"
-pub fn get_benchmark_versions() -> Vec<String> {
-    if let Ok(versions_env) = env::var("FOUNDRY_BENCH_VERSIONS") {
-        versions_env.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
-    } else {
-        FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
-    }
-}
-
-/// Setup Repositories for benchmarking
-pub fn setup_benchmark_repos() -> Vec<(RepoConfig, BenchmarkProject)> {
-    // Check for FOUNDRY_BENCH_REPOS environment variable
-    let repos = if let Ok(repos_env) = env::var("FOUNDRY_BENCH_REPOS") {
-        // Parse repo specs from the environment variable
-        // Format should be: "org1/repo1,org2/repo2"
-        repos_env
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse::<RepoConfig>())
-            .collect::<Result<Vec<_>>>()
-            .expect("Failed to parse FOUNDRY_BENCH_REPOS")
-    } else {
-        BENCHMARK_REPOS.clone()
-    };
-
-    repos
-        .par_iter()
-        .map(|repo_config| {
-            let project = BenchmarkProject::setup(repo_config).expect("Failed to setup project");
-            (repo_config.clone(), project)
-        })
-        .collect()
 }

@@ -5,8 +5,9 @@ use crate::{
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
-use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
+use anvil_core::eth::{block::Block, subscription::SubscriptionId};
 use anvil_rpc::{request::Version, response::ResponseResult};
+use foundry_primitives::FoundryReceiptEnvelope;
 use futures::{Stream, StreamExt, channel::mpsc::Receiver, ready};
 use serde::Serialize;
 use std::{
@@ -147,7 +148,11 @@ impl Stream for EthSubscription {
 }
 
 /// Returns all the logs that match the given filter
-pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredParams) -> Vec<Log> {
+pub fn filter_logs(
+    block: Block,
+    receipts: Vec<FoundryReceiptEnvelope>,
+    filter: &FilteredParams,
+) -> Vec<Log> {
     /// Determines whether to add this log
     fn add_log(
         block_hash: B256,
@@ -172,7 +177,7 @@ pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredP
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
-        let transaction_hash = block.transactions[receipt_index].hash();
+        let transaction_hash = block.body.transactions[receipt_index].hash();
         for log in receipt.logs() {
             if add_log(block_hash, log, &block, filter) {
                 logs.push(Log {

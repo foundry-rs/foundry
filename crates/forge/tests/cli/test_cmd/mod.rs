@@ -47,6 +47,10 @@ forgetest!(testdata, |_prj, cmd| {
     if orig_assert.get_output().status.success() {
         return;
     }
+    let stdout = orig_assert.get_output().stdout_lossy();
+    if let Some(i) = stdout.rfind("Suite result:") {
+        test_debug!("--- short stdout ---\n\n{}\n\n---", &stdout[i..]);
+    }
 
     // Retry failed tests.
     cmd.args(["--rerun"]);
@@ -552,6 +556,83 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     cmd.assert_empty_stderr();
 });
 
+// Verify that --show-progress doesn't stop tests after first failure
+forgetest_init!(show_progress_runs_all_tests, |prj, cmd| {
+    prj.add_test(
+        "MultiTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MultiTest is Test {
+    function test_1_Fail() public {
+        assertTrue(false);
+    }
+
+    function test_2_Pass() public {
+        assertTrue(true);
+    }
+
+    function test_3_Pass() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With --show-progress, all 3 tests should run despite first one failing
+    let output = cmd.args(["test", "--show-progress", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    // Verify all 3 tests were executed
+    assert!(stdout.contains("test_1_Fail"), "test_1_Fail should run");
+    assert!(stdout.contains("test_2_Pass"), "test_2_Pass should run");
+    assert!(stdout.contains("test_3_Pass"), "test_3_Pass should run");
+    assert!(stdout.contains("2 passed; 1 failed"), "Should show 2 passed and 1 failed");
+});
+
+// Verify that --show-progress with --fail-fast DOES stop after first failure
+forgetest_init!(show_progress_with_fail_fast_exits_early, |prj, cmd| {
+    prj.add_test(
+        "MultiTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MultiTest is Test {
+    function test_1_Fail() public {
+        assertTrue(false);
+    }
+
+    function test_2_SlowPass() public {
+        vm.sleep(60000); // Sleep for 60 seconds to ensure fail-fast stops before this completes
+        assertTrue(true);
+    }
+
+    function test_3_SlowPass() public {
+        vm.sleep(60000); // Sleep for 60 seconds to ensure fail-fast stops before this completes
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With both --show-progress and --fail-fast, should stop after first failure
+    let output = cmd.args(["test", "--show-progress", "--fail-fast", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    // Verify first test ran and failed
+    assert!(stdout.contains("test_1_Fail"), "test_1_Fail should run");
+
+    // With -j1 (sequential execution) and fail-fast, the slow tests should not run
+    // since test_1_Fail will fail first
+    let slow_tests_count = (if stdout.contains("test_2_SlowPass") { 1 } else { 0 })
+        + (if stdout.contains("test_3_SlowPass") { 1 } else { 0 });
+
+    assert!(
+        slow_tests_count < 2,
+        "With --fail-fast and sequential execution, not all slow tests should run after first failure"
+    );
+});
+
 // https://github.com/foundry-rs/foundry/pull/6531
 forgetest_init!(fork_traces, |prj, cmd| {
     let endpoint = rpc::next_http_archive_rpc_url();
@@ -595,6 +676,33 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+// Validates BPO1 blob gas price calculation during fork transaction replay.
+// Block 24127158 has a blob tx at index 0, target tx at index 1.
+// Forking at the target tx replays the blob tx with correct BPO1 blob base fee calculation.
+forgetest_init!(fork_tx_replay_bpo1_blob_base_fee, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_test(
+        "BlobFork.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BlobForkTest is Test {
+    function test_fork_with_blob_replay() public {
+        // Fork at tx index 1 in block 24127158, which replays blob tx at index 0
+        bytes32 txHash = 0xa0f349b16e0f338ee760a9954ff5dbf2a402cff3320f3fe2c3755aee8babc335;
+        vm.createSelectFork("<url>", txHash);
+        // If we get here, blob tx replay succeeded
+        assertTrue(true);
+    }
+}
+    "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args(["test", "-vvvv"]).assert_success();
 });
 
 // https://github.com/foundry-rs/foundry/issues/6579
@@ -974,7 +1082,7 @@ contract PrecompileLabelsTest is Test {
         vm.deal(address(0x000000000000000000636F6e736F6c652e6c6f67), 1 ether);
         vm.deal(address(0x4e59b44847b379578588920cA78FbF26c0B4956C), 1 ether);
         vm.deal(address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38), 1 ether);
-        vm.deal(address(0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84), 1 ether);
+        vm.deal(address(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496), 1 ether);
         vm.deal(address(1), 1 ether);
         vm.deal(address(2), 1 ether);
         vm.deal(address(3), 1 ether);
@@ -1007,7 +1115,7 @@ Traces:
     │   └─ ← [Return]
     ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
     │   └─ ← [Return]
-    ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
+    ├─ [0] VM::deal(PrecompileLabelsTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
     │   └─ ← [Return]
@@ -1122,8 +1230,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-// tests that `forge test` with config `show_logs: false` for fuzz tests will not display
-// `console.log` info
+// tests that `forge test` with config `show_logs: false` for fuzz tests will
+// still display `console.log` from the last run at verbosity >= 2 (issue #11039)
 forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     // run fuzz test 3 times
     prj.update_config(|config| {
@@ -1145,6 +1253,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     }
      "#,
     );
+    // At verbosity >= 2, logs from the last run should be shown even when show_logs is false
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1152,6 +1261,9 @@ Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -1159,8 +1271,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-// tests that `forge test` with inline config `show_logs = false` for fuzz tests will not
-// display `console.log` info
+// tests that `forge test` with inline config `show_logs = false` for fuzz tests will
+// still display `console.log` from the last run at verbosity >= 2 (issue #11039)
 forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     // run fuzz test 3 times
     prj.update_config(|config| {
@@ -1182,6 +1294,7 @@ contract ContractFuzz is Test {
 }
      "#,
     );
+    // At verbosity >= 2, logs from the last run should be shown even when show_logs is false
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1189,6 +1302,9 @@ Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -1739,6 +1855,15 @@ contract ATest is DSTest {
         b = new B();
         b = new B();
         vm.resetGasMetering();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/12474
+    function testMemoryOnReset(uint8[1] memory x) public {
+        uint8[1] memory z;
+        z[0] = x[0];
+        assertEq(z[0], x[0]);
+        vm.resetGasMetering();
+        assertEq(x[0], z[0]);
     }
 }
      "#,
@@ -4235,4 +4360,54 @@ contract InvariantOutputTest is Test {
     cmd.args(["test", "--mt", "invariant_check_count", "--color", "always"])
         .assert_failure()
         .stdout_eq(file!["../../fixtures/invariant_traces.svg": TermSvg]);
+});
+
+forgetest_init!(memory_limit, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.memory_limit = 500 * 32;
+    });
+    prj.add_test(
+        "MemoryLimit.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Memory {
+    function allocate(uint256 n) external pure returns (uint256[] memory) {
+        return new uint256[](n);
+    }
+}
+
+contract MemoryLimitTest is Test {
+    Memory public m = new Memory();
+
+    function test_inBounds() public {
+        m.allocate(100);
+    }
+
+    function test_oom() public {
+        m.allocate(1000);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/MemoryLimit.t.sol:MemoryLimitTest
+[PASS] test_inBounds() ([GAS])
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MemoryLimit.t.sol:MemoryLimitTest
+[FAIL: EvmError: Revert] test_oom() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
