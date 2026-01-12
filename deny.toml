@@ -66,6 +66,8 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    # Rendered mdBook HTML source code includes attribution as required by CC-BY-4.0
+    { allow = ["CC-BY-4.0", "MIT"], name = "font-awesome-as-a-crate" },
 ]
 # copyleft = "deny"
 
