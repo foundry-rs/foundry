@@ -166,7 +166,6 @@ impl Group {
     }
 }
 
-// TODO: Find a better name for this
 /// Cheatcode safety.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
