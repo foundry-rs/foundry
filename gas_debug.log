@@ -1,0 +1,13 @@
+--- Opcode List Generation ---
+Step 0: PC=0 Op=PUSH1 GasUsed=0 Cost=0
+Step 1: PC=2 Op=DUP1 GasUsed=3 Cost=3
+Step 2: PC=3 Op=PUSH1 GasUsed=6 Cost=3
+Step 3: PC=5 Op=PUSH1 GasUsed=9 Cost=3
+Step 4: PC=7 Op=CODECOPY GasUsed=12 Cost=3
+Step 5: PC=8 Op=PUSH1 GasUsed=21 Cost=9
+Step 6: PC=10 Op=RETURN GasUsed=24 Cost=3
+--- Opcode List Generation ---
+Step 0: PC=0 Op=PUSH1 GasUsed=0 Cost=0
+Step 1: PC=2 Op=PUSH1 GasUsed=3 Cost=3
+Step 2: PC=4 Op=SSTORE GasUsed=6 Cost=3
+Step 3: PC=5 Op=STOP GasUsed=22106 Cost=22100
