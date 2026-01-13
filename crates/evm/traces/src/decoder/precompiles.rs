@@ -157,13 +157,27 @@ impl Precompile for Ecrecover {
     }
 
     fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ecrecoverCall { hash, v, r, s } = ecrecoverCall::abi_decode_raw(data)?;
-        Ok(vec![hash.to_string(), v.to_string(), r.to_string(), s.to_string()])
+        // Input: hash (32) + v (32) + r (32) + s (32) = 128 bytes.
+        let (hash, rest) = take_at_most(data, 32);
+        let (v, rest) = take_at_most(rest, 32);
+        let (r, rest) = take_at_most(rest, 32);
+        let (s, _) = take_at_most(rest, 32);
+        Ok(vec![
+            hex::encode_prefixed(hash),
+            U256::from_be_slice(v).to_string(),
+            hex::encode_prefixed(r),
+            hex::encode_prefixed(s),
+        ])
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ret = ecrecoverCall::abi_decode_returns(data)?;
-        Ok(vec![ret.to_string()])
+        // Output: 32 bytes with address in the last 20 bytes.
+        if data.len() >= 32 {
+            let addr = Address::from_slice(&data[12..32]);
+            Ok(vec![addr.to_string()])
+        } else {
+            Ok(vec![hex::encode_prefixed(data)])
+        }
     }
 }
 
@@ -178,8 +192,7 @@ impl Precompile for Sha256 {
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ret = sha256Call::abi_decode_returns(data)?;
-        Ok(vec![ret.to_string()])
+        Ok(vec![hex::encode_prefixed(data)])
     }
 }
 
@@ -194,8 +207,12 @@ impl Precompile for Ripemd160 {
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ret = ripemdCall::abi_decode_returns(data)?;
-        Ok(vec![ret.to_string()])
+        // Output: 32 bytes with hash in the last 20 bytes.
+        if data.len() >= 32 {
+            Ok(vec![hex::encode_prefixed(&data[12..32])])
+        } else {
+            Ok(vec![hex::encode_prefixed(data)])
+        }
     }
 }
 
@@ -250,13 +267,24 @@ impl Precompile for EcAdd {
     }
 
     fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ecaddCall { x1, y1, x2, y2 } = ecaddCall::abi_decode_raw(data)?;
-        Ok(vec![x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string()])
+        // Input: x1 (32) + y1 (32) + x2 (32) + y2 (32) = 128 bytes.
+        let (x1, rest) = take_at_most(data, 32);
+        let (y1, rest) = take_at_most(rest, 32);
+        let (x2, rest) = take_at_most(rest, 32);
+        let (y2, _) = take_at_most(rest, 32);
+        Ok(vec![
+            U256::from_be_slice(x1).to_string(),
+            U256::from_be_slice(y1).to_string(),
+            U256::from_be_slice(x2).to_string(),
+            U256::from_be_slice(y2).to_string(),
+        ])
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ecaddReturn { x, y } = ecaddCall::abi_decode_returns(data)?;
-        Ok(vec![x.to_string(), y.to_string()])
+        // Output: x (32) + y (32) = 64 bytes.
+        let (x, rest) = take_at_most(data, 32);
+        let (y, _) = take_at_most(rest, 32);
+        Ok(vec![U256::from_be_slice(x).to_string(), U256::from_be_slice(y).to_string()])
     }
 }
 
@@ -271,13 +299,22 @@ impl Precompile for Ecmul {
     }
 
     fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ecmulCall { x1, y1, s } = ecmulCall::abi_decode_raw(data)?;
-        Ok(vec![x1.to_string(), y1.to_string(), s.to_string()])
+        // Input: x1 (32) + y1 (32) + s (32) = 96 bytes.
+        let (x1, rest) = take_at_most(data, 32);
+        let (y1, rest) = take_at_most(rest, 32);
+        let (s, _) = take_at_most(rest, 32);
+        Ok(vec![
+            U256::from_be_slice(x1).to_string(),
+            U256::from_be_slice(y1).to_string(),
+            U256::from_be_slice(s).to_string(),
+        ])
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ecmulReturn { x, y } = ecmulCall::abi_decode_returns(data)?;
-        Ok(vec![x.to_string(), y.to_string()])
+        // Output: x (32) + y (32) = 64 bytes.
+        let (x, rest) = take_at_most(data, 32);
+        let (y, _) = take_at_most(rest, 32);
+        Ok(vec![U256::from_be_slice(x).to_string(), U256::from_be_slice(y).to_string()])
     }
 }
 
@@ -306,8 +343,9 @@ impl Precompile for Ecpairing {
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ret = ecpairingCall::abi_decode_returns(data)?;
-        Ok(vec![ret.to_string()])
+        // Returns 32 bytes: 1 for success, 0 for failure.
+        let success = data.len() >= 32 && data[31] == 1 && data[..31].iter().all(|&b| b == 0);
+        Ok(vec![success.to_string()])
     }
 }
 
@@ -462,8 +500,9 @@ impl Precompile for Bls12PairingCheck {
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ret = bls12PairingCheckCall::abi_decode_returns(data)?;
-        Ok(vec![ret.to_string()])
+        // Returns 32 bytes: 1 for success, 0 for failure.
+        let success = data.len() >= 32 && data[31] == 1 && data[..31].iter().all(|&b| b == 0);
+        Ok(vec![success.to_string()])
     }
 }
 

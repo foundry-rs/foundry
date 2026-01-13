@@ -130,8 +130,8 @@ Ran 1 test for test/PrecompileTrace.t.sol:PrecompileTraceTest
 [PASS] test_precompile_traces() ([GAS])
 Traces:
   [..] PrecompileTraceTest::test_precompile_traces()
-    ├─ [279062] → new PrecompileCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   ├─ [3000] PRECOMPILES::ecrecover(0xea83cdcdd06bf61e414054115a551e23133711d0507dcbc07a4bab7dc4581935, 27, 1, 2) [staticcall]
+    ├─ [..] → new PrecompileCaller@[..]
+    │   ├─ [..] PRECOMPILES::ecrecover(0xea83cdcdd06bf61e414054115a551e23133711d0507dcbc07a4bab7dc4581935, 27, 1, 2) [staticcall]
     │   │   └─ ← [Return] 0xBe038042508C42Df7b2A529cd4Cc0a9447c7D2b6
     │   ├─ [..] PRECOMPILES::sha256(0x68656c6c6f) [staticcall]
     │   │   └─ ← [Return] 0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
