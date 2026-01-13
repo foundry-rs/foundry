@@ -126,6 +126,16 @@ impl FromStr for ChainOrAll {
     }
 }
 
+/// Cleans the cache for a specific chain.
+///
+/// When `blocks` is empty:
+/// - If `etherscan` is true, only the etherscan cache for the chain is cleaned.
+/// - If `etherscan` is false, both the etherscan cache and the RPC cache for the chain are cleaned.
+///
+/// When `blocks` is not empty:
+/// - Only the RPC block caches for the specified blocks are cleaned.
+/// - The `etherscan` flag is ignored because etherscan cache is stored at the chain level, not at
+///   the block level, so it cannot be cleaned for specific blocks.
 fn clean_chain_cache(chain: impl Into<Chain>, blocks: Vec<u64>, etherscan: bool) -> Result<()> {
     let chain = chain.into();
     if blocks.is_empty() {
