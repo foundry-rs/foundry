@@ -1,0 +1,8 @@
+{
+  "track_id": "source_instrumentation_coverage_20260113",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-01-13T10:00:00Z",
+  "updated_at": "2026-01-13T10:00:00Z",
+  "description": "Refactor `forge coverage` to support source instrumentation (Hardhat-style) to resolve \"Stack Too Deep\" errors."
+}
