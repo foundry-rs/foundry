@@ -84,6 +84,46 @@ contract UnwrappedModifierLogicTest {
     }
 
     /// -----------------------------------------------------------------------
+    /// Shared local variables
+    /// -----------------------------------------------------------------------
+
+    function gasLeft() internal returns (uint256) { return 1; }
+    function gasLeftMulti() internal returns (uint256, bool) { return (1, true); }
+    function _payMeSubsidizedGasAfter(uint256, uint256) internal {}
+    function _refund(uint256) internal {}
+
+    // Single shared variable: declared before, used after
+    modifier payMeSubsidizedGas(uint256 amount) {
+        uint256 pre = gasLeft();
+        _;
+        _payMeSubsidizedGasAfter(pre, amount);
+    }
+
+    // Multiple shared variables
+    modifier payMeFixedGasAmount() { //~NOTE: wrap modifier logic to reduce code size
+        uint256 pre = gasLeft();
+        uint256 amount = 12345;
+        _;
+        _payMeSubsidizedGasAfter(pre, amount);
+    }
+
+    modifier payMeSubsidizedGasAndRefund(uint256 amount) { //~NOTE: wrap modifier logic to reduce code size
+        (uint256 pre, bool success) = gasLeftMulti();
+        _;
+        _payMeSubsidizedGasAfter(pre, amount);
+        _refund(pre);
+    }
+
+    // Multiple shared variables
+    modifier payMeFixedGasAmountAndRefund() { //~NOTE: wrap modifier logic to reduce code size
+        uint256 pre = gasLeft();
+        uint256 amount = 12345;
+        _;
+        _payMeSubsidizedGasAfter(pre, amount);
+        _refund(pre);
+    }
+
+    /// -----------------------------------------------------------------------
     /// Bad patterns (multiple valid statements before or after placeholder)
     /// -----------------------------------------------------------------------
 
