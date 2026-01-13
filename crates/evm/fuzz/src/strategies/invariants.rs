@@ -152,6 +152,6 @@ pub fn fuzz_contract_with_calldata(
     ]
     .prop_map(move |calldata| {
         trace!(input=?calldata);
-        CallDetails { target, calldata }
+        CallDetails { target, calldata, value: None }
     })
 }
