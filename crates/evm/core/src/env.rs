@@ -114,7 +114,8 @@ impl<DB: Database, J: JournalTr<Database = DB>, C> AsEnvMut<MonadSpecId>
     }
 }
 
-// SpecId implementations for anvil compatibility (anvil uses EitherEvm pattern with multiple chains)
+// SpecId implementations for anvil compatibility (anvil uses EitherEvm pattern with multiple
+// chains)
 impl<DB: Database, J: JournalTr<Database = DB>, C> AsEnvMut<SpecId>
     for Context<BlockEnv, TxEnv, CfgEnv<SpecId>, DB, J, C>
 {

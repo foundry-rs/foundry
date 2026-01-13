@@ -47,8 +47,7 @@ use foundry_evm_traces::{
 };
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
-use monad_revm::MonadContext;
-use monad_revm::MonadSpecId;
+use monad_revm::{MonadContext, MonadSpecId};
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
