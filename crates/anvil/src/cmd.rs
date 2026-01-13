@@ -911,19 +911,16 @@ mod tests {
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(args.host, vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]);
 
+        let expected_hosts =
+            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec();
+
         let args = NodeArgs::parse_from([
             "anvil", "--host", "::1", "--host", "1.1.1.1", "--host", "2.2.2.2",
         ]);
-        assert_eq!(
-            args.host,
-            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
-        );
+        assert_eq!(args.host, expected_hosts);
 
         let args = NodeArgs::parse_from(["anvil", "--host", "::1,1.1.1.1,2.2.2.2"]);
-        assert_eq!(
-            args.host,
-            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
-        );
+        assert_eq!(args.host, expected_hosts);
 
         unsafe { env::set_var("ANVIL_IP_ADDR", "1.1.1.1") };
         let args = NodeArgs::parse_from(["anvil"]);
@@ -931,9 +928,6 @@ mod tests {
 
         unsafe { env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2") };
         let args = NodeArgs::parse_from(["anvil"]);
-        assert_eq!(
-            args.host,
-            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
-        );
+        assert_eq!(args.host, expected_hosts);
     }
 }
