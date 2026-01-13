@@ -7,12 +7,6 @@ yanked = "warn"
 ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
     "RUSTSEC-2024-0436",
-    # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
-    "RUSTSEC-2024-0437",
-    # https://rustsec.org/advisories/RUSTSEC-2025-0141 bincode is unmaintained, need to transition all deps to wincode first
-    "RUSTSEC-2025-0141",
-    #  https://rustsec.org/advisories/RUSTSEC-2026-0002 lru unused directly: <https://github.com/alloy-rs/alloy/pull/3460>
-    "RUSTSEC-2026-0002",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -72,6 +66,8 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    # Rendered mdBook HTML source code includes attribution as required by CC-BY-4.0
+    { allow = ["CC-BY-4.0", "MIT"], name = "font-awesome-as-a-crate" },
 ]
 # copyleft = "deny"
 
