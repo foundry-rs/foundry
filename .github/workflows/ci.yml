@@ -107,6 +107,8 @@ jobs:
           toolchain: nightly-2026-01-10
           components: rustfmt
       - run: cargo fmt --all --check
+        env:
+          RUSTC_WRAPPER: ""
 
   forge-fmt:
     runs-on: depot-ubuntu-latest
@@ -126,6 +128,8 @@ jobs:
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
+        env:
+          RUSTC_WRAPPER: ""
 
   crate-checks:
     runs-on: depot-ubuntu-latest
