@@ -99,7 +99,7 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTra
             };
 
             return Some(DecodedCallTrace {
-                label: Some("PRECOMPILES".to_string()),
+                label: Some(precompile.label().to_string()),
                 call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
                 return_data: Some(return_data),
             });
@@ -111,6 +111,7 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTra
 
 pub(super) trait Precompile {
     fn address(&self) -> Address;
+    fn label(&self) -> &'static str;
     fn signature(&self, data: &[u8]) -> &'static str;
 
     fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
@@ -152,6 +153,10 @@ impl Precompile for Ecrecover {
         EC_RECOVER
     }
 
+    fn label(&self) -> &'static str {
+        "ECRecover"
+    }
+
     fn signature(&self, _: &[u8]) -> &'static str {
         ecrecoverCall::SIGNATURE
     }
@@ -173,6 +178,10 @@ impl Precompile for Sha256 {
         SHA_256
     }
 
+    fn label(&self) -> &'static str {
+        "SHA-256"
+    }
+
     fn signature(&self, _: &[u8]) -> &'static str {
         sha256Call::SIGNATURE
     }
@@ -187,6 +196,10 @@ struct Ripemd160;
 impl Precompile for Ripemd160 {
     fn address(&self) -> Address {
         RIPEMD_160
+    }
+
+    fn label(&self) -> &'static str {
+        "RIPEMD-160"
     }
 
     fn signature(&self, _: &[u8]) -> &'static str {
@@ -205,6 +218,10 @@ impl Precompile for Identity {
         IDENTITY
     }
 
+    fn label(&self) -> &'static str {
+        "Identity"
+    }
+
     fn signature(&self, _: &[u8]) -> &'static str {
         identityCall::SIGNATURE
     }
@@ -214,6 +231,10 @@ struct ModExp;
 impl Precompile for ModExp {
     fn address(&self) -> Address {
         MOD_EXP
+    }
+
+    fn label(&self) -> &'static str {
+        "ModExp"
     }
 
     fn signature(&self, _: &[u8]) -> &'static str {
