@@ -510,13 +510,25 @@ impl Precompile for P256Verify {
     }
 
     fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let p256VerifyCall { hash, r, s, qx, qy } = p256VerifyCall::abi_decode_raw(data)?;
-        Ok(vec![hash.to_string(), r.to_string(), s.to_string(), qx.to_string(), qy.to_string()])
+        // Input: hash (32) + r (32) + s (32) + qx (32) + qy (32) = 160 bytes.
+        let (hash, rest) = take_at_most(data, 32);
+        let (r, rest) = take_at_most(rest, 32);
+        let (s, rest) = take_at_most(rest, 32);
+        let (qx, rest) = take_at_most(rest, 32);
+        let (qy, _) = take_at_most(rest, 32);
+        Ok(vec![
+            hex::encode_prefixed(hash),
+            hex::encode_prefixed(r),
+            hex::encode_prefixed(s),
+            hex::encode_prefixed(qx),
+            hex::encode_prefixed(qy),
+        ])
     }
 
     fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-        let ret = p256VerifyCall::abi_decode_returns(data)?;
-        Ok(vec![ret.to_string()])
+        // Returns 32 bytes: 1 for success, 0 (or empty) for failure.
+        let success = data.len() >= 32 && data[31] == 1 && data[..31].iter().all(|&b| b == 0);
+        Ok(vec![success.to_string()])
     }
 }
 
