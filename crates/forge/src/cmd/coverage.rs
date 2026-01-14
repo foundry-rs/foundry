@@ -11,8 +11,8 @@ use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
-    VYPER_EXTENSIONS, artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
+    artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
 };
 use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
@@ -89,7 +89,8 @@ impl CoverageArgs {
         }
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings {
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
@@ -394,7 +395,8 @@ impl CoverageArgs {
                 for result in suite.test_results.values() {
                     let Some(hit_maps) = &result.line_coverage else { continue };
                     for map in hit_maps.0.values() {
-                        if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
+                        if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode())
+                        {
                             hits.push((id, map, true));
                         } else if let Some((id, _)) =
                             known_contracts.find_by_creation_code(map.bytecode())

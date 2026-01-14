@@ -2044,9 +2044,10 @@ contract AContractTest is DSTest {
     // Run coverage without --ir-minimum flag
     // It should detect via_ir and enable ir_minimum mode automatically
     let output = cmd.arg("coverage").assert_success().get_output().stderr_lossy();
-    assert!(output.contains("Enabling `--ir-minimum` automatically because `via_ir` is enabled in configuration"));
+    assert!(output.contains(
+        "Enabling `--ir-minimum` automatically because `via_ir` is enabled in configuration"
+    ));
 });
-
 
 // <https://github.com/foundry-rs/foundry/issues/10422>
 // Test that line hits are properly recorded in lcov report.

@@ -592,7 +592,8 @@ impl SourceAnalysis {
 
             let mut lines = Vec::new();
             for &line in &all_lines {
-                if let Some(reference_item) = items.iter().find(|item| item.loc.lines.start == line) {
+                if let Some(reference_item) = items.iter().find(|item| item.loc.lines.start == line)
+                {
                     lines.push(CoverageItem {
                         kind: CoverageItemKind::Line,
                         loc: reference_item.loc.clone(),
@@ -600,7 +601,7 @@ impl SourceAnalysis {
                     });
                 }
             }
-            
+
             // Append lines at the end to ensure they don't interfere with injected IDs.
             if map.len() <= source_id {
                 map.resize(source_id + 1, (u32::MAX, 0));

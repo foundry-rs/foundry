@@ -138,12 +138,18 @@ impl<'ast> Instrumenter<'ast> {
 impl<'ast> Visit<'ast> for Instrumenter<'ast> {
     type BreakValue = ();
 
-    fn visit_item_contract(&mut self, contract: &'ast ast::ItemContract<'ast>) -> ControlFlow<Self::BreakValue> {
+    fn visit_item_contract(
+        &mut self,
+        contract: &'ast ast::ItemContract<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         self.contract_name = contract.name.as_str().into();
         self.walk_item_contract(contract)
     }
 
-    fn visit_item_function(&mut self, func: &'ast ast::ItemFunction<'ast>) -> ControlFlow<Self::BreakValue> {
+    fn visit_item_function(
+        &mut self,
+        func: &'ast ast::ItemFunction<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         if let Some(sm) = &func.header.state_mutability {
             let s = sm.to_string();
             if s == "pure" || s == "view" {
@@ -308,7 +314,13 @@ mod tests {
         let sess = Session::builder().with_buffer_emitter(Default::default()).build();
         let _: solar::interface::Result<()> = sess.enter_sequential(|| {
             let arena = ast::Arena::new();
-            let mut parser = Parser::from_source_code(&sess, &arena, FileName::Custom("test.sol".to_string()), src.to_string()).unwrap();
+            let mut parser = Parser::from_source_code(
+                &sess,
+                &arena,
+                FileName::Custom("test.sol".to_string()),
+                src.to_string(),
+            )
+            .unwrap();
             let ast = match parser.parse_file() {
                 Ok(ast) => ast,
                 Err(diag) => {
@@ -321,14 +333,14 @@ mod tests {
             instrumenter.instrument(&mut content);
 
             println!("Instrumented code:\n{}", content);
-            
+
             // Basic assertions
             assert!(content.contains("VmCoverage_0"));
             assert!(!content.contains("pure")); // pure should be removed
 
             // Check items were collected
             assert!(!instrumenter.items.is_empty());
-            
+
             solar::interface::Result::Ok(())
         });
     }

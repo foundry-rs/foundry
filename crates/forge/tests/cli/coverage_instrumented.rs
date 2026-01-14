@@ -1,7 +1,4 @@
-use foundry_test_utils::{
-    forgetest,
-    util::OutputExt,
-};
+use foundry_test_utils::{forgetest, util::OutputExt};
 
 forgetest!(instrumented_basic, |prj, cmd| {
     prj.insert_ds_test();
@@ -45,16 +42,23 @@ contract CounterTest is DSTest {
     );
 
     // Assert coverage with --instrument-source.
-    let output = cmd.arg("coverage")
+    let output = cmd
+        .arg("coverage")
         .arg("--instrument-source")
         .arg("--no-match-coverage")
         .arg("test.sol")
         .assert_success();
-    
+
     let stdout = output.get_output().stdout_lossy();
-    assert!(stdout.contains("src/Counter.sol     | 100.00% (4/4)   | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2)"));
-    assert!(stdout.contains("src/CounterTest.sol | 100.00% (6/6)   | 100.00% (4/4) | 100.00% (0/0) | 100.00% (2/2)"));
-    assert!(stdout.contains("Total               | 100.00% (10/10) | 100.00% (6/6) | 100.00% (0/0) | 100.00% (4/4)"));
+    assert!(stdout.contains(
+        "src/Counter.sol     | 100.00% (4/4)   | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2)"
+    ));
+    assert!(stdout.contains(
+        "src/CounterTest.sol | 100.00% (6/6)   | 100.00% (4/4) | 100.00% (0/0) | 100.00% (2/2)"
+    ));
+    assert!(stdout.contains(
+        "Total               | 100.00% (10/10) | 100.00% (6/6) | 100.00% (0/0) | 100.00% (4/4)"
+    ));
 });
 
 forgetest!(instrumented_stack_too_deep, |prj, cmd| {

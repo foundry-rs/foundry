@@ -2,13 +2,7 @@
 
 use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{
-    Attribute,
-    Cell,
-    Color,
-    Row,
-    Table,
-    modifiers::UTF8_ROUND_CORNERS,
-    presets::ASCII_MARKDOWN,
+    Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
 };
 use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};

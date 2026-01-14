@@ -218,7 +218,10 @@ impl FuzzedExecutor {
                         }
 
                         HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
-                        SourceHitMaps::merge_opt(&mut test_data.source_coverage, case.source_coverage);
+                        SourceHitMaps::merge_opt(
+                            &mut test_data.source_coverage,
+                            case.source_coverage,
+                        );
                         test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {

@@ -158,12 +158,11 @@ impl CoverageReport {
                 // the matching version.
                 for analysis in self.analyses.values_mut() {
                     let (base_id, items) = analysis.items_for_source(source_id as u32);
-                    if !items.is_empty() {
-                        if let Some(item) =
+                    if !items.is_empty()
+                        && let Some(item) =
                             analysis.all_items_mut().get_mut((base_id + item_id) as usize)
-                        {
-                            item.hits += hits;
-                        }
+                    {
+                        item.hits += hits;
                     }
                 }
             }
@@ -311,7 +310,10 @@ impl HitMap {
     /// Create a new empty hitmap without bytecode.
     #[inline]
     pub fn empty() -> Self {
-        Self { bytecode: Bytes::new(), hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
+        Self {
+            bytecode: Bytes::new(),
+            hits: HashMap::with_capacity_and_hasher(1024, Default::default()),
+        }
     }
 
     /// Returns the bytecode.
