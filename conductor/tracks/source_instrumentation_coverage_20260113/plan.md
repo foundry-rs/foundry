@@ -1,9 +1,9 @@
 # Track Plan: Source Instrumentation for Forge Coverage
 
 ## Phase 1: Foundation and AST Analysis
-- [ ] Task: Research `solar` AST structures for Statements and Branches
-- [ ] Task: Implement a basic AST visitor to identify coverage points
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Foundation and AST Analysis' (Protocol in workflow.md)
+- [x] Task: Research `solar` AST structures for Statements and Branches 88895
+- [x] Task: Implement a basic AST visitor to identify coverage points cd6299f
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Foundation and AST Analysis' (Protocol in workflow.md)
 
 ## Phase 2: Instrumentation Engine
 - [ ] Task: Develop a source-to-source rewriter using `solar`
