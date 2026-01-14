@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, ChainId, Signature, hex};
 use alloy_signer::Signer;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
 use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
-use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
+// use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
 use foundry_primitives::{
@@ -41,7 +41,7 @@ pub enum WalletSigner {
     /// Wrapper around Ledger signer.
     Ledger(LedgerSigner),
     /// Wrapper around Trezor signer.
-    Trezor(TrezorSigner),
+    // Trezor(TrezorSigner),
     /// Wrapper around browser wallet.
     Browser(BrowserSigner),
     /// Wrapper around AWS KMS signer.
@@ -61,10 +61,10 @@ impl WalletSigner {
         Ok(Self::Ledger(ledger))
     }
 
-    pub async fn from_trezor_path(path: TrezorHDPath) -> Result<Self> {
-        let trezor = TrezorSigner::new(path, None).await?;
-        Ok(Self::Trezor(trezor))
-    }
+    // pub async fn from_trezor_path(path: TrezorHDPath) -> Result<Self> {
+    //     let trezor = TrezorSigner::new(path, None).await?;
+    //     Ok(Self::Trezor(trezor))
+    // }
 
     pub async fn from_browser(
         port: u16,
@@ -211,18 +211,18 @@ impl WalletSigner {
                     }
                 }
             }
-            Self::Trezor(trezor) => {
-                for i in 0..max {
-                    match trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await {
-                        Ok(address) => {
-                            senders.insert(address);
-                        }
-                        Err(e) => {
-                            warn!("Failed to get Trezor address at index {i} (TrezorLive): {e}",);
-                        }
-                    }
-                }
-            }
+            // Self::Trezor(trezor) => {
+            //     for i in 0..max {
+            //         match trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await {
+            //             Ok(address) => {
+            //                 senders.insert(address);
+            //             }
+            //             Err(e) => {
+            //                 warn!("Failed to get Trezor address at index {i} (TrezorLive): {e}",);
+            //             }
+            //         }
+            //     }
+            // }
             Self::Browser(browser) => {
                 senders.insert(alloy_signer::Signer::address(browser));
             }
@@ -238,6 +238,7 @@ impl WalletSigner {
             Self::Turnkey(turnkey) => {
                 senders.insert(alloy_signer::Signer::address(turnkey));
             }
+            _ => {}
         }
         Ok(senders.into_iter().collect())
     }
@@ -269,7 +270,7 @@ macro_rules! delegate {
         match $s {
             Self::Local($inner) => $e,
             Self::Ledger($inner) => $e,
-            Self::Trezor($inner) => $e,
+            // Self::Trezor($inner) => $e,
             Self::Browser($inner) => $e,
             #[cfg(feature = "aws-kms")]
             Self::Aws($inner) => $e,
@@ -277,6 +278,7 @@ macro_rules! delegate {
             Self::Gcp($inner) => $e,
             #[cfg(feature = "turnkey")]
             Self::Turnkey($inner) => $e,
+            _ => panic!("Unsupported signer"),
         }
     };
 }
