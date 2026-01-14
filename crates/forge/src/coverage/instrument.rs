@@ -13,6 +13,7 @@ pub struct Instrumenter<'ast> {
     pub branch_counter: u32,
     pub item_counter: u32,
     pub skip_instrumentation: bool,
+    pub contract_name: Arc<str>,
     _marker: std::marker::PhantomData<&'ast ()>,
 }
 
@@ -26,6 +27,7 @@ impl<'ast> Instrumenter<'ast> {
             branch_counter: 0,
             item_counter: 0,
             skip_instrumentation: false,
+            contract_name: Arc::from(""),
             _marker: std::marker::PhantomData,
         }
     }
@@ -103,7 +105,7 @@ impl<'ast> Instrumenter<'ast> {
 
         SourceLocation {
             source_id: self.source_id as usize,
-            contract_name: Arc::from(""), // TODO: Pass contract name context
+            contract_name: self.contract_name.clone(),
             bytes: self.byte_range(span),
             lines: self.line_range(span),
         }
@@ -125,6 +127,11 @@ impl<'ast> Instrumenter<'ast> {
 
 impl<'ast> Visit<'ast> for Instrumenter<'ast> {
     type BreakValue = ();
+
+    fn visit_item_contract(&mut self, contract: &'ast ast::ItemContract<'ast>) -> ControlFlow<Self::BreakValue> {
+        self.contract_name = contract.name.as_str().into();
+        self.walk_item_contract(contract)
+    }
 
     fn visit_item_function(&mut self, func: &'ast ast::ItemFunction<'ast>) -> ControlFlow<Self::BreakValue> {
         if let Some(sm) = &func.header.state_mutability {
