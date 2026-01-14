@@ -21,7 +21,7 @@ use std::{
 
 pub use foundry_evm::coverage::*;
 
-pub mod visitor;
+pub mod instrument;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
