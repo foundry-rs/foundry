@@ -58,33 +58,36 @@ where
     ) -> Option<CallOutcome> {
         if inputs.target_address == CHEATCODE_ADDRESS {
             let input_bytes = inputs.input.bytes(context);
-            if input_bytes.len() >= 4 && u32::from_be_bytes(input_bytes[0..4].try_into().unwrap()) == COVERAGE_HIT_SELECTOR {
-                if input_bytes.len() >= 36 {
-                    let id_uint = U256::from_be_slice(&input_bytes[4..36]);
-                    // Cast to u32/usize. Coverage IDs are usize.
-                    let id = id_uint.to::<u32>(); 
-                    
-                    // The hit is attributed to the CURRENT contract which is executing.
-                    // In `call`, the `interpreter` context from `step` belongs to the CALLER.
-                    // So `self.current_map` should point to the caller's HitMap.
-                    
-                    unsafe {
-                        if self.current_map != NonNull::dangling() {
-                             self.current_map.as_mut().hit(id);
+            if input_bytes.len() >= 4 {
+                let selector = u32::from_be_bytes(input_bytes[0..4].try_into().unwrap());
+                if selector == COVERAGE_HIT_SELECTOR {
+                    if input_bytes.len() >= 36 {
+                        let id_uint = U256::from_be_slice(&input_bytes[4..36]);
+                        // Cast to u32/usize. Coverage IDs are usize.
+                        let id = id_uint.to::<u32>(); 
+                        
+                        // The hit is attributed to the CURRENT contract which is executing.
+                        // In `call`, the `interpreter` context from `step` belongs to the CALLER.
+                        // So `self.current_map` should point to the caller's HitMap.
+                        
+                        unsafe {
+                            if self.current_map != NonNull::dangling() {
+                                 self.current_map.as_mut().hit(id);
+                            }
                         }
                     }
+                    
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Return,
+                            output: Bytes::new(),
+                            gas: revm::interpreter::Gas::new(0),
+                        },
+                        memory_offset: inputs.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                    });
                 }
-                
-                return Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Return,
-                        output: Bytes::new(),
-                        gas: revm::interpreter::Gas::new(0),
-                    },
-                    memory_offset: inputs.return_memory_offset.clone(),
-                    was_precompile_called: false,
-                    precompile_call_logs: vec![],
-                });
             }
         }
         
