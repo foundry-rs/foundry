@@ -18,9 +18,9 @@
 - [x] Task: Modify `forge` build pipeline to use instrumented sources in a temp directory aad657f
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Runtime and Integration' (Protocol in workflow.md)
 
-## Phase 4: Reporting and Polish
+## Phase 4: Reporting and Polish [checkpoint: fa06cb6]
 - [x] Task: Debug runtime interception of `vm.coverageHit` (Currently fails with unknown cheatcode) 6173edf
 - [x] Task: Adapt `CoverageReport` to handle hits from instrumented source (Partially done via SourceAnalysis construction) 970217b
 - [x] Task: Verify accuracy against the existing bytecode tracing method 970217b
 - [x] Task: Test with "Stack Too Deep" contracts to ensure resolution 970217b
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Reporting and Polish' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 4: Reporting and Polish' (Protocol in workflow.md) fa06cb6
