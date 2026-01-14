@@ -22,5 +22,5 @@
 - [x] Task: Debug runtime interception of `vm.coverageHit` (Currently fails with unknown cheatcode) 6173edf
 - [x] Task: Adapt `CoverageReport` to handle hits from instrumented source (Partially done via SourceAnalysis construction) 970217b
 - [x] Task: Verify accuracy against the existing bytecode tracing method 970217b
-- [~] Task: Test with "Stack Too Deep" contracts to ensure resolution
+- [x] Task: Test with "Stack Too Deep" contracts to ensure resolution 970217b
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Reporting and Polish' (Protocol in workflow.md)
