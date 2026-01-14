@@ -5,11 +5,11 @@
 - [x] Task: Implement a basic AST visitor to identify coverage points cd6299f
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Foundation and AST Analysis' (Protocol in workflow.md)
 
-## Phase 2: Instrumentation Engine
-- [ ] Task: Develop a source-to-source rewriter using `solar`
-- [ ] Task: Implement injection logic for `vm.coverageHit` calls
-- [ ] Task: Handle edge cases (modifiers, inheritance, complex expressions)
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Instrumentation Engine' (Protocol in workflow.md)
+## Phase 2: Instrumentation Engine [checkpoint: d0ee454]
+- [x] Task: Develop a source-to-source rewriter using `solar` b64175b
+- [x] Task: Implement injection logic for `vm.coverageHit` calls 1166d77
+- [x] Task: Handle edge cases (modifiers, inheritance, complex expressions) d0ee454
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Instrumentation Engine' (Protocol in workflow.md)
 
 ## Phase 3: Runtime and Integration
 - [ ] Task: Implement `coverageHit` cheatcode handling in `revm` inspectors
