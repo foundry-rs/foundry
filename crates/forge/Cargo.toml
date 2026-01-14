@@ -87,6 +87,7 @@ watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
+tempfile.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -108,7 +109,6 @@ mockall = "0.14"
 globset = "0.4"
 similar-asserts.workspace = true
 svm.workspace = true
-tempfile.workspace = true
 
 alloy-signer-local.workspace = true
 

@@ -11,9 +11,8 @@ use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
-    Artifact, ArtifactId, Language, Project, ProjectCompileOutput, ProjectPathsConfig,
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
     VYPER_EXTENSIONS, artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
-    compilers::multi::MultiCompilerLanguage,
 };
 use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
@@ -117,28 +116,15 @@ impl CoverageArgs {
         sh_println!("Experimental source instrumentation mode enabled.")?;
 
         // 1. Setup temp directory
-        let temp_root =
-            std::env::temp_dir().join(format!("foundry-coverage-{}", std::process::id()));
-        if temp_root.exists() {
-            let _ = std::fs::remove_dir_all(&temp_root);
-        }
-        std::fs::create_dir_all(&temp_root)?;
+        let temp_dir = tempfile::tempdir()?;
+        let temp_root = temp_dir.path();
 
         // 2. Collect and instrument sources
         let mut coverage_items = Vec::new();
         let sess = solar::interface::Session::builder().with_stderr_emitter().build();
 
-        let mut source_paths: Vec<PathBuf> = Vec::new();
-        for dir in [&config.src, &config.test, &config.script] {
-            if dir.exists() {
-                for path in foundry_compilers::utils::source_files_iter(
-                    dir,
-                    MultiCompilerLanguage::FILE_EXTENSIONS,
-                ) {
-                    source_paths.push(path);
-                }
-            }
-        }
+        let project = config.project()?;
+        let source_paths = project.paths.input_files();
 
         let mut path_to_id: HashMap<PathBuf, usize> = HashMap::default();
         sess.enter_sequential(|| {
@@ -170,25 +156,24 @@ impl CoverageArgs {
                         instrumenter.instrument(&mut instrumented_content);
                         coverage_items.extend(instrumenter.items);
                     }
-                                                    Err(err) => {
-                                                        sh_warn!("Failed to parse {:?}: {:?}", path, err)?;
-                                                    }
-                                                }
-                                    
-                                                instrumented_content.push_str(&format!(
-                                                    "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256,uint256) external; }}",
-                                                    id
-                                                ));
-                                                std::fs::write(target_path, instrumented_content)?;
-                                                path_to_id.insert(path.clone(), id);
-                                            }            Ok::<(), eyre::Error>(())
+                    Err(err) => {
+                        sh_warn!("Failed to parse {:?}: {:?}", path, err)?;
+                    }
+                }
+
+                instrumented_content.push_str(&format!(
+                    "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256,uint256) external; }}",
+                    id
+                ));
+                std::fs::write(target_path, instrumented_content)?;
+                path_to_id.insert(path.clone(), id);
+            }
+            Ok::<(), eyre::Error>(())
         })?;
 
         // 3. Update config to point to temp root
         let original_root = config.root.clone();
-        // Copy remappings and other important paths if they are relative to original root.
-        // ProjectCompiler will handle absolute paths.
-        config.root = temp_root.clone();
+        config.root = temp_root.to_path_buf();
         config.src = temp_root.join(config.src.strip_prefix(&original_root)?);
         config.test = temp_root.join(config.test.strip_prefix(&original_root)?);
         config.script = temp_root.join(config.script.strip_prefix(&original_root)?);
@@ -198,7 +183,6 @@ impl CoverageArgs {
 
         // 5. Prepare Report
         let mut report = CoverageReport::default();
-        // Use the version from the first source in output
         let version = output
             .output()
             .sources
@@ -218,11 +202,7 @@ impl CoverageArgs {
         self.populate_reporters(&original_root);
 
         sh_println!("Running tests...")?;
-        // We pass original_root so reporting works correctly relative to project root
         self.collect(&original_root, &output, report, config, evm_opts).await?;
-
-        // 6. Cleanup
-        let _ = std::fs::remove_dir_all(&temp_root);
 
         Ok(())
     }
