@@ -271,6 +271,9 @@ pub struct FuzzTestResult {
     /// Raw line coverage info
     pub line_coverage: Option<HitMaps>,
 
+    /// Raw source coverage info
+    pub source_coverage: Option<HitMaps>,
+
     /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
     pub breakpoints: Option<Breakpoints>,
 
