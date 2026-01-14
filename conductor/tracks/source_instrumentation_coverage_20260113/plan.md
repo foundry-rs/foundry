@@ -1,6 +1,6 @@
 # Track Plan: Source Instrumentation for Forge Coverage
 
-## Phase 1: Foundation and AST Analysis
+## Phase 1: Foundation and AST Analysis [checkpoint: f99f847]
 - [x] Task: Research `solar` AST structures for Statements and Branches 88895
 - [x] Task: Implement a basic AST visitor to identify coverage points cd6299f
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Foundation and AST Analysis' (Protocol in workflow.md)
