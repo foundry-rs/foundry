@@ -906,6 +906,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         call_inspectors!(
             [
                 &mut self.line_coverage,
+                &mut self.source_coverage,
                 &mut self.tracer,
                 &mut self.cheatcodes,
                 &mut self.script_execution_inspector,
@@ -971,6 +972,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             [
                 &mut self.fuzzer,
                 &mut self.tracer,
+                &mut self.source_coverage,
                 &mut self.log_collector,
                 &mut self.printer,
                 &mut self.revert_diag
