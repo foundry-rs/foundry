@@ -11,15 +11,15 @@
 - [x] Task: Handle edge cases (modifiers, inheritance, complex expressions) d0ee454
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Instrumentation Engine' (Protocol in workflow.md)
 
-## Phase 3: Runtime and Integration [IN PROGRESS]
+## Phase 3: Runtime and Integration [checkpoint: c7f4e61]
 - [x] Task: Implement `coverageHit` cheatcode handling in `revm` inspectors 54f16e3
 - [x] Task: Add `--instrument-source` flag to `forge coverage` CLI 54f16e3
 - [x] Task: Update `Instrumenter` to emit `CoverageItem`s 54f16e3
-- [ ] Task: Modify `forge` build pipeline to use instrumented sources in a temp directory
+- [x] Task: Modify `forge` build pipeline to use instrumented sources in a temp directory (Implemented in cmd/coverage.rs)
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Runtime and Integration' (Protocol in workflow.md)
 
 ## Phase 4: Reporting and Polish
-- [ ] Task: Adapt `CoverageReport` to handle hits from instrumented source
+- [ ] Task: Adapt `CoverageReport` to handle hits from instrumented source (Partially done via SourceAnalysis construction)
 - [ ] Task: Verify accuracy against the existing bytecode tracing method
 - [ ] Task: Test with "Stack Too Deep" contracts to ensure resolution
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Reporting and Polish' (Protocol in workflow.md)

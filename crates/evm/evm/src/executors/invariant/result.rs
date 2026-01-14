@@ -30,6 +30,8 @@ pub struct InvariantFuzzTestResult {
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
     /// The coverage info collected during the invariant test runs.
     pub line_coverage: Option<HitMaps>,
+    /// The source coverage info collected during the invariant test runs.
+    pub source_coverage: Option<HitMaps>,
     /// Fuzzed selectors metrics collected during the invariant test runs.
     pub metrics: HashMap<String, InvariantMetrics>,
     /// NUmber of failed replays from persisted corpus.

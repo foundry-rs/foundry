@@ -11,8 +11,9 @@ use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
-    artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
+    Artifact, ArtifactId, Language, Project, ProjectCompileOutput, ProjectPathsConfig,
+    VYPER_EXTENSIONS, artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
+    compilers::multi::MultiCompilerLanguage,
 };
 use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
@@ -53,8 +54,7 @@ pub struct CoverageArgs {
     /// The path to output the report.
     ///
     /// If not specified, the report will be stored in the root of the project.
-    #[arg(
-        long,
+    #[arg(long,
         short,
         value_hint = ValueHint::FilePath,
         value_name = "PATH"
@@ -85,9 +85,12 @@ impl CoverageArgs {
     pub async fn run(mut self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
+        if self.instrument_source {
+            return self.run_instrumented(config, evm_opts).await;
+        }
+
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
@@ -107,6 +110,120 @@ impl CoverageArgs {
 
         sh_println!("Running tests...")?;
         self.collect(&paths.root, &output, report, config, evm_opts).await
+    }
+
+    /// Experimental source instrumentation mode.
+    async fn run_instrumented(mut self, mut config: Config, evm_opts: EvmOpts) -> Result<()> {
+        sh_println!("Experimental source instrumentation mode enabled.")?;
+
+        // 1. Setup temp directory
+        let temp_root =
+            std::env::temp_dir().join(format!("foundry-coverage-{}", std::process::id()));
+        if temp_root.exists() {
+            let _ = std::fs::remove_dir_all(&temp_root);
+        }
+        std::fs::create_dir_all(&temp_root)?;
+
+        // 2. Collect and instrument sources
+        let mut coverage_items = Vec::new();
+        let sess = solar::interface::Session::builder().with_stderr_emitter().build();
+
+        let mut source_paths: Vec<PathBuf> = Vec::new();
+        for dir in [&config.src, &config.test, &config.script] {
+            if dir.exists() {
+                for path in foundry_compilers::utils::source_files_iter(
+                    dir,
+                    MultiCompilerLanguage::FILE_EXTENSIONS,
+                ) {
+                    source_paths.push(path);
+                }
+            }
+        }
+
+        let mut path_to_id: HashMap<PathBuf, usize> = HashMap::default();
+        sess.enter_sequential(|| {
+            for (id, path) in source_paths.iter().enumerate() {
+                let rel_path = path.strip_prefix(&config.root)?;
+                let target_path = temp_root.join(rel_path);
+                if let Some(parent) = target_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                let content = std::fs::read_to_string(path)?;
+                let mut instrumented_content = content.clone();
+
+                let arena = solar::ast::Arena::new();
+                let mut parser = solar::parse::Parser::from_source_code(
+                    &sess,
+                    &arena,
+                    solar::interface::source_map::FileName::Real(path.clone()),
+                    content,
+                )
+                .map_err(|e| eyre::eyre!("Failed to create parser for {:?}: {:?}", path, e))?;
+
+                match parser.parse_file() {
+                    Ok(ast) => {
+                        let mut instrumenter =
+                            crate::coverage::instrument::Instrumenter::new(&sess, id as u32);
+                        let _ =
+                            solar::ast::visit::Visit::visit_source_unit(&mut instrumenter, &ast);
+                        instrumenter.instrument(&mut instrumented_content);
+                        coverage_items.extend(instrumenter.items);
+                    }
+                                                    Err(err) => {
+                                                        sh_warn!("Failed to parse {:?}: {:?}", path, err)?;
+                                                    }
+                                                }
+                                    
+                                                instrumented_content.push_str(&format!(
+                                                    "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256) external; }}",
+                                                    id
+                                                ));
+                                                std::fs::write(target_path, instrumented_content)?;
+                                                path_to_id.insert(path.clone(), id);
+                                            }            Ok::<(), eyre::Error>(())
+        })?;
+
+        // 3. Update config to point to temp root
+        let original_root = config.root.clone();
+        // Copy remappings and other important paths if they are relative to original root.
+        // ProjectCompiler will handle absolute paths.
+        config.root = temp_root.clone();
+        config.src = temp_root.join(config.src.strip_prefix(&original_root)?);
+        config.test = temp_root.join(config.test.strip_prefix(&original_root)?);
+        config.script = temp_root.join(config.script.strip_prefix(&original_root)?);
+
+        // 4. Build instrumented project
+        let (_project, output) = self.build(&config)?;
+
+        // 5. Prepare Report
+        let mut report = CoverageReport::default();
+        // Use the version from the first source in output
+        let version = output
+            .output()
+            .sources
+            .sources_with_version()
+            .next()
+            .map(|(_, _, v)| v.clone())
+            .unwrap_or_else(|| Version::new(0, 8, 0));
+
+        for (path, &id) in &path_to_id {
+            report.add_source(version.clone(), id, path.to_path_buf());
+        }
+
+        let analysis = SourceAnalysis::from_items(coverage_items);
+        report.add_analysis(version, analysis);
+
+        self.populate_reporters(&original_root);
+
+        sh_println!("Running tests...")?;
+        // We pass original_root so reporting works correctly relative to project root
+        self.collect(&original_root, &output, report, config, evm_opts).await?;
+
+        // 6. Cleanup
+        let _ = std::fs::remove_dir_all(&temp_root);
+
+        Ok(())
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -264,8 +381,18 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
-        let outcome =
-            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
+        let outcome = self
+            .test
+            .run_tests(
+                project_root,
+                config,
+                evm_opts,
+                output,
+                &filter,
+                !self.instrument_source,
+                self.instrument_source,
+            )
+            .await?;
 
         let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
 
@@ -273,7 +400,12 @@ impl CoverageArgs {
         let data = outcome.results.iter().flat_map(|(_, suite)| {
             let mut hits = Vec::new();
             for result in suite.test_results.values() {
-                let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
+                let hit_maps = if self.instrument_source {
+                    result.source_coverage.as_ref()
+                } else {
+                    result.line_coverage.as_ref()
+                };
+                let Some(hit_maps) = hit_maps else { continue };
                 for map in hit_maps.0.values() {
                     if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
                         hits.push((id, map, true));

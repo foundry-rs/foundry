@@ -824,6 +824,7 @@ impl<'a> FunctionRunner<'a> {
                     &mut self.result.logs,
                     &mut self.result.traces,
                     &mut self.result.line_coverage,
+                    &mut self.result.source_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
                     &self.tcfg.early_exit,
@@ -868,7 +869,7 @@ impl<'a> FunctionRunner<'a> {
             }
         };
         // Merge coverage collected during invariant run with test setup coverage.
-        self.result.merge_coverages(invariant_result.line_coverage);
+        self.result.merge_coverages(invariant_result.line_coverage, invariant_result.source_coverage);
 
         let mut counterexample = None;
         let success = invariant_result.error.is_none();
@@ -895,6 +896,7 @@ impl<'a> FunctionRunner<'a> {
                                 &mut self.result.logs,
                                 &mut self.result.traces,
                                 &mut self.result.line_coverage,
+                                &mut self.result.source_coverage,
                                 &mut self.result.deprecated_cheatcodes,
                                 progress.as_ref(),
                                 &self.tcfg.early_exit,
@@ -944,6 +946,7 @@ impl<'a> FunctionRunner<'a> {
                     &mut self.result.logs,
                     &mut self.result.traces,
                     &mut self.result.line_coverage,
+                    &mut self.result.source_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     &invariant_result.last_run_inputs,
                     show_solidity,

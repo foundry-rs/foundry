@@ -46,6 +46,8 @@ struct FuzzTestData {
     breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
     coverage: Option<HitMaps>,
+    // Stores source coverage information for all fuzz cases.
+    source_coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs
     // is false)
     logs: Vec<Log>,
@@ -216,6 +218,7 @@ impl FuzzedExecutor {
                         }
 
                         HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
+                        HitMaps::merge_opt(&mut test_data.source_coverage, case.source_coverage);
                         test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {
@@ -289,6 +292,7 @@ impl FuzzedExecutor {
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             line_coverage: test_data.coverage,
+            source_coverage: test_data.source_coverage,
             deprecated_cheatcodes: test_data.deprecated_cheatcodes,
             failed_corpus_replays: corpus_manager.failed_replays(),
         };
@@ -375,6 +379,7 @@ impl FuzzedExecutor {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
                 coverage: call.line_coverage,
+                source_coverage: call.source_coverage,
                 breakpoints,
                 logs: call.logs,
                 deprecated_cheatcodes,

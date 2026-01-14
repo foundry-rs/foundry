@@ -15,6 +15,8 @@ pub struct CaseOutcome {
     pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call.
     pub coverage: Option<HitMaps>,
+    /// The source coverage info collected during the call.
+    pub source_coverage: Option<HitMaps>,
     /// Breakpoints char pc map.
     pub breakpoints: Breakpoints,
     /// logs of a single fuzz test case.

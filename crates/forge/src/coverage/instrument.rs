@@ -74,7 +74,7 @@ impl<'ast> Instrumenter<'ast> {
     }
 
     fn inject_hit(&mut self, span: ast::Span, item_id: u32) {
-        let hit_call = format!("vm.coverageHit({});", item_id);
+        let hit_call = format!("VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({});", self.source_id, item_id);
         let injection_span = span.with_hi(span.lo());
         self.updates.push((injection_span, hit_call));
     }
@@ -84,7 +84,7 @@ impl<'ast> Instrumenter<'ast> {
     }
 
     fn wrap_with_hit(&mut self, span: ast::Span, item_id: u32) {
-        self.updates.push((span.with_hi(span.lo()), format!("{{ vm.coverageHit({}); ", item_id)));
+        self.updates.push((span.with_hi(span.lo()), format!("{{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}); ", self.source_id, item_id)));
         self.updates.push((span.with_lo(span.hi()), " }".to_string()));
     }
 
@@ -147,8 +147,11 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
 
         if let Some(block) = &func.body {
              // Inject hit at the start of function/modifier body
-            let start_span = block.first().map(|s| s.span).unwrap_or(func.header.span);
-            self.inject_hit(start_span, item_id);
+            let injection_span = block.first().map(|s| s.span).unwrap_or_else(|| {
+                let lo = block.span.lo() + BytePos(1);
+                Span::new(lo, lo)
+            });
+            self.inject_hit(injection_span, item_id);
         }
         self.walk_item_function(func)
     }
@@ -188,7 +191,7 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
                 if let Some(els) = els_opt {
                     self.inject_into_block_or_wrap(els, false_item_id);
                 } else {
-                    self.updates.push((stmt.span.with_lo(stmt.span.hi()), format!(" else {{ vm.coverageHit({}); }}", false_item_id)));
+                    self.updates.push((stmt.span.with_lo(stmt.span.hi()), format!(" else {{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}); }}", self.source_id, false_item_id)));
                 }
             }
             ast::StmtKind::For { init, cond, next, body } => {
@@ -306,7 +309,7 @@ mod tests {
             println!("Instrumented code:\n{}", content);
             
             // Basic assertions
-            assert!(content.contains("vm.coverageHit"));
+            assert!(content.contains("VmCoverage_0"));
             assert!(!content.contains("pure")); // pure should be removed
 
             // Check items were collected
