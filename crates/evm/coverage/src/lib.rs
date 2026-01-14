@@ -154,9 +154,8 @@ impl CoverageReport {
     pub fn add_source_hit_maps(&mut self, source_hits: &SourceHitMaps) -> Result<()> {
         for (&source_id, hit_map) in &source_hits.0 {
             for (item_id, hits) in hit_map.iter() {
-                // We need to find which version this source_id belongs to.
-                // Since source_id is per-compilation, and instrumented mode usually has one version,
-                // we'll look through all analyses.
+                // Since source_id is per-compilation, we look through all analyses to find
+                // the matching version.
                 for analysis in self.analyses.values_mut() {
                     let (base_id, items) = analysis.items_for_source(source_id as u32);
                     if !items.is_empty() {

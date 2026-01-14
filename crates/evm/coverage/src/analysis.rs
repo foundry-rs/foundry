@@ -601,8 +601,7 @@ impl SourceAnalysis {
                 }
             }
             
-            // We MUST NOT sort `items` here because their order corresponds to the IDs 
-            // injected into the source code. Append lines at the end.
+            // Append lines at the end to ensure they don't interfere with injected IDs.
             if map.len() <= source_id {
                 map.resize(source_id + 1, (u32::MAX, 0));
             }

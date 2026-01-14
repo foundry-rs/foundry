@@ -3,7 +3,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use revm::{
     context::ContextTr,
     inspector::JournalExt,
-    interpreter::{CallInputs, CallOutcome, Interpreter, InterpreterResult, InstructionResult},
+    interpreter::{CallInputs, CallOutcome, InterpreterResult, InstructionResult},
     Inspector,
 };
 
