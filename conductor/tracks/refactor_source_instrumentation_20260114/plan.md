@@ -1,9 +1,9 @@
 # Track Plan: Refactor Source Instrumentation for Main Repo Standards
 
-## Phase 1: Engine and AST Grooming
+## Phase 1: Engine and AST Grooming [checkpoint: 26bb4f9]
 - [x] Task: Refactor `Instrumenter` AST visitor for robust control flow and remove redundant comments (c190a74)
 - [x] Task: Clean up `analysis.rs` and `lib.rs` in `evm/coverage` for ID stability and idiomatic patterns (e5f40a6)
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Engine and AST Grooming' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Engine and AST Grooming' (Protocol in workflow.md) (26bb4f9)
 
 ## Phase 2: Pipeline Unification and CLI Grooming
 - [ ] Task: Unify `CoverageArgs::run` pipeline using `tempfile` and `ProjectPathsConfig`
