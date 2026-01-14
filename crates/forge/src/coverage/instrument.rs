@@ -74,7 +74,7 @@ impl<'ast> Instrumenter<'ast> {
     }
 
     fn inject_hit(&mut self, span: ast::Span, item_id: u32) {
-        let hit_call = format!("VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({});", self.source_id, item_id);
+        let hit_call = format!("VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}, {});", self.source_id, self.source_id, item_id);
         let injection_span = span.with_hi(span.lo());
         self.updates.push((injection_span, hit_call));
     }
@@ -84,7 +84,7 @@ impl<'ast> Instrumenter<'ast> {
     }
 
     fn wrap_with_hit(&mut self, span: ast::Span, item_id: u32) {
-        self.updates.push((span.with_hi(span.lo()), format!("{{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}); ", self.source_id, item_id)));
+        self.updates.push((span.with_hi(span.lo()), format!("{{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}, {}); ", self.source_id, self.source_id, item_id)));
         self.updates.push((span.with_lo(span.hi()), " }".to_string()));
     }
 
@@ -191,7 +191,7 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
                 if let Some(els) = els_opt {
                     self.inject_into_block_or_wrap(els, false_item_id);
                 } else {
-                    self.updates.push((stmt.span.with_lo(stmt.span.hi()), format!(" else {{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}); }}", self.source_id, false_item_id)));
+                    self.updates.push((stmt.span.with_lo(stmt.span.hi()), format!(" else {{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}, {}); }}", self.source_id, self.source_id, false_item_id)));
                 }
             }
             ast::StmtKind::For { init, cond, next, body } => {

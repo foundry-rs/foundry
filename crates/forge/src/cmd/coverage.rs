@@ -176,7 +176,7 @@ impl CoverageArgs {
                                                 }
                                     
                                                 instrumented_content.push_str(&format!(
-                                                    "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256) external; }}",
+                                                    "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256,uint256) external; }}",
                                                     id
                                                 ));
                                                 std::fs::write(target_path, instrumented_content)?;

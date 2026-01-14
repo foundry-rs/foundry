@@ -15,8 +15,8 @@ pub const CHEATCODE_ADDRESS: Address = Address::new([
     0xF3, 0x98, 0x9D, 0x68, 0xf6, 0x7F, 0x5b, 0x1D, 0xD1, 0x2D,
 ]);
 
-/// Selector for `coverageHit(uint256)`: `0xdc884051`
-pub const COVERAGE_HIT_SELECTOR: u32 = 0xdc884051;
+/// Selector for `coverageHit(uint256,uint256)`: `0xa46d5036`
+pub const COVERAGE_HIT_SELECTOR: u32 = 0xa46d5036;
 
 #[derive(Debug)]
 pub struct SourceCoverageCollector {
@@ -71,10 +71,12 @@ where
             if input_bytes.len() >= 4 {
                 let selector = u32::from_be_bytes(input_bytes[0..4].try_into().unwrap());
                 if selector == COVERAGE_HIT_SELECTOR {
-                    if input_bytes.len() >= 36 {
-                        let id_uint = U256::from_be_slice(&input_bytes[4..36]);
+                    if input_bytes.len() >= 68 {
+                        // let source_id_uint = U256::from_be_slice(&input_bytes[4..36]);
+                        let item_id_uint = U256::from_be_slice(&input_bytes[36..68]);
+                        
                         // Cast to u32/usize. Coverage IDs are usize.
-                        let id = id_uint.to::<u32>(); 
+                        let id = item_id_uint.to::<u32>(); 
                         
                         // The hit is attributed to the CURRENT contract which is executing.
                         // In `call`, the `interpreter` context from `step` belongs to the CALLER.
