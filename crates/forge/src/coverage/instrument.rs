@@ -1,34 +1,27 @@
+use foundry_evm::coverage::{CoverageItem, CoverageItemKind, SourceLocation};
 use solar::{
     ast::{self, visit::Visit},
-    interface::Session,
+    interface::{BytePos, Session, Span},
 };
-use std::ops::ControlFlow;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CoveragePointKind {
-    Statement,
-    Branch { branch_id: usize, path_id: usize },
-}
-
-#[derive(Debug, Clone)]
-pub struct CoveragePoint {
-    pub kind: CoveragePointKind,
-    pub span: ast::Span,
-}
+use std::{ops::{ControlFlow, Range}, sync::Arc};
 
 pub struct Instrumenter<'ast> {
-    pub points: Vec<CoveragePoint>,
+    pub source_id: u32,
+    pub session: &'ast Session,
+    pub items: Vec<CoverageItem>,
     pub updates: Vec<(ast::Span, String)>,
-    pub branch_counter: usize,
-    pub item_counter: usize,
+    pub branch_counter: u32,
+    pub item_counter: u32,
     pub skip_instrumentation: bool,
     _marker: std::marker::PhantomData<&'ast ()>,
 }
 
 impl<'ast> Instrumenter<'ast> {
-    pub fn new() -> Self {
+    pub fn new(session: &'ast Session, source_id: u32) -> Self {
         Self {
-            points: Vec::new(),
+            source_id,
+            session,
+            items: Vec::new(),
             updates: Vec::new(),
             branch_counter: 0,
             item_counter: 0,
@@ -37,12 +30,16 @@ impl<'ast> Instrumenter<'ast> {
         }
     }
 
-    pub fn instrument(&mut self, sess: &Session, content: &mut String) {
+    pub fn instrument(&mut self, content: &mut String) {
         if self.updates.is_empty() {
             return;
         }
 
-        let sf = sess.source_map().lookup_source_file(self.updates[0].0.lo());
+        // Safety: updates MUST be sorted by lo() descending to avoid index shifting issues?
+        // Actually, if we sort by lo() ascending, we need to track shift.
+        // My implementation uses shift.
+
+        let sf = self.session.source_map().lookup_source_file(self.updates[0].0.lo());
         let base = sf.start_pos.0;
 
         self.updates.sort_by_key(|(span, _)| span.lo());
@@ -53,30 +50,76 @@ impl<'ast> Instrumenter<'ast> {
             let start = ((lo.0 as i64) - shift) as usize;
             let end = ((hi.0 as i64) - shift) as usize;
 
+            if start > content.len() || end > content.len() {
+                continue; // Safety check
+            }
+
             content.replace_range(start..end, &new);
             shift += (end as i64 - start as i64) - (new.len() as i64);
         }
     }
 
-    fn next_item_id(&mut self) -> usize {
+    fn next_item_id(&mut self) -> u32 {
         let id = self.item_counter;
         self.item_counter += 1;
         id
     }
 
-    fn inject_hit(&mut self, span: ast::Span, item_id: usize) {
+    fn next_branch_id(&mut self) -> u32 {
+        let id = self.branch_counter;
+        self.branch_counter += 1;
+        id
+    }
+
+    fn inject_hit(&mut self, span: ast::Span, item_id: u32) {
         let hit_call = format!("vm.coverageHit({});", item_id);
         let injection_span = span.with_hi(span.lo());
         self.updates.push((injection_span, hit_call));
     }
 
-    fn inject_into_block_or_wrap(&mut self, stmt: &'ast ast::Stmt<'ast>, item_id: usize) {
+    fn inject_into_block_or_wrap(&mut self, stmt: &'ast ast::Stmt<'ast>, item_id: u32) {
         self.wrap_with_hit(stmt.span, item_id);
     }
 
-    fn wrap_with_hit(&mut self, span: ast::Span, item_id: usize) {
+    fn wrap_with_hit(&mut self, span: ast::Span, item_id: u32) {
         self.updates.push((span.with_hi(span.lo()), format!("{{ vm.coverageHit({}); ", item_id)));
         self.updates.push((span.with_lo(span.hi()), " }".to_string()));
+    }
+
+    fn push_item(&mut self, kind: CoverageItemKind, span: Span, hits: u32) {
+        let item = CoverageItem { kind, loc: self.source_location_for(span), hits };
+        self.items.push(item);
+    }
+
+    fn source_location_for(&self, mut span: Span) -> SourceLocation {
+        // Statements' ranges in the solc source map do not include the semicolon.
+        if let Ok(snippet) = self.session.source_map().span_to_snippet(span)
+            && let Some(stripped) = snippet.strip_suffix(';')
+        {
+            let stripped = stripped.trim_end();
+            let skipped = snippet.len() - stripped.len();
+            span = span.with_hi(span.hi() - BytePos::from_usize(skipped));
+        }
+
+        SourceLocation {
+            source_id: self.source_id as usize,
+            contract_name: Arc::from(""), // TODO: Pass contract name context
+            bytes: self.byte_range(span),
+            lines: self.line_range(span),
+        }
+    }
+
+    fn byte_range(&self, span: Span) -> Range<u32> {
+        let bytes_usize = self.session.source_map().span_to_source(span).unwrap().data;
+        bytes_usize.start as u32..bytes_usize.end as u32
+    }
+
+    fn line_range(&self, span: Span) -> Range<u32> {
+        let lines = self.session.source_map().span_to_lines(span).unwrap().data;
+        assert!(!lines.is_empty());
+        let first = lines.first().unwrap();
+        let last = lines.last().unwrap();
+        first.line_index as u32 + 1..last.line_index as u32 + 2
     }
 }
 
@@ -84,7 +127,6 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
     type BreakValue = ();
 
     fn visit_item_function(&mut self, func: &'ast ast::ItemFunction<'ast>) -> ControlFlow<Self::BreakValue> {
-        // Strip pure/view modifiers to allow vm.coverageHit (which is state-changing)
         if let Some(sm) = &func.header.state_mutability {
             let s = sm.to_string();
             if s == "pure" || s == "view" {
@@ -92,9 +134,12 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
             }
         }
 
+        let name = func.header.name.as_ref().map(|n| n.as_str()).unwrap_or("function");
+        let item_id = self.next_item_id();
+        self.push_item(CoverageItemKind::Function { name: name.into() }, func.header.span, 0);
+
         if let Some(block) = &func.body {
-            let item_id = self.next_item_id();
-            // Inject hit at the start of function/modifier body
+             // Inject hit at the start of function/modifier body
             let start_span = block.first().map(|s| s.span).unwrap_or(func.header.span);
             self.inject_hit(start_span, item_id);
         }
@@ -108,52 +153,50 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
 
         match &stmt.kind {
             ast::StmtKind::If(cond, then, els_opt) => {
-                let branch_id = self.branch_counter;
-                self.branch_counter += 1;
-
+                let branch_id = self.next_branch_id();
+                
                 // Hit for the 'if' check itself
                 let item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(cond.span.hi()), 0);
                 self.inject_hit(stmt.span.with_hi(cond.span.hi()), item_id);
 
                 // True path
                 let true_item_id = self.next_item_id();
-                self.points.push(CoveragePoint {
-                    kind: CoveragePointKind::Branch { branch_id, path_id: 0 },
-                    span: then.span,
-                });
+                self.push_item(
+                    CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
+                    then.span,
+                    0
+                );
                 self.inject_into_block_or_wrap(then, true_item_id);
 
                 // False path
                 let false_item_id = self.next_item_id();
-                self.points.push(CoveragePoint {
-                    kind: CoveragePointKind::Branch { branch_id, path_id: 1 },
-                    span: els_opt.as_ref().map(|e| e.span).unwrap_or(stmt.span),
-                });
+                let else_span = els_opt.as_ref().map(|e| e.span).unwrap_or(stmt.span);
+                self.push_item(
+                    CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode: false },
+                    else_span,
+                    0
+                );
+                
                 if let Some(els) = els_opt {
                     self.inject_into_block_or_wrap(els, false_item_id);
                 } else {
-                    // Implicit false branch. Add an 'else' block.
                     self.updates.push((stmt.span.with_lo(stmt.span.hi()), format!(" else {{ vm.coverageHit({}); }}", false_item_id)));
                 }
             }
             ast::StmtKind::For { init, cond, next, body } => {
                 let item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(body.span.lo()), 0);
                 self.inject_hit(stmt.span.with_hi(body.span.lo()), item_id);
                 
                 let body_item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, body.span, 0);
                 self.inject_into_block_or_wrap(body, body_item_id);
 
-                // Visit header components but skip their instrumentation
                 self.skip_instrumentation = true;
-                if let Some(init) = init {
-                    let _ = self.visit_stmt(init);
-                }
-                if let Some(cond) = cond {
-                    let _ = self.visit_expr(cond);
-                }
-                if let Some(next) = next {
-                    let _ = self.visit_expr(next);
-                }
+                if let Some(init) = init { let _ = self.visit_stmt(init); }
+                if let Some(cond) = cond { let _ = self.visit_expr(cond); }
+                if let Some(next) = next { let _ = self.visit_expr(next); }
                 self.skip_instrumentation = false;
 
                 let _ = self.visit_stmt(body);
@@ -161,9 +204,11 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
             }
             ast::StmtKind::While(cond, body) => {
                 let item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(cond.span.hi()), 0);
                 self.inject_hit(stmt.span.with_hi(cond.span.hi()), item_id);
                 
                 let body_item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, body.span, 0);
                 self.inject_into_block_or_wrap(body, body_item_id);
 
                 self.skip_instrumentation = true;
@@ -175,12 +220,15 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
             }
             ast::StmtKind::DoWhile(body, cond) => {
                 let item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(body.span.lo()), 0);
                 self.inject_hit(stmt.span.with_hi(body.span.lo()), item_id);
                 
                 let body_item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, body.span, 0);
                 self.inject_into_block_or_wrap(body, body_item_id);
                 
                 let cond_item_id = self.next_item_id();
+                self.push_item(CoverageItemKind::Statement, cond.span, 0);
                 self.inject_hit(cond.span, cond_item_id);
 
                 let _ = self.visit_stmt(body);
@@ -194,10 +242,7 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
             }
             _ => {
                 let item_id = self.next_item_id();
-                self.points.push(CoveragePoint {
-                    kind: CoveragePointKind::Statement,
-                    span: stmt.span,
-                });
+                self.push_item(CoverageItemKind::Statement, stmt.span, 0);
                 self.inject_hit(stmt.span, item_id);
             }
         }
@@ -247,15 +292,18 @@ mod tests {
                 }
             };
 
-            let mut instrumenter = Instrumenter::new();
+            let mut instrumenter = Instrumenter::new(&sess, 0);
             let _ = instrumenter.visit_source_unit(&ast);
-            instrumenter.instrument(&sess, &mut content);
+            instrumenter.instrument(&mut content);
 
             println!("Instrumented code:\n{}", content);
             
             // Basic assertions
             assert!(content.contains("vm.coverageHit"));
             assert!(!content.contains("pure")); // pure should be removed
+
+            // Check items were collected
+            assert!(!instrumenter.items.is_empty());
             
             solar::interface::Result::Ok(())
         });

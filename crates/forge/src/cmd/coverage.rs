@@ -69,6 +69,10 @@ pub struct CoverageArgs {
     #[arg(long)]
     exclude_tests: bool,
 
+    /// Whether to use the experimental source instrumentation engine.
+    #[arg(long, help_heading = "Experimental")]
+    instrument_source: bool,
+
     /// The coverage reporters to use. Constructed from the other fields.
     #[arg(skip)]
     reporters: Vec<Box<dyn CoverageReporter>>,
