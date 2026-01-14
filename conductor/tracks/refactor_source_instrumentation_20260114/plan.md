@@ -5,11 +5,11 @@
 - [x] Task: Clean up `analysis.rs` and `lib.rs` in `evm/coverage` for ID stability and idiomatic patterns (e5f40a6)
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Engine and AST Grooming' (Protocol in workflow.md) (26bb4f9)
 
-## Phase 2: Pipeline Unification and CLI Grooming
+## Phase 2: Pipeline Unification and CLI Grooming [checkpoint: 8614eef]
 - [x] Task: Unify `CoverageArgs::run` pipeline using `tempfile` and `ProjectPathsConfig` (095e2a4)
 - [x] Task: Groom `cmd/coverage.rs` for consistent indentation and idiomatic error handling (651927b)
 - [x] Task: Ensure all executor modifications (`fuzz`, `invariant`) are clean and idiomatic (e730588)
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Pipeline Unification and CLI Grooming' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Pipeline Unification and CLI Grooming' (Protocol in workflow.md) (8614eef)
 
 ## Phase 3: Final Standards Check
 - [ ] Task: Verify all tests in `coverage_instrumented.rs` pass with groomed code
