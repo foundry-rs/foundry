@@ -1615,3 +1615,60 @@ Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
 
 "#]]);
 });
+
+// Test that state is preserved across calls during invariant replay.
+// Regression test for commit 0584a581b which changed replay_run to use execute_tx
+// (which uses call_raw) instead of transact_raw, but forgot to add the commit() call.
+forgetest_init!(invariant_replay_state_preserved, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(123u32));
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+    });
+
+    prj.add_test(
+        "InvariantReplayState.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Handler is Test {
+    uint256 public counter;
+
+    function increment(uint256 amount) public {
+        amount = bound(amount, 1, 100);
+        uint256 before = counter;
+        counter += amount;
+        console.log("before:", before, "after:", counter);
+    }
+}
+
+contract InvariantReplayStateTest is Test {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+        targetContract(address(handler));
+    }
+
+    function invariant_counter_increases() public view {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With -vvv we see logs from replay. The "before" value of each call should
+    // match the "after" value from the previous call, proving state persists.
+    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_counter_increases() (runs: 1, calls: 5, reverts: 0)
+...
+Logs:
+  before: 0 after: 38
+  before: 38 after: 86
+  before: 86 after: 87
+  before: 87 after: 172
+  before: 172 after: 272
+...
+"#]]);
+});
