@@ -209,6 +209,7 @@ impl InvariantTest {
     }
 
     /// Merge current collected line coverage with the new coverage from last fuzzed call.
+    /// Merge current collected line coverage with the new coverage from last fuzzed call.
     fn merge_line_coverage(&mut self, new_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
     }
