@@ -160,13 +160,34 @@ impl CoverageReport {
                 for analysis in self.analyses.values_mut() {
                     let (base_id, items) = analysis.items_for_source(source_id as u32);
                     if !items.is_empty() {
-                        if let Some(item) = analysis.all_items_mut().get_mut((base_id + item_id) as usize) {
+                        if let Some(item) =
+                            analysis.all_items_mut().get_mut((base_id + item_id) as usize)
+                        {
                             item.hits += hits;
                         }
                     }
                 }
             }
         }
+
+        // Update Line items based on hits of other items on the same line.
+        for analysis in self.analyses.values_mut() {
+            let all_items = analysis.all_items_mut();
+            let mut line_hits: HashMap<(usize, u32), u32> = HashMap::default();
+            for item in all_items.iter().filter(|i| !matches!(i.kind, CoverageItemKind::Line)) {
+                if item.hits > 0 {
+                    *line_hits.entry((item.loc.source_id, item.loc.lines.start)).or_default() +=
+                        item.hits;
+                }
+            }
+
+            for item in all_items.iter_mut().filter(|i| matches!(i.kind, CoverageItemKind::Line)) {
+                if let Some(&hits) = line_hits.get(&(item.loc.source_id, item.loc.lines.start)) {
+                    item.hits = hits;
+                }
+            }
+        }
+
         Ok(())
     }
 

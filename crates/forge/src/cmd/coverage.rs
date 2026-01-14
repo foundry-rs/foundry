@@ -208,7 +208,8 @@ impl CoverageArgs {
             .unwrap_or_else(|| Version::new(0, 8, 0));
 
         for (path, &id) in &path_to_id {
-            report.add_source(version.clone(), id, path.to_path_buf());
+            let rel_path = path.strip_prefix(&original_root).unwrap_or(path);
+            report.add_source(version.clone(), id, rel_path.to_path_buf());
         }
 
         let analysis = SourceAnalysis::from_items(coverage_items);

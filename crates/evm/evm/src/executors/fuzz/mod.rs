@@ -12,7 +12,7 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::{RevertDecoder, SkipReason},
 };
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
     FuzzFixtures, FuzzTestResult,
@@ -47,7 +47,7 @@ struct FuzzTestData {
     // Stores coverage information for all fuzz cases.
     coverage: Option<HitMaps>,
     // Stores source coverage information for all fuzz cases.
-    source_coverage: Option<HitMaps>,
+    source_coverage: Option<SourceHitMaps>,
     // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs
     // is false)
     logs: Vec<Log>,
@@ -218,7 +218,7 @@ impl FuzzedExecutor {
                         }
 
                         HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
-                        HitMaps::merge_opt(&mut test_data.source_coverage, case.source_coverage);
+                        SourceHitMaps::merge_opt(&mut test_data.source_coverage, case.source_coverage);
                         test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {

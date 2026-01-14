@@ -585,12 +585,31 @@ impl SourceAnalysis {
         let mut map = Vec::new();
 
         for (source_id, mut items) in sorted_sources {
+            // Determine unique lines before adding Line items to avoid shifting IDs.
+            let mut all_lines: Vec<u32> = items.iter().map(|item| item.loc.lines.start).collect();
+            all_lines.sort_unstable();
+            all_lines.dedup();
+
+            let mut lines = Vec::new();
+            for &line in &all_lines {
+                if let Some(reference_item) = items.iter().find(|item| item.loc.lines.start == line) {
+                    lines.push(CoverageItem {
+                        kind: CoverageItemKind::Line,
+                        loc: reference_item.loc.clone(),
+                        hits: 0,
+                    });
+                }
+            }
+            
+            // We MUST NOT sort `items` here because their order corresponds to the IDs 
+            // injected into the source code. Append lines at the end.
             if map.len() <= source_id {
                 map.resize(source_id + 1, (u32::MAX, 0));
             }
 
-            map[source_id] = (final_items.len() as u32, items.len() as u32);
+            map[source_id] = (final_items.len() as u32, (items.len() + lines.len()) as u32);
             final_items.append(&mut items);
+            final_items.append(&mut lines);
         }
 
         Self { all_items: final_items, map }

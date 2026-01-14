@@ -14,6 +14,7 @@ mod compiler;
 mod config;
 mod context;
 mod coverage;
+mod coverage_instrumented;
 mod create;
 mod debug;
 mod doc;

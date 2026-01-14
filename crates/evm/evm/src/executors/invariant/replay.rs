@@ -5,7 +5,7 @@ use alloy_primitives::{Log, map::HashMap};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use foundry_evm_traces::{TraceKind, TraceMode, Traces, load_contracts};
 use indicatif::ProgressBar;
@@ -23,7 +23,7 @@ pub fn replay_run(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     line_coverage: &mut Option<HitMaps>,
-    source_coverage: &mut Option<HitMaps>,
+    source_coverage: &mut Option<SourceHitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
     show_solidity: bool,
@@ -41,7 +41,7 @@ pub fn replay_run(
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
         HitMaps::merge_opt(line_coverage, call_result.line_coverage);
-        HitMaps::merge_opt(source_coverage, call_result.source_coverage);
+        SourceHitMaps::merge_opt(source_coverage, call_result.source_coverage);
 
         // Identify newly generated contracts, if they exist.
         ided_contracts
@@ -99,7 +99,7 @@ pub fn replay_error(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     line_coverage: &mut Option<HitMaps>,
-    source_coverage: &mut Option<HitMaps>,
+    source_coverage: &mut Option<SourceHitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,

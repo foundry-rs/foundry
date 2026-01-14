@@ -11,6 +11,11 @@ use alloy_primitives::{
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
+use foundry_evm_core::{
+    ContextExt, Env, InspectorExt,
+    backend::{DatabaseExt, JournaledState},
+    evm::new_evm_with_inspector,
+};
 use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};

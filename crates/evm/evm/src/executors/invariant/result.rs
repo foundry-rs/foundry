@@ -7,7 +7,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use eyre::Result;
 use foundry_config::InvariantConfig;
 use foundry_evm_core::utils::StateChangeset;
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzedCases,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
@@ -31,7 +31,7 @@ pub struct InvariantFuzzTestResult {
     /// The coverage info collected during the invariant test runs.
     pub line_coverage: Option<HitMaps>,
     /// The source coverage info collected during the invariant test runs.
-    pub source_coverage: Option<HitMaps>,
+    pub source_coverage: Option<SourceHitMaps>,
     /// Fuzzed selectors metrics collected during the invariant test runs.
     pub metrics: HashMap<String, InvariantMetrics>,
     /// NUmber of failed replays from persisted corpus.

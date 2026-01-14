@@ -55,7 +55,7 @@ where
                         result: InterpreterResult {
                             result: InstructionResult::Return,
                             output: Bytes::new(),
-                            gas: revm::interpreter::Gas::new(0),
+                            gas: revm::interpreter::Gas::new(inputs.gas_limit),
                         },
                         memory_offset: inputs.return_memory_offset.clone(),
                         was_precompile_called: false,
