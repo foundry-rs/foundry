@@ -12,6 +12,6 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Pipeline Unification and CLI Grooming' (Protocol in workflow.md) (8614eef)
 
 ## Phase 3: Final Standards Check
-- [ ] Task: Verify all tests in `coverage_instrumented.rs` pass with groomed code
-- [ ] Task: Run `cargo fmt` and `cargo clippy` on modified crates only
+- [x] Task: Verify all tests in `coverage_instrumented.rs` pass with groomed code (22707f4)
+- [x] Task: Run `cargo fmt` and `cargo clippy` on modified crates only (651927b)
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Final Standards Check' (Protocol in workflow.md)
