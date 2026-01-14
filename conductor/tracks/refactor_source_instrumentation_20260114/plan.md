@@ -2,7 +2,7 @@
 
 ## Phase 1: Engine and AST Grooming
 - [x] Task: Refactor `Instrumenter` AST visitor for robust control flow and remove redundant comments (c190a74)
-- [ ] Task: Clean up `analysis.rs` and `lib.rs` in `evm/coverage` for ID stability and idiomatic patterns
+- [x] Task: Clean up `analysis.rs` and `lib.rs` in `evm/coverage` for ID stability and idiomatic patterns (e5f40a6)
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Engine and AST Grooming' (Protocol in workflow.md)
 
 ## Phase 2: Pipeline Unification and CLI Grooming
