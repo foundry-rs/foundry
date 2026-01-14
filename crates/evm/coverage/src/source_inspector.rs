@@ -18,11 +18,21 @@ pub const CHEATCODE_ADDRESS: Address = Address::new([
 /// Selector for `coverageHit(uint256)`: `0xdc884051`
 pub const COVERAGE_HIT_SELECTOR: u32 = 0xdc884051;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SourceCoverageCollector {
     current_map: NonNull<HitMap>,
     current_hash: B256,
     pub maps: HitMaps,
+}
+
+impl Clone for SourceCoverageCollector {
+    fn clone(&self) -> Self {
+        Self {
+            current_map: NonNull::dangling(),
+            current_hash: B256::ZERO,
+            maps: self.maps.clone(),
+        }
+    }
 }
 
 impl Default for SourceCoverageCollector {
