@@ -394,44 +394,48 @@ impl CoverageArgs {
             )
             .await?;
 
-        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
-
         // Add hit data to the coverage report
-        let data = outcome.results.iter().flat_map(|(_, suite)| {
-            let mut hits = Vec::new();
-            for result in suite.test_results.values() {
-                let hit_maps = if self.instrument_source {
-                    result.source_coverage.as_ref()
-                } else {
-                    result.line_coverage.as_ref()
-                };
-                let Some(hit_maps) = hit_maps else { continue };
-                for map in hit_maps.0.values() {
-                    if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
-                        hits.push((id, map, true));
-                    } else if let Some((id, _)) =
-                        known_contracts.find_by_creation_code(map.bytecode())
-                    {
-                        hits.push((id, map, false));
+        if self.instrument_source {
+            for (_, suite) in &outcome.results {
+                for result in suite.test_results.values() {
+                    if let Some(source_hits) = &result.source_coverage {
+                        report.add_source_hit_maps(source_hits)?;
                     }
                 }
             }
-            hits
-        });
+        } else {
+            let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
+            let data = outcome.results.iter().flat_map(|(_, suite)| {
+                let mut hits = Vec::new();
+                for result in suite.test_results.values() {
+                    let Some(hit_maps) = &result.line_coverage else { continue };
+                    for map in hit_maps.0.values() {
+                        if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
+                            hits.push((id, map, true));
+                        } else if let Some((id, _)) =
+                            known_contracts.find_by_creation_code(map.bytecode())
+                        {
+                            hits.push((id, map, false));
+                        }
+                    }
+                }
+                hits
+            });
 
-        for (artifact_id, map, is_deployed_code) in data {
-            if let Some(source_id) =
-                report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
-            {
-                report.add_hit_map(
-                    &ContractId {
-                        version: artifact_id.version.clone(),
-                        source_id,
-                        contract_name: artifact_id.name.as_str().into(),
-                    },
-                    map,
-                    is_deployed_code,
-                )?;
+            for (artifact_id, map, is_deployed_code) in data {
+                if let Some(source_id) =
+                    report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
+                {
+                    report.add_hit_map(
+                        &ContractId {
+                            version: artifact_id.version.clone(),
+                            source_id,
+                            contract_name: artifact_id.name.as_str().into(),
+                        },
+                        map,
+                        is_deployed_code,
+                    )?;
+                }
             }
         }
 

@@ -13,7 +13,7 @@ use eyre::Report;
 use foundry_common::{get_contract_name, get_file_name, shell};
 use foundry_evm::{
     core::Breakpoints,
-    coverage::HitMaps,
+    coverage::{HitMaps, SourceHitMaps},
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
@@ -425,7 +425,7 @@ pub struct TestResult {
 
     /// Raw source coverage info
     #[serde(skip)]
-    pub source_coverage: Option<HitMaps>,
+    pub source_coverage: Option<SourceHitMaps>,
 
     /// Labeled addresses
     #[serde(rename = "labeled_addresses")] // Backwards compatibility.
@@ -754,10 +754,10 @@ impl TestResult {
     pub fn merge_coverages(
         &mut self,
         other_line_coverage: Option<HitMaps>,
-        other_source_coverage: Option<HitMaps>,
+        other_source_coverage: Option<SourceHitMaps>,
     ) {
         HitMaps::merge_opt(&mut self.line_coverage, other_line_coverage);
-        HitMaps::merge_opt(&mut self.source_coverage, other_source_coverage);
+        SourceHitMaps::merge_opt(&mut self.source_coverage, other_source_coverage);
     }
 }
 
@@ -914,7 +914,7 @@ pub struct TestSetup {
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
     /// Source coverage info during setup.
-    pub source_coverage: Option<HitMaps>,
+    pub source_coverage: Option<SourceHitMaps>,
     /// Addresses of external libraries deployed during setup.
     pub deployed_libs: Vec<Address>,
 
@@ -942,9 +942,9 @@ impl TestSetup {
     pub fn merge_coverages(
         &mut self,
         other_line_coverage: Option<HitMaps>,
-        other_source_coverage: Option<HitMaps>,
+        other_source_coverage: Option<SourceHitMaps>,
     ) {
         HitMaps::merge_opt(&mut self.coverage, other_line_coverage);
-        HitMaps::merge_opt(&mut self.source_coverage, other_source_coverage);
+        SourceHitMaps::merge_opt(&mut self.source_coverage, other_source_coverage);
     }
 }

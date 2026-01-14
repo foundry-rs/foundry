@@ -11,12 +11,7 @@ use alloy_primitives::{
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
-use foundry_evm_core::{
-    ContextExt, Env, InspectorExt,
-    backend::{DatabaseExt, JournaledState},
-    evm::new_evm_with_inspector,
-};
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
@@ -290,7 +285,7 @@ pub struct InspectorData {
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
     pub line_coverage: Option<HitMaps>,
-    pub source_coverage: Option<HitMaps>,
+    pub source_coverage: Option<SourceHitMaps>,
     pub edge_coverage: Option<Vec<u8>>,
     pub cheatcodes: Option<Box<Cheatcodes>>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,

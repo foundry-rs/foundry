@@ -150,6 +150,26 @@ impl CoverageReport {
         Ok(())
     }
 
+    /// Processes data from a [`SourceHitMaps`] and sets hit counts for coverage items.
+    pub fn add_source_hit_maps(&mut self, source_hits: &SourceHitMaps) -> Result<()> {
+        for (&source_id, hit_map) in &source_hits.0 {
+            for (item_id, hits) in hit_map.iter() {
+                // We need to find which version this source_id belongs to.
+                // Since source_id is per-compilation, and instrumented mode usually has one version,
+                // we'll look through all analyses.
+                for analysis in self.analyses.values_mut() {
+                    let (base_id, items) = analysis.items_for_source(source_id as u32);
+                    if !items.is_empty() {
+                        if let Some(item) = analysis.all_items_mut().get_mut((base_id + item_id) as usize) {
+                            item.hits += hits;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Retains all the coverage items specified by `predicate`.
     ///
     /// This function should only be called after all the sources were used, otherwise, the output
@@ -210,6 +230,48 @@ impl DerefMut for HitMaps {
     }
 }
 
+/// A collection of source-level hit maps, keyed by source ID.
+#[derive(Clone, Debug, Default)]
+pub struct SourceHitMaps(pub HashMap<usize, HitMap>);
+
+impl SourceHitMaps {
+    /// Merges two `Option<SourceHitMaps>`.
+    pub fn merge_opt(a: &mut Option<Self>, b: Option<Self>) {
+        match (a, b) {
+            (_, None) => {}
+            (a @ None, Some(b)) => *a = Some(b),
+            (Some(a), Some(b)) => a.merge(b),
+        }
+    }
+
+    /// Merges two `SourceHitMaps`.
+    pub fn merge(&mut self, other: Self) {
+        for (source_id, other_map) in other.0 {
+            self.0.entry(source_id).and_modify(|m| m.merge(&other_map)).or_insert(other_map);
+        }
+    }
+
+    /// Merges two `SourceHitMaps`.
+    pub fn merged(mut self, other: Self) -> Self {
+        self.merge(other);
+        self
+    }
+}
+
+impl Deref for SourceHitMaps {
+    type Target = HashMap<usize, HitMap>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SourceHitMaps {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// Hit data for an address.
 ///
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
@@ -224,6 +286,12 @@ impl HitMap {
     #[inline]
     pub fn new(bytecode: Bytes) -> Self {
         Self { bytecode, hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
+    }
+
+    /// Create a new empty hitmap without bytecode.
+    #[inline]
+    pub fn empty() -> Self {
+        Self { bytecode: Bytes::new(), hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
     }
 
     /// Returns the bytecode.
