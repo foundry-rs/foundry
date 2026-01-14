@@ -296,8 +296,22 @@ mod tests {
     }
     function foo(uint x) public m {
         uint y = x + 1;
-        if (y > 10) {
+        if (y > 10) { y = 0; } else if (y > 5) { y = 1; } else { y = 2; }
+        if (y == 20) { y = 0; } else { y = 1; }
+        if (y == 30) { y = 0; } if (y == 40) { y = 1; } else { y = 2; }
+        if (y == 50) { y = 0; } else if (y == 60) { y = 1; }
+        if (y < 0) {
             y = 0;
+        } else {
+            y = 1;
+        }
+        if (y > 100)
+        {
+            y = 100;
+        }
+        else
+        {
+            y = y;
         }
         while (y < 5) {
             y++;
