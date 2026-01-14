@@ -7,7 +7,7 @@ use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionErr
 use revm::{
     DatabaseCommit, Inspector,
     context::{
-        BlockEnv, TxEnv,
+        BlockEnv, CfgEnv, TxEnv,
         result::{EVMError, ExecResultAndState, ExecutionResult, ResultAndState},
     },
     handler::PrecompileProvider,
@@ -345,13 +345,13 @@ where
 /// Maps [`EvmEnv<OpSpecId>`] to [`EvmEnv`].
 fn map_op_env(env: EvmEnv<OpSpecId>) -> EvmEnv {
     let eth_spec_id = env.spec_id().into_eth_spec();
-    let cfg = env.cfg_env.with_spec(eth_spec_id);
+    let cfg = CfgEnv::new_with_spec(eth_spec_id).with_chain_id(env.cfg_env.chain_id);
     EvmEnv { cfg_env: cfg, block_env: env.block_env }
 }
 
 /// Maps [`EvmEnv<MonadSpecId>`] to [`EvmEnv`].
 fn map_monad_env(env: EvmEnv<MonadSpecId>) -> EvmEnv {
     let eth_spec_id = env.spec_id().into_eth_spec();
-    let cfg = env.cfg_env.with_spec(eth_spec_id);
+    let cfg = CfgEnv::new_with_spec(eth_spec_id).with_chain_id(env.cfg_env.chain_id);
     EvmEnv { cfg_env: cfg, block_env: env.block_env }
 }

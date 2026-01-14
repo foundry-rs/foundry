@@ -7,7 +7,10 @@ use std::{
 };
 
 use alloy_consensus::{BlockBody, Header};
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
+use alloy_primitives::{
+    Address, B256, Bytes, U256, keccak256,
+    map::{AddressMap, HashMap},
+};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
@@ -37,7 +40,7 @@ use crate::mem::storage::MinedTransaction;
 
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
     }
 
@@ -60,7 +63,7 @@ impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
 where
     &'a T: DatabaseRef<Error = DatabaseError>,
 {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         T::maybe_as_full_db(self)
     }
 
@@ -168,6 +171,7 @@ pub trait Db:
                         Some(Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)))
                     },
                     nonce,
+                    account_id: None,
                 },
             );
 
@@ -237,7 +241,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
 }
 
 impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.cache.accounts)
     }
 
@@ -345,7 +349,7 @@ impl DatabaseRef for StateDb {
 }
 
 impl MaybeFullDatabase for StateDb {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         self.0.maybe_as_full_db()
     }
 

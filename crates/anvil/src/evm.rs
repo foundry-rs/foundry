@@ -136,7 +136,7 @@ mod tests {
             chain.operator_fee_scalar = Some(U256::from(0));
         }
 
-        let op_cfg = op_env.evm_env.cfg_env.clone().with_spec(op_spec);
+        let op_cfg = CfgEnv::new_with_spec(op_spec).with_chain_id(op_env.evm_env.cfg_env.chain_id);
         let op_evm_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(EmptyDB::default());
@@ -187,8 +187,9 @@ mod tests {
             networks: NetworkConfigs::with_monad(),
         };
 
-        let monad_cfg: monad_revm::MonadCfgEnv =
-            monad_env.evm_env.cfg_env.clone().with_spec(monad_spec).into();
+        let monad_cfg: monad_revm::MonadCfgEnv = CfgEnv::new_with_spec(monad_spec)
+            .with_chain_id(monad_env.evm_env.cfg_env.chain_id)
+            .into();
         let monad_evm_context = MonadContext {
             journaled_state: {
                 let mut journal = Journal::new(EmptyDB::default());

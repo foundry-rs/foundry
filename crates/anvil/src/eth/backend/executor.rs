@@ -45,7 +45,7 @@ use monad_revm::MonadContext;
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, Inspector,
-    context::{Block as RevmBlock, Cfg, TxEnv},
+    context::{Block as RevmBlock, Cfg, CfgEnv, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,
@@ -501,16 +501,14 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
 {
     if env.networks.is_optimism() {
-        let evm_env = EvmEnv::new(
-            env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS),
-            env.evm_env.block_env.clone(),
-        );
+        let cfg = CfgEnv::new_with_spec(op_revm::OpSpecId::ISTHMUS)
+            .with_chain_id(env.evm_env.cfg_env.chain_id);
+        let evm_env = EvmEnv::new(cfg, env.evm_env.block_env.clone());
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
     } else if env.networks.is_monad() {
-        let evm_env = EvmEnv::new(
-            env.evm_env.cfg_env.clone().with_spec(monad_revm::MonadSpecId::default()),
-            env.evm_env.block_env.clone(),
-        );
+        let cfg = CfgEnv::new_with_spec(monad_revm::MonadSpecId::default())
+            .with_chain_id(env.evm_env.cfg_env.chain_id);
+        let evm_env = EvmEnv::new(cfg, env.evm_env.block_env.clone());
         EitherEvm::Monad(
             MonadEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector),
         )

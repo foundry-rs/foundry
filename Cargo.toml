@@ -291,13 +291,13 @@ op-alloy-flz = "0.13.1"
 ## alloy-evm
 alloy-evm = "0.25.1"
 alloy-op-evm = "0.25.1"
-alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
+alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "integration/revm-merge-a31fa98efe2208af326cf70f59d374165e0df363" }
 
 # revm
 revm = { version = "33.1.0", default-features = false }
 revm-inspectors = { version = "0.33.0", features = ["serde"] }
 op-revm = { version = "14.1.0", default-features = false }
-monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
+monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "merge-a31fa98efe2208af326cf70f59d374165e0df363" }
 
 ## cli
 anstream = "0.6"
@@ -442,26 +442,28 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-alloy-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
-alloy-op-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
-alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
+alloy-evm = { git = "https://github.com/haythemsellami/evm", branch = "integration/revm-merge-a31fa98efe2208af326cf70f59d374165e0df363" }
+alloy-op-evm = { git = "https://github.com/haythemsellami/evm", branch = "integration/revm-merge-a31fa98efe2208af326cf70f59d374165e0df363" }
+alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "integration/revm-merge-a31fa98efe2208af326cf70f59d374165e0df363" }
 # alloy-evm = { path = "../Alloy/evm/crates/evm" }
 # alloy-op-evm = { path = "../Alloy/evm/crates/op-evm" }
 # alloy-monad-evm = { path = "../Alloy/evm/crates/monad-evm" }
 
 ## revm
-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
-op-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
-monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
+revm = { git = "https://github.com/haythemsellami/revm", branch = "merge-a31fa98efe2208af326cf70f59d374165e0df363" }
+op-revm = { git = "https://github.com/haythemsellami/revm", branch = "merge-a31fa98efe2208af326cf70f59d374165e0df363" }
+monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "merge-a31fa98efe2208af326cf70f59d374165e0df363" }
 # revm = { path = "../revm/crates/revm" }
 # op-revm = { path = "../revm/crates/op-revm" }
 # monad-revm = { path = "../revm/crates/monad-revm" }
-# revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "0aaab71" }
+# revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", branch = "main" }
+revm-inspectors = { git = "https://github.com/haythemsellami/revm-inspectors", branch = "main" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "main" }
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b4299fc" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", branch = "main" }
+foundry-fork-db = { git = "https://github.com/haythemsellami/foundry-fork-db", branch = "main" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
