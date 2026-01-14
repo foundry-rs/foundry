@@ -6,7 +6,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Engine and AST Grooming' (Protocol in workflow.md) (26bb4f9)
 
 ## Phase 2: Pipeline Unification and CLI Grooming
-- [ ] Task: Unify `CoverageArgs::run` pipeline using `tempfile` and `ProjectPathsConfig`
+- [x] Task: Unify `CoverageArgs::run` pipeline using `tempfile` and `ProjectPathsConfig` (095e2a4)
 - [ ] Task: Groom `cmd/coverage.rs` for consistent indentation and idiomatic error handling
 - [ ] Task: Ensure all executor modifications (`fuzz`, `invariant`) are clean and idiomatic
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Pipeline Unification and CLI Grooming' (Protocol in workflow.md)
