@@ -8,7 +8,7 @@
 ## Phase 2: Pipeline Unification and CLI Grooming
 - [x] Task: Unify `CoverageArgs::run` pipeline using `tempfile` and `ProjectPathsConfig` (095e2a4)
 - [x] Task: Groom `cmd/coverage.rs` for consistent indentation and idiomatic error handling (651927b)
-- [ ] Task: Ensure all executor modifications (`fuzz`, `invariant`) are clean and idiomatic
+- [x] Task: Ensure all executor modifications (`fuzz`, `invariant`) are clean and idiomatic (e730588)
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Pipeline Unification and CLI Grooming' (Protocol in workflow.md)
 
 ## Phase 3: Final Standards Check
