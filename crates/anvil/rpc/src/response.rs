@@ -45,7 +45,7 @@ pub enum ResponseResult {
 impl ResponseResult {
     pub fn success<S>(content: S) -> Self
     where
-        S: Serialize + 'static,
+        S: Serialize,
     {
         Self::Success(serde_json::to_value(&content).unwrap())
     }
