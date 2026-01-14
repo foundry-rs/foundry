@@ -3,7 +3,13 @@ use solar::{
     ast::{self, visit::Visit},
     interface::{BytePos, Session, Span},
 };
-use std::{ops::{ControlFlow, Range}, sync::Arc};
+use std::{
+    ops::{ControlFlow, Range},
+    sync::Arc,
+};
+
+/// The address used for coverage hit calls.
+const COVERAGE_ADDRESS: &str = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D";
 
 pub struct Instrumenter<'ast> {
     pub source_id: u32,
@@ -37,10 +43,6 @@ impl<'ast> Instrumenter<'ast> {
             return;
         }
 
-        // Safety: updates MUST be sorted by lo() descending to avoid index shifting issues?
-        // Actually, if we sort by lo() ascending, we need to track shift.
-        // My implementation uses shift.
-
         let sf = self.session.source_map().lookup_source_file(self.updates[0].0.lo());
         let base = sf.start_pos.0;
 
@@ -53,7 +55,7 @@ impl<'ast> Instrumenter<'ast> {
             let end = ((hi.0 as i64) - shift) as usize;
 
             if start > content.len() || end > content.len() {
-                continue; // Safety check
+                continue;
             }
 
             content.replace_range(start..end, &new);
@@ -74,9 +76,11 @@ impl<'ast> Instrumenter<'ast> {
     }
 
     fn inject_hit(&mut self, span: ast::Span, item_id: u32) {
-        let hit_call = format!("VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}, {});", self.source_id, self.source_id, item_id);
-        let injection_span = span.with_hi(span.lo());
-        self.updates.push((injection_span, hit_call));
+        let hit_call = format!(
+            "VmCoverage_{}({}).coverageHit({}, {});",
+            self.source_id, COVERAGE_ADDRESS, self.source_id, item_id
+        );
+        self.updates.push((span.with_hi(span.lo()), hit_call));
     }
 
     fn inject_into_block_or_wrap(&mut self, stmt: &'ast ast::Stmt<'ast>, item_id: u32) {
@@ -84,7 +88,13 @@ impl<'ast> Instrumenter<'ast> {
     }
 
     fn wrap_with_hit(&mut self, span: ast::Span, item_id: u32) {
-        self.updates.push((span.with_hi(span.lo()), format!("{{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}, {}); ", self.source_id, self.source_id, item_id)));
+        self.updates.push((
+            span.with_hi(span.lo()),
+            format!(
+                "{{ VmCoverage_{}({}).coverageHit({}, {}); ",
+                self.source_id, COVERAGE_ADDRESS, self.source_id, item_id
+            ),
+        ));
         self.updates.push((span.with_lo(span.hi()), " }".to_string()));
     }
 
@@ -146,7 +156,6 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
         self.push_item(CoverageItemKind::Function { name: name.into() }, func.header.span, 0);
 
         if let Some(block) = &func.body {
-             // Inject hit at the start of function/modifier body
             let injection_span = block.first().map(|s| s.span).unwrap_or_else(|| {
                 let lo = block.span.lo() + BytePos(1);
                 Span::new(lo, lo)
@@ -164,59 +173,67 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
         match &stmt.kind {
             ast::StmtKind::If(cond, then, els_opt) => {
                 let branch_id = self.next_branch_id();
-                
-                // Hit for the 'if' check itself
+
                 let item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(cond.span.hi()), 0);
                 self.inject_hit(stmt.span.with_hi(cond.span.hi()), item_id);
 
-                // True path
                 let true_item_id = self.next_item_id();
                 self.push_item(
                     CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                     then.span,
-                    0
+                    0,
                 );
                 self.inject_into_block_or_wrap(then, true_item_id);
 
-                // False path
                 let false_item_id = self.next_item_id();
                 let else_span = els_opt.as_ref().map(|e| e.span).unwrap_or(stmt.span);
                 self.push_item(
                     CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode: false },
                     else_span,
-                    0
+                    0,
                 );
-                
+
                 if let Some(els) = els_opt {
                     self.inject_into_block_or_wrap(els, false_item_id);
                 } else {
-                    self.updates.push((stmt.span.with_lo(stmt.span.hi()), format!(" else {{ VmCoverage_{}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).coverageHit({}, {}); }}", self.source_id, self.source_id, false_item_id)));
+                    self.updates.push((
+                        stmt.span.with_lo(stmt.span.hi()),
+                        format!(
+                            " else {{ VmCoverage_{}({}).coverageHit({}, {}); }}",
+                            self.source_id, COVERAGE_ADDRESS, self.source_id, false_item_id
+                        ),
+                    ));
                 }
             }
             ast::StmtKind::For { init, cond, next, body } => {
                 let item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(body.span.lo()), 0);
                 self.inject_hit(stmt.span.with_hi(body.span.lo()), item_id);
-                
+
                 let body_item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, body.span, 0);
                 self.inject_into_block_or_wrap(body, body_item_id);
 
                 self.skip_instrumentation = true;
-                if let Some(init) = init { let _ = self.visit_stmt(init); }
-                if let Some(cond) = cond { let _ = self.visit_expr(cond); }
-                if let Some(next) = next { let _ = self.visit_expr(next); }
+                if let Some(init) = init {
+                    let _ = self.visit_stmt(init);
+                }
+                if let Some(cond) = cond {
+                    let _ = self.visit_expr(cond);
+                }
+                if let Some(next) = next {
+                    let _ = self.visit_expr(next);
+                }
                 self.skip_instrumentation = false;
 
-                let _ = self.visit_stmt(body);
-                return ControlFlow::Continue(());
+                return self.visit_stmt(body);
             }
             ast::StmtKind::While(cond, body) => {
                 let item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(cond.span.hi()), 0);
                 self.inject_hit(stmt.span.with_hi(cond.span.hi()), item_id);
-                
+
                 let body_item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, body.span, 0);
                 self.inject_into_block_or_wrap(body, body_item_id);
@@ -225,18 +242,17 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
                 let _ = self.visit_expr(cond);
                 self.skip_instrumentation = false;
 
-                let _ = self.visit_stmt(body);
-                return ControlFlow::Continue(());
+                return self.visit_stmt(body);
             }
             ast::StmtKind::DoWhile(body, cond) => {
                 let item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, stmt.span.with_hi(body.span.lo()), 0);
                 self.inject_hit(stmt.span.with_hi(body.span.lo()), item_id);
-                
+
                 let body_item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, body.span, 0);
                 self.inject_into_block_or_wrap(body, body_item_id);
-                
+
                 let cond_item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, cond.span, 0);
                 self.inject_hit(cond.span, cond_item_id);
@@ -247,9 +263,7 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
                 self.skip_instrumentation = false;
                 return ControlFlow::Continue(());
             }
-            ast::StmtKind::Block(_) | ast::StmtKind::UncheckedBlock(_) => {
-                // Walk into blocks
-            }
+            ast::StmtKind::Block(_) | ast::StmtKind::UncheckedBlock(_) => {}
             _ => {
                 let item_id = self.next_item_id();
                 self.push_item(CoverageItemKind::Statement, stmt.span, 0);
