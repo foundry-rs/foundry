@@ -145,7 +145,9 @@ impl CoverageArgs {
                     solar::interface::source_map::FileName::Real(path.clone()),
                     content,
                 )
-                .map_err(|e| eyre::eyre!("Failed to create parser for {:?}: {:?}", path, e))?;
+                .map_err(|e| {
+                    eyre::eyre!("Failed to create parser for {:?}: {:?}", path, e)
+                })?;
 
                 match parser.parse_file() {
                     Ok(ast) => {
@@ -165,7 +167,8 @@ impl CoverageArgs {
                     "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256,uint256) external; }}",
                     id
                 ));
-                std::fs::write(target_path, instrumented_content)?;
+                std::fs::write(&target_path, instrumented_content)
+                    .map_err(|e| eyre::eyre!("Failed to write instrumented file to {:?}: {}", target_path, e))?;
                 path_to_id.insert(path.clone(), id);
             }
             Ok::<(), eyre::Error>(())
@@ -233,8 +236,8 @@ impl CoverageArgs {
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
 
-        // If `via_ir` is enabled in the config, we should use `ir_minimum` to avoid stack too deep errors
-        // and because disabling it (which happens if `ir_minimum` is false) might break compilation.
+        // If `via_ir` is enabled in the config, we should use `ir_minimum` to avoid stack too deep
+        // errors and because disabling it might break compilation.
         let use_ir_minimum = self.ir_minimum || config.via_ir;
 
         if use_ir_minimum {
@@ -377,7 +380,7 @@ impl CoverageArgs {
 
         // Add hit data to the coverage report
         if self.instrument_source {
-            for (_, suite) in &outcome.results {
+            for suite in outcome.results.values() {
                 for result in suite.test_results.values() {
                     if let Some(source_hits) = &result.source_coverage {
                         report.add_source_hit_maps(source_hits)?;
@@ -386,7 +389,7 @@ impl CoverageArgs {
             }
         } else {
             let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
-            let data = outcome.results.iter().flat_map(|(_, suite)| {
+            let data = outcome.results.values().flat_map(|suite| {
                 let mut hits = Vec::new();
                 for result in suite.test_results.values() {
                     let Some(hit_maps) = &result.line_coverage else { continue };
