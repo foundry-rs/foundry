@@ -60,6 +60,8 @@ pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 }
 
 pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
+    // Disable show_progress by default in tests to avoid polluting snapshot output.
+    test.write_config(Config { show_progress: false, ..Default::default() });
     let cmd = test.forge_command();
     (test, cmd)
 }
