@@ -7,7 +7,7 @@ use crate::{
     },
     mem::state::state_root,
 };
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::backend::{BlockchainDb, DatabaseResult, StateSnapshot};
 use revm::{
@@ -106,7 +106,7 @@ impl Db for MemDb {
 }
 
 impl MaybeFullDatabase for MemDb {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.inner.cache.accounts)
     }
 
