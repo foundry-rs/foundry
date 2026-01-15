@@ -4,7 +4,10 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
-    mutation::{MutationHandler, MutationReporter, MutationsSummary},
+    mutation::{
+        MutationHandler, MutationReporter, MutationsSummary, mutant::MutationResult,
+        run_mutations_parallel,
+    },
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -214,6 +217,11 @@ pub struct TestArgs {
     /// Only run tests in contracts matching the specified regex pattern.
     #[arg(long, value_name = "REGEX", requires = "mutate")]
     pub mutate_contract: Option<regex::Regex>,
+
+    /// Number of parallel workers for mutation testing.
+    /// Defaults to the number of CPU cores.
+    #[arg(long, value_name = "JOBS", requires = "mutate")]
+    pub mutation_jobs: Option<usize>,
 }
 
 impl TestArgs {
@@ -477,11 +485,16 @@ impl TestArgs {
                 self.mutate.as_ref().unwrap().clone()
             };
 
-            sh_println!("Running mutation tests...").unwrap();
+            // Determine number of parallel workers
+            let num_workers = self.mutation_jobs.unwrap_or_else(|| {
+                std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+            });
+
+            sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
             let mut mutation_summary = MutationsSummary::new();
 
             for path in mutate_paths {
-                sh_println!("Running mutation tests for {}", path.display()).unwrap();
+                sh_println!("Running mutation tests for {}", path.display())?;
 
                 // Check if this file has already been tested and if the build id is the
                 // same - if so, just add the mutants to the summary
@@ -497,23 +510,15 @@ impl TestArgs {
                 // If we have cached results for these mutations and build id, use them and skip
                 // running tests
                 if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id) {
+                    sh_println!("  Using cached results for {} mutants", prior.len())?;
                     for (mutant, status) in prior {
                         match status {
-                            crate::mutation::mutant::MutationResult::Dead => {
-                                handler.add_dead_mutant(mutant)
-                            }
-                            crate::mutation::mutant::MutationResult::Alive => {
-                                handler.add_survived_mutant(mutant)
-                            }
-                            crate::mutation::mutant::MutationResult::Invalid => {
-                                handler.add_invalid_mutant(mutant)
-                            }
-                            crate::mutation::mutant::MutationResult::Skipped => {
-                                handler.add_skipped_mutant(mutant)
-                            }
+                            MutationResult::Dead => handler.add_dead_mutant(mutant),
+                            MutationResult::Alive => handler.add_survived_mutant(mutant),
+                            MutationResult::Invalid => handler.add_invalid_mutant(mutant),
+                            MutationResult::Skipped => handler.add_skipped_mutant(mutant),
                         }
                     }
-                    // Add this handler's results to the overall summary
                     mutation_summary.merge(handler.get_report());
                     continue;
                 }
@@ -521,161 +526,64 @@ impl TestArgs {
                 // Load survived spans for adaptive mutation testing
                 handler.retrieve_survived_spans(&build_id);
 
-                // Try cached mutants first
+                // Generate or load cached mutants
                 let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
                     ms
                 } else {
-                    // No cache match: generate fresh mutants (will use survived spans filter)
                     handler.generate_ast().await;
                     handler.mutations.clone()
                 };
 
-                // Sort mutations by span: group by start position, then test wider spans first
-                // This maximizes effectiveness of adaptive mutation testing:
-                // - If a wide span survives, all nested child spans can be skipped
-                // - Sort by (lo ascending, hi descending) to group spans and test parents first
+                if mutants.is_empty() {
+                    sh_println!("  No mutants generated for {}", path.display())?;
+                    continue;
+                }
+
+                // Sort mutations by span for optimal adaptive testing
                 mutants.sort_by(|a, b| {
                     let lo_cmp = a.span.lo().0.cmp(&b.span.lo().0);
                     if lo_cmp != std::cmp::Ordering::Equal {
                         lo_cmp
                     } else {
-                        // Same start: wider span (larger hi) comes first
                         b.span.hi().0.cmp(&a.span.hi().0)
                     }
                 });
 
-                // Debug: Analyze mutation distribution by span
-                let mut span_counts = std::collections::HashMap::new();
-                for m in &mutants {
-                    *span_counts.entry((m.span.lo().0, m.span.hi().0)).or_insert(0) += 1;
-                }
-                let spans_with_multiple =
-                    span_counts.iter().filter(|(_, count)| **count > 1).count();
-                let total_mutations_at_multi_spans: usize = span_counts
-                    .iter()
-                    .filter(|(_, count)| **count > 1)
-                    .map(|(_, count)| *count)
-                    .sum();
-                let mut output = String::new();
-                writeln!(output, "\n[Adaptive Debug] Mutation distribution:")?;
-                writeln!(output, "  Total mutations: {}", mutants.len())?;
-                writeln!(output, "  Unique spans: {}", span_counts.len())?;
-                writeln!(
-                    output,
-                    "  Spans with >1 mutation: {spans_with_multiple} (these are candidates for skipping)"
+                sh_println!("  Generated {} mutants, testing in parallel...", mutants.len())?;
+
+                // Run mutations in parallel using isolated workspaces
+                let results = run_mutations_parallel(
+                    mutants.clone(),
+                    path.clone(),
+                    handler.src.clone(),
+                    config.clone(),
+                    evm_opts.clone(),
+                    env.clone(),
+                    num_workers,
                 )?;
-                writeln!(
-                    output,
-                    "  Mutations at multi-mutation spans: {total_mutations_at_multi_spans}"
-                )?;
-                writeln!(
-                    output,
-                    "  Max mutations at any span: {}",
-                    span_counts.values().max().unwrap_or(&0)
-                )?;
-                let _ = sh_println!("{}", output);
 
-                // Accumulate per-mutant results for persistence
-                let mut results_vec: Vec<(
-                    crate::mutation::mutant::Mutant,
-                    crate::mutation::mutant::MutationResult,
-                )> = Vec::with_capacity(mutants.len());
-
-                for (i, mutant) in mutants.iter().enumerate() {
-                    // Adaptive mutation: Skip if this span already has a surviving mutation
-                    if handler.should_skip_span(mutant.span) {
-                        sh_println!(
-                            "Skipping mutant {} of {} (adaptive: span already has surviving mutation)",
-                            i + 1,
-                            mutants.len()
-                        )?;
-                        handler.add_skipped_mutant(mutant.clone());
-                        results_vec.push((
-                            mutant.clone(),
-                            crate::mutation::mutant::MutationResult::Skipped,
-                        ));
-                        continue;
-                    }
-
-                    sh_println!("Testing mutant {} of {}", i + 1, mutants.len())?;
-
-                    handler.generate_mutated_solidity(mutant);
-                    let new_filter = self.filter(&config)?;
-                    let compiler = ProjectCompiler::new()
-                        .dynamic_test_linking(config.dynamic_test_linking)
-                        .quiet(true);
-
-                    match compiler.compile(&config.project()?) {
-                        Ok(compile_output) => {
-                            let mut runner = MultiContractRunnerBuilder::new(config.clone())
-                                .set_debug(false)
-                                .initial_balance(evm_opts.initial_balance)
-                                .evm_spec(config.evm_spec_id())
-                                .sender(evm_opts.sender)
-                                .with_fork(evm_opts.clone().get_fork(&config, env.clone()))
-                                .build::<MultiCompiler>(
-                                    &compile_output,
-                                    env.clone(),
-                                    evm_opts.clone(),
-                                )?;
-
-                            let results: BTreeMap<String, SuiteResult> =
-                                runner.test_collect(&new_filter)?;
-
-                            let outcome =
-                                TestOutcome::new(Some(runner), results, self.allow_failure);
-                            if outcome.failures().count() > 0 {
-                                handler.add_dead_mutant(mutant.clone());
-                                results_vec.push((
-                                    mutant.clone(),
-                                    crate::mutation::mutant::MutationResult::Dead,
-                                ));
-                            } else {
-                                // Mutation survived! Mark this span to skip similar mutations
-                                let span_key = (mutant.span.lo().0, mutant.span.hi().0);
-                                let remaining_at_span = mutants
-                                    .iter()
-                                    .skip(i + 1)
-                                    .filter(|m| {
-                                        (m.span.lo().0, m.span.hi().0) == span_key
-                                            || handler.should_skip_span(m.span)
-                                    })
-                                    .count();
-                                sh_println!(
-                                    "[Adaptive] Mutation {} SURVIVED at span {:?} - will skip {} remaining mutations",
-                                    i + 1,
-                                    span_key,
-                                    remaining_at_span
-                                )?;
-                                handler.mark_span_survived(mutant.span);
-                                handler.add_survived_mutant(mutant.clone());
-                                results_vec.push((
-                                    mutant.clone(),
-                                    crate::mutation::mutant::MutationResult::Alive,
-                                ));
-                            }
+                // Collect results for caching
+                let mut results_vec = Vec::with_capacity(results.len());
+                for result in results {
+                    results_vec.push((result.mutant.clone(), result.result.clone()));
+                    match result.result {
+                        MutationResult::Dead => handler.add_dead_mutant(result.mutant),
+                        MutationResult::Alive => {
+                            handler.mark_span_survived(result.mutant.span);
+                            handler.add_survived_mutant(result.mutant);
                         }
-                        Err(_) => {
-                            handler.add_invalid_mutant(mutant.clone());
-                            results_vec.push((
-                                mutant.clone(),
-                                crate::mutation::mutant::MutationResult::Invalid,
-                            ));
-                        }
+                        MutationResult::Invalid => handler.add_invalid_mutant(result.mutant),
+                        MutationResult::Skipped => handler.add_skipped_mutant(result.mutant),
                     }
                 }
 
-                handler.restore_original_source();
-
-                // If we generated fresh mutants, persist them for this build id
-                if !handler.mutations.is_empty() && !build_id.is_empty() {
-                    let _ = handler.persist_cached_mutants(&build_id, &handler.mutations);
+                // Persist results for caching
+                if !mutants.is_empty() && !build_id.is_empty() {
+                    let _ = handler.persist_cached_mutants(&build_id, &mutants);
                     let _ = handler.persist_cached_results(&build_id, &results_vec);
-                    // Persist survived spans for adaptive mutation testing
                     let _ = handler.persist_survived_spans(&build_id);
                 }
 
-                // Add this handler's results to the overall summary
                 mutation_summary.merge(handler.get_report());
             }
 

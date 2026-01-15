@@ -24,6 +24,7 @@ impl MutatorRegistry {
         registry
     }
 
+    #[cfg(test)]
     pub fn new_with_mutators(mutators: Vec<Box<dyn Mutator>>) -> Self {
         Self { mutators }
     }

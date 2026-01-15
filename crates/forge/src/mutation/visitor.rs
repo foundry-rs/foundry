@@ -1,4 +1,6 @@
-use crate::mutation::{mutant::OwnedLiteral, mutators::Mutator};
+use crate::mutation::mutant::OwnedLiteral;
+#[cfg(test)]
+use crate::mutation::mutators::Mutator;
 use solar::ast::{Expr, Span, VariableDefinition, visit::Visit};
 use std::{ops::ControlFlow, path::PathBuf};
 
@@ -36,6 +38,7 @@ impl MutantVisitor {
     }
 
     /// Use only a set of mutators
+    #[cfg(test)]
     pub fn new_with_mutators(path: PathBuf, mutators: Vec<Box<dyn Mutator>>) -> Self {
         Self {
             mutation_to_conduct: Vec::new(),

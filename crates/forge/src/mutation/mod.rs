@@ -1,6 +1,7 @@
 pub mod mutant;
 mod mutators;
 mod reporter;
+pub mod runner;
 mod visitor;
 
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
@@ -17,6 +18,9 @@ use crate::mutation::{
 };
 
 pub use crate::mutation::reporter::MutationReporter;
+pub use crate::mutation::runner::{
+    MutantTestResult, ParallelMutationRunner, run_mutations_parallel,
+};
 
 use crate::result::TestOutcome;
 use solar::ast::{Span, visit::Visit};
@@ -181,7 +185,7 @@ impl SurvivedSpans {
 
 pub struct MutationHandler {
     contract_to_mutate: PathBuf,
-    src: Arc<String>,
+    pub src: Arc<String>,
     pub mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
     report: MutationsSummary,

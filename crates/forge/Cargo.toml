@@ -95,6 +95,7 @@ opener = "0.8"
 # soldeer
 soldeer-commands.workspace = true
 quick-junit = "0.5.1"
+tempfile.workspace = true
 
 [dev-dependencies]
 alloy-hardforks.workspace = true

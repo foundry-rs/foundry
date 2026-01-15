@@ -1,7 +1,7 @@
 use crate::mutation::{Session, mutators::Mutator, visitor::MutantVisitor};
-use solar_parse::{
-    Parser,
+use solar::{
     ast::{Arena, interface::source_map::FileName},
+    parse::Parser,
 };
 
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub trait MutatorTester {
             vec![Box::new(mutator)],
         );
 
-        let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
+        let _ = sess.enter(|| -> solar::interface::Result<()> {
             let arena = Arena::new();
 
             let mut _parser = Parser::from_lazy_source_code(

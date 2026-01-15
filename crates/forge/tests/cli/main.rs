@@ -24,6 +24,7 @@ mod install;
 mod json;
 mod lint;
 mod multi_script;
+mod mutation;
 mod precompiles;
 mod script;
 mod soldeer;
