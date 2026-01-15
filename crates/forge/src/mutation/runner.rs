@@ -211,11 +211,8 @@ pub fn run_mutations_parallel(
 
     // Get relative path of source within project - MUST be relative for safety
     // Canonicalize paths to handle relative vs absolute path comparisons
-    let source_abs = if source_path.is_absolute() {
-        source_path
-    } else {
-        config.root.join(&source_path)
-    };
+    let source_abs =
+        if source_path.is_absolute() { source_path } else { config.root.join(&source_path) };
 
     let source_relative = source_abs
         .strip_prefix(&config.root)

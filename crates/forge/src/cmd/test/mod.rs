@@ -450,7 +450,7 @@ impl TestArgs {
         }
 
         // All test have been run once before reaching this point
-        if self.mutate.is_some() {
+        if let Some(mutate) = &self.mutate {
             // check outcome here, stop if any test failed
             // @todo rather set non-allowed failed tests in config and ensure_ok() here?
             // @todo other checks: no fork (or just exclude based on clap arg?)
@@ -479,14 +479,14 @@ impl TestArgs {
                                 .is_some_and(|(id, _)| contract_pattern.is_match(&id.name))
                     })
                     .collect()
-            } else if self.mutate.as_ref().unwrap().is_empty() {
+            } else if mutate.is_empty() {
                 // If --mutate is passed without arguments, use all Solidity files
                 source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                     .filter(|entry| entry.is_sol() && !entry.is_sol_test())
                     .collect()
             } else {
                 // If --mutate is passed with arguments, use those paths
-                self.mutate.as_ref().unwrap().clone()
+                mutate.clone()
             };
 
             // Determine number of parallel workers

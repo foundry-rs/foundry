@@ -10,6 +10,7 @@ pub struct MutatorTestCase<'a> {
     /// eg `let input = "function f() { x = 1; }"` to test x = 1
     pub input: &'a str,
     /// All the mutations expected for this input, using this mutator
+    #[expect(dead_code)]
     pub expected_mutations: Option<Vec<&'static str>>,
 }
 

@@ -17,9 +17,9 @@ use crate::mutation::{
     visitor::MutantVisitor,
 };
 
-pub use crate::mutation::reporter::MutationReporter;
-pub use crate::mutation::runner::{
-    MutantTestResult, ParallelMutationRunner, run_mutations_parallel,
+pub use crate::mutation::{
+    reporter::MutationReporter,
+    runner::{MutantTestResult, ParallelMutationRunner, run_mutations_parallel},
 };
 
 use crate::result::TestOutcome;

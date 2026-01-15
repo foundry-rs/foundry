@@ -68,6 +68,7 @@ ignored_error_codes = [
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
+mutation_dir = "cache/mutation"
 show_progress = false
 ffi = false
 allow_internal_expect_revert = false
@@ -1232,6 +1233,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "no_match_path": null,
   "no_match_coverage": null,
   "test_failures_file": "cache/test-failures",
+  "mutation_dir": "cache/mutation",
   "threads": null,
   "show_progress": false,
   "fuzz": {
