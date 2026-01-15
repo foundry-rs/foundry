@@ -456,12 +456,14 @@ monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
 # revm = { path = "../revm/crates/revm" }
 # op-revm = { path = "../revm/crates/op-revm" }
 # monad-revm = { path = "../revm/crates/monad-revm" }
-# revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "0aaab71" }
+# revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", branch = "main" }
+revm-inspectors = { git = "https://github.com/haythemsellami/revm-inspectors", branch = "main" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "main" }
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b4299fc" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", branch = "main" }
+foundry-fork-db = { git = "https://github.com/haythemsellami/foundry-fork-db", branch = "main" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
