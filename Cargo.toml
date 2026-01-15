@@ -183,7 +183,7 @@ walkdir.opt-level = 3
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
 alloy-sol-macro-expander.opt-level = "s"
-figment.opt-level = "s"
+figment2.opt-level = "s"
 foundry-compilers-artifacts-solc.opt-level = "s"
 foundry-config.opt-level = "s"
 html5ever.opt-level = "s"
@@ -386,7 +386,7 @@ dunce = "1"
 evm-disassembler = "0.6"
 evmole = "0.8"
 eyre = "0.6"
-figment = "0.10"
+figment = { package = "figment2", version = "0.11" }
 futures = { version = "0.3", default-features = false }
 hyper = "1.8"
 indicatif = "0.18"
