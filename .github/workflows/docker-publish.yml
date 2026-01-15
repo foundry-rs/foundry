@@ -24,7 +24,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
   # Keep in sync with `release.yml`.
-  RUST_PROFILE: maxperf
+  RUST_PROFILE: dist
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
 
 jobs:

@@ -92,7 +92,7 @@ strip = "none"
 [profile.bench]
 inherits = "profiling"
 
-[profile.maxperf]
+[profile.dist]
 inherits = "release"
 lto = "fat"
 codegen-units = 1
@@ -182,18 +182,62 @@ walkdir.opt-level = 3
 
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
-alloy-sol-macro-expander.opt-level = "z"
-figment2.opt-level = "z"
-foundry-compilers-artifacts-solc.opt-level = "z"
-foundry-config.opt-level = "z"
-html5ever.opt-level = "z"
-mdbook-driver.opt-level = "z"
-prettyplease.opt-level = "z"
-protobuf.opt-level = "z"
-pulldown-cmark.opt-level = "z"
-syn-solidity.opt-level = "z"
-syn.opt-level = "z"
-trezor-client.opt-level = "z"
+alloy-sol-macro-expander.opt-level = "s"
+figment2.opt-level = "s"
+foundry-compilers-artifacts-solc.opt-level = "s"
+foundry-config.opt-level = "s"
+html5ever.opt-level = "s"
+mdbook-driver.opt-level = "s"
+prettyplease.opt-level = "s"
+protobuf.opt-level = "s"
+pulldown-cmark.opt-level = "s"
+syn-solidity.opt-level = "s"
+syn.opt-level = "s"
+trezor-client.opt-level = "s"
+
+# Networking stack (not perf-critical for CLI tools).
+reqwest.opt-level = "s"
+hyper.opt-level = "s"
+hyper-util.opt-level = "s"
+h2.opt-level = "s"
+rustls.opt-level = "s"
+tower.opt-level = "s"
+tower-http.opt-level = "s"
+
+# Doc generation / templating.
+mdbook-core.opt-level = "s"
+mdbook-html.opt-level = "s"
+font-awesome-as-a-crate.opt-level = "s"
+handlebars.opt-level = "s"
+
+# Watch mode.
+watchexec.opt-level = "s"
+watchexec-events.opt-level = "s"
+watchexec-signals.opt-level = "s"
+watchexec-supervisor.opt-level = "s"
+
+# Soldeer package manager.
+soldeer-commands.opt-level = "s"
+soldeer-core.opt-level = "s"
+
+# Parsing / editing (not perf-sensitive in CLI).
+toml_edit.opt-level = "s"
+toml.opt-level = "s"
+
+# Block explorers / verification.
+foundry-block-explorers.opt-level = "s"
+
+# Misc CLI dependencies.
+clap_builder.opt-level = "s"
+clap_complete.opt-level = "s"
+comfy-table.opt-level = "s"
+indicatif.opt-level = "s"
+dialoguer.opt-level = "s"
+ratatui.opt-level = "s"
+crossterm.opt-level = "s"
+
+# Alloy JSON (parsing, not hot path).
+alloy-json-abi.opt-level = "s"
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
