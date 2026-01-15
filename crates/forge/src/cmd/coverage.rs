@@ -237,35 +237,33 @@ impl CoverageArgs {
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
 
-        // If `via_ir` is enabled in the config, we should use `ir_minimum` to avoid stack too deep
-        // errors and because disabling it might break compilation.
-        let use_ir_minimum = self.ir_minimum || config.via_ir;
-
-        if use_ir_minimum {
-            if !self.ir_minimum && config.via_ir {
-                sh_warn!(
-                    "Enabling `--ir-minimum` automatically because `via_ir` is enabled in configuration.\n\
-                     This enables `viaIR` with minimum optimization, which can result in inaccurate source mappings.\n\
-                     See more: https://github.com/foundry-rs/foundry/issues/3357"
-                )?;
-            } else {
-                sh_warn!(
-                    "`--ir-minimum` enables `viaIR` with minimum optimization, \
-                     which can result in inaccurate source mappings.\n\
-                     Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
-                     Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
-                     See more: https://github.com/foundry-rs/foundry/issues/3357"
-                )?;
-            }
-        } else {
-            sh_warn!(
-                "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
-                 If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
-                 enables `viaIR` with minimum optimization resolving most of the errors"
-            )?;
-        }
-
-        config.disable_optimizations(&mut project, use_ir_minimum);
+        // let use_ir_minimum = self.ir_minimum || config.via_ir;
+        //
+        // if use_ir_minimum {
+        //     if !self.ir_minimum && config.via_ir {
+        //         sh_warn!(
+        //             "Enabling `--ir-minimum` automatically because `via_ir` is enabled in configuration.\n\
+        //              This enables `viaIR` with minimum optimization, which can result in inaccurate source mappings.\n\
+        //              See more: https://github.com/foundry-rs/foundry/issues/3357"
+        //         )?;
+        //     } else {
+        //         sh_warn!(
+        //             "`--ir-minimum` enables `viaIR` with minimum optimization, \
+        //              which can result in inaccurate source mappings.\n\
+        //              Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
+        //              Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
+        //              See more: https://github.com/foundry-rs/foundry/issues/3357"
+        //         )?;
+        //     }
+        // } else {
+        //     sh_warn!(
+        //         "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
+        //          If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
+        //          enables `viaIR` with minimum optimization resolving most of the errors"
+        //     )?;
+        // }
+        //
+        // config.disable_optimizations(&mut project, use_ir_minimum);
 
         let output = ProjectCompiler::default()
             .compile(&project)?
