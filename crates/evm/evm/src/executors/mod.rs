@@ -910,14 +910,6 @@ impl RawCallResult {
         }
     }
 
-    /// Unpacks an execution result.
-    pub fn from_execution_result(r: Result<Self, ExecutionErr>) -> (Self, Option<String>) {
-        match r {
-            Ok(r) => (r, None),
-            Err(e) => (e.raw, Some(e.reason)),
-        }
-    }
-
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
         if let Some(reason) = SkipReason::decode(&self.result) {
@@ -1135,29 +1127,30 @@ impl FuzzTestTimer {
 #[derive(Clone, Debug)]
 pub struct EarlyExit {
     /// Shared atomic flag set to `true` when a failure occurs or ctrl-c received.
-    /// None if running without fail-fast or show-progress.
-    inner: Option<Arc<AtomicBool>>,
+    inner: Arc<AtomicBool>,
+    /// Whether to exit early on test failure (fail-fast mode).
+    fail_fast: bool,
 }
 
 impl EarlyExit {
-    pub fn new(early_exit: bool) -> Self {
-        Self { inner: early_exit.then_some(Arc::new(AtomicBool::new(false))) }
+    pub fn new(fail_fast: bool) -> Self {
+        Self { inner: Arc::new(AtomicBool::new(false)), fail_fast }
     }
 
-    /// Returns `true` if fail-fast is enabled.
-    pub fn is_enabled(&self) -> bool {
-        self.inner.is_some()
-    }
-
-    /// Sets the exit flag. Used by other tests to stop early.
-    pub fn record_exit(&self) {
-        if let Some(early_exit) = &self.inner {
-            early_exit.store(true, Ordering::Relaxed);
+    /// Records a test failure. Only triggers early exit if fail-fast mode is enabled.
+    pub fn record_failure(&self) {
+        if self.fail_fast {
+            self.inner.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// Records a Ctrl-C interrupt. Always triggers early exit.
+    pub fn record_ctrl_c(&self) {
+        self.inner.store(true, Ordering::Relaxed);
     }
 
     /// Whether tests should stop and exit early.
     pub fn should_stop(&self) -> bool {
-        self.inner.as_ref().map(|flag| flag.load(Ordering::Relaxed)).unwrap_or(false)
+        self.inner.load(Ordering::Relaxed)
     }
 }

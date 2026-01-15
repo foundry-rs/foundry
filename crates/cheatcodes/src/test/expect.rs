@@ -793,8 +793,12 @@ fn expect_emit(
 pub(crate) fn handle_expect_emit(
     state: &mut Cheatcodes,
     log: &alloy_primitives::Log,
-    interpreter: &mut Interpreter,
-) {
+    mut interpreter: Option<&mut Interpreter>,
+) -> Option<&'static str> {
+    // This function returns an optional string indicating a failure reason.
+    // If the string is `Some`, it indicates that the expectation failed with the provided reason.
+    let mut should_fail = None;
+
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
@@ -806,7 +810,7 @@ pub(crate) fn handle_expect_emit(
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
     if state.expected_emits.iter().all(|(expected, _)| expected.found) {
-        return;
+        return should_fail;
     }
 
     // Check count=0 expectations against this log - fail immediately if violated
@@ -818,14 +822,19 @@ pub(crate) fn handle_expect_emit(
             // Check revert address 
             && (expected_emit.address.is_none() || expected_emit.address == Some(log.address))
         {
-            // This event was emitted but we expected it NOT to be (count=0)
-            // Fail immediately
-            interpreter.bytecode.set_action(InterpreterAction::new_return(
-                InstructionResult::Revert,
-                Error::encode("log emitted 1 time, expected 0"),
-                interpreter.gas,
-            ));
-            return;
+            if let Some(interpreter) = &mut interpreter {
+                // This event was emitted but we expected it NOT to be (count=0)
+                // Fail immediately
+                interpreter.bytecode.set_action(InterpreterAction::new_return(
+                    InstructionResult::Revert,
+                    Error::encode("log emitted but expected 0 times"),
+                    interpreter.gas,
+                ));
+            } else {
+                should_fail = Some("log emitted but expected 0 times");
+            }
+
+            return should_fail;
         }
     }
 
@@ -850,7 +859,7 @@ pub(crate) fn handle_expect_emit(
     if !should_fill_logs
         && state.expected_emits.iter().all(|(emit, _)| emit.found || emit.count == 0)
     {
-        return;
+        return should_fail;
     }
 
     let (mut event_to_fill_or_check, mut count_map) = state
@@ -867,14 +876,17 @@ pub(crate) fn handle_expect_emit(
             state
                 .expected_emits
                 .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
-        } else {
+        } else if let Some(interpreter) = &mut interpreter {
             interpreter.bytecode.set_action(InterpreterAction::new_return(
                 InstructionResult::Revert,
                 Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
                 interpreter.gas,
             ));
+        } else {
+            should_fail = Some("use vm.expectEmitAnonymous to match anonymous events");
         }
-        return;
+
+        return should_fail;
     };
 
     // Increment/set `count` for `log.address` and `log.data`
@@ -953,6 +965,8 @@ pub(crate) fn handle_expect_emit(
         // appear.
         state.expected_emits.push_front((event_to_fill_or_check, count_map));
     }
+
+    should_fail
 }
 
 /// Handles expected emits specified by the `expectEmit` cheatcodes.

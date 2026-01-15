@@ -1,16 +1,16 @@
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
+use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder, Transaction};
 use alloy_eips::{
     Typed2718,
     eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN},
 };
-use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, U256, b256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -62,7 +62,7 @@ async fn can_send_eip4844_transaction_fork() {
     let bob = accounts[1];
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
-    let sidecar = sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
 
     let tx = TransactionRequest::default()
         .with_from(alice)
@@ -89,7 +89,7 @@ async fn can_send_eip4844_transaction_eth_send_transaction() {
     let bob = accounts[1];
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
-    let sidecar = sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
 
     let tx = TransactionRequest::default()
         .with_from(alice)
@@ -417,7 +417,7 @@ async fn can_get_blobs_by_versioned_hash() {
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
 
-    let sidecar = sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
@@ -455,7 +455,7 @@ async fn can_get_blobs_by_tx_hash() {
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
 
-    let sidecar = sidecar.build().unwrap();
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)

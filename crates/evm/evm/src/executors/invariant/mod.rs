@@ -331,7 +331,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
+        fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
@@ -341,7 +341,7 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         let (mut invariant_test, mut corpus_manager) =
-            self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
+            self.prepare_test(&invariant_contract, fuzz_fixtures, fuzz_state)?;
 
         // Start timer for this invariant test.
         let mut runs = 0;
@@ -395,16 +395,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Execute call from the randomly generated sequence without committing state.
                 // State is committed only if call is not a magic assume.
-                let mut call_result = current_run
-                    .executor
-                    .call_raw(
-                        tx.sender,
-                        tx.call_details.target,
-                        tx.call_details.calldata.clone(),
-                        U256::ZERO,
-                    )
-                    .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-
+                let mut call_result = execute_tx(&mut current_run.executor, tx)?;
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
                     invariant_test.record_metrics(tx, call_result.reverted, discarded);
@@ -561,29 +552,19 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
+        fuzz_state: EvmFuzzState,
     ) -> Result<(InvariantTest, CorpusManager)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
             self.select_contracts_and_senders(invariant_contract.address)?;
 
-        // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let inspector = self.executor.inspector();
-        let fuzz_state = EvmFuzzState::new(
-            self.executor.backend().mem_db(),
-            self.config.dictionary,
-            deployed_libs,
-            inspector.analysis.as_ref(),
-            inspector.paths_config(),
-        );
-
         // Creates the invariant strategy.
         let strategy = invariant_strat(
             fuzz_state.clone(),
             targeted_senders,
             targeted_contracts.clone(),
-            self.config.dictionary.dictionary_weight,
+            self.config.clone(),
             fuzz_fixtures.clone(),
         )
         .no_shrink();
@@ -1036,4 +1017,30 @@ pub(crate) fn call_invariant_function(
     let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success(address, &mut call_result, false);
     Ok((call_result, success))
+}
+
+/// Calls the invariant selector and returns call result and if succeeded.
+/// Updates the block number and block timestamp if configured.
+pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result<RawCallResult> {
+    // Apply pre-call block adjustments.
+    if let Some(warp) = tx.warp {
+        executor.env_mut().evm_env.block_env.timestamp += warp;
+    }
+    if let Some(roll) = tx.roll {
+        executor.env_mut().evm_env.block_env.number += roll;
+    }
+
+    // Perform the raw call.
+    let mut call_result = executor
+        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), U256::ZERO)
+        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+
+    // Propagate block adjustments to call result which will be committed.
+    if let Some(warp) = tx.warp {
+        call_result.env.evm_env.block_env.timestamp += warp;
+    }
+    if let Some(roll) = tx.roll {
+        call_result.env.evm_env.block_env.number += roll;
+    }
+    Ok(call_result)
 }

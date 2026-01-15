@@ -9,7 +9,9 @@ use alloy_chains::{
     NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
+use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::precompiles::PrecompilesMap;
+use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, map::AddressHashMap};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -20,7 +22,7 @@ pub mod celo;
 #[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize, PartialEq)]
 pub struct NetworkConfigs {
     /// Enable Optimism network features.
-    #[arg(help_heading = "Networks", long, visible_alias = "optimism", conflicts_with = "celo")]
+    #[arg(help_heading = "Networks", long, conflicts_with = "celo")]
     // Skipped from configs (forge) as there is no feature to be added yet.
     #[serde(skip)]
     optimism: bool,
@@ -45,6 +47,23 @@ impl NetworkConfigs {
 
     pub fn is_optimism(&self) -> bool {
         self.optimism
+    }
+
+    /// Returns the base fee parameters for the configured network.
+    ///
+    /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
+    /// at the given timestamp, otherwise returns pre-Canyon parameters.
+    pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
+        if self.is_optimism() {
+            let op_hardforks = OpChainHardforks::op_mainnet();
+            if op_hardforks.is_canyon_active_at_timestamp(timestamp) {
+                BaseFeeParams::optimism_canyon()
+            } else {
+                BaseFeeParams::optimism()
+            }
+        } else {
+            BaseFeeParams::ethereum()
+        }
     }
 
     pub fn bypass_prevrandao(&self, chain_id: u64) -> bool {

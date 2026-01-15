@@ -46,7 +46,8 @@ struct FuzzTestData {
     breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
     coverage: Option<HitMaps>,
-    // Stores logs for all fuzz cases
+    // Stores logs for all fuzz cases (when show_logs is true) or just the last run (when show_logs
+    // is false)
     logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
     deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
@@ -98,21 +99,23 @@ impl FuzzedExecutor {
         &mut self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
-        deployed_libs: &[Address],
+        state: EvmFuzzState,
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
     ) -> Result<FuzzTestResult> {
+        let state = &state;
         // Stores the fuzz test execution data.
         let mut test_data = FuzzTestData::default();
-        let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), state),
         ]
         .prop_map(move |calldata| BasicTxDetails {
+            warp: None,
+            roll: None,
             sender: Default::default(),
             call_details: CallDetails { target: Default::default(), calldata },
         });
@@ -168,9 +171,14 @@ impl FuzzedExecutor {
                     last_metrics_report = Instant::now();
                 };
 
+                if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut()
+                    && let Some(seed) = self.config.seed
+                {
+                    cheats.set_seed(seed.wrapping_add(U256::from(test_data.runs)));
+                }
                 test_data.runs += 1;
 
-                match corpus_manager.new_input(&mut self.runner, &state, func) {
+                match corpus_manager.new_input(&mut self.runner, state, func) {
                     Ok(input) => input,
                     Err(err) => {
                         test_data.failure = Some(TestCaseError::fail(format!(
@@ -198,8 +206,13 @@ impl FuzzedExecutor {
                             test_data.breakpoints.replace(case.breakpoints);
                         }
 
+                        // Always store logs from the last run in test_data.logs for display at
+                        // verbosity >= 2. When show_logs is true,
+                        // accumulate all logs. When false, only keep the last run's logs.
                         if self.config.show_logs {
                             test_data.logs.extend(case.logs);
+                        } else {
+                            test_data.logs = case.logs;
                         }
 
                         HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
@@ -257,6 +270,12 @@ impl FuzzedExecutor {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
+        // test_data.logs already contains the appropriate logs:
+        // - For failed tests: logs from the counterexample
+        // - For successful tests with show_logs=true: all logs from all runs
+        // - For successful tests with show_logs=false: logs from the last run only
+        let result_logs = test_data.logs;
+
         let mut result = FuzzTestResult {
             first_case: test_data.first_case.unwrap_or_default(),
             gas_by_case: test_data.gas_by_case,
@@ -264,7 +283,7 @@ impl FuzzedExecutor {
             skipped: false,
             reason: None,
             counterexample: None,
-            logs: test_data.logs,
+            logs: result_logs,
             labels: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
@@ -321,6 +340,8 @@ impl FuzzedExecutor {
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
+                warp: None,
+                roll: None,
                 sender: self.sender,
                 call_details: CallDetails { target: address, calldata: calldata.clone() },
             }],
@@ -364,29 +385,6 @@ impl FuzzedExecutor {
                 counterexample: (calldata, call),
                 breakpoints,
             }))
-        }
-    }
-
-    /// Stores fuzz state for use with [fuzz_calldata_from_state]
-    pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
-        let inspector = self.executor.inspector();
-
-        if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(
-                fork_db,
-                self.config.dictionary,
-                deployed_libs,
-                inspector.analysis.as_ref(),
-                inspector.paths_config(),
-            )
-        } else {
-            EvmFuzzState::new(
-                self.executor.backend().mem_db(),
-                self.config.dictionary,
-                deployed_libs,
-                inspector.analysis.as_ref(),
-                inspector.paths_config(),
-            )
         }
     }
 }

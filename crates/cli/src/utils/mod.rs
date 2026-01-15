@@ -630,7 +630,7 @@ ignore them in the `.gitignore` file."
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
     }
 
-    /// Returns true if the given path has no submodules by checking `git submodule status`
+    /// Returns true if the given path has submodules by checking `git submodule status`
     pub fn has_submodules<I, S>(self, paths: I) -> Result<bool>
     where
         I: IntoIterator<Item = S>,
@@ -699,10 +699,9 @@ ignore them in the `.gitignore` file."
     ///
     /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
     pub fn submodules_uninitialized(self) -> Result<bool> {
-        self.cmd()
-            .args(["submodule", "status"])
-            .get_stdout_lossy()
-            .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
+        // keep behavior consistent with `has_missing_dependencies`, but avoid duplicating the
+        // "submodule status has '-' prefix" logic.
+        self.has_missing_dependencies(std::iter::empty::<&OsStr>())
     }
 
     /// Initializes the git submodules.

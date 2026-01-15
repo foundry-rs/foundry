@@ -20,9 +20,9 @@ use crate::{
     },
     utils::IgnoredTraces,
 };
-use alloy_consensus::BlobTransactionSidecar;
+use alloy_consensus::BlobTransactionSidecarVariant;
 use alloy_evm::eth::EthEvmContext;
-use alloy_network::TransactionBuilder4844;
+use alloy_network::{TransactionBuilder4844, TransactionBuilder7594};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
@@ -392,7 +392,7 @@ pub struct Cheatcodes {
     pub active_delegations: Vec<SignedAuthorization>,
 
     /// The active EIP-4844 blob that will be attached to the next call.
-    pub active_blob_sidecar: Option<BlobTransactionSidecar>,
+    pub active_blob_sidecar: Option<BlobTransactionSidecarVariant>,
 
     /// The gas price.
     ///
@@ -938,7 +938,11 @@ impl Cheatcodes {
                                 precompile_call_logs: vec![],
                             });
                         }
-                        tx_req.set_blob_sidecar(blob_sidecar);
+                        if blob_sidecar.is_eip4844() {
+                            tx_req.set_blob_sidecar(blob_sidecar.into_eip4844().unwrap());
+                        } else if blob_sidecar.is_eip7594() {
+                            tx_req.set_blob_sidecar_7594(blob_sidecar.into_eip7594().unwrap());
+                        }
                     }
 
                     // Apply active EIP-7702 delegations, if any.
@@ -1197,19 +1201,27 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
-        if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, &log, interpreter);
+    fn log(&mut self, _ecx: Ecx, log: Log) {
+        if !self.expected_emits.is_empty()
+            && let Some(err) = expect::handle_expect_emit(self, &log, None)
+        {
+            // Because we do not have access to the interpreter here, we cannot fail the test
+            // immediately. In most cases the failure will still be caught on `call_end`.
+            // In the rare case it is not, we log the error here.
+            let _ = sh_err!("{err:?}");
         }
 
         // `recordLogs`
-        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs.push(Vm::Log {
-                topics: log.data.topics().to_vec(),
-                data: log.data.data.clone(),
-                emitter: log.address,
-            });
+        record_logs(&mut self.recorded_logs, &log);
+    }
+
+    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
+        if !self.expected_emits.is_empty() {
+            expect::handle_expect_emit(self, &log, Some(interpreter));
         }
+
+        // `recordLogs`
+        record_logs(&mut self.recorded_logs, &log);
     }
 
     fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
@@ -2434,6 +2446,17 @@ fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
             | crate::Vm::AccountAccessKind::CallCode
             | crate::Vm::AccountAccessKind::DelegateCall
     )
+}
+
+/// Records a log into the recorded logs vector, if it exists.
+fn record_logs(recorded_logs: &mut Option<Vec<Vm::Log>>, log: &Log) {
+    if let Some(storage_recorded_logs) = recorded_logs {
+        storage_recorded_logs.push(Vm::Log {
+            topics: log.data.topics().to_vec(),
+            data: log.data.data.clone(),
+            emitter: log.address,
+        });
+    }
 }
 
 /// Appends an AccountAccess that resumes the recording of the current context.

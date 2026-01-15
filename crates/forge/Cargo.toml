@@ -94,7 +94,7 @@ opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
-quick-junit = "0.5.1"
+quick-junit = "0.5.2"
 tempfile.workspace = true
 
 [dev-dependencies]
@@ -104,10 +104,9 @@ forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 
-mockall = "0.13"
+mockall = "0.14"
 globset = "0.4"
 paste = "1.0"
-
 rstest = "0.25.0"
 similar-asserts.workspace = true
 svm.workspace = true
