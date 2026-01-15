@@ -4,7 +4,7 @@ use crate::{
     Chain, Config, NamedChain,
     resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
-use figment::{
+use figment2::{
     Error, Metadata, Profile, Provider,
     providers::Env,
     value::{Dict, Map},

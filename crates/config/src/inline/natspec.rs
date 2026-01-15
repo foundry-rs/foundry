@@ -1,5 +1,5 @@
 use super::{INLINE_CONFIG_PREFIX, InlineConfigError, InlineConfigErrorKind};
-use figment::Profile;
+use figment2::Profile;
 use foundry_compilers::{
     ProjectCompileOutput,
     artifacts::{Node, ast::NodeType},

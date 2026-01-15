@@ -1,5 +1,5 @@
 use crate::{Config, DEPRECATIONS, Warning};
-use figment::{
+use figment2::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map, Value},
 };
@@ -81,7 +81,8 @@ impl<P: Provider> WarningsProvider<P> {
         );
 
         // Add warning for unknown keys within profiles (root keys only here).
-        if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
+        if let Ok(default_map) =
+            figment2::providers::Serialized::defaults(&Config::default()).data()
             && let Some(default_dict) = default_map.get(&Config::DEFAULT_PROFILE)
         {
             let allowed_keys: std::collections::BTreeSet<String> =

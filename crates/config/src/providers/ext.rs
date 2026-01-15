@@ -1,5 +1,5 @@
 use crate::{Config, extend, utils};
-use figment::{
+use figment2::{
     Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Toml},
     value::{Dict, Map, Value},
@@ -385,7 +385,7 @@ impl Provider for DappEnvCompatProvider {
         if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
             dict.insert(
                 "block_number".to_string(),
-                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+                val.parse::<u64>().map_err(figment2::Error::custom)?.into(),
             );
         }
         if let Ok(val) = env::var("DAPP_TEST_ADDRESS") {
@@ -394,29 +394,29 @@ impl Provider for DappEnvCompatProvider {
         if let Ok(val) = env::var("DAPP_FORK_BLOCK") {
             dict.insert(
                 "fork_block_number".to_string(),
-                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+                val.parse::<u64>().map_err(figment2::Error::custom)?.into(),
             );
         } else if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
             dict.insert(
                 "fork_block_number".to_string(),
-                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+                val.parse::<u64>().map_err(figment2::Error::custom)?.into(),
             );
         }
         if let Ok(val) = env::var("DAPP_TEST_TIMESTAMP") {
             dict.insert(
                 "block_timestamp".to_string(),
-                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+                val.parse::<u64>().map_err(figment2::Error::custom)?.into(),
             );
         }
         if let Ok(val) = env::var("DAPP_BUILD_OPTIMIZE_RUNS") {
             dict.insert(
                 "optimizer_runs".to_string(),
-                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+                val.parse::<u64>().map_err(figment2::Error::custom)?.into(),
             );
         }
         if let Ok(val) = env::var("DAPP_BUILD_OPTIMIZE") {
             // Activate Solidity optimizer (0 or 1)
-            let val = val.parse::<u8>().map_err(figment::Error::custom)?;
+            let val = val.parse::<u8>().map_err(figment2::Error::custom)?;
             if val > 1 {
                 return Err(
                     format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`, expected 0 or 1").into()
@@ -434,7 +434,7 @@ impl Provider for DappEnvCompatProvider {
         if let Ok(val) = env::var("DAPP_TEST_FUZZ_RUNS") {
             fuzz_dict.insert(
                 "runs".to_string(),
-                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+                val.parse::<u32>().map_err(figment2::Error::custom)?.into(),
             );
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
@@ -443,7 +443,7 @@ impl Provider for DappEnvCompatProvider {
         if let Ok(val) = env::var("DAPP_TEST_DEPTH") {
             invariant_dict.insert(
                 "depth".to_string(),
-                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+                val.parse::<u32>().map_err(figment2::Error::custom)?.into(),
             );
         }
         dict.insert("invariant".to_string(), invariant_dict.into());
@@ -540,7 +540,7 @@ impl<P: Provider> Provider for UnwrapProfileProvider<P> {
                 match profile_val {
                     Value::Dict(_, dict) => return Ok(profile.collect(dict)),
                     bad_val => {
-                        let mut err = Error::from(figment::error::Kind::InvalidType(
+                        let mut err = Error::from(figment2::error::Kind::InvalidType(
                             bad_val.to_actual(),
                             "dict".into(),
                         ));
