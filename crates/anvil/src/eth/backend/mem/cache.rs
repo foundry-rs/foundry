@@ -68,7 +68,7 @@ impl DiskStateCache {
                         trace!(target: "backend", ?hash, "wrote state json file");
                     }
                     Err(err) => {
-                        error!(target: "backend", %err, ?hash, "Failed to load state snapshot");
+                        error!(target: "backend", %err, ?hash, "Failed to write state snapshot");
                     }
                 };
             });
