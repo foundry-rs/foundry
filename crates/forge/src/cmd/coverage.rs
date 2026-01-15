@@ -177,10 +177,13 @@ impl CoverageArgs {
 
         // 3. Update config to point to temp root
         let original_root = config.root.clone();
-        config.root = temp_root.to_path_buf();
+        // Keep the original root so that the project root is correct for tests that rely on it
+        // config.root = temp_root.to_path_buf();
         config.src = temp_root.join(config.src.strip_prefix(&original_root)?);
         config.test = temp_root.join(config.test.strip_prefix(&original_root)?);
         config.script = temp_root.join(config.script.strip_prefix(&original_root)?);
+        config.out = temp_root.join("out");
+        config.cache_path = temp_root.join("cache");
 
         // 4. Build instrumented project
         let (_project, output) = self.build(&config)?;
