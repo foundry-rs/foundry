@@ -150,13 +150,6 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
         &mut self,
         func: &'ast ast::ItemFunction<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
-        if let Some(sm) = &func.header.state_mutability {
-            let s = sm.to_string();
-            if s == "pure" || s == "view" {
-                self.updates.push((sm.span, "".to_string()));
-            }
-        }
-
         let name = func.header.name.as_ref().map(|n| n.as_str()).unwrap_or("function");
         let item_id = self.next_item_id();
         self.push_item(CoverageItemKind::Function { name: name.into() }, func.header.span, 0);
@@ -366,10 +359,63 @@ mod tests {
 
             // Basic assertions
             assert!(content.contains("VmCoverage_0"));
-            assert!(!content.contains("pure")); // pure should be removed
+            assert!(content.contains("pure")); // pure should be preserved
 
             // Check items were collected
             assert!(!instrumenter.items.is_empty());
+
+            solar::interface::Result::Ok(())
+        });
+    }
+
+    #[test]
+    fn test_override_view_instrumentation() {
+        let src = "contract C {
+    function foo() public view virtual returns (uint) { return 1; }
+}
+contract D is C {
+    function foo() public view override returns (uint) { return 2; }
+}";
+        let mut content = src.to_string();
+        let sess = Session::builder().with_buffer_emitter(Default::default()).build();
+        let _: solar::interface::Result<()> = sess.enter_sequential(|| {
+            let arena = ast::Arena::new();
+            let mut parser = Parser::from_source_code(
+                &sess,
+                &arena,
+                FileName::Custom("test.sol".to_string()),
+                src.to_string(),
+            )
+            .unwrap();
+            let ast = match parser.parse_file() {
+                Ok(ast) => ast,
+                Err(diag) => {
+                    panic!("Parse error: {:?}", diag);
+                }
+            };
+
+            let mut instrumenter = Instrumenter::new(&sess, 0);
+            let _ = instrumenter.visit_source_unit(&ast);
+            instrumenter.instrument(&mut content);
+
+            println!("Instrumented code:\n{}", content);
+
+            // Assertions
+            // The base contract function 'foo' (virtual, not override) SHOULD be instrumented (view removed)
+            // The derived contract function 'foo' (override) SHOULD NOT be instrumented (view preserved)
+
+            let view_count = content.matches("view").count();
+            assert_eq!(view_count, 2, "Expected 'view' to remain in both C.foo and D.foo");
+
+            let parts: Vec<&str> = content.split("contract D").collect();
+            let c_part = parts[0];
+            let d_part = parts[1];
+
+            assert!(c_part.contains("view"), "Base contract function should keep view");
+            assert!(c_part.contains("VmCoverage"), "Base contract function should be instrumented");
+
+            assert!(d_part.contains("view"), "Derived contract function should keep view");
+            assert!(d_part.contains("VmCoverage"), "Derived contract function should be instrumented");
 
             solar::interface::Result::Ok(())
         });
