@@ -1724,3 +1724,49 @@ Compiling 1 files with [..]
 
 "#]]);
 });
+
+// Test that `type(Contract).creationCode` can be used in view functions.
+// https://github.com/foundry-rs/foundry/issues/13086
+forgetest_init!(preprocess_creation_code_in_view_function, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {
+    uint256 public immutable value;
+    constructor(uint256 _value) { value = _value; }
+}
+        "#,
+    );
+
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Target} from "../src/Target.sol";
+
+contract TargetTest is Test {
+    function computeAddress(address factory, uint256 salt, uint256 value) internal view returns (address) {
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                bytes1(0xff),
+                factory,
+                salt,
+                keccak256(abi.encodePacked(type(Target).creationCode, abi.encode(value)))
+            )
+        );
+        return address(uint160(uint256(hash)));
+    }
+
+    function testComputeAddress() public view {
+        computeAddress(address(this), 1, 100);
+    }
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
+});
