@@ -18,7 +18,7 @@ env:
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
   # Keep in sync with `docker-publish.yml`.
-  RUST_PROFILE: maxperf
+  RUST_PROFILE: dist
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
 
   LAST_STABLE_VERSION: "v1.5.0"

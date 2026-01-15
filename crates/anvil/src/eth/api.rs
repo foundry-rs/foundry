@@ -3354,11 +3354,10 @@ impl EthApi {
                     .max_fee_per_gas()
                     .is_none()
                     .then(|| request.set_max_fee_per_gas(self.gas_price()));
-                // TODO: use suggested tip instead of 0
                 request
                     .max_priority_fee_per_gas()
                     .is_none()
-                    .then(|| request.set_max_priority_fee_per_gas(Default::default()));
+                    .then(|| request.set_max_priority_fee_per_gas(MIN_SUGGESTED_PRIORITY_FEE));
             }
             if tx_type == FoundryTxType::Eip4844 {
                 request.as_ref().max_fee_per_blob_gas().is_none().then(|| {
