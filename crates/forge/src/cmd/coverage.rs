@@ -18,6 +18,7 @@ use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
+use solar_sema::codegen::Codegen;
 use std::path::{Path, PathBuf};
 
 // Loads project's figment and merges the build cli arguments into it
@@ -122,7 +123,9 @@ impl CoverageArgs {
 
         // 2. Collect and instrument sources
         let mut coverage_items = Vec::new();
-        let sess = solar::interface::Session::builder().with_stderr_emitter().build();
+        let mut opts = solar::config::Opts::default();
+        opts.unstable.instrument = true;
+        let sess = solar::interface::Session::new(opts);
 
         let project = config.project()?;
         let source_paths = project.paths.input_files();
