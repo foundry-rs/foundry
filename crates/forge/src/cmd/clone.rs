@@ -111,6 +111,12 @@ pub struct CloneArgs {
     #[arg(long, default_value = "etherscan", value_name = "EXPLORER")]
     pub source: SourceExplorer,
 
+    /// Custom Sourcify API URL.
+    ///
+    /// Only used when `--source sourcify` is specified.
+    #[arg(long, value_name = "URL")]
+    pub sourcify_url: Option<String>,
+
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
@@ -128,6 +134,7 @@ impl CloneArgs {
             no_remappings_txt,
             keep_directory_structure,
             source,
+            sourcify_url,
         } = self;
 
         // step 0. get the chain and api key from the config
@@ -145,7 +152,7 @@ impl CloneArgs {
                 (meta, "Etherscan", None)
             }
             SourceExplorer::Sourcify => {
-                let client = SourcifyClient::new(chain);
+                let client = SourcifyClient::with_url(chain, sourcify_url.as_deref());
                 sh_println!("Downloading the source code of {address} from Sourcify...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Sourcify", Some(client))
@@ -682,10 +689,6 @@ pub(crate) struct SourcifyClient {
 }
 
 impl SourcifyClient {
-    pub fn new(chain: Chain) -> Self {
-        Self::with_url(chain, None)
-    }
-
     pub fn with_url(chain: Chain, verifier_url: Option<&str>) -> Self {
         let base_url = Self::get_base_url(verifier_url);
         Self {
