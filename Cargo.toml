@@ -96,7 +96,6 @@ inherits = "profiling"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
-strip = "debuginfo"
 
 # Speed up tests and dev build.
 [profile.dev.package]
