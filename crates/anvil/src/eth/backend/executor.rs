@@ -501,14 +501,15 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
 {
     if env.networks.is_optimism() {
-        let cfg = CfgEnv::new_with_spec(op_revm::OpSpecId::ISTHMUS)
-            .with_chain_id(env.evm_env.cfg_env.chain_id);
+        let cfg = env.evm_env.cfg_env.clone()
+            .with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS);
         let evm_env = EvmEnv::new(cfg, env.evm_env.block_env.clone());
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
     } else if env.networks.is_monad() {
-        let cfg = CfgEnv::new_with_spec(monad_revm::MonadSpecId::default())
-            .with_chain_id(env.evm_env.cfg_env.chain_id);
-        let evm_env = EvmEnv::new(cfg, env.evm_env.block_env.clone());
+        let cfg: monad_revm::MonadCfgEnv = env.evm_env.cfg_env.clone()
+            .with_spec_and_mainnet_gas_params(monad_revm::MonadSpecId::default())
+            .into();
+        let evm_env = EvmEnv::new(cfg.into(), env.evm_env.block_env.clone());
         EitherEvm::Monad(
             MonadEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector),
         )
