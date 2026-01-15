@@ -721,9 +721,9 @@ enum SourcifyContractResponse {
 #[serde(rename_all = "camelCase")]
 struct SourcifyContractData {
     #[serde(default)]
-    sources: Option<BTreeMap<String, String>>,
+    sources: Option<BTreeMap<String, SourcifySourceFile>>,
     #[serde(default)]
-    abi: Option<Box<serde_json::value::RawValue>>,
+    abi: Option<serde_json::Value>,
     #[serde(default)]
     compilation: Option<SourcifyCompilation>,
     #[serde(default)]
@@ -736,9 +736,7 @@ struct SourcifyContractData {
     #[allow(dead_code)]
     runtime_bytecode: Option<String>,
     #[serde(default)]
-    creation_transaction_hash: Option<String>,
-    #[serde(default)]
-    creator_address: Option<String>,
+    deployment: Option<SourcifyDeployment>,
     // Additional fields that may be present in the response
     #[serde(default)]
     #[allow(dead_code)]
@@ -765,6 +763,13 @@ struct SourcifyContractData {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SourcifySourceFile {
+    #[serde(default)]
+    content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SourcifyCompilation {
     #[serde(default)]
     compiler_version: String,
@@ -772,6 +777,15 @@ struct SourcifyCompilation {
     name: String,
     #[serde(default)]
     compiler_settings: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourcifyDeployment {
+    #[serde(default)]
+    transaction_hash: Option<String>,
+    #[serde(default)]
+    deployer: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -797,10 +811,7 @@ impl ExplorerClient for SourcifyClient {
         address: Address,
     ) -> std::result::Result<ContractMetadata, EtherscanError> {
         // Request all fields including creation data to cache them
-        let url = self.get_contract_url(
-            address,
-            "sources,abi,compilation,creationTransactionHash,creatorAddress",
-        );
+        let url = self.get_contract_url(address, "sources,abi,compilation,deployment");
         let response = self.client.get(&url).send().await?;
 
         let status = response.status();
@@ -823,11 +834,18 @@ impl ExplorerClient for SourcifyClient {
         }
 
         // Use the untagged enum to properly handle both success and error responses
-        let response: SourcifyContractResponse = serde_json::from_str(&response_text).map_err(|e| {
-            EtherscanError::Unknown(format!(
-                "Failed to parse Sourcify response: {e}. Response: {response_text}"
-            ))
-        })?;
+        let response: SourcifyContractResponse =
+            serde_json::from_str(&response_text).map_err(|e| {
+                // Truncate response for error message to avoid huge output
+                let truncated = if response_text.len() > 500 {
+                    format!("{}... (truncated)", &response_text[..500])
+                } else {
+                    response_text.clone()
+                };
+                EtherscanError::Unknown(format!(
+                    "Failed to parse Sourcify response: {e}. Response: {truncated}"
+                ))
+            })?;
 
         let data = match response {
             SourcifyContractResponse::Success(data) => data,
@@ -848,7 +866,7 @@ impl ExplorerClient for SourcifyClient {
         // Convert sources map to SourceCodeMetadata::Sources format
         let sources: HashMap<String, SourceCodeEntry> = sources_map
             .into_iter()
-            .map(|(path, content)| (path, SourceCodeEntry { content }))
+            .map(|(path, source_file)| (path, SourceCodeEntry { content: source_file.content }))
             .collect();
 
         let source_code = SourceCodeMetadata::Sources(sources);
@@ -862,12 +880,21 @@ impl ExplorerClient for SourcifyClient {
         let compiler_version =
             data.compilation.as_ref().map(|c| c.compiler_version.clone()).unwrap_or_default();
 
-        let abi = data.abi.map(|a| Box::<str>::from(a.get()).into()).unwrap_or_default();
+        let abi = data.abi.map(|a| a.to_string()).unwrap_or_default();
 
         // Cache creation data for later use in contract_creation_data
-        let tx_hash =
-            data.creation_transaction_hash.and_then(|h| h.parse().ok()).unwrap_or(TxHash::ZERO);
-        let creator = data.creator_address.and_then(|a| a.parse().ok()).unwrap_or(Address::ZERO);
+        let tx_hash = data
+            .deployment
+            .as_ref()
+            .and_then(|d| d.transaction_hash.as_ref())
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(TxHash::ZERO);
+        let creator = data
+            .deployment
+            .as_ref()
+            .and_then(|d| d.deployer.as_ref())
+            .and_then(|a| a.parse().ok())
+            .unwrap_or(Address::ZERO);
         let creation_data = ContractCreationData {
             contract_address: address,
             contract_creator: creator,
