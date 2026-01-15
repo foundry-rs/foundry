@@ -687,30 +687,44 @@ pub(crate) struct SourcifyClient {
     client: reqwest::Client,
     chain: Chain,
     base_url: String,
+    /// Whether the base_url already contains the full path (v2/contract/chain)
+    is_full_path: bool,
     /// Cached creation data from the first API call
     cached_creation_data: std::sync::Arc<std::sync::Mutex<Option<ContractCreationData>>>,
 }
 
 impl SourcifyClient {
     pub fn with_url(chain: Chain, verifier_url: Option<&str>) -> Self {
-        let base_url = Self::get_base_url(verifier_url);
+        let (base_url, is_full_path) = match verifier_url {
+            Some(url) => (
+                Url::parse(url).unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap()),
+                true, // Custom URL contains full path
+            ),
+            None => (Url::parse(SOURCIFY_URL).unwrap(), false),
+        };
         Self {
             client: reqwest::Client::new(),
             chain,
-            base_url: base_url.to_string(),
+            base_url: base_url.to_string().trim_end_matches('/').to_string(),
+            is_full_path,
             cached_creation_data: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
-    fn get_base_url(verifier_url: Option<&str>) -> Url {
-        // note(onbjerg): a little ugly but makes this infallible as we guarantee `SOURCIFY_URL` to
-        // be well formatted
-        Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
-            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap())
-    }
-
     fn get_contract_url(&self, address: Address, fields: &str) -> String {
-        format!("{}/v2/contract/{}/{}?fields={}", self.base_url, self.chain.id(), address, fields)
+        if self.is_full_path {
+            // Custom URL already contains v2/contract/chain, just append address and fields
+            format!("{}/{}?fields={}", self.base_url, address, fields)
+        } else {
+            // Default URL, need to build full path
+            format!(
+                "{}/v2/contract/{}/{}?fields={}",
+                self.base_url,
+                self.chain.id(),
+                address,
+                fields
+            )
+        }
     }
 }
 
