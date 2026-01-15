@@ -967,8 +967,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                 let input_bytes = call.input.bytes(ecx);
                 // Check if any mock function set for call data or if catch-all mock function set
                 // for selector.
-                if let Some(target) =
-                    mocks.get(&input_bytes).or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
+                if let Some(target) = mocks
+                    .get(&input_bytes)
+                    .or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
                 {
                     call.bytecode_address = *target;
                     call.known_bytecode = None;
