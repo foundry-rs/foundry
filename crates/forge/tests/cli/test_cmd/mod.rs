@@ -638,7 +638,6 @@ forgetest_init!(invariant_show_progress_enabled, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
-        config.show_progress = true;
     });
     prj.add_test(
         "InvariantProgress.t.sol",
@@ -660,7 +659,8 @@ contract InvariantProgressTest is Test {
     );
 
     // Progress output includes the "↪" symbol when showing suite results
-    let output = cmd.args(["test", "--mt", "invariant_pass"]).assert_success();
+    // Use --show-progress flag to override env var set by test harness
+    let output = cmd.args(["test", "--mt", "invariant_pass", "--show-progress"]).assert_success();
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("↪"), "Progress should be shown when enabled");
 });
@@ -670,7 +670,6 @@ forgetest_init!(invariant_show_progress_disabled_with_quiet, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
-        config.show_progress = true;
     });
     prj.add_test(
         "InvariantProgress.t.sol",
@@ -702,7 +701,6 @@ forgetest_init!(invariant_show_progress_disabled_with_json, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
-        config.show_progress = true;
     });
     prj.add_test(
         "InvariantProgress.t.sol",

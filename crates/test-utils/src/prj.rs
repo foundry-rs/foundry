@@ -60,8 +60,6 @@ pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 }
 
 pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
-    // Disable show_progress by default in tests to avoid polluting snapshot output.
-    test.write_config(Config { show_progress: false, ..Default::default() });
     let cmd = test.forge_command();
     (test, cmd)
 }
@@ -461,6 +459,8 @@ impl TestProject {
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
+        // Disable show_progress by default in tests to avoid polluting snapshot output.
+        cmd.env("FOUNDRY_SHOW_PROGRESS", "0");
         cmd
     }
 

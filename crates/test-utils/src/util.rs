@@ -84,8 +84,6 @@ pub fn initialize(target: &Path) {
             cmd.args(["init", "--force", "--empty"]).assert_success();
             prj.write_config(Config {
                 solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
-                // Disable show_progress by default in tests to avoid polluting snapshot output.
-                show_progress: false,
                 ..Default::default()
             });
 
