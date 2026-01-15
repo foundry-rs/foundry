@@ -184,10 +184,9 @@ impl IntStrategy {
 
         // init I256 from 2 randoms
         let mut inner: [u64; 4] = [0; 4];
-        let mask64 = (1 << 65) - 1;
-        inner[0] = (lower & mask64) as u64;
+        inner[0] = lower as u64;
         inner[1] = (lower >> 64) as u64;
-        inner[2] = (higher & mask64) as u64;
+        inner[2] = higher as u64;
         inner[3] = (higher >> 64) as u64;
 
         // we have a small bias here, i.e. intN::min will never be generated

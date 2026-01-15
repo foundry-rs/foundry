@@ -7,9 +7,8 @@
 extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
-use alloy_consensus::{EthereumTxEnvelope, Header, TxEip4844Variant};
+use alloy_consensus::Header;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
@@ -40,8 +39,9 @@ use foundry_common::{
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
+use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, future::Either};
-use op_alloy_consensus::OpTxEnvelope;
+
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -750,11 +750,12 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         };
 
         Ok(if raw {
-            // also consider opstack deposit transactions
-            let either_tx = tx.try_into_either::<OpTxEnvelope>()?;
-            let encoded = either_tx.encoded_2718();
+            // convert to FoundryTxEnvelope to support all foundry tx types (including opstack
+            // deposit transactions)
+            let foundry_tx = FoundryTxEnvelope::try_from(tx)?;
+            let encoded = foundry_tx.encoded_2718();
             format!("0x{}", hex::encode(encoded))
-        } else if let Some(field) = field {
+        } else if let Some(ref field) = field {
             get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
@@ -2235,7 +2236,7 @@ impl SimpleCast {
             eyre::bail!("invalid function signature");
         };
 
-        let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let num_threads = rayon::current_num_threads();
         let found = AtomicBool::new(false);
 
         let result: Option<(u32, String, String)> =
@@ -2318,9 +2319,7 @@ impl SimpleCast {
     /// let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
     /// let tx_envelope = Cast::decode_raw_transaction(&tx)?;
     /// # Ok::<(), eyre::Report>(())
-    pub fn decode_raw_transaction(
-        tx: &str,
-    ) -> Result<EthereumTxEnvelope<TxEip4844Variant<BlobTransactionSidecarVariant>>> {
+    pub fn decode_raw_transaction(tx: &str) -> Result<FoundryTxEnvelope> {
         let tx_hex = hex::decode(tx)?;
         let tx = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)

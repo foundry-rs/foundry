@@ -7,7 +7,7 @@ use eyre::{Context, Result};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
 use foundry_config::{DocConfig, FormatterConfig, filter::expand_globs};
 use itertools::Itertools;
-use mdbook::MDBook;
+use mdbook_driver::MDBook;
 use rayon::prelude::*;
 use std::{
     cmp::Ordering,

@@ -2,7 +2,6 @@
 
 use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
-use eyre::ContextCompat;
 use foundry_config::{
     Chain, Config,
     figment::{
@@ -258,13 +257,6 @@ pub struct EnvArgs {
     #[arg(long, visible_alias = "tx-gas-limit")]
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub enable_tx_gas_limit: bool,
-}
-
-impl EvmArgs {
-    /// Ensures that fork url exists and returns its reference.
-    pub fn ensure_fork_url(&self) -> eyre::Result<&String> {
-        self.fork_url.as_ref().wrap_err("Missing `--fork-url` field.")
-    }
 }
 
 /// We have to serialize chain IDs and not names because when extracting an EVM `Env`, it expects

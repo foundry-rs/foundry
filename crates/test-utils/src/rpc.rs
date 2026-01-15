@@ -191,6 +191,13 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         return "https://celo.drpc.org".to_string();
     }
 
+    if matches!(chain, Sepolia) {
+        let rpc_url = env::var("ETH_SEPOLIA_RPC").unwrap_or_default();
+        if !rpc_url.is_empty() {
+            return rpc_url;
+        }
+    }
+
     if matches!(chain, Arbitrum) {
         let rpc_url = env::var("ARBITRUM_RPC").unwrap_or_default();
         if !rpc_url.is_empty() {
