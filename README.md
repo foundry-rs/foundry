@@ -33,9 +33,8 @@ Monad Foundry is under active development! Expect a lot of new features to appea
 
 Forge commands (`forge test`, `forge script`, `forge debug`) always execute using Monad's EVM specification. There is no flag to switch, Monad gas costs and precompiles are applied by default.
 
-- [x] `forge test` executes with Monad EVM
+- [x] `forge test` aexecutes with Monad EVM
 - [x] `forge script` executes with Monad EVM
-- [x] `forge debug` executes with Monad EVM
 - [ ] Monad staking precompiles
 
 ### Cast
