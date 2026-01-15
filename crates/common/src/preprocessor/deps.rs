@@ -462,7 +462,7 @@ interface {vm_interface_name} {{
     function deployCode(string memory _artifact, uint256 _value, bytes32 _salt) external returns (address);
     function deployCode(string memory _artifact, bytes memory _args, uint256 _value) external returns (address);
     function deployCode(string memory _artifact, bytes memory _args, uint256 _value, bytes32 _salt) external returns (address);
-    function getCode(string memory _artifact) external returns (bytes memory);
+    function getCode(string memory _artifact) external view returns (bytes memory);
 }}"#
             ),
         ));
