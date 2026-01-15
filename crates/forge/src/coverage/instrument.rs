@@ -191,6 +191,7 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
                     0,
                 );
                 self.inject_into_block_or_wrap(then, true_item_id);
+                let _ = self.visit_stmt(then);
 
                 let false_item_id = self.next_item_id();
                 let else_span = els_opt.as_ref().map(|e| e.span).unwrap_or(stmt.span);
@@ -201,7 +202,20 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
                 );
 
                 if let Some(els) = els_opt {
-                    self.inject_into_block_or_wrap(els, false_item_id);
+                    // We manually wrap the else block to ensure that the closing brace is added
+                    // *after* visiting the statement. This is crucial for `else if` chains where
+                    // the inner `if` might generate an implicit `else` block. If we used
+                    // `inject_into_block_or_wrap`, the closing brace would be added before the
+                    // implicit else, resulting in invalid syntax: `} else { ... }`.
+                    self.updates.push((
+                        els.span.with_hi(els.span.lo()),
+                        format!(
+                            "{{ VmCoverage_{}({}).coverageHit({}, {}); ",
+                            self.source_id, COVERAGE_ADDRESS, self.source_id, false_item_id
+                        ),
+                    ));
+                    let _ = self.visit_stmt(els);
+                    self.updates.push((els.span.with_lo(els.span.hi()), " }".to_string()));
                 } else {
                     self.updates.push((
                         stmt.span.with_lo(stmt.span.hi()),
@@ -211,6 +225,7 @@ impl<'ast> Visit<'ast> for Instrumenter<'ast> {
                         ),
                     ));
                 }
+                return ControlFlow::Continue(());
             }
             ast::StmtKind::For { init, cond, next, body } => {
                 let item_id = self.next_item_id();
@@ -300,6 +315,7 @@ mod tests {
         if (y == 20) { y = 0; } else { y = 1; }
         if (y == 30) { y = 0; } if (y == 40) { y = 1; } else { y = 2; }
         if (y == 50) { y = 0; } else if (y == 60) { y = 1; }
+        if (y == 70) { y = 0; } else if (y == 80) { y = 1; }
         if (y < 0) {
             y = 0;
         } else {
