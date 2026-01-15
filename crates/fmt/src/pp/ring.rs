@@ -53,19 +53,19 @@ impl<T> RingBuffer<T> {
     #[track_caller]
     pub(crate) fn pop_first(&mut self) -> T {
         self.offset += 1;
-        self.data.pop_front().unwrap()
+        self.data.pop_front().expect("RingBuffer::pop_first called on empty buffer")
     }
 
     #[inline]
     #[track_caller]
     pub(crate) fn last(&self) -> &T {
-        self.data.back().unwrap()
+        self.data.back().expect("RingBuffer::last called on empty buffer")
     }
 
     #[inline]
     #[track_caller]
     pub(crate) fn last_mut(&mut self) -> &mut T {
-        self.data.back_mut().unwrap()
+        self.data.back_mut().expect("RingBuffer::last_mut called on empty buffer")
     }
 
     #[inline]
@@ -77,7 +77,7 @@ impl<T> RingBuffer<T> {
     #[inline]
     #[track_caller]
     pub(crate) fn pop_last(&mut self) {
-        self.data.pop_back().unwrap();
+        self.data.pop_back().expect("RingBuffer::pop_last called on empty buffer");
     }
 }
 
