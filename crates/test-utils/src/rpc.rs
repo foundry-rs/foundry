@@ -110,7 +110,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
         (
             "polkadotTestnet",
-            RpcEndpointUrl::Url("https://services.polkadothub-rpc.com/testnet".into()),
+            RpcEndpointUrl::Url("https://eth-rpc-testnet.polkadot.io".into()),
         ),
         ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),
     ])
