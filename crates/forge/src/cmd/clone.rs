@@ -113,7 +113,7 @@ pub struct CloneArgs {
 
     /// Custom Sourcify API URL.
     ///
-    /// Only used when `--source sourcify` is specified.
+    /// Implies `--source sourcify`.
     #[arg(long, value_name = "URL")]
     pub sourcify_url: Option<String>,
 
@@ -140,6 +140,9 @@ impl CloneArgs {
         // step 0. get the chain and api key from the config
         let config = etherscan.load_config()?;
         let chain = config.chain.unwrap_or_default();
+
+        // If sourcify_url is specified, use Sourcify as the source
+        let source = if sourcify_url.is_some() { SourceExplorer::Sourcify } else { source };
 
         // step 1. get the metadata from client based on source type
         let (meta, explorer_name, sourcify_client) = match source {
