@@ -3339,7 +3339,7 @@ contract DeployScript is Script {
 Compiler run successful!
 Traces:
   [9882] DeployScript::run()
-    ├─ [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
+    ├─ [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -3352,7 +3352,7 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
+  [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     └─ ← [Stop]
 
 

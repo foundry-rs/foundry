@@ -574,3 +574,62 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });
+
+// Test for issue #12962: trace should show receive() instead of fallback() for empty calldata
+// when calling a contract deployed from raw bytecode.
+// See: https://github.com/foundry-rs/foundry/issues/12962
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(receive_vs_fallback_trace, |prj, cmd| {
+    prj.add_test(
+        "ReceiveVsFallback.t.sol",
+        r#"
+pragma solidity ^0.8.18;
+
+import "forge-std/Test.sol";
+
+contract ReceiveVsFallbackTest is Test {
+    /// Test that deploying a contract from raw runtime bytecode and calling it with empty calldata
+    /// correctly shows receive() in the trace, not fallback().
+    /// This is a regression test for https://github.com/foundry-rs/foundry/issues/12962
+    function testReceiveTraceForRawBytecode() public {
+        // Raw runtime bytecode of a contract with receive() and fallback() that emit events.
+        // The contract emits Log("receive", sender, value, data) for receive() calls
+        // and Log("fallback", sender, value, data) for fallback() calls.
+        bytes memory code = hex"608060405236610044577ff7f75251dee7d7fc22deac3247729ebe7c86541f35930bf10c2a4207479a3b6c333460405161003a929190610172565b60405180910390a1005b7ff7f75251dee7d7fc22deac3247729ebe7c86541f35930bf10c2a4207479a3b6c333460003660405161007a949392919061025a565b60405180910390a1005b600082825260208201905092915050565b7f7265636569766500000000000000000000000000000000000000000000000000600082015250565b60006100cb600783610084565b91506100d682610095565b602082019050919050565b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b600061010c826100e1565b9050919050565b61011c81610101565b82525050565b6000819050919050565b61013581610122565b82525050565b600082825260208201905092915050565b50565b600061015c60008361013b565b91506101678261014c565b600082019050919050565b6000608082019050818103600083015261018b816100be565b905061019a6020830185610113565b6101a7604083018461012c565b81810360608301526101b88161014f565b90509392505050565b7f66616c6c6261636b000000000000000000000000000000000000000000000000600082015250565b60006101f7600883610084565b9150610202826101c1565b602082019050919050565b82818337600083830152505050565b6000601f19601f8301169050919050565b6000610239838561013b565b935061024683858461020d565b61024f8361021c565b840190509392505050565b60006080820190508181036000830152610273816101ea565b90506102826020830187610113565b61028f604083018661012c565b81810360608301526102a281848661022d565b90509594505050505056fea2646970667358221220749a95417d16869c0020868fb950c3602810c6148809abb4489b45f51181536964736f6c63430008130033";
+
+        // Prepend minimal constructor: PUSH2 size, PUSH1 0x0E, PUSH1 0x00, CODECOPY, PUSH2 size, PUSH1 0x00, RETURN
+        bytes memory init = hex"6102e3600e6000396102e36000f3";
+        bytes memory initcode = abi.encodePacked(init, code);
+
+        address deployed;
+        assembly {
+            deployed := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        require(deployed != address(0), "deployment failed");
+
+        // Call with empty calldata - should invoke receive() and show "receive()" in trace
+        (bool success,) = deployed.call("");
+        assertTrue(success, "call should succeed");
+    }
+}
+"#,
+    );
+
+    // Test receive() trace - should show "receive()" not "fallback()"
+    cmd.args(["test", "--match-test", "testReceiveTraceForRawBytecode", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testReceiveTraceForRawBytecode() ([GAS])
+Traces:
+  [..] ReceiveVsFallbackTest::testReceiveTraceForRawBytecode()
+    ├─ [..] → new <unknown>@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 739 bytes of code
+    ├─ [..] 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f::receive()
+    │   ├─ emit Log(: "receive", : ReceiveVsFallbackTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : 0, : 0x)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+...
+"#]]);
+});
