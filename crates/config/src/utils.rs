@@ -2,7 +2,7 @@
 
 use crate::Config;
 use alloy_primitives::U256;
-use figment2::value::Value;
+use figment::value::Value;
 use foundry_compilers::artifacts::{
     EvmVersion,
     remappings::{Remapping, RemappingError},
@@ -103,10 +103,10 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
     Some(remappings_from_newline(&val).collect())
 }
 
-/// Converts the `val` into a `figment2::Value::Array`
+/// Converts the `val` into a `figment::Value::Array`
 ///
 /// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
-pub fn to_array_value(val: &str) -> Result<Value, figment2::Error> {
+pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
     let value: Value = match Value::from(val) {
         Value::String(_, val) => val
             .trim_start_matches('[')

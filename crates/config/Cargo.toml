@@ -29,7 +29,7 @@ solar.workspace = true
 dirs.workspace = true
 dunce.workspace = true
 eyre.workspace = true
-figment2 = { workspace = true, features = ["toml", "env"] }
+figment = { workspace = true, features = ["toml", "env"] }
 glob = "0.3"
 globset = "0.4"
 heck.workspace = true
@@ -57,7 +57,7 @@ path-slash = "0.2"
 [dev-dependencies]
 snapbox.workspace = true
 similar-asserts.workspace = true
-figment2 = { workspace = true, features = ["test"] }
+figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true
 
 [features]

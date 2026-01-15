@@ -1,5 +1,5 @@
 use crate::{Config, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline};
-use figment2::{
+use figment::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map},
 };
@@ -317,7 +317,7 @@ impl Provider for RemappingsProvider<'_> {
         let remappings = match &self.remappings {
             Ok(remappings) => self.get_remappings(remappings.clone()),
             Err(err) => {
-                if let figment2::error::Kind::MissingField(_) = err.kind {
+                if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
                     return Err(err.clone());
@@ -333,7 +333,7 @@ impl Provider for RemappingsProvider<'_> {
 
         Ok(Map::from([(
             Config::selected_profile(),
-            Dict::from([("remappings".to_string(), figment2::value::Value::from(remappings))]),
+            Dict::from([("remappings".to_string(), figment::value::Value::from(remappings))]),
         )]))
     }
 

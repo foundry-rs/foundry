@@ -11,7 +11,7 @@ extern crate tracing;
 use crate::cache::StorageCachingConfig;
 use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
-use figment2::{
+use figment::{
     Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map, Value},
@@ -98,7 +98,7 @@ pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
-pub use figment2 as figment;
+pub use figment;
 
 pub mod providers;
 pub use providers::Remappings;
@@ -2462,7 +2462,7 @@ impl Provider for Config {
     }
 
     #[track_caller]
-    fn data(&self) -> Result<Map<Profile, Dict>, figment2::Error> {
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         if let Some(entry) = data.get_mut(&self.profile) {
             entry.insert("root".to_string(), Value::serialize(self.root.clone())?);
@@ -2758,7 +2758,7 @@ mod tests {
     };
     use NamedChain::Moonbeam;
     use endpoints::{RpcAuth, RpcEndpointConfig};
-    use figment2::error::Kind::InvalidType;
+    use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
         ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };

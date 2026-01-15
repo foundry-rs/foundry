@@ -1,7 +1,7 @@
 //! Helpers to automatically fix configuration warnings.
 
 use crate::{Config, Warning};
-use figment2::providers::Env;
+use figment::providers::Env;
 use std::{
     fs, io,
     ops::{Deref, DerefMut},
@@ -216,7 +216,7 @@ pub fn fix_tomls() -> Vec<Warning> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use figment2::Jail;
+    use figment::Jail;
     use similar_asserts::assert_eq;
 
     macro_rules! fix_test {
@@ -231,7 +231,7 @@ mod tests {
                     std::fs::create_dir(jail.directory().join(".foundry")).unwrap();
 
                     // define function type to allow implicit params / return
-                    let f: Box<dyn FnOnce(&mut Jail) -> Result<(), figment2::Error>> = Box::new($fun);
+                    let f: Box<dyn FnOnce(&mut Jail) -> Result<(), figment::Error>> = Box::new($fun);
                     f(jail)?;
 
                     Ok(())

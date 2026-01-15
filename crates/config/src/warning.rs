@@ -1,4 +1,4 @@
-use figment2::Profile;
+use figment::Profile;
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
 

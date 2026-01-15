@@ -1,6 +1,6 @@
 //! error handling and solc error codes
 use alloy_primitives::map::HashSet;
-use figment2::providers::{Format, Toml};
+use figment::providers::{Format, Toml};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{error::Error, fmt, str::FromStr};
 
@@ -8,12 +8,12 @@ use std::{error::Error, fmt, str::FromStr};
 #[derive(Clone, PartialEq)]
 pub struct ExtractConfigError {
     /// error thrown when extracting the `Config`
-    pub(crate) error: figment2::Error,
+    pub(crate) error: figment::Error,
 }
 
 impl ExtractConfigError {
     /// Wraps the figment error.
-    pub fn new(error: figment2::Error) -> Self {
+    pub fn new(error: figment::Error) -> Self {
         Self { error }
     }
 }
@@ -62,14 +62,14 @@ impl Error for ExtractConfigError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum FoundryConfigError {
     /// An error thrown during toml parsing
-    Toml(figment2::Error),
+    Toml(figment::Error),
     /// Any other error thrown when constructing the config's figment.
-    Other(figment2::Error),
+    Other(figment::Error),
 }
 
 impl fmt::Display for FoundryConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let fmt_err = |err: &figment2::Error, f: &mut fmt::Formatter<'_>| {
+        let fmt_err = |err: &figment::Error, f: &mut fmt::Formatter<'_>| {
             write!(f, "{err}")?;
             if !err.path.is_empty() {
                 // the path will contain the setting value like `["etherscan_api_key"]`

@@ -1,6 +1,6 @@
 use crate::Config;
 use alloy_primitives::map::HashMap;
-use figment2::{
+use figment::{
     Figment, Profile, Provider,
     value::{Dict, Map, Value},
 };
@@ -140,11 +140,11 @@ pub struct InlineConfigProvider<'a> {
 }
 
 impl Provider for InlineConfigProvider<'_> {
-    fn metadata(&self) -> figment2::Metadata {
-        figment2::Metadata::named("inline config")
+    fn metadata(&self) -> figment::Metadata {
+        figment::Metadata::named("inline config")
     }
 
-    fn data(&self) -> figment2::Result<DataMap> {
+    fn data(&self) -> figment::Result<DataMap> {
         let mut map = DataMap::new();
         if let Some(new) = self.inline.get_contract(self.contract) {
             extend_data_map(&mut map, new);
