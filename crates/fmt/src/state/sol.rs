@@ -795,12 +795,8 @@ impl<'ast> State<'_, 'ast> {
             fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
         let force_break = overflows && fits_alone_no_cmnts;
 
-        // Set up precall size tracking
         if lhs_size <= space_left {
             self.neverbreak();
-            self.call_stack.add_precall(lhs_size + 1);
-        } else {
-            self.call_stack.add_precall(space_left + self.config.tab_width);
         }
 
         // Handle comments before the RHS expression
@@ -932,7 +928,6 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.var_init = cache;
-        self.call_stack.reset_precall();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>, is_var_def: bool) {
@@ -1954,12 +1949,6 @@ impl<'ast> State<'_, 'ast> {
         );
         self.end();
         self.word(" =");
-
-        // '(' + var + ', ' + var + ')' + ' ='
-        let vars_size = vars.iter().fold(0, |acc, var| {
-            acc + var.as_ref().unspan().map_or(0, |v| self.estimate_size(v.span)) + 2
-        }) + 2;
-        self.call_stack.add_precall(vars_size);
 
         if self.estimate_size(init_expr.span) + self.config.tab_width
             <= std::cmp::max(space_left, self.space_left())
