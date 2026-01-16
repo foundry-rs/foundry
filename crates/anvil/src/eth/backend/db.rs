@@ -7,7 +7,10 @@ use std::{
 };
 
 use alloy_consensus::{BlockBody, Header};
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::{AddressMap, HashMap}};
+use alloy_primitives::{
+    Address, B256, Bytes, U256, keccak256,
+    map::{AddressMap, HashMap},
+};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,

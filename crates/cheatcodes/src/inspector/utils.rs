@@ -44,12 +44,8 @@ impl CommonCreateInput for &mut CreateInputs {
     }
     fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address {
         let caller = CreateInputs::caller(self);
-        let old_nonce = ecx
-            .journaled_state
-            .state
-            .get(&caller)
-            .map(|acc| acc.info.nonce)
-            .unwrap_or_default();
+        let old_nonce =
+            ecx.journaled_state.state.get(&caller).map(|acc| acc.info.nonce).unwrap_or_default();
         let created_address = self.created_address(old_nonce);
         cheatcodes.allow_cheatcodes_on_create(ecx, caller, created_address);
         created_address

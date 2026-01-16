@@ -1,6 +1,9 @@
 //! Support for generating the state root for memdb storage
 
-use alloy_primitives::{B256, U256, keccak256, map::{AddressMap, HashMap}};
+use alloy_primitives::{
+    B256, U256, keccak256,
+    map::{AddressMap, HashMap},
+};
 use alloy_rlp::Encodable;
 use alloy_trie::{HashBuilder, Nibbles};
 use revm::{database::DbAccount, state::AccountInfo};

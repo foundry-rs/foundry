@@ -22,8 +22,7 @@ use revm::{
     bytecode::Bytecode,
     context::JournalInner,
     context_interface::{
-        block::BlobExcessGasAndPrice,
-        journaled_state::account::JournaledAccountTr,
+        block::BlobExcessGasAndPrice, journaled_state::account::JournaledAccountTr,
         result::ResultAndState,
     },
     database::{CacheDB, DatabaseRef},

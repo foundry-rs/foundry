@@ -136,7 +136,7 @@ mod tests {
             chain.operator_fee_scalar = Some(U256::from(0));
         }
 
-        let op_cfg = op_env.evm_env.cfg_env.clone().with_spec(op_spec);
+        let op_cfg: CfgEnv<OpSpecId> = CfgEnv::new_with_spec(op_spec);
         let op_evm_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(EmptyDB::default());
