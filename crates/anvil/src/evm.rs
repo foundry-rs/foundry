@@ -170,13 +170,13 @@ mod tests {
     }
 
     #[test]
-    fn build_eth_evm_with_extra_precompiles_default_spec() {
-        let (env, mut evm) = create_eth_evm(SpecId::default());
+    fn build_eth_evm_with_extra_precompiles_osaka_spec() {
+        let (env, mut evm) = create_eth_evm(SpecId::OSAKA);
 
-        // Check that the Osaka precompile IS present when using the default spec.
+        // Check that the Osaka precompile IS present when using the Osaka spec.
         assert!(evm.precompiles().addresses().contains(&ETH_OSAKA_PRECOMPILE));
 
-        // Check that the Prague precompile IS present when using the default spec.
+        // Check that the Prague precompile IS present when using the Osaka spec.
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
@@ -245,13 +245,13 @@ mod tests {
     }
 
     #[test]
-    fn build_op_evm_with_extra_precompiles_default_spec() {
-        let (env, mut evm) = create_op_evm(SpecId::default(), OpSpecId::default());
+    fn build_op_evm_with_extra_precompiles_isthmus_spec() {
+        let (env, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::ISTHMUS);
 
-        // Check that the Isthmus precompile IS present when using the default spec.
+        // Check that the Isthmus precompile IS present when using the Isthmus spec.
         assert!(evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
 
-        // Check that the Prague precompile IS present when using the default spec.
+        // Check that the Prague precompile IS present when using the Isthmus spec.
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn build_op_evm_with_extra_precompiles_bedrock_spec() {
-        let (env, mut evm) = create_op_evm(SpecId::default(), OpSpecId::BEDROCK);
+        let (env, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::BEDROCK);
 
         // Check that the Isthmus precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
         assert!(!evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
