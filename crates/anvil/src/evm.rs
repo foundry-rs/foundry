@@ -36,8 +36,11 @@ mod tests {
         primitives::hardfork::SpecId,
     };
 
-    // A precompile activated in the `Prague` spec.
+    // A precompile activated in the `Prague` spec (BLS12-381 G2 map).
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
+
+    // A precompile activated in the `Osaka` spec (P256 verify - EIP-7212).
+    const ETH_OSAKA_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
 
     // A precompile activated in the `Isthmus` spec.
     const OP_ISTHMUS_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
@@ -170,6 +173,9 @@ mod tests {
     fn build_eth_evm_with_extra_precompiles_default_spec() {
         let (env, mut evm) = create_eth_evm(SpecId::default());
 
+        // Check that the Osaka precompile IS present when using the default spec.
+        assert!(evm.precompiles().addresses().contains(&ETH_OSAKA_PRECOMPILE));
+
         // Check that the Prague precompile IS present when using the default spec.
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
@@ -192,8 +198,36 @@ mod tests {
     fn build_eth_evm_with_extra_precompiles_london_spec() {
         let (env, mut evm) = create_eth_evm(SpecId::LONDON);
 
+        // Check that the Osaka precompile IS NOT present when using the London spec.
+        assert!(!evm.precompiles().addresses().contains(&ETH_OSAKA_PRECOMPILE));
+
         // Check that the Prague precompile IS NOT present when using the London spec.
         assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
+
+        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
+
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
+
+        let result = match &mut evm {
+            EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
+            _ => unreachable!(),
+        };
+
+        assert!(result.result.is_success());
+        assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
+    }
+
+    #[test]
+    fn build_eth_evm_with_extra_precompiles_prague_spec() {
+        let (env, mut evm) = create_eth_evm(SpecId::PRAGUE);
+
+        // Check that the Osaka precompile IS NOT present when using the Prague spec.
+        assert!(!evm.precompiles().addresses().contains(&ETH_OSAKA_PRECOMPILE));
+
+        // Check that the Prague precompile IS present when using the Prague spec.
+        assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
