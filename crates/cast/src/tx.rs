@@ -497,8 +497,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
     /// Returns whether this builder will produce a Tempo transaction.
     pub fn is_tempo(&self) -> bool {
-        // TODO: Replace this with `FoundryTransactionRequest::is_tempo`
-        self.tx.other.contains_key("feeToken") || self.tx.other.contains_key("nonceKey")
+        FoundryTransactionRequest::new(self.tx.clone()).is_tempo()
     }
 
     async fn _build(
