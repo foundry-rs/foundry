@@ -1420,10 +1420,10 @@ contract SimpleContractTest is Test {
 ...
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [370554] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 1737 bytes of code
-    ├─ [2511] SimpleContract::setStr("new value")
-    │   ├─ [1588] SimpleContract::_setStr("new value")
+    ├─ [..] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] [..] bytes of code
+    ├─ [..] SimpleContract::setStr("new value")
+    │   ├─ [..] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
     │   └─ ← [Stop]
     └─ ← [Stop]

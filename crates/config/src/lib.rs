@@ -2564,6 +2564,8 @@ impl Default for Config {
                 SolidityErrorCode::ContractExceeds24576Bytes,
                 SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
                 SolidityErrorCode::TransientStorageUsed,
+                SolidityErrorCode::TransferDeprecated,
+                SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
             ],
             ignored_file_paths: vec![],
             deny: DenyLevel::Never,
