@@ -799,6 +799,41 @@ impl Config {
         Ok(config)
     }
 
+    /// Merges environment variable providers into the figment and selects the profile.
+    fn merge_env_providers(figment: Figment, profile: Profile) -> Figment {
+        use crate::providers::*;
+
+        figment
+            .merge(
+                Env::prefixed("DAPP_")
+                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(
+                Env::prefixed("DAPP_TEST_")
+                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(DappEnvCompatProvider)
+            .merge(EtherscanEnvProvider::default())
+            .merge(
+                Env::prefixed("FOUNDRY_")
+                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .map(|key| {
+                        let key = key.as_str();
+                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
+                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                        }) {
+                            key.replacen('_', ".", 1).into()
+                        } else {
+                            key.into()
+                        }
+                    })
+                    .global(),
+            )
+            .select(profile)
+    }
+
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
     ///
     /// This will merge various providers, such as env,toml,remappings into the figment if
@@ -830,35 +865,7 @@ impl Config {
         );
 
         // merge environment variables
-        figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            )
-            .merge(
-                Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            )
-            .merge(DappEnvCompatProvider)
-            .merge(EtherscanEnvProvider::default())
-            .merge(
-                Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else {
-                            key.into()
-                        }
-                    })
-                    .global(),
-            )
-            .select(profile.clone());
+        figment = Self::merge_env_providers(figment, profile.clone());
 
         // only resolve remappings if all providers are requested
         if providers.is_all() {
@@ -1801,6 +1808,60 @@ impl Config {
         Self::figment_with_root(root)
     }
 
+    /// Extracts basic metadata (artifacts path and EVM version) for a specific profile.
+    /// Loads configuration from TOML files and environment variables, but ignores remappings.
+    ///
+    /// Errors if the profile doesn't exist.
+    pub fn extract_profile_metadata(
+        root: impl AsRef<Path>,
+        profile: impl Into<Profile>,
+    ) -> Result<(PathBuf, EvmVersion), figment::Error> {
+        use crate::providers::*;
+
+        let root = root.as_ref();
+        let profile = profile.into();
+        let mut figment = Figment::default();
+
+        // merge global foundry.toml file with specific profile
+        if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
+            figment = Self::merge_toml_provider(
+                figment,
+                TomlFileProvider::with_profile(None, global_toml, profile.clone()),
+                profile.clone(),
+            );
+        }
+        // merge local foundry.toml file with specific profile
+        figment = Self::merge_toml_provider(
+            figment,
+            TomlFileProvider::with_profile(
+                Some("FOUNDRY_CONFIG"),
+                root.join(Self::FILE_NAME),
+                profile.clone(),
+            ),
+            profile.clone(),
+        );
+
+        // merge environment variables
+        figment = Self::merge_env_providers(figment, profile.clone());
+
+        // validate that the profile exists
+        let validation_figment = figment.clone().select(Self::PROFILE_SECTION);
+        if let Ok(data) = validation_figment.data()
+            && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
+        {
+            let profile_str = profile.to_string();
+            if profile != Self::DEFAULT_PROFILE && !profiles.contains_key(&profile_str) {
+                return Err(figment::Error::from(format!(
+                    "profile '{profile_str}' not found in configuration"
+                )));
+            }
+        }
+
+        let out = figment.extract_inner("out")?;
+        let evm_version = resolve_evm_version(&figment, EvmVersion::default())?.unwrap_or_default();
+        Ok((out, evm_version))
+    }
+
     /// Creates a new Config that adds additional context extracted from the provided root.
     ///
     /// # Example
@@ -2269,24 +2330,8 @@ impl Config {
 
     /// Check if any defaults need to be normalized.
     ///
-    /// This normalizes the default `evm_version` if a `solc` was provided in the config.
-    ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        if figment.contains("evm_version") {
-            return figment;
-        }
-
-        // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
-            && let Some(version) = solc
-                .try_version()
-                .ok()
-                .and_then(|version| self.evm_version.normalize_version_solc(&version))
-        {
-            figment = figment.merge(("evm_version", version));
-        }
-
         // Normalize `deny` based on the provided `deny_warnings` version.
         if self.deny_warnings
             && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
@@ -2294,8 +2339,37 @@ impl Config {
             figment = figment.merge(("deny", DenyLevel::Warnings));
         }
 
+        if figment.contains("evm_version") {
+            return figment;
+        }
+
+        // Normalizes the default `evm_version` if a `solc` was provided in the config.
+        if let Some(version) = resolve_evm_version(&figment, self.evm_version).ok().flatten() {
+            figment = figment.merge(("evm_version", version));
+        }
+
         figment
     }
+}
+
+/// Resolves the EVM version from a figment, normalizing against a base version.
+///
+/// See also <https://github.com/foundry-rs/foundry/issues/7014>
+fn resolve_evm_version(
+    figment: &Figment,
+    ref_version: EvmVersion,
+) -> Result<Option<EvmVersion>, figment::Error> {
+    if let Ok(evm) = figment.extract_inner::<EvmVersion>("evm_version") {
+        return Ok(Some(evm));
+    }
+    if let Ok(evm) = figment.extract_inner::<String>("evm_version") {
+        return evm.to_lowercase().parse::<EvmVersion>().map(Some).map_err(figment::Error::from);
+    }
+    // Fallback to solc-based detection
+    if let Ok(solc) = figment.extract_inner::<SolcReq>("solc") {
+        return Ok(solc.try_version().ok().and_then(|v| ref_version.normalize_version_solc(&v)));
+    }
+    Ok(None)
 }
 
 impl From<Config> for Figment {

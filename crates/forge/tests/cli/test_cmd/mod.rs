@@ -4237,6 +4237,89 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(can_get_profile_metadata, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    // Create foundry.toml with multiple profiles
+    let config_content = r#"
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+[profile.test1]
+out = "out/test1"
+evm_version = "london"
+
+[profile.test2]
+out = "out/test2"
+evm_version = "cancun"
+"#;
+    prj.create_file("foundry.toml", config_content);
+
+    prj.add_source(
+        "GetProfile.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+struct ProfileMetadata { string artifacts; string evm; }
+interface ProfileVm {
+    function getProfile(string calldata evm) external returns(ProfileMetadata memory);
+}
+
+contract GetProfileTest is Test {
+    function endsWith(string memory str, string memory suffix) internal pure returns (bool) {
+        bytes memory strBytes = bytes(str);
+        bytes memory suffixBytes = bytes(suffix);
+
+        if (suffixBytes.length > strBytes.length) {
+            return false;
+        }
+
+        uint offset = strBytes.length - suffixBytes.length;
+        for (uint i = 0; i < suffixBytes.length; i++) {
+            if (strBytes[offset + i] != suffixBytes[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function test_getProfile() public {
+        ProfileMetadata memory meta;
+        ProfileVm pm = ProfileVm(address(vm));
+
+        // Test profile test1
+        meta = pm.getProfile("test1");
+        assertTrue(endsWith(meta.artifacts, "out/test1"), "artifacts should end with out/test1");
+        assertEq(meta.evm, "london");
+
+        // Test profile test2
+        meta = pm.getProfile("test2");
+        assertTrue(endsWith(meta.artifacts, "out/test2"), "artifacts should end with out/test2");
+        assertEq(meta.evm, "cancun");
+    }
+}
+        "#,
+    );
+
+    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/GetProfile.t.sol:GetProfileTest
+[PASS] test_getProfile() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // tests proper reverts in fork mode for contracts with non-existent linked libraries.
 // <https://github.com/foundry-rs/foundry/issues/11185>
 #[cfg(not(feature = "isolate-by-default"))]

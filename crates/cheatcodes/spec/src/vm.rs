@@ -359,6 +359,14 @@ interface Vm {
         bytes revertData;
     }
 
+    /// Represents metadata derived from `foundry.toml` for a given profile.
+    struct ProfileMetadata {
+        /// The output path of the generated artifacts.
+       string artifacts;
+       /// The EVM version.
+       string evm;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -2828,6 +2836,15 @@ interface Vm {
         returns (address[] memory keyAddrs);
 
     // -------- Uncategorized Utilities --------
+
+    /// Derives the `ProfileMetadata` from the `foundry.toml` for the active profile.
+    #[cheatcode(group = Utilities)]
+    function getProfile() external returns (ProfileMetadata memory);
+
+    /// Derives the `ProfileMetadata` from the `foundry.toml` for the given profile.
+    /// Reverts if the profile does not exist or the path cannot be resolved.
+    #[cheatcode(group = Utilities)]
+    function getProfile(string calldata profile) external returns (ProfileMetadata memory);
 
     /// Labels an address in call traces.
     #[cheatcode(group = Utilities)]
