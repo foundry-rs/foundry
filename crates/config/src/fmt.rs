@@ -194,7 +194,7 @@ impl MultilineFuncHeaderStyle {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NamespaceImportStyle {
-    /// prefer plain imports: `import * as name from "source";`
+    /// prefer plain imports: `import "source" as name;`
     #[default]
     PreferPlain,
     /// prefer glob imports: `import * as name from "source";`
