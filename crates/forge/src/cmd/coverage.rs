@@ -1,7 +1,7 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::coverage::{
-    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
-    DebugReporter, ItemAnchor, LcovReporter,
+    BytecodeReporter, ContractId, CoverageItem, CoverageItemKind, CoverageReport, CoverageReporter,
+    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, SourceLocation,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
 };
@@ -18,7 +18,7 @@ use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
-use solar_sema::codegen::Codegen;
+use solar::sema::codegen::Codegen;
 use std::path::{Path, PathBuf};
 
 // Loads project's figment and merges the build cli arguments into it
@@ -115,79 +115,82 @@ impl CoverageArgs {
 
     /// Experimental source instrumentation mode.
     async fn run_instrumented(mut self, mut config: Config, evm_opts: EvmOpts) -> Result<()> {
-        sh_println!("Experimental source instrumentation mode enabled.")?;
+        sh_println!("Experimental source instrumentation mode (Solar-powered) enabled.")?;
 
         // 1. Setup temp directory
         let temp_dir = tempfile::tempdir()?;
         let temp_root = temp_dir.path();
 
-        // 2. Collect and instrument sources
-        let mut coverage_items = Vec::new();
+        // 2. Setup Solar and compile
         let mut opts = solar::config::Opts::default();
         opts.unstable.instrument = true;
         let sess = solar::interface::Session::new(opts);
+        let mut compiler = solar::sema::Compiler::new(sess);
 
         let project = config.project()?;
         let source_paths = project.paths.input_files();
 
-        let mut path_to_id: HashMap<PathBuf, usize> = HashMap::default();
-        sess.enter_sequential(|| {
-            for (id, path) in source_paths.iter().enumerate() {
-                let rel_path = path.strip_prefix(&config.root)?;
-                let target_path = temp_root.join(rel_path);
-                if let Some(parent) = target_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
+        let (objects, coverage_items) = compiler.enter_mut(|compiler| {
+            let mut pcx = compiler.parse();
+            pcx.par_load_files(
+                source_paths
+                    .iter()
+                    .map(|p| p.to_str().unwrap().to_string())
+                    .collect::<Vec<String>>(),
+            )
+            .map_err(|_| eyre::eyre!("Solar parsing failed"))?;
+            pcx.parse();
+            compiler.lower_asts().map_err(|_| eyre::eyre!("Solar lowering failed"))?;
+            compiler.analysis().map_err(|_| eyre::eyre!("Solar analysis failed"))?;
 
-                let content = std::fs::read_to_string(path)?;
-                let mut instrumented_content = content.clone();
+            let mut codegen =
+                Codegen::new(compiler.gcx(), compiler.gcx().bump()).with_instrumentation(true);
+            let yul_objects = codegen.lower_hir();
 
-                let arena = solar::ast::Arena::new();
-                let mut parser = solar::parse::Parser::from_source_code(
-                    &sess,
-                    &arena,
-                    solar::interface::source_map::FileName::Real(path.clone()),
-                    content,
-                )
-                .map_err(|e| {
-                    eyre::eyre!("Failed to create parser for {:?}: {:?}", path, e)
-                })?;
+            let mut items = Vec::new();
+            for (_counter, (span, contract_id)) in codegen.coverage_map() {
+                let start = compiler.gcx().sess.source_map().lookup_char_pos(span.lo());
+                let end = compiler.gcx().sess.source_map().lookup_char_pos(span.hi());
+                let contract_name = compiler.gcx().item_name(*contract_id).to_string();
 
-                match parser.parse_file() {
-                    Ok(ast) => {
-                        let mut instrumenter =
-                            crate::coverage::instrument::Instrumenter::new(&sess, id as u32);
-                        let _ =
-                            solar::ast::visit::Visit::visit_source_unit(&mut instrumenter, &ast);
-                        instrumenter.instrument(&mut instrumented_content);
-                        coverage_items.extend(instrumenter.items);
-                    }
-                    Err(err) => {
-                        sh_warn!("Failed to parse {:?}: {:?}", path, err)?;
-                    }
-                }
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                start.file.name.hash(&mut hasher);
+                let source_id = hasher.finish() as usize;
 
-                instrumented_content.push_str(&format!(
-                    "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256,uint256) external pure; }}",
-                    id
-                ));
-                std::fs::write(&target_path, instrumented_content)
-                    .map_err(|e| eyre::eyre!("Failed to write instrumented file to {:?}: {}", target_path, e))?;
-                path_to_id.insert(path.clone(), id);
+                items.push(CoverageItem {
+                    kind: CoverageItemKind::Statement,
+                    loc: SourceLocation {
+                        source_id,
+                        contract_name: contract_name.into(),
+                        bytes: span.lo().0..span.hi().0,
+                        lines: start.line as u32..end.line as u32 + 1,
+                    },
+                    hits: 0,
+                });
             }
-            Ok::<(), eyre::Error>(())
+
+            let objects = yul_objects
+                .into_iter()
+                .map(|obj| (obj.name.value.to_string(), obj.to_string()))
+                .collect::<Vec<_>>();
+
+            Ok::<(Vec<(String, String)>, Vec<CoverageItem>), eyre::Error>((objects, items))
         })?;
 
-        // 3. Update config to point to temp root
+        // 3. Write Yul files and update config
+        for (name, content) in objects {
+            let target_path = temp_root.join(format!("{name}.yul"));
+            std::fs::write(&target_path, content)?;
+        }
+
         let original_root = config.root.clone();
         config.root = temp_root.to_path_buf();
-        config.src = temp_root.join(config.src.strip_prefix(&original_root)?);
-        config.test = temp_root.join(config.test.strip_prefix(&original_root)?);
-        config.script = temp_root.join(config.script.strip_prefix(&original_root)?);
+        config.src = temp_root.to_path_buf();
         config.out = temp_root.join("out");
         config.cache_path = temp_root.join("cache");
 
-        // 4. Build instrumented project
+        // 4. Build instrumented project (from Yul)
         let (_project, output) = self.build(&config)?;
 
         // 5. Prepare Report
@@ -200,20 +203,13 @@ impl CoverageArgs {
             .map(|(_, _, v)| v.clone())
             .unwrap_or_else(|| Version::new(0, 8, 0));
 
-        for (path, &id) in &path_to_id {
-            let rel_path = path.strip_prefix(&original_root).unwrap_or(path);
-            report.add_source(version.clone(), id, rel_path.to_path_buf());
-        }
-
         let analysis = SourceAnalysis::from_items(coverage_items);
         report.add_analysis(version, analysis);
 
         self.populate_reporters(&original_root);
 
         sh_println!("Running tests...")?;
-        self.collect(&original_root, &output, report, config, evm_opts).await?;
-
-        Ok(())
+        self.collect(&original_root, &output, report, config, evm_opts).await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
