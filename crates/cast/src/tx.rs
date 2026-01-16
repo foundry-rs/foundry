@@ -702,7 +702,7 @@ pub(crate) async fn signing_provider(
     let config = tx_opts.eth.load_config()?;
     let signer = tx_opts.eth.wallet.signer().await?;
     let wallet = alloy_network::EthereumWallet::from(signer);
-    let provider = get_provider_builder(&config)?.build_with_wallet(wallet)?;
+    let provider = get_provider_builder(&config, false)?.build_with_wallet(wallet)?;
     if let Some(interval) = tx_opts.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }
