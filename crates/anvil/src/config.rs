@@ -16,7 +16,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
-use alloy_eips::eip7840::BlobParams;
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, TransactionResponse};
@@ -1094,6 +1094,9 @@ impl NodeConfig {
             self.networks,
         );
 
+        let base_fee_params: BaseFeeParams =
+            self.networks.base_fee_params(self.get_genesis_timestamp());
+
         let fees = FeeManager::new(
             spec_id,
             self.get_base_fee(),
@@ -1101,6 +1104,7 @@ impl NodeConfig {
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
             self.get_blob_params(),
+            base_fee_params,
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =

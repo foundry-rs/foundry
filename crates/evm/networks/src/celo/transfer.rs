@@ -73,7 +73,7 @@ pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileRes
         Ok(account) => account,
         Err(e) => {
             return Err(PrecompileError::Other(
-                format!("Failed to load from account: {e:?}").into(),
+                format!("Failed to load sender account: {e:?}").into(),
             ));
         }
     };
@@ -86,7 +86,9 @@ pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileRes
     let to_account = match internals.load_account(to_address) {
         Ok(account) => account,
         Err(e) => {
-            return Err(PrecompileError::Other(format!("Failed to load to account: {e:?}").into()));
+            return Err(PrecompileError::Other(
+                format!("Failed to load recipient account: {e:?}").into(),
+            ));
         }
     };
 

@@ -69,6 +69,11 @@ impl<'s, 'c> LintContext<'s, 'c> {
         Self { sess, with_description, with_json_emitter, config, active_lints }
     }
 
+    fn add_help<'a>(&self, diag: DiagBuilder<'a, ()>, help: &'static str) -> DiagBuilder<'a, ()> {
+        // Avoid ANSI characters when using a JSON emitter
+        if self.with_json_emitter { diag.help(help) } else { diag.help(hyperlink(help)) }
+    }
+
     pub fn session(&self) -> &'s Session {
         self.sess
     }
@@ -95,12 +100,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
             .code(DiagId::new_str(lint.id()))
             .span(MultiSpan::from_span(span));
 
-        // Avoid ANSI characters when using a JSON emitter
-        if self.with_json_emitter {
-            diag = diag.help(lint.help());
-        } else {
-            diag = diag.help(hyperlink(lint.help()));
-        }
+        diag = self.add_help(diag, lint.help());
 
         diag.emit();
     }
@@ -144,12 +144,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
             }
         };
 
-        // Avoid ANSI characters when using a JSON emitter
-        if self.with_json_emitter {
-            diag = diag.help(lint.help());
-        } else {
-            diag = diag.help(hyperlink(lint.help()));
-        }
+        diag = self.add_help(diag, lint.help());
 
         diag.emit();
     }
