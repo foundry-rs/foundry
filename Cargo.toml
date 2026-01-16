@@ -289,14 +289,14 @@ op-alloy-rpc-types = "0.23.1"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.25.1"
-alloy-op-evm = "0.25.1"
+alloy-evm = "0.25.2"
+alloy-op-evm = "0.25.2"
 alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
 
 # revm
-revm = { version = "33.1.0", default-features = false }
-revm-inspectors = { version = "0.33.0", features = ["serde"] }
-op-revm = { version = "14.1.0", default-features = false }
+revm = { version = "34.0.0", default-features = false }
+revm-inspectors = { version = "0.33.2", features = ["serde"] }
+op-revm = { version = "15.0.0", default-features = false }
 monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
 
 ## cli
