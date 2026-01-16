@@ -37,6 +37,8 @@ pub struct FormatterConfig {
     pub contract_new_lines: bool,
     /// Sort import statements alphabetically in groups (a group is separated by a newline).
     pub sort_imports: bool,
+    /// Choose between `import "a" as name` and `import * as name from "a"`
+    pub namespace_import_style: NamespaceImportStyle,
     /// Whether to suppress spaces around the power operator (`**`).
     pub pow_no_space: bool,
     /// Style that determines if a broken list, should keep its elements together on their own
@@ -189,6 +191,18 @@ impl MultilineFuncHeaderStyle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NamespaceImportStyle {
+    /// prefer plain imports: `import * as name from "source";`
+    #[default]
+    PreferPlain,
+    /// prefer glob imports: `import * as name from "source";`
+    PreferGlob,
+    /// preserve the original style
+    Preserve,
+}
+
 /// Style that determines if a broken list, should keep its elements together on their own line,
 /// before breaking individually.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +264,7 @@ impl Default for FormatterConfig {
             ignore: vec![],
             contract_new_lines: false,
             sort_imports: false,
+            namespace_import_style: NamespaceImportStyle::default(),
             pow_no_space: false,
             prefer_compact: PreferCompact::default(),
             docs_style: DocCommentStyle::default(),
