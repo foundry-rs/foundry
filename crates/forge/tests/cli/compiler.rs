@@ -236,13 +236,13 @@ Solidity:
 0.8.11 (<= london):
 └── src/ContractB.sol
 
-0.8.33 (<= osaka):
+0.8.33 (<= prague):
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
 Vyper:
 
-0.4.3 (<= osaka):
+0.4.3 (<= prague):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
