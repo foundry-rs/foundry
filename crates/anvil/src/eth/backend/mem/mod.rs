@@ -56,7 +56,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
-    map::HashMap,
+    map::{AddressMap, HashMap},
 };
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
@@ -3443,7 +3443,7 @@ impl Backend {
         // Get the database at the common block
         let common_state = {
             let return_state_or_throw_err =
-                |db: Option<&StateDb>| -> Result<HashMap<Address, DbAccount>, BlockchainError> {
+                |db: Option<&StateDb>| -> Result<AddressMap<DbAccount>, BlockchainError> {
                     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
                     let db_full =
                         state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;

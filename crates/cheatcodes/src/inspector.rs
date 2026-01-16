@@ -1881,8 +1881,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             let bytecode = created_acc.info.code.clone().unwrap_or_default().original_bytes();
             if let Some((index, _)) =
                 self.expected_creates.iter().find_position(|expected_create| {
-                    expected_create.deployer == call.caller
-                        && expected_create.create_scheme.eq(call.scheme.into())
+                    expected_create.deployer == call.caller()
+                        && expected_create.create_scheme.eq(call.scheme().into())
                         && expected_create.bytecode == bytecode
                 })
             {
@@ -1894,7 +1894,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
 impl InspectorExt for Cheatcodes {
     fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &CreateInputs) -> bool {
-        if let CreateScheme::Create2 { .. } = inputs.scheme {
+        if let CreateScheme::Create2 { .. } = inputs.scheme() {
             let depth = ecx.journaled_state.depth();
             let target_depth = if let Some(prank) = &self.get_prank(depth) {
                 prank.depth

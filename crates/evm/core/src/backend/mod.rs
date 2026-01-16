@@ -21,7 +21,10 @@ use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
     context::JournalInner,
-    context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
+    context_interface::{
+        block::BlobExcessGasAndPrice, journaled_state::account::JournaledAccountTr,
+        result::ResultAndState,
+    },
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},

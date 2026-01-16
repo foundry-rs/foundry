@@ -32,6 +32,7 @@ impl GenesisConfig {
                 // we set this to empty so `Database::code_by_hash` doesn't get called
                 code: Some(Default::default()),
                 nonce: 0,
+                account_id: None,
             };
             (address, info)
         })
@@ -65,6 +66,7 @@ impl GenesisConfig {
             nonce: nonce.unwrap_or_default(),
             code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,
+            account_id: None,
         }
     }
 }

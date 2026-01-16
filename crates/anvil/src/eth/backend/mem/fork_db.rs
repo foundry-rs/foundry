@@ -2,7 +2,7 @@ use crate::eth::backend::db::{
     Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
     SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
 };
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseResult, RevertStateSnapshotAction, StateSnapshot},
@@ -87,7 +87,7 @@ impl Db for ForkedDatabase {
 }
 
 impl MaybeFullDatabase for ForkedDatabase {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.database().cache.accounts)
     }
 
@@ -122,7 +122,7 @@ impl MaybeFullDatabase for ForkedDatabase {
 }
 
 impl MaybeFullDatabase for ForkDbStateSnapshot {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.local.cache.accounts)
     }
 

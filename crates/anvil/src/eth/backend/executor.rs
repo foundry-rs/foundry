@@ -502,7 +502,10 @@ where
 {
     if env.networks.is_optimism() {
         let evm_env = EvmEnv::new(
-            env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS),
+            env.evm_env
+                .cfg_env
+                .clone()
+                .with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS),
             env.evm_env.block_env.clone(),
         );
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
