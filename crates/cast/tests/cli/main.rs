@@ -4344,7 +4344,7 @@ casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
     .assert_success();
 });
 
-// Test cast mktx with EIP-4844 blob transaction
+// Test cast mktx with EIP-4844 blob transaction (legacy format)
 casttest!(cast_mktx_eip4844_blob, |prj, cmd| {
     // Create a temporary blob data file
     let blob_data = b"dummy blob data for testing";
@@ -4366,6 +4366,7 @@ casttest!(cast_mktx_eip4844_blob, |prj, cmd| {
         "--priority-gas-price",
         "1000000000",
         "--blob",
+        "--eip4844",
         "--blob-gas-price",
         "1000000",
         "--path",
@@ -4375,7 +4376,7 @@ casttest!(cast_mktx_eip4844_blob, |prj, cmd| {
     .assert_success();
 });
 
-// Test cast mktx with EIP-7594 blob transaction
+// Test cast mktx with EIP-7594 blob transaction (default format)
 casttest!(cast_mktx_eip7594_blob, |prj, cmd| {
     // Create a temporary blob data file
     let blob_data = b"dummy peerdas blob data for testing";
@@ -4397,7 +4398,6 @@ casttest!(cast_mktx_eip7594_blob, |prj, cmd| {
         "--priority-gas-price",
         "1000000000",
         "--blob",
-        "--peerdas",
         "--blob-gas-price",
         "1000000",
         "--path",
