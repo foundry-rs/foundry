@@ -95,7 +95,6 @@ extern crate tracing;
 ///
 /// Panics if any error occurs. For a non-panicking version, use [`try_spawn`].
 ///
-///
 /// # Examples
 ///
 /// ```no_run
