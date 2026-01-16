@@ -36,9 +36,10 @@ where
     CTX: ContextTr<Journal: JournalExt>,
 {
     fn log(&mut self, _context: &mut CTX, log: alloy_primitives::Log) {
-        if log.topics().len() == 2 && log.topics()[0] == SOLAR_COVERAGE_TOPIC {
-            let counter = U256::from_be_bytes(log.topics()[1].0).to::<u32>();
-            self.maps.0.entry(0).or_insert_with(HitMap::empty).hit(counter);
+        if log.topics().len() == 3 && log.topics()[0] == SOLAR_COVERAGE_TOPIC {
+            let source_id = U256::from_be_bytes(log.topics()[1].0).to::<usize>();
+            let counter = U256::from_be_bytes(log.topics()[2].0).to::<u32>();
+            self.maps.0.entry(source_id).or_insert_with(HitMap::empty).hit(counter);
         }
     }
 
