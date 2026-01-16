@@ -64,6 +64,8 @@ ignored_error_codes = [
     "code-size",
     "init-code-size",
     "transient-storage",
+    "transfer-deprecated",
+    "natspec-memory-safe-assembly-deprecated",
 ]
 ignored_warnings_from = []
 deny = "never"
@@ -1219,7 +1221,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "license",
     "code-size",
     "init-code-size",
-    "transient-storage"
+    "transient-storage",
+    "transfer-deprecated",
+    "natspec-memory-safe-assembly-deprecated"
   ],
   "ignored_warnings_from": [],
   "deny": "never",
