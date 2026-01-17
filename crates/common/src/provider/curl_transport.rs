@@ -2,12 +2,52 @@
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_transport::{TransportError, TransportFut};
+use serde_json::Value;
 use tower::Service;
 use url::Url;
 
 /// Escapes a string for use in a single-quoted shell argument.
 fn shell_escape(s: &str) -> String {
     s.replace('\'', "'\"'\"'")
+}
+
+/// Generates a curl command for an RPC request.
+///
+/// This is a standalone helper that can be used to generate curl commands
+/// without going through the transport layer.
+pub fn generate_curl_command(
+    url: &str,
+    method: &str,
+    params: Value,
+    headers: Option<&[String]>,
+    jwt: Option<&str>,
+) -> String {
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    });
+    let payload_str = serde_json::to_string(&payload).unwrap_or_default();
+    let escaped_payload = shell_escape(&payload_str);
+
+    let mut cmd = String::from("curl -X POST");
+    cmd.push_str(" -H 'Content-Type: application/json'");
+
+    if let Some(jwt) = jwt {
+        cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt)));
+    }
+
+    if let Some(hdrs) = headers {
+        for h in hdrs {
+            cmd.push_str(&format!(" -H '{}'", shell_escape(h)));
+        }
+    }
+
+    cmd.push_str(&format!(" --data-raw '{escaped_payload}'"));
+    cmd.push_str(&format!(" '{}'", shell_escape(url)));
+
+    cmd
 }
 
 /// A transport that prints curl commands instead of executing RPC requests.
