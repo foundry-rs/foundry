@@ -9,7 +9,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
-use foundry_cli::{opts::TransactionOpts, utils, utils::LoadConfig};
+use foundry_cli::{opts::TransactionOpts, utils::LoadConfig, utils::get_provider_with_curl};
 use foundry_wallets::WalletSigner;
 
 use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
@@ -117,7 +117,7 @@ impl SendTxArgs {
         };
 
         let config = send_tx.eth.load_config()?;
-        let provider = utils::get_provider(&config)?;
+        let provider = get_provider_with_curl(&config, send_tx.eth.rpc.curl)?;
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
