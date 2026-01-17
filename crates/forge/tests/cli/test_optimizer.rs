@@ -1196,7 +1196,7 @@ contract CounterWithSalt {
 Compiling 1 files with [..]
 ...
 [FAIL: assertion failed: 113 != 112] test_Increment_In_Counter() (gas: [..])
-[FAIL: assertion failed: 0x11acEfcD29A1BA964A05C0E7F3901054BEfb17c0 != 0x223e63BE3BF01DD04f852d70f1bE217017055f49] test_Increment_In_Counter_With_Salt() (gas: [..])
+[FAIL: assertion failed: 113 != 112] test_Increment_In_Counter_With_Salt() (gas: [..])
 ...
 
 "#]]);

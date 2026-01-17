@@ -39,7 +39,7 @@ mod tests {
     // A precompile activated in the `Prague` spec (BLS12-381 G2 map).
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
 
-    // A precompile activated in the `Osaka` spec (P256 verify - EIP-7212).
+    // A precompile activated in the `Osaka` spec (EIP-7951).
     const ETH_OSAKA_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
 
     // A precompile activated in the `Isthmus` spec.
