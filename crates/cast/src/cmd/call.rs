@@ -450,7 +450,8 @@ impl CallArgs {
             "data": format!("0x{}", hex::encode(&data)),
         });
 
-        let block_param = self.block
+        let block_param = self
+            .block
             .map(|b| serde_json::to_value(b).unwrap_or(serde_json::json!("latest")))
             .unwrap_or(serde_json::json!("latest"));
 
@@ -587,7 +588,7 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U64, address, b256, fixed_bytes, hex};
+    use alloy_primitives::{U64, address, b256, fixed_bytes};
 
     #[test]
     fn test_get_state_overrides() {
