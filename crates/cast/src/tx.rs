@@ -4,7 +4,7 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
+    AnyNetwork, TransactionBuilder, TransactionBuilder7594, TransactionBuilder7702,
 };
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
@@ -313,6 +313,8 @@ pub struct CastTxBuilder<P, S> {
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
+    /// Whether the blob transaction should use EIP-4844 (legacy) format instead of EIP-7594.
+    eip4844: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -373,6 +375,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx,
             legacy,
             blob: tx_opts.blob,
+            eip4844: tx_opts.eip4844,
             chain,
             etherscan_api_key,
             auth: tx_opts.auth,
@@ -389,6 +392,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -445,6 +449,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -668,9 +673,15 @@ where
 
         let mut coder = SidecarBuilder::<SimpleCoder>::default();
         coder.ingest(&blob_data);
-        let sidecar = coder.build()?;
 
-        self.tx.set_blob_sidecar(sidecar);
+        if self.eip4844 {
+            let sidecar = coder.build()?;
+            alloy_network::TransactionBuilder4844::set_blob_sidecar(&mut self.tx, sidecar);
+        } else {
+            let sidecar = coder.build_7594()?;
+            self.tx.set_blob_sidecar_7594(sidecar);
+        }
+
         self.tx.populate_blob_hashes();
 
         Ok(self)
