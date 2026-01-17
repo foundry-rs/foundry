@@ -58,7 +58,7 @@ impl CurlTransport {
             cmd.push_str(&format!(" -H '{}'", shell_escape(h)));
         }
 
-        cmd.push_str(&format!(" --data-raw '{}'", escaped_payload));
+        cmd.push_str(&format!(" --data-raw '{escaped_payload}'"));
         cmd.push_str(&format!(" '{}'", shell_escape(self.url.as_str())));
 
         cmd
@@ -70,7 +70,7 @@ impl CurlTransport {
 
         Box::pin(async move {
             // Print the curl command to stdout
-            println!("{curl_cmd}");
+            let _ = crate::sh_println!("{curl_cmd}");
 
             // Exit cleanly after printing the curl command
             std::process::exit(0);
@@ -112,7 +112,7 @@ impl Service<RequestPacket> for &CurlTransport {
 
     #[inline]
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        self.request(req.clone())
+        self.request(req)
     }
 }
 
