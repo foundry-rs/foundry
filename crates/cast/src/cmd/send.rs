@@ -9,7 +9,10 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
-use foundry_cli::{opts::TransactionOpts, utils::LoadConfig, utils::get_provider_with_curl};
+use foundry_cli::{
+    opts::TransactionOpts,
+    utils::{LoadConfig, get_provider_with_curl},
+};
 use foundry_wallets::WalletSigner;
 
 use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
