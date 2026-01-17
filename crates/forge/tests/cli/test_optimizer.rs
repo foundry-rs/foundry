@@ -1119,7 +1119,7 @@ contract CounterTest is Test {
 
     function test_Increment_In_Counter_With_Salt() public {
         CounterWithSalt counter = new CounterWithSalt{value: 111, salt: bytes32("preprocess_counter_with_salt")}(1);
-        assertEq(address(counter), 0x72061cf94796DB611EcE884Ab867d66e80Ef0d00);
+        assertEq(address(counter), 0x223e63BE3BF01DD04f852d70f1bE217017055f49);
     }
 }
     "#,
