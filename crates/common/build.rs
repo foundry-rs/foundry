@@ -2,17 +2,16 @@
 
 use chrono::DateTime;
 use std::{error::Error, path::PathBuf};
-use vergen::EmitBuilder;
+use vergen::{BuildBuilder, Emitter};
+use vergen_git2::Git2Builder;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
-    EmitBuilder::builder()
-        .build_date()
-        .build_timestamp()
-        .git_describe(false, true, None)
-        .git_sha(false)
-        .emit_and_set()?;
+    let build = BuildBuilder::default().build_date(true).build_timestamp(true).build()?;
+    let git2 = Git2Builder::default().describe(false, true, None).sha(false).build()?;
+
+    Emitter::default().add_instructions(&build)?.add_instructions(&git2)?.emit_and_set()?;
 
     let sha = env_var("VERGEN_GIT_SHA");
     let sha_short = &sha[..10];
