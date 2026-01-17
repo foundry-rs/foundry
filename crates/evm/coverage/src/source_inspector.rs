@@ -1,5 +1,5 @@
 use crate::{HitMap, SourceHitMaps};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use revm::{
     Inspector,
     context::ContextTr,
@@ -17,10 +17,6 @@ pub const CHEATCODE_ADDRESS: Address = Address::new([
 /// Selector for `coverageHit(uint256,uint256)`: `0xa46d5036`
 pub const COVERAGE_HIT_SELECTOR: u32 = 0xa46d5036;
 
-/// Topic for Solar-powered coverage hits.
-pub const SOLAR_COVERAGE_TOPIC: B256 =
-    alloy_primitives::b256!("de8687a6448657031ecfa91d686df3dd1e841f00000000000000000000000000");
-
 #[derive(Debug, Clone, Default)]
 pub struct SourceCoverageCollector {
     pub maps: SourceHitMaps,
@@ -35,14 +31,6 @@ impl<CTX> Inspector<CTX> for SourceCoverageCollector
 where
     CTX: ContextTr<Journal: JournalExt>,
 {
-    fn log(&mut self, _context: &mut CTX, log: alloy_primitives::Log) {
-        if log.topics().len() == 3 && log.topics()[0] == SOLAR_COVERAGE_TOPIC {
-            let source_id = U256::from_be_bytes(log.topics()[1].0).to::<usize>();
-            let counter = U256::from_be_bytes(log.topics()[2].0).to::<u32>();
-            self.maps.0.entry(source_id).or_insert_with(HitMap::empty).hit(counter);
-        }
-    }
-
     fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         if inputs.target_address == CHEATCODE_ADDRESS {
             let input_bytes = inputs.input.bytes(context);
