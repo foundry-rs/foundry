@@ -4670,3 +4670,86 @@ Transaction successfully executed.
 
 "#]]);
 });
+
+// tests that the --curl flag outputs a valid curl command for cast rpc
+casttest!(curl_rpc, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["rpc", "eth_blockNumber", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("-H 'Content-Type: application/json'"));
+    assert!(output.contains("eth_blockNumber"));
+    assert!(output.contains("jsonrpc"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast block-number
+casttest!(curl_block_number, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["block-number", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_blockNumber"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast chain-id
+casttest!(curl_chain_id, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["chain-id", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_chainId"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast gas-price
+casttest!(curl_gas_price, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["gas-price", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_gasPrice"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast call
+casttest!(curl_call, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["call", to, "balanceOf(address)(uint256)", to, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
