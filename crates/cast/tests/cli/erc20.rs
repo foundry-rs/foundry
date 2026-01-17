@@ -363,3 +363,141 @@ forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
     let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
     assert_eq!(balance, transfer_amount); // 2nd transfer failed
 });
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 balance
+casttest!(curl_erc20_balance, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+    let owner = "0xbeef000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "balance", token, owner, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 name
+casttest!(curl_erc20_name, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "name", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 decimals
+casttest!(curl_erc20_decimals, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "decimals", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 total-supply
+casttest!(curl_erc20_total_supply, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "total-supply", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 balance
+casttest!(erc20_curl_balance, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+    let owner = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "balance", token, owner, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 name
+casttest!(erc20_curl_name, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+
+    let output = cmd
+        .args(["erc20", "name", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 decimals
+casttest!(erc20_curl_decimals, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+
+    let output = cmd
+        .args(["erc20", "decimals", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 total-supply
+casttest!(erc20_curl_total_supply, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+
+    let output = cmd
+        .args(["erc20", "total-supply", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
