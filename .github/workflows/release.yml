@@ -163,7 +163,7 @@ jobs:
 
       - name: cross setup
         if: contains(matrix.target, 'musl')
-        uses: taiki-e/cache-cargo-install-action@25ef9892608d184944df486ae09ffae168b3cda3 # v2
+        uses: taiki-e/cache-cargo-install-action@34ce5120836e5f9f1508d8713d7fdea0e8facd6f # v2
         with:
           git: https://github.com/cross-rs/cross
           rev: baf457efc2555225af47963475bd70e8d2f5993f

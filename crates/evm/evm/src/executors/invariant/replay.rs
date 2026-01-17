@@ -37,11 +37,14 @@ pub fn replay_run(
 
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs {
-        let call_result = execute_tx(&mut executor, tx)?;
-        logs.extend(call_result.logs);
+        let mut call_result = execute_tx(&mut executor, tx)?;
+        logs.extend(call_result.logs.clone());
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-        HitMaps::merge_opt(line_coverage, call_result.line_coverage);
+        HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
         SourceHitMaps::merge_opt(source_coverage, call_result.source_coverage);
+
+        // Commit state changes to persist across calls in the sequence.
+        executor.commit(&mut call_result);
 
         // Identify newly generated contracts, if they exist.
         ided_contracts
