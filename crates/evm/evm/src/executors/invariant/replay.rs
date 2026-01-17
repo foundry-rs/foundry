@@ -41,7 +41,7 @@ pub fn replay_run(
         logs.extend(call_result.logs.clone());
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
         HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
-        SourceHitMaps::merge_opt(source_coverage, call_result.source_coverage);
+        SourceHitMaps::merge_opt(source_coverage, call_result.source_coverage.clone());
 
         // Commit state changes to persist across calls in the sequence.
         executor.commit(&mut call_result);

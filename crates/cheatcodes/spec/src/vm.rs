@@ -951,6 +951,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getRecordedLogs() external view returns (Log[] memory logs);
 
+    /// Gets all the recorded logs, in JSON format.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRecordedLogsJson() external view returns (string memory logsJson);
+
     // -------- Coverage --------
 
     /// Record a hit for coverage.

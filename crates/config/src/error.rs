@@ -12,7 +12,7 @@ pub struct ExtractConfigError {
 }
 
 impl ExtractConfigError {
-    /// Wraps the figment error
+    /// Wraps the figment error.
     pub fn new(error: figment::Error) -> Self {
         Self { error }
     }
@@ -63,7 +63,7 @@ impl Error for ExtractConfigError {
 pub enum FoundryConfigError {
     /// An error thrown during toml parsing
     Toml(figment::Error),
-    /// Any other error thrown when constructing the config's figment
+    /// Any other error thrown when constructing the config's figment.
     Other(figment::Error),
 }
 
