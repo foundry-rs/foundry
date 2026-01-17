@@ -2889,7 +2889,7 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomAddress() external view returns (address);
 
-    /// Returns an int256 value bounded in given range and different from the current one.
+    /// Returns an int256 value bounded in a given range and different from the current one.
     #[cheatcode(group = Utilities)]
     function bound(int256 current, int256 min, int256 max) external view returns (int256);
 
