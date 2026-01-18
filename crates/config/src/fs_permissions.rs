@@ -11,6 +11,7 @@ use std::{
 ///
 /// E.g. for cheat codes (`vm.writeFile`)
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(transparent)]
 pub struct FsPermissions {
     /// what kind of access is allowed
