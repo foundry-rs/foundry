@@ -323,6 +323,28 @@ If the answer is not there:
 - Join the [support Telegram][tg-support-url] to get help, or
 - Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
 
+## Basic Foundry Test Example
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+contract CounterTest is Test {
+    uint256 public counter;
+
+    function setUp() public {
+        counter = 0;
+    }
+
+    function testIncrement() public {
+        counter += 1;
+        assertEq(counter, 1);
+    }
+}
+
+
 #### License
 
 <sup>
