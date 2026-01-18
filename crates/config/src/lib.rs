@@ -774,40 +774,28 @@ impl Config {
     }
 
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
-        // Helper to add a profile only if it's not already present
-        fn add_profile(profiles: &mut Vec<Profile>, profile: &Profile) {
-            if !profiles.contains(profile) {
-                profiles.push(profile.clone());
-            }
-        }
-
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
-        let active_profile = figment.profile().clone();
+        config.profile = figment.profile().clone();
 
-        // Collect profiles from the profile section.
         // The `"profile"` profile contains all the profiles as keys.
+        let mut add_profile = |profile: &Profile| {
+            if !config.profiles.contains(profile) {
+                config.profiles.push(profile.clone());
+            }
+        };
         let figment = figment.select(Self::PROFILE_SECTION);
         if let Ok(data) = figment.data()
             && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
         {
             for profile in profiles.keys() {
-                add_profile(&mut config.profiles, &Profile::new(profile));
+                add_profile(&Profile::new(profile));
             }
         }
-
-        // Always include the default profile
-        add_profile(&mut config.profiles, &Self::DEFAULT_PROFILE);
-
-        // Ensure the active profile exists.
-        if config.profiles.contains(&active_profile) {
-            config.profile = active_profile;
-        } else {
-            return Err(ExtractConfigError::new(Error::from(format!(
-                "Profile {active_profile} does not exist"
-            ))));
-        }
+        add_profile(&Self::DEFAULT_PROFILE);
+        add_profile(&config.profile);
 
         config.normalize_optimizer_settings();
+
         Ok(config)
     }
 
@@ -6427,18 +6415,53 @@ mod tests {
     }
 
     #[test]
-    fn fails_on_unknown_profile() {
+    fn fails_on_ambiguous_version_in_compilation_restrictions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [profile.default]
+                src = "src"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                version = "0.8.11"
                 "#,
             )?;
 
-            jail.set_env("FOUNDRY_PROFILE", "foo");
-            let err = Config::load().expect_err("expected unknown profile to fail");
-            assert!(err.to_string().contains("Profile foo does not exist"));
+            let err = Config::load().expect_err("expected bare version to fail");
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("Invalid version format '0.8.11'")
+                    && err_msg.contains("Bare version numbers are ambiguous"),
+                "Expected error about ambiguous version, got: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn accepts_explicit_version_requirements() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                version = "=0.8.11"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "test/*.sol"
+                version = ">=0.8.11"
+                "#,
+            )?;
+
+            let config = Config::load().expect("should accept explicit version requirements");
+            assert_eq!(config.compilation_restrictions.len(), 2);
 
             Ok(())
         });

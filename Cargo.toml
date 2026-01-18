@@ -92,7 +92,7 @@ strip = "none"
 [profile.bench]
 inherits = "profiling"
 
-[profile.maxperf]
+[profile.dist]
 inherits = "release"
 lto = "fat"
 codegen-units = 1
@@ -182,18 +182,62 @@ walkdir.opt-level = 3
 
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
-alloy-sol-macro-expander.opt-level = "z"
-figment.opt-level = "z"
-foundry-compilers-artifacts-solc.opt-level = "z"
-foundry-config.opt-level = "z"
-html5ever.opt-level = "z"
-mdbook.opt-level = "z"
-prettyplease.opt-level = "z"
-protobuf.opt-level = "z"
-pulldown-cmark.opt-level = "z"
-syn-solidity.opt-level = "z"
-syn.opt-level = "z"
-trezor-client.opt-level = "z"
+alloy-sol-macro-expander.opt-level = "s"
+figment2.opt-level = "s"
+foundry-compilers-artifacts-solc.opt-level = "s"
+foundry-config.opt-level = "s"
+html5ever.opt-level = "s"
+mdbook-driver.opt-level = "s"
+prettyplease.opt-level = "s"
+protobuf.opt-level = "s"
+pulldown-cmark.opt-level = "s"
+syn-solidity.opt-level = "s"
+syn.opt-level = "s"
+trezor-client.opt-level = "s"
+
+# Networking stack (not perf-critical for CLI tools).
+reqwest.opt-level = "s"
+hyper.opt-level = "s"
+hyper-util.opt-level = "s"
+h2.opt-level = "s"
+rustls.opt-level = "s"
+tower.opt-level = "s"
+tower-http.opt-level = "s"
+
+# Doc generation / templating.
+mdbook-core.opt-level = "s"
+mdbook-html.opt-level = "s"
+font-awesome-as-a-crate.opt-level = "s"
+handlebars.opt-level = "s"
+
+# Watch mode.
+watchexec.opt-level = "s"
+watchexec-events.opt-level = "s"
+watchexec-signals.opt-level = "s"
+watchexec-supervisor.opt-level = "s"
+
+# Soldeer package manager.
+soldeer-commands.opt-level = "s"
+soldeer-core.opt-level = "s"
+
+# Parsing / editing (not perf-sensitive in CLI).
+toml_edit.opt-level = "s"
+toml.opt-level = "s"
+
+# Block explorers / verification.
+foundry-block-explorers.opt-level = "s"
+
+# Misc CLI dependencies.
+clap_builder.opt-level = "s"
+clap_complete.opt-level = "s"
+comfy-table.opt-level = "s"
+indicatif.opt-level = "s"
+dialoguer.opt-level = "s"
+ratatui.opt-level = "s"
+crossterm.opt-level = "s"
+
+# Alloy JSON (parsing, not hot path).
+alloy-json-abi.opt-level = "s"
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
@@ -242,47 +286,47 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 ] }
 
 ## alloy
-alloy-consensus = { version = "1.1.3", default-features = false }
-alloy-contract = { version = "1.1.3", default-features = false }
-alloy-eips = { version = "1.1.3", default-features = false }
-alloy-eip5792 = { version = "1.1.3", default-features = false }
-alloy-ens = { version = "1.1.3", default-features = false }
-alloy-genesis = { version = "1.1.3", default-features = false }
-alloy-json-rpc = { version = "1.1.3", default-features = false }
-alloy-network = { version = "1.1.3", default-features = false }
-alloy-provider = { version = "1.1.3", default-features = false }
-alloy-pubsub = { version = "1.1.3", default-features = false }
-alloy-rpc-client = { version = "1.1.3", default-features = false }
-alloy-rpc-types = { version = "1.1.3", default-features = true }
-alloy-rpc-types-beacon = { version = "1.1.3", default-features = true }
-alloy-rpc-types-eth = { version = "1.1.3", default-features = false }
-alloy-serde = { version = "1.1.3", default-features = false }
-alloy-signer = { version = "1.1.3", default-features = false }
-alloy-signer-aws = { version = "1.1.3", default-features = false }
-alloy-signer-gcp = { version = "1.1.3", default-features = false }
-alloy-signer-ledger = { version = "1.1.3", default-features = false }
-alloy-signer-local = { version = "1.1.3", default-features = false }
-alloy-signer-trezor = { version = "1.1.3", default-features = false }
-alloy-signer-turnkey = { version = "1.1.3", default-features = false }
-alloy-transport = { version = "1.1.3", default-features = false }
-alloy-transport-http = { version = "1.1.3", default-features = false }
-alloy-transport-ipc = { version = "1.1.3", default-features = false }
-alloy-transport-ws = { version = "1.1.3", default-features = false }
-alloy-hardforks = { version = "0.4.5", default-features = false }
-alloy-op-hardforks = { version = "0.4.5", default-features = false }
+alloy-consensus = { version = "1.4", default-features = false }
+alloy-contract = { version = "1.4", default-features = false }
+alloy-eips = { version = "1.4", default-features = false }
+alloy-eip5792 = { version = "1.4", default-features = false }
+alloy-ens = { version = "1.4", default-features = false }
+alloy-genesis = { version = "1.4", default-features = false }
+alloy-json-rpc = { version = "1.4", default-features = false }
+alloy-network = { version = "1.4", default-features = false }
+alloy-provider = { version = "1.4", default-features = false }
+alloy-pubsub = { version = "1.4", default-features = false }
+alloy-rpc-client = { version = "1.4", default-features = false }
+alloy-rpc-types = { version = "1.4", default-features = true }
+alloy-rpc-types-beacon = { version = "1.4", default-features = true }
+alloy-rpc-types-eth = { version = "1.4", default-features = false }
+alloy-serde = { version = "1.4", default-features = false }
+alloy-signer = { version = "1.4", default-features = false }
+alloy-signer-aws = { version = "1.4", default-features = false }
+alloy-signer-gcp = { version = "1.4", default-features = false }
+alloy-signer-ledger = { version = "1.4", default-features = false }
+alloy-signer-local = { version = "1.4", default-features = false }
+alloy-signer-trezor = { version = "1.4", default-features = false }
+alloy-signer-turnkey = { version = "1.4", default-features = false }
+alloy-transport = { version = "1.4", default-features = false }
+alloy-transport-http = { version = "1.4", default-features = false }
+alloy-transport-ipc = { version = "1.4", default-features = false }
+alloy-transport-ws = { version = "1.4", default-features = false }
+alloy-hardforks = { version = "0.4.7", default-features = false }
+alloy-op-hardforks = { version = "0.4.7", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "1.5.1"
-alloy-json-abi = "1.5.1"
-alloy-primitives = { version = "1.5.1", features = [
+alloy-dyn-abi = "1.5.2"
+alloy-json-abi = "1.5.2"
+alloy-primitives = { version = "1.5.2", features = [
     "getrandom",
     "rand",
     "map-fxhash",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "1.5.1"
-alloy-sol-macro-input = "1.5.1"
-alloy-sol-types = "1.5.1"
+alloy-sol-macro-expander = "1.5.2"
+alloy-sol-macro-input = "1.5.2"
+alloy-sol-types = "1.5.2"
 
 alloy-chains = "0.2"
 alloy-rlp = "0.3"
@@ -339,10 +383,10 @@ color-eyre = "0.6"
 comfy-table = "7"
 dirs = "6"
 dunce = "1"
-evm-disassembler = "0.5"
+evm-disassembler = "0.6"
 evmole = "0.8"
 eyre = "0.6"
-figment = "0.10"
+figment = { package = "figment2", version = "0.11" }
 futures = { version = "0.3", default-features = false }
 hyper = "1.8"
 indicatif = "0.18"
@@ -379,7 +423,8 @@ tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
-vergen = { version = "8", default-features = false }
+vergen = { version = "9", default-features = false, features = ["build", "cargo"] }
+vergen-git2 = "9"
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = { version = "0.2", default-features = false, features = [
@@ -392,7 +437,7 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", tag = "v0.7.5" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", tag = "v0.7.5", default-features = false, features = ["serde"] }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 

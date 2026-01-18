@@ -4,8 +4,7 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, AnyTypedTransaction, TransactionBuilder, TransactionBuilder4844,
-    TransactionBuilder7702,
+    AnyNetwork, TransactionBuilder, TransactionBuilder7594, TransactionBuilder7702,
 };
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
@@ -24,6 +23,7 @@ use foundry_common::{
     provider::RetryProviderWithSigner, shell,
 };
 use foundry_config::{Chain, Config};
+use foundry_primitives::{FoundryTransactionRequest, FoundryTypedTx};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
@@ -224,6 +224,15 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
         Ok(res)
     }
 
+    /// Sends a raw RLP-encoded transaction via `eth_sendRawTransaction`.
+    ///
+    /// Used for transaction types that the standard Alloy network stack doesn't understand
+    /// (e.g., Tempo transactions).
+    pub async fn send_raw(&self, raw_tx: &[u8]) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+        let res = self.provider.send_raw_transaction(raw_tx).await?;
+        Ok(res)
+    }
+
     /// # Example
     ///
     /// ```
@@ -304,6 +313,8 @@ pub struct CastTxBuilder<P, S> {
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
+    /// Whether the blob transaction should use EIP-4844 (legacy) format instead of EIP-7594.
+    eip4844: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -350,11 +361,21 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx.set_nonce(nonce.to());
         }
 
+        // Set Tempo fee token if provided
+        if let Some(fee_token) = tx_opts.tempo.fee_token {
+            tx.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
+        }
+
+        if let Some(nonce_key) = tx_opts.tempo.sequence_key {
+            tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
+        }
+
         Ok(Self {
             provider,
             tx,
             legacy,
             blob: tx_opts.blob,
+            eip4844: tx_opts.eip4844,
             chain,
             etherscan_api_key,
             auth: tx_opts.auth,
@@ -371,6 +392,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -427,6 +449,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -437,13 +460,14 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
 }
 
 impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
-    /// Builds [TransactionRequest] and fills missing fields. Returns a transaction which is ready
-    /// to be broadcasted.
+    /// Builds a [FoundryTransactionRequest] and fills missing fields. Returns a transaction which
+    /// is ready to be broadcasted.
     pub async fn build(
         self,
         sender: impl Into<SenderKind<'_>>,
-    ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(sender, true, false).await
+    ) -> Result<(FoundryTransactionRequest, Option<Function>)> {
+        let (tx, func) = self._build(sender, true, false).await?;
+        Ok((FoundryTransactionRequest::new(tx), func))
     }
 
     /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
@@ -460,11 +484,26 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
     /// Returns the hex encoded string representation of the transaction.
     pub async fn build_unsigned_raw(self, from: Address) -> Result<String> {
         let (tx, _) = self._build(SenderKind::Address(from), true, true).await?;
-        let tx = tx.build_unsigned()?;
-        match tx {
-            AnyTypedTransaction::Ethereum(t) => Ok(hex::encode_prefixed(t.encoded_for_signing())),
-            _ => eyre::bail!("Cannot generate unsigned transaction for non-Ethereum transactions"),
-        }
+        let ftx = FoundryTransactionRequest::new(tx);
+
+        let tx = ftx.build_unsigned()?;
+        Ok(hex::encode_prefixed(match tx {
+            FoundryTypedTx::Legacy(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip1559(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip2930(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip4844(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip7702(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Tempo(t) => t.encoded_for_signing(),
+            _ => eyre::bail!(
+                "Cannot generate unsigned transaction for transaction: unknown transaction type"
+            ),
+        }))
+    }
+
+    /// Returns whether this builder will produce a Tempo transaction.
+    pub fn is_tempo(&self) -> bool {
+        // TODO: Replace this with `FoundryTransactionRequest::is_tempo`
+        self.tx.other.contains_key("feeToken") || self.tx.other.contains_key("nonceKey")
     }
 
     async fn _build(
@@ -634,9 +673,15 @@ where
 
         let mut coder = SidecarBuilder::<SimpleCoder>::default();
         coder.ingest(&blob_data);
-        let sidecar = coder.build()?;
 
-        self.tx.set_blob_sidecar(sidecar);
+        if self.eip4844 {
+            let sidecar = coder.build()?;
+            alloy_network::TransactionBuilder4844::set_blob_sidecar(&mut self.tx, sidecar);
+        } else {
+            let sidecar = coder.build_7594()?;
+            self.tx.set_blob_sidecar_7594(sidecar);
+        }
+
         self.tx.populate_blob_hashes();
 
         Ok(self)
@@ -662,13 +707,17 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 }
 
 /// Creates a provider with wallet for signing transactions locally.
-pub(crate) async fn signing_provider(
+///
+/// If `curl_mode` is true, the provider will print equivalent curl commands to stdout
+/// instead of executing RPC requests.
+pub(crate) async fn signing_provider_with_curl(
     tx_opts: &SendTxOpts,
+    curl_mode: bool,
 ) -> eyre::Result<RetryProviderWithSigner> {
     let config = tx_opts.eth.load_config()?;
     let signer = tx_opts.eth.wallet.signer().await?;
     let wallet = alloy_network::EthereumWallet::from(signer);
-    let provider = get_provider_builder(&config)?.build_with_wallet(wallet)?;
+    let provider = get_provider_builder(&config, curl_mode)?.build_with_wallet(wallet)?;
     if let Some(interval) = tx_opts.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }
