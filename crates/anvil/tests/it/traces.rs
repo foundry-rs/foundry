@@ -778,7 +778,7 @@ async fn test_trace_address_fork2() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "flaky"]
-async fn flaky_trace_filter() {
+async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 

@@ -659,7 +659,7 @@ async fn can_remove_pool_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "flaky"]
-async fn flaky_reorg() {
+async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
