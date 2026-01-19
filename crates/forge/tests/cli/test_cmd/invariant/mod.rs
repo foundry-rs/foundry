@@ -1079,7 +1079,7 @@ contract CheckIntervalTest is Test {
         r#"
 ...
 [FAIL: counter > 5]
-       [SEQUENCE]
+	[SEQUENCE]
 ...
 "#
     ]]);
