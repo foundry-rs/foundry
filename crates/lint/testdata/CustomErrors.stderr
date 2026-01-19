@@ -1,0 +1,48 @@
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/CustomErrors.sol:LL:CC
+   |
+LL |         require(value > 0, "Value must be greater than zero");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/CustomErrors.sol:LL:CC
+   |
+LL | ...   require(value >= 0 && value <= 100, "Value must be between 0 and 100");
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/CustomErrors.sol:LL:CC
+   |
+LL |         require(a > 0 && b > 0, "Both must be positive");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/CustomErrors.sol:LL:CC
+   |
+LL |         revert("Something went wrong");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/CustomErrors.sol:LL:CC
+   |
+LL |         revert("");
+   |         ^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
+note[custom-errors]: prefer using custom errors on revert and require calls
+  --> ROOT/testdata/CustomErrors.sol:LL:CC
+   |
+LL |         revert();
+   |         ^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#custom-errors
+
