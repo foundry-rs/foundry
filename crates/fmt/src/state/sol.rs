@@ -205,16 +205,32 @@ impl<'ast> State<'_, 'ast> {
     fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
-        match items {
-            ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
+
+        use ast::ImportItems;
+        use config::NamespaceImportStyle as NIStyle;
+
+        match (items, self.config.namespace_import_style) {
+            (ImportItems::Plain(None), _) => {
                 self.print_ast_str_lit(path);
-                if let Some(ident) = items.source_alias() {
-                    self.word(" as ");
-                    self.print_ident(&ident);
-                }
             }
 
-            ast::ImportItems::Aliases(aliases) => {
+            (ImportItems::Plain(Some(source_alias)), NIStyle::Preserve | NIStyle::PreferPlain)
+            | (ImportItems::Glob(source_alias), NIStyle::PreferPlain) => {
+                self.print_ast_str_lit(path);
+                self.word(" as ");
+                self.print_ident(source_alias);
+            }
+
+            (ImportItems::Glob(source_alias), NIStyle::Preserve | NIStyle::PreferGlob)
+            | (ImportItems::Plain(Some(source_alias)), NIStyle::PreferGlob) => {
+                self.word("*");
+                self.word(" as ");
+                self.print_ident(source_alias);
+                self.word(" from ");
+                self.print_ast_str_lit(path);
+            }
+
+            (ImportItems::Aliases(aliases), _) => {
                 // Check if we should keep single imports on one line
                 let use_single_line = self.config.single_line_imports && aliases.len() == 1;
 
