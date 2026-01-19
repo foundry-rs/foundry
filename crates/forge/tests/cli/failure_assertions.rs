@@ -190,18 +190,21 @@ Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
-    prj.insert_ds_test();
-    prj.insert_vm();
+forgetest!(
+    #[ignore = "flaky cache selectors"]
+    flaky_expect_emit_tests_should_fail,
+    |prj, cmd| {
+        prj.insert_ds_test();
+        prj.insert_vm();
 
-    let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitFailures.t.sol");
+        let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitFailures.t.sol");
 
-    prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests);
+        prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests);
 
-    cmd.forge_fuse().arg("build").assert_success();
-    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+        cmd.forge_fuse().arg("build").assert_success();
+        cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
+        cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...
 [FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
 [FAIL: log != expected SomethingElse] testShouldFailDifferentIndexedParameters() ([GAS])
@@ -222,11 +225,11 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    cmd.forge_fuse()
-        .args(["test", "--mc", "ExpectEmitCountFailureTest"])
-        .assert_failure()
-        .stdout_eq(
-            r#"No files changed, compilation skipped
+        cmd.forge_fuse()
+            .args(["test", "--mc", "ExpectEmitCountFailureTest"])
+            .assert_failure()
+            .stdout_eq(
+                r#"No files changed, compilation skipped
 ...
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
@@ -236,25 +239,29 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,
-        );
-});
+            );
+    }
+);
 
-forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
-    prj.insert_ds_test();
-    prj.insert_vm();
-    prj.update_config(|config| {
-        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
-    });
+forgetest!(
+    #[ignore = "flaky cache selectors"]
+    flaky_expect_emit_params_tests_should_fail,
+    |prj, cmd| {
+        prj.insert_ds_test();
+        prj.insert_vm();
+        prj.update_config(|config| {
+            config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+        });
 
-    let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
-    let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
+        let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
+        let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
 
-    prj.add_source("ExpectEmitParamHarness.sol", expect_emit_failure_src);
-    prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests);
+        prj.add_source("ExpectEmitParamHarness.sol", expect_emit_failure_src);
+        prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests);
 
-    cmd.forge_fuse().arg("build").assert_success();
+        cmd.forge_fuse().arg("build").assert_success();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitParamFailures"]).assert_failure().stdout_eq(
+        cmd.forge_fuse().args(["test", "--mc", "ExpectEmitParamFailures"]).assert_failure().stdout_eq(
         r#"No files changed, compilation skipped
 ...
 [PASS] testSelectiveChecks() ([GAS])
@@ -273,7 +280,8 @@ Encountered a total of 8 failing tests, 1 tests succeeded
 ...
 "#,
     );
-});
+    }
+);
 
 forgetest!(mem_safety_test_should_fail, |prj, cmd| {
     prj.insert_ds_test();

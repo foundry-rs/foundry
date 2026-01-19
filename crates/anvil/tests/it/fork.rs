@@ -1203,7 +1203,8 @@ async fn test_fork_reset_basefee() {
 
 // <https://github.com/foundry-rs/foundry/issues/6795>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_arbitrum_fork_dev_balance() {
+#[ignore = "flaky external RPC"]
+async fn flaky_test_arbitrum_fork_dev_balance() {
     let (api, handle) = spawn(
         fork_config()
             .with_fork_block_number(None::<u64>)
@@ -1241,7 +1242,8 @@ async fn test_arb_fork_mining() {
 
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_arbitrum_fork_block_number() {
+#[ignore = "flaky external RPC"]
+async fn flaky_test_arbitrum_fork_block_number() {
     // fork to get initial block for test
     let (_, handle) = spawn(
         fork_config()
