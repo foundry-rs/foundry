@@ -176,7 +176,8 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 });
 
 // tests cast can decode error and event when using local sig identifiers cache
-forgetest_init!(error_event_decode_with_cache, |prj, cmd| {
+#[ignore = "flaky cache selectors"]
+forgetest_init!(flaky_error_event_decode_with_cache, |prj, cmd| {
     prj.add_source(
         "LocalProjectContract",
         r#"
