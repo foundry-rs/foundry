@@ -2528,15 +2528,18 @@ interface Interface {
 
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
-casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
-    cmd.args([
-        "interface",
-        "--etherscan-api-key",
-        &next_etherscan_api_key(),
-        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_fetch_weth_interface_from_etherscan,
+    |_prj, cmd| {
+        cmd.args([
+            "interface",
+            "--etherscan-api-key",
+            &next_etherscan_api_key(),
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
@@ -2562,7 +2565,8 @@ interface WETH9 {
 }
 
 "#]]);
-});
+    }
+);
 
 casttest!(ens_namehash, |_prj, cmd| {
     cmd.args(["namehash", "emo.eth"]).assert_success().stdout_eq(str![[r#"
