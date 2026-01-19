@@ -17,7 +17,9 @@ jobs:
     with:
       profile: isolate
 
-  create-failure-issue:
+  # If any of the jobs fail, this will create a high-priority issue to signal so.
+  issue:
+    name: Open an issue
     runs-on: ubuntu-latest
     needs: [nextest]
     if: failure()
@@ -35,4 +37,4 @@ jobs:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           update_existing: true
-          filename: .github/TEST_ISOLATE_FAILURE.md
+          filename: .github/TEST_ISOLATE_FAILURE_TEMPLATE.md
