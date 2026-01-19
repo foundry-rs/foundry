@@ -13,7 +13,7 @@ use eyre::Report;
 use foundry_common::{get_contract_name, get_file_name, shell};
 use foundry_evm::{
     core::Breakpoints,
-    coverage::HitMaps,
+    coverage::{HitMaps, SourceHitMaps},
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
@@ -423,6 +423,10 @@ pub struct TestResult {
     #[serde(skip)]
     pub line_coverage: Option<HitMaps>,
 
+    /// Raw source coverage info
+    #[serde(skip)]
+    pub source_coverage: Option<SourceHitMaps>,
+
     /// Labeled addresses
     #[serde(rename = "labeled_addresses")] // Backwards compatibility.
     pub labels: AddressHashMap<String>,
@@ -495,7 +499,7 @@ macro_rules! extend {
         $a.logs.extend($b.logs);
         $a.labels.extend($b.labels);
         $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
-        $a.merge_coverages($b.line_coverage);
+        $a.merge_coverages($b.line_coverage, $b.source_coverage);
     };
 }
 
@@ -507,6 +511,7 @@ impl TestResult {
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
             line_coverage: setup.coverage.clone(),
+            source_coverage: setup.source_coverage.clone(),
             ..Default::default()
         }
     }
@@ -525,6 +530,7 @@ impl TestResult {
             labels,
             traces,
             coverage,
+            source_coverage,
             deployed_libs: _,
             reason,
             skipped,
@@ -536,6 +542,7 @@ impl TestResult {
             logs,
             traces,
             line_coverage: coverage,
+            source_coverage,
             labels,
             ..Default::default()
         }
@@ -744,8 +751,13 @@ impl TestResult {
     }
 
     /// Merges the given coverage result into `self`.
-    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
-        HitMaps::merge_opt(&mut self.line_coverage, other_coverage);
+    pub fn merge_coverages(
+        &mut self,
+        other_line_coverage: Option<HitMaps>,
+        other_source_coverage: Option<SourceHitMaps>,
+    ) {
+        HitMaps::merge_opt(&mut self.line_coverage, other_line_coverage);
+        SourceHitMaps::merge_opt(&mut self.source_coverage, other_source_coverage);
     }
 }
 
@@ -901,6 +913,8 @@ pub struct TestSetup {
     pub traces: Traces,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
+    /// Source coverage info during setup.
+    pub source_coverage: Option<SourceHitMaps>,
     /// Addresses of external libraries deployed during setup.
     pub deployed_libs: Vec<Address>,
 
@@ -925,7 +939,12 @@ impl TestSetup {
         extend!(self, raw, trace_kind);
     }
 
-    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
-        HitMaps::merge_opt(&mut self.coverage, other_coverage);
+    pub fn merge_coverages(
+        &mut self,
+        other_line_coverage: Option<HitMaps>,
+        other_source_coverage: Option<SourceHitMaps>,
+    ) {
+        HitMaps::merge_opt(&mut self.coverage, other_line_coverage);
+        SourceHitMaps::merge_opt(&mut self.source_coverage, other_source_coverage);
     }
 }

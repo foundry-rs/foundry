@@ -5,7 +5,7 @@ use alloy_primitives::{Log, map::HashMap};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use foundry_evm_traces::{TraceKind, TraceMode, Traces, load_contracts};
 use indicatif::ProgressBar;
@@ -23,6 +23,7 @@ pub fn replay_run(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     line_coverage: &mut Option<HitMaps>,
+    source_coverage: &mut Option<SourceHitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
     show_solidity: bool,
@@ -40,6 +41,7 @@ pub fn replay_run(
         logs.extend(call_result.logs.clone());
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
         HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
+        SourceHitMaps::merge_opt(source_coverage, call_result.source_coverage.clone());
 
         // Commit state changes to persist across calls in the sequence.
         executor.commit(&mut call_result);
@@ -100,6 +102,7 @@ pub fn replay_error(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     line_coverage: &mut Option<HitMaps>,
+    source_coverage: &mut Option<SourceHitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
@@ -121,6 +124,7 @@ pub fn replay_error(
         logs,
         traces,
         line_coverage,
+        source_coverage,
         deprecated_cheatcodes,
         &calls,
         config.show_solidity,

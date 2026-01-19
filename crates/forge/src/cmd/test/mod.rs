@@ -280,7 +280,7 @@ impl TestArgs {
             .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
-        self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
+        self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false, false).await
     }
 
     /// Executes all the tests in the project.
@@ -294,6 +294,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
         coverage: bool,
+        source_coverage: bool,
     ) -> Result<TestOutcome> {
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -343,6 +344,7 @@ impl TestArgs {
             .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
+            .set_source_coverage(source_coverage)
             .build::<MultiCompiler>(output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
