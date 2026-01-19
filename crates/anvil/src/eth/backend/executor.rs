@@ -96,7 +96,11 @@ impl ExecutedTransaction {
                 })
             }
             // TODO(onbjerg): we should impl support for Tempo transactions
-            FoundryTxEnvelope::Tempo(_) => todo!(),
+            FoundryTxEnvelope::Tempo(_) => {
+                panic!(
+                    "Tempo transactions are not supported, and should have been handled upstream"
+                )
+            }
         }
     }
 }
