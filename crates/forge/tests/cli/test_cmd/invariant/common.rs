@@ -991,6 +991,223 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
+// Tests that call_override detects reentrancy via ETH value transfers.
+// When a contract sends ETH to an EOA, call_override intercepts the transfer,
+// performs the ETH transfer, and then injects a callback that simulates a
+// malicious receive() function reentering the protocol.
+forgetest!(invariant_reentrancy_eth_transfer, |prj, cmd| {
+    prj.insert_utils();
+    prj.update_config(|config| {
+        config.invariant.depth = 15;
+        config.invariant.fail_on_revert = false;
+        config.invariant.call_override = true;
+    });
+
+    prj.add_test(
+        "InvariantReentrancyEthTransfer.t.sol",
+        r#"
+import "./utils/Test.sol";
+
+// Vulnerable vault that sends ETH before updating state
+contract VulnerableVault {
+    mapping(address => uint256) public balances;
+    bool public exploited;
+
+    function deposit() external payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    function withdraw() external {
+        uint256 amount = balances[msg.sender];
+        require(amount > 0, "No balance");
+        // BUG: Sends ETH before updating state - vulnerable to reentrancy
+        (bool success,) = msg.sender.call{value: amount}("");
+        require(success, "Transfer failed");
+        balances[msg.sender] = 0;
+    }
+
+    // Backdoor that can only be called during reentrancy (when balance not zeroed)
+    function exploit() external {
+        require(balances[msg.sender] > 0, "Need balance");
+        // This can be called multiple times before balance is zeroed
+        exploited = true;
+    }
+}
+
+contract InvariantReentrancyEthTransfer is Test {
+    VulnerableVault vault;
+    address user;
+
+    function setUp() public {
+        vault = new VulnerableVault();
+        user = address(0x1234);
+        vm.deal(user, 10 ether);
+        // Pre-fund vault and make initial deposit
+        vm.deal(address(vault), 100 ether);
+        vm.prank(user);
+        vault.deposit{value: 1 ether}();
+    }
+
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(vault);
+        return targets;
+    }
+
+    function targetSenders() public view returns (address[] memory) {
+        address[] memory senders = new address[](1);
+        senders[0] = user;
+        return senders;
+    }
+
+    function invariantNotExploited() public view {
+        require(vault.exploited() == false, "exploited via reentrancy");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReentrancyEthTransfer.t.sol:InvariantReentrancyEthTransfer
+[FAIL: exploited via reentrancy]
+	[SEQUENCE]
+ invariantNotExploited() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantReentrancyEthTransfer.t.sol:InvariantReentrancyEthTransfer
+[FAIL: exploited via reentrancy]
+	[SEQUENCE]
+ invariantNotExploited() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
+// Tests that call_override detects reentrancy via ETH value transfers to contracts.
+// When a contract sends ETH to another contract, call_override intercepts the transfer,
+// performs the ETH transfer, and then injects a callback that simulates a
+// malicious receive() function reentering the protocol.
+forgetest!(invariant_reentrancy_eth_transfer_to_contract, |prj, cmd| {
+    prj.insert_utils();
+    prj.update_config(|config| {
+        config.invariant.depth = 15;
+        config.invariant.fail_on_revert = false;
+        config.invariant.call_override = true;
+    });
+
+    prj.add_test(
+        "InvariantReentrancyEthTransferToContract.t.sol",
+        r#"
+import "./utils/Test.sol";
+
+// Receiver contract that will receive ETH from the vault
+contract Receiver {
+    // Empty - just receives ETH
+    receive() external payable {}
+}
+
+// Vulnerable vault that sends ETH to a contract before updating state
+contract VulnerableVaultWithContractReceiver {
+    mapping(address => uint256) public balances;
+    bool public exploited;
+    Receiver public receiver;
+
+    constructor(Receiver _receiver) {
+        receiver = _receiver;
+    }
+
+    function deposit() external payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    // Withdraw sends ETH to the receiver contract, not msg.sender
+    function withdrawToReceiver() external {
+        uint256 amount = balances[msg.sender];
+        require(amount > 0, "No balance");
+        // BUG: Sends ETH before updating state - vulnerable to reentrancy
+        // Even though receiver is a contract, call_override can intercept
+        (bool success,) = address(receiver).call{value: amount}("");
+        require(success, "Transfer failed");
+        balances[msg.sender] = 0;
+    }
+
+    // Backdoor that can only be called during reentrancy (when balance not zeroed)
+    function exploit() external {
+        require(balances[msg.sender] > 0, "Need balance");
+        exploited = true;
+    }
+}
+
+contract InvariantReentrancyEthTransferToContract is Test {
+    VulnerableVaultWithContractReceiver vault;
+    Receiver receiver;
+    address user;
+
+    function setUp() public {
+        receiver = new Receiver();
+        vault = new VulnerableVaultWithContractReceiver(receiver);
+        user = address(0x1234);
+        vm.deal(user, 10 ether);
+        vm.deal(address(vault), 100 ether);
+        vm.prank(user);
+        vault.deposit{value: 1 ether}();
+    }
+
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(vault);
+        return targets;
+    }
+
+    function targetSenders() public view returns (address[] memory) {
+        address[] memory senders = new address[](1);
+        senders[0] = user;
+        return senders;
+    }
+
+    function invariantNotExploited() public view {
+        require(vault.exploited() == false, "exploited via reentrancy to contract");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReentrancyEthTransferToContract.t.sol:InvariantReentrancyEthTransferToContract
+[FAIL: exploited via reentrancy to contract]
+	[SEQUENCE]
+ invariantNotExploited() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantReentrancyEthTransferToContract.t.sol:InvariantReentrancyEthTransferToContract
+[FAIL: exploited via reentrancy to contract]
+	[SEQUENCE]
+ invariantNotExploited() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
 forgetest_init!(invariant_roll_fork, |prj, cmd| {
     prj.add_rpc_endpoints();
     prj.update_config(|config| {

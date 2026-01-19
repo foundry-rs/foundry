@@ -1,11 +1,13 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
 use foundry_common::mapping_slots::step as mapping_step;
+use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use revm::{
     Inspector,
-    context::{ContextTr, Transaction},
+    context::{ContextTr, JournalTr, Transaction},
     inspector::JournalExt,
-    interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, Interpreter},
+    interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
 };
+use tracing::trace;
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -36,7 +38,7 @@ where
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && ecx.tx().caller() != inputs.caller {
-            self.override_call(inputs);
+            self.override_call(ecx, inputs);
         }
 
         // We only collect `stack` and `memory` data before and after calls.
@@ -74,25 +76,77 @@ impl Fuzzer {
         self.collect = false;
     }
 
-    /// Overrides an external call and tries to call any method of msg.sender.
-    fn override_call(&mut self, call: &mut CallInputs) {
-        if let Some(ref mut call_generator) = self.call_generator {
-            // We only override external calls which are not coming from the test contract.
-            if call.caller != call_generator.test_address
-                && call.scheme == CallScheme::Call
-                && !call_generator.used
-            {
-                // There's only a 30% chance that an override happens.
-                if let Some(tx) = call_generator.next(call.caller, call.target_address) {
-                    call.input = CallInput::Bytes(tx.call_details.calldata.0.into());
-                    call.caller = tx.sender;
-                    call.target_address = tx.call_details.target;
+    /// Overrides an external call to simulate reentrancy attacks.
+    ///
+    /// This function detects reentrancy vulnerabilities by replacing external calls
+    /// with callbacks that reenter the caller contract.
+    ///
+    /// For calls with value (ETH transfers):
+    /// 1. Performs the ETH transfer via the journal first
+    /// 2. Replaces the call with a reentrant callback (value = 0)
+    ///
+    /// For calls without value:
+    /// - Replaces the call entirely with a reentrant callback
+    ///
+    /// This simulates malicious contracts that immediately reenter when called.
+    fn override_call<CTX>(&mut self, ecx: &mut CTX, call: &mut CallInputs)
+    where
+        CTX: ContextTr<Journal: JournalExt>,
+    {
+        let Some(ref mut call_generator) = self.call_generator else {
+            return;
+        };
 
-                    // TODO: in what scenarios can the following be problematic
-                    call.bytecode_address = tx.call_details.target;
-                    call_generator.used = true;
-                }
-            }
+        // We only override external calls which are not coming from the test contract.
+        // Only CALL scheme can trigger reentrancy; skip DELEGATECALL, STATICCALL, etc.
+        // Also skip calls to the cheatcode address (vm.prank, vm.deal, etc.).
+        if call.caller == call_generator.test_address
+            || call.scheme != CallScheme::Call
+            || call_generator.used
+            || call.target_address == CHEATCODE_ADDRESS
+        {
+            return;
         }
+
+        // There's only a ~27% chance that an override happens (90% * 30% from strategy).
+        let Some(tx) = call_generator.next(call.caller, call.target_address) else {
+            trace!(caller = ?call.caller, target = ?call.target_address, "call_override: no tx generated");
+            return;
+        };
+
+        // Check if this call transfers ETH value.
+        // If so, perform the transfer first before injecting callback.
+        let value = call.transfer_value().unwrap_or_default();
+        let has_value = !value.is_zero() && call.gas_limit > 2300;
+
+        if has_value {
+            // Transfer ETH first, then inject callback.
+            // This simulates a malicious receive() function that reenters.
+            let from = call.caller;
+            let to = call.target_address;
+            trace!(from = ?from, to = ?to, value = ?value, "call_override: transferring ETH before callback");
+            let _ = ecx.journal_mut().transfer(from, to, value);
+        }
+
+        // Replace the call with a reentrant callback.
+        // tx.sender = original_target (the callee becomes the attacker)
+        // tx.call_details.target = handler/target contract (where we call back)
+        trace!(
+            new_caller = ?tx.sender,
+            new_target = ?tx.call_details.target,
+            calldata_len = tx.call_details.calldata.len(),
+            "call_override: replacing call with reentrant callback"
+        );
+
+        call.input = CallInput::Bytes(tx.call_details.calldata.0.into());
+        call.caller = tx.sender;
+        call.target_address = tx.call_details.target;
+        call.bytecode_address = tx.call_details.target;
+
+        // Clear the value since the reentrant callback doesn't transfer ETH.
+        // For value transfers, the ETH was already transferred above.
+        call.value = CallValue::Transfer(alloy_primitives::U256::ZERO);
+
+        call_generator.used = true;
     }
 }
