@@ -3273,7 +3273,7 @@ impl Backend {
             && let Ok(typed_tx) = FoundryTxEnvelope::try_from(tx)
             && let Some(sidecar) = typed_tx.sidecar()
         {
-            return Ok(Some(sidecar.sidecar.blobs.clone()));
+            return Ok(Some(sidecar.sidecar.blobs().to_vec()));
         }
 
         Ok(None)
@@ -3291,7 +3291,7 @@ impl Backend {
                 .iter()
                 .filter_map(|tx| tx.as_ref().sidecar())
                 .flat_map(|sidecar| {
-                    sidecar.sidecar.blobs.iter().zip(sidecar.sidecar.commitments.iter())
+                    sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.commitments().iter())
                 })
                 .filter(|(_, commitment)| {
                     // Filter blobs by versioned_hashes if provided
@@ -3312,12 +3312,15 @@ impl Backend {
                 .into_transactions_iter()
                 .map(FoundryTxEnvelope::try_from)
                 .filter_map(|typed_tx_result| {
-                    typed_tx_result.ok()?.sidecar().map(|sidecar| sidecar.sidecar().clone())
+                    typed_tx_result
+                        .ok()?
+                        .sidecar()
+                        .and_then(|sidecar| sidecar.sidecar().clone().into_eip4844())
                 })
                 .fold(BlobTransactionSidecar::default(), |mut acc, sidecar| {
-                    acc.blobs.extend(sidecar.blobs);
-                    acc.commitments.extend(sidecar.commitments);
-                    acc.proofs.extend(sidecar.proofs);
+                    acc.blobs.extend(sidecar.blobs.iter().cloned());
+                    acc.commitments.extend(sidecar.commitments.iter().cloned());
+                    acc.proofs.extend(sidecar.proofs.iter().cloned());
                     acc
                 });
             Ok(Some(sidecar))
@@ -3335,10 +3338,10 @@ impl Backend {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
                         if versioned_hash == hash
                             && let Some(index) =
-                                sidecar.sidecar.commitments.iter().position(|commitment| {
+                                sidecar.sidecar.commitments().iter().position(|commitment| {
                                     kzg_to_versioned_hash(commitment.as_slice()) == *hash
                                 })
-                            && let Some(blob) = sidecar.sidecar.blobs.get(index)
+                            && let Some(blob) = sidecar.sidecar.blobs().get(index)
                         {
                             return Ok(Some(*blob));
                         }

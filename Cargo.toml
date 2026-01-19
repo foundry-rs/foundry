@@ -297,7 +297,7 @@ alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "mai
 revm = { version = "34.0.0", default-features = false }
 revm-inspectors = { version = "0.33.2", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
-monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
+monad-revm = { git = "https://github.com/haythemsellami/monad-revm", branch = "main" }
 
 ## cli
 anstream = "0.6"
@@ -445,18 +445,11 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 alloy-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
 alloy-op-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
 alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
-# alloy-evm = { path = "../Alloy/evm/crates/evm" }
-# alloy-op-evm = { path = "../Alloy/evm/crates/op-evm" }
-# alloy-monad-evm = { path = "../Alloy/evm/crates/monad-evm" }
 
 ## revm
-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
-op-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
-monad-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
-# revm = { path = "../revm/crates/revm" }
-# op-revm = { path = "../revm/crates/op-revm" }
-# monad-revm = { path = "../revm/crates/monad-revm" }
-# revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", branch = "main" }
+# revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
+# op-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
+monad-revm = { git = "https://github.com/haythemsellami/monad-revm", branch = "main" }
 revm-inspectors = { git = "https://github.com/haythemsellami/revm-inspectors", branch = "main" }
 
 ## foundry
