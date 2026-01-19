@@ -49,7 +49,7 @@ allow_paths = []
 include_paths = []
 skip = []
 force = false
-evm_version = "prague"
+evm_version = "osaka"
 gas_reports = ["*"]
 gas_reports_ignore = []
 gas_reports_include_tests = false
@@ -64,6 +64,8 @@ ignored_error_codes = [
     "code-size",
     "init-code-size",
     "transient-storage",
+    "transfer-deprecated",
+    "natspec-memory-safe-assembly-deprecated",
 ]
 ignored_warnings_from = []
 deny = "never"
@@ -1197,7 +1199,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "include_paths": [],
   "skip": [],
   "force": false,
-  "evm_version": "prague",
+  "evm_version": "osaka",
   "gas_reports": [
     "*"
   ],
@@ -1221,7 +1223,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "license",
     "code-size",
     "init-code-size",
-    "transient-storage"
+    "transient-storage",
+    "transfer-deprecated",
+    "natspec-memory-safe-assembly-deprecated"
   ],
   "ignored_warnings_from": [],
   "deny": "never",
@@ -1794,7 +1798,7 @@ contract Counter {
     let v1_profile = SettingsOverrides {
         name: "v1".to_string(),
         via_ir: Some(true),
-        evm_version: Some(EvmVersion::Prague),
+        evm_version: Some(EvmVersion::Osaka),
         optimizer: None,
         optimizer_runs: Some(44444444),
         bytecode_hash: None,
@@ -1880,19 +1884,19 @@ contract Counter {
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
     assert_eq!(None, via_ir);
-    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
+    assert_eq!("\"osaka\"", evm_version.unwrap().to_string());
     assert_eq!("false", enabled.unwrap().to_string());
     assert_eq!("200", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v1/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
+    assert_eq!("\"osaka\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("44444444", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v2/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
+    assert_eq!("\"osaka\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("111", runs.unwrap().to_string());
 
