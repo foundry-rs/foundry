@@ -4,7 +4,7 @@
 retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
 slow-timeout = { period = "30s", terminate-after = 3 }
 # Exclude flaky tests from regular CI runs - they run in nightly test-flaky workflow
-default-filter = "not test(/^flaky_/)"
+default-filter = "not test(/flaky_/)"
 
 [[profile.default.overrides]]
 filter = "test(/ext_integration/)"
@@ -18,6 +18,6 @@ retries = 0
 # Profile for running flaky tests (used by nightly CI and for local debugging)
 # Run with: cargo nextest run --profile flaky
 [profile.flaky]
-default-filter = "test(/^flaky_/)"
+default-filter = "test(/flaky_/)"
 retries = { backoff = "exponential", count = 5, delay = "10s", jitter = true }
 slow-timeout = { period = "60s", terminate-after = 3 }
