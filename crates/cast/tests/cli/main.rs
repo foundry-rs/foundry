@@ -3667,43 +3667,47 @@ Transaction successfully executed.
 });
 
 // https://github.com/foundry-rs/foundry/issues/9541
-forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(
-        NodeConfig::test()
-            .with_auto_impersonate(true)
-            .with_eth_rpc_url(Some("https://sepolia.base.org")),
-    )
-    .await;
+forgetest_async!(
+    #[ignore = "flaky external RPC"]
+    flaky_cast_run_impersonated_tx,
+    |_prj, cmd| {
+        let (_api, handle) = anvil::spawn(
+            NodeConfig::test()
+                .with_auto_impersonate(true)
+                .with_eth_rpc_url(Some("https://sepolia.base.org")),
+        )
+        .await;
 
-    let http_endpoint = handle.http_endpoint();
+        let http_endpoint = handle.http_endpoint();
 
-    let provider = ProviderBuilder::new().connect_http(http_endpoint.parse().unwrap());
+        let provider = ProviderBuilder::new().connect_http(http_endpoint.parse().unwrap());
 
-    // send impersonated tx
-    let tx = TransactionRequest::default()
-        .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
-        .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-        .with_input(
-            Bytes::from_str(
-                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-            )
-            .unwrap(),
-        );
+        // send impersonated tx
+        let tx = TransactionRequest::default()
+            .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
+            .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+            .with_input(
+                Bytes::from_str(
+                    "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
+                )
+                .unwrap(),
+            );
 
-    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    assert!(receipt.status());
+        assert!(receipt.status());
 
-    // run impersonated tx
-    cmd.cast_fuse()
-        .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
-        .assert_success();
-});
+        // run impersonated tx
+        cmd.cast_fuse()
+            .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
+            .assert_success();
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
 casttest!(
-    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
-    fetch_src_blockscout,
+    #[ignore = "flaky external API"]
+    flaky_fetch_src_blockscout,
     |_prj, cmd| {
         let url = "https://eth.blockscout.com/api";
 
@@ -3730,8 +3734,8 @@ contract WETH9 {
 );
 
 casttest!(
-    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
-    fetch_src_default,
+    #[ignore = "flaky etherscan API"]
+    flaky_fetch_src_default,
     |_prj, cmd| {
         let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
         let etherscan_api_key = next_etherscan_api_key();
@@ -3756,8 +3760,11 @@ contract WETH9 {
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
-casttest!(osaka_can_run_p256_precompile, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "flaky external RPC"]
+    flaky_osaka_can_run_p256_precompile,
+    |_prj, cmd| {
+        cmd.args([
         "run",
         "0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de",
         "--rpc-url",
@@ -3832,7 +3839,8 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+    }
+);
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>
