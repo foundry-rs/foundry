@@ -3400,7 +3400,10 @@ Traces:
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10068>
-forgetest_init!(can_upload_selectors_with_path, |prj, cmd| {
+forgetest_init!(
+    #[ignore = "flaky external API"]
+    flaky_can_upload_selectors_with_path,
+    |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_source(
         "CounterV1.sol",
@@ -4130,8 +4133,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 // This test is a copy of `error_event_decode_with_cache` in cast/tests/cli/selectors.rs
 // but it uses `forge build` to check that the project selectors are cached by default.
-#[ignore = "flaky cache selectors"]
-forgetest_init!(flaky_build_with_selectors_cache, |prj, cmd| {
+forgetest_init!(
+    #[ignore = "flaky cache selectors"]
+    flaky_build_with_selectors_cache,
+    |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_source(
         "LocalProjectContract",

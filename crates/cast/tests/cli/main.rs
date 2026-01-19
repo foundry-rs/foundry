@@ -3147,8 +3147,10 @@ Transaction successfully executed.
 });
 
 // tests cast can decode external libraries traces with project cached selectors
-#[ignore = "flaky cache selectors"]
-forgetest_async!(flaky_decode_external_libraries_with_cached_selectors, |prj, cmd| {
+forgetest_async!(
+    #[ignore = "flaky cache selectors"]
+    flaky_decode_external_libraries_with_cached_selectors,
+    |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
