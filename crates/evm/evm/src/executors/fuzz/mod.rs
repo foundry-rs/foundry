@@ -160,7 +160,7 @@ impl SharedFuzzState {
 /// configuration which can be overridden via [environment variables](proptest::test_runner::Config)
 pub struct FuzzedExecutor {
     /// The EVM executor.
-    executor: Executor,
+    executor_f: Executor,
     /// The fuzzer
     runner: TestRunner,
     /// The account that calls tests.
@@ -187,7 +187,7 @@ impl FuzzedExecutor {
             max_workers = 0;
         }
         let num_workers = Ord::min(rayon::current_num_threads(), max_workers as usize);
-        Self { executor, runner, sender, config, persisted_failure, num_workers }
+        Self { executor_f: executor, runner, sender, config, persisted_failure, num_workers }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -237,12 +237,12 @@ impl FuzzedExecutor {
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
         &self,
+        executor: &Executor,
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
     ) -> Result<FuzzOutcome, TestCaseError> {
-        let mut call = self
-            .executor
+        let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
@@ -275,7 +275,7 @@ impl FuzzedExecutor {
         {
             true
         } else {
-            self.executor.is_raw_call_mut_success(address, &mut call, false)
+            executor.is_raw_call_mut_success(address, &mut call, false)
         };
 
         if success {
@@ -422,10 +422,11 @@ impl FuzzedExecutor {
             self.config.corpus.clone(),
             strategy.boxed(),
             // Master worker replays the persisted corpus using the executor
-            if worker_id == 0 { Some(&self.executor) } else { None },
+            if worker_id == 0 { Some(&self.executor_f) } else { None },
             Some(func),
             None, // fuzzed_contracts for invariant tests
         )?;
+        let mut executor = self.executor_f.clone();
 
         let mut worker = WorkerState::new(worker_id);
         // We want to collect at least one trace which will be displayed to user.
@@ -480,13 +481,19 @@ impl FuzzedExecutor {
                     let timer = Instant::now();
                     corpus.sync(
                         self.num_workers,
-                        &self.executor,
+                        &executor,
                         Some(func),
                         None,
                         &shared_state.global_corpus_metrics,
                     )?;
                     trace!("finished corpus sync in {:?}", timer.elapsed());
                     runs_since_sync = 0;
+                }
+
+                if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
+                    && let Some(seed) = self.config.seed
+                {
+                    cheats.set_seed(seed.wrapping_add(U256::from(worker.runs)));
                 }
 
                 match corpus.new_input(&mut runner, &shared_state.state, func) {
@@ -516,7 +523,7 @@ impl FuzzedExecutor {
             };
 
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            match self.single_fuzz(address, input, &mut corpus) {
+            match self.single_fuzz(&executor, address, input, &mut corpus) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
                         let total_runs = inc_runs();

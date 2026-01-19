@@ -462,15 +462,56 @@ impl<'a> InvariantExecutor<'a> {
                     });
 
                     // Determine if test can continue or should exit.
-                    let result = can_continue(
-                        &invariant_contract,
-                        &mut invariant_test,
-                        &mut current_run,
-                        &self.config,
-                        call_result,
-                        &state_changeset,
-                    )
-                    .map_err(|e| eyre!(e.to_string()))?;
+                    // Check invariants based on check_interval to improve deep run performance.
+                    // - check_interval=0: only assert on the last call
+                    // - check_interval=1 (default): assert after every call
+                    // - check_interval=N: assert every N calls AND always on the last call
+                    let is_last_call = current_run.depth == self.config.depth - 1;
+                    let should_check_invariant = if self.config.check_interval == 0 {
+                        is_last_call
+                    } else {
+                        self.config.check_interval == 1
+                            || (current_run.depth + 1).is_multiple_of(self.config.check_interval)
+                            || is_last_call
+                    };
+
+                    let result = if should_check_invariant {
+                        can_continue(
+                            &invariant_contract,
+                            &mut invariant_test,
+                            &mut current_run,
+                            &self.config,
+                            call_result,
+                            &state_changeset,
+                        )
+                        .map_err(|e| eyre!(e.to_string()))?
+                    } else {
+                        // Skip invariant check but still track reverts
+                        if call_result.reverted {
+                            invariant_test.test_data.failures.reverts += 1;
+                            if self.config.fail_on_revert {
+                                let case_data = error::FailedInvariantCaseData::new(
+                                    &invariant_contract,
+                                    &self.config,
+                                    &invariant_test.targeted_contracts,
+                                    &current_run.inputs,
+                                    call_result,
+                                    &[],
+                                );
+                                invariant_test.test_data.failures.revert_reason =
+                                    Some(case_data.revert_reason.clone());
+                                invariant_test.test_data.failures.error =
+                                    Some(InvariantFuzzError::Revert(case_data));
+                                result::RichInvariantResults::new(false, None)
+                            } else {
+                                current_run.inputs.pop();
+                                result::RichInvariantResults::new(true, None)
+                            }
+                        } else {
+                            result::RichInvariantResults::new(true, None)
+                        }
+                    };
+
                     if !result.can_continue || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }

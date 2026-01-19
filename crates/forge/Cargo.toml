@@ -87,6 +87,8 @@ watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+url.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -95,19 +97,17 @@ opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
-quick-junit = "0.5.1"
+quick-junit = "0.5.2"
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
-futures.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 
-mockall = "0.13"
+mockall = "0.14"
 globset = "0.4"
-paste = "1.0"
 similar-asserts.workspace = true
 svm.workspace = true
 tempfile.workspace = true

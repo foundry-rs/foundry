@@ -55,6 +55,18 @@ pub(crate) mod mapping;
 pub(crate) mod mock;
 pub(crate) mod prank;
 
+/// JSON-serializable log entry for `getRecordedLogsJson`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LogJson {
+    /// The topics of the log, including the signature, if any.
+    topics: Vec<String>,
+    /// The raw data of the log, hex-encoded with 0x prefix.
+    data: String,
+    /// The address of the log's emitter.
+    emitter: String,
+}
+
 /// Records storage slots reads and writes.
 #[derive(Clone, Debug, Default)]
 pub struct RecordAccess {
@@ -400,6 +412,22 @@ impl Cheatcode for getRecordedLogsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state.recorded_logs.replace(Default::default()).unwrap_or_default().abi_encode())
+    }
+}
+
+impl Cheatcode for getRecordedLogsJsonCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let logs = state.recorded_logs.replace(Default::default()).unwrap_or_default();
+        let json_logs: Vec<_> = logs
+            .into_iter()
+            .map(|log| LogJson {
+                topics: log.topics.iter().map(|t| format!("{t}")).collect(),
+                data: hex::encode_prefixed(&log.data),
+                emitter: format!("{}", log.emitter),
+            })
+            .collect();
+        Ok(serde_json::to_string(&json_logs)?.abi_encode())
     }
 }
 
@@ -1418,15 +1446,13 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
     let mut contract_names = HashMap::new();
     let mut storage_layouts = HashMap::new();
     for address in addresses_to_lookup {
-        if let Some((artifact_id, _)) = get_contract_data(ccx, address) {
+        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
             contract_names.insert(address, artifact_id.identifier());
-        }
 
-        // Also get storage layout if available
-        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address)
-            && let Some(storage_layout) = &contract_data.storage_layout
-        {
-            storage_layouts.insert(address, storage_layout.clone());
+            // Also get storage layout if available
+            if let Some(storage_layout) = &contract_data.storage_layout {
+                storage_layouts.insert(address, storage_layout.clone());
+            }
         }
     }
 
