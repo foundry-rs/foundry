@@ -91,7 +91,9 @@ evmole.workspace = true
 alloy-hardforks.workspace = true
 dirs.workspace = true
 anvil.workspace = true
+foundry-evm-networks.workspace = true
 foundry-test-utils.workspace = true
+tempo-primitives.workspace = true
 
 [features]
 default = ["jemalloc"]

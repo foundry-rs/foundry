@@ -4,11 +4,15 @@ use revm::primitives::hardfork::SpecId;
 
 pub use alloy_hardforks::EthereumHardfork;
 pub use alloy_op_hardforks::OpHardfork;
+#[cfg(feature = "tempo")]
+pub use tempo_chainspec::hardfork::TempoHardfork;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
     Optimism(OpHardfork),
+    #[cfg(feature = "tempo")]
+    Tempo(TempoHardfork),
 }
 
 impl FoundryHardfork {
@@ -18,6 +22,11 @@ impl FoundryHardfork {
 
     pub fn optimism(h: OpHardfork) -> Self {
         Self::Optimism(h)
+    }
+
+    #[cfg(feature = "tempo")]
+    pub fn tempo(h: TempoHardfork) -> Self {
+        Self::Tempo(h)
     }
 }
 
@@ -33,11 +42,20 @@ impl From<OpHardfork> for FoundryHardfork {
     }
 }
 
+#[cfg(feature = "tempo")]
+impl From<TempoHardfork> for FoundryHardfork {
+    fn from(value: TempoHardfork) -> Self {
+        Self::Tempo(value)
+    }
+}
+
 impl From<FoundryHardfork> for SpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
             FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
+            #[cfg(feature = "tempo")]
+            FoundryHardfork::Tempo(hardfork) => hardfork.into(),
         }
     }
 }

@@ -897,6 +897,19 @@ impl Backend {
         Err(BlockchainError::DepositTransactionUnsupported)
     }
 
+    /// Returns true if Tempo network is active
+    pub fn is_tempo(&self) -> bool {
+        self.env.read().networks.is_tempo()
+    }
+
+    /// Returns an error if Tempo network is not active
+    pub fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
+        if self.is_tempo() {
+            return Ok(());
+        }
+        Err(BlockchainError::TempoTransactionUnsupported)
+    }
+
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> u64 {
         self.env.read().evm_env.block_env.gas_limit
@@ -1170,6 +1183,7 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
+    #[cfg(not(feature = "tempo"))]
     fn new_evm_with_inspector_ref<'db, I, DB>(
         &self,
         db: &'db DB,
@@ -1198,6 +1212,44 @@ impl Backend {
                     move |input| cheat_ecrecover.call(input),
                 ))
             });
+        }
+
+        evm
+    }
+
+    /// Creates an EVM instance with optionally injected precompiles.
+    #[cfg(feature = "tempo")]
+    fn new_evm_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        env: &Env,
+        inspector: &'db mut I,
+    ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<tempo_revm::evm::TempoContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let mut evm = new_evm_with_inspector(WrapDatabaseRef(db), env, inspector);
+        if !self.env.read().networks.is_tempo() {
+            self.env.read().networks.inject_precompiles(evm.precompiles_mut());
+
+            if let Some(factory) = &self.precompile_factory {
+                evm.precompiles_mut().extend_precompiles(factory.precompiles());
+            }
+
+            let cheats = Arc::new(self.cheats.clone());
+            if cheats.has_recover_overrides() {
+                let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
+                evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
+                    Some(DynPrecompile::new_stateful(
+                        cheat_ecrecover.precompile_id().clone(),
+                        move |input| cheat_ecrecover.call(input),
+                    ))
+                });
+            }
         }
 
         evm
@@ -2686,6 +2738,7 @@ impl Backend {
         Ok(GethTrace::Default(Default::default()))
     }
 
+    #[cfg(not(feature = "tempo"))]
     fn replay_tx_with_inspector<I, F, T>(
         &self,
         hash: B256,
@@ -2735,6 +2788,120 @@ impl Backend {
             let mut cache_db = CacheDB::new(Box::new(parent_state));
 
             // configure the blockenv for the block of the transaction
+            let mut env = self.env.read().clone();
+
+            env.evm_env.block_env = BlockEnv {
+                number: U256::from(block.header.number),
+                beneficiary: block.header.beneficiary,
+                timestamp: U256::from(block.header.timestamp),
+                difficulty: block.header.difficulty,
+                prevrandao: Some(block.header.mix_hash),
+                basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                gas_limit: block.header.gas_limit,
+                ..Default::default()
+            };
+
+            let executor = TransactionExecutor {
+                db: &mut cache_db,
+                validator: self,
+                pending: pool_txs.into_iter(),
+                evm_env: env.evm_env.clone(),
+                parent_hash: block.header.parent_hash,
+                gas_used: 0,
+                blob_gas_used: 0,
+                enable_steps_tracing: self.enable_steps_tracing,
+                print_logs: self.print_logs,
+                print_traces: self.print_traces,
+                call_trace_decoder: self.call_trace_decoder.clone(),
+                precompile_factory: self.precompile_factory.clone(),
+                networks: self.env.read().networks,
+                blob_params: self.blob_params(),
+                cheats: self.cheats().clone(),
+            };
+
+            let _ = executor.execute();
+
+            let target_tx = block.body.transactions[index].clone();
+            let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
+            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+                target_tx.transaction.as_ref(),
+                *target_tx.sender(),
+            );
+            if env.networks.is_optimism() {
+                tx_env.enveloped_tx = Some(target_tx.transaction.encoded_2718().into());
+            }
+
+            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+
+            let result = evm
+                .transact(tx_env.clone())
+                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+            Ok(f(result, cache_db, inspector, tx_env.base, env))
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
+    }
+
+    #[cfg(feature = "tempo")]
+    fn replay_tx_with_inspector<I, F, T>(
+        &self,
+        hash: B256,
+        mut inspector: I,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + Inspector<OpContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + Inspector<tempo_revm::evm::TempoContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + 'a,
+        for<'a> F:
+            FnOnce(ResultAndState<OpHaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, Env) -> T,
+    {
+        let block = {
+            let storage = self.blockchain.storage.read();
+            let MinedTransaction { block_hash, .. } = storage
+                .transactions
+                .get(&hash)
+                .cloned()
+                .ok_or(BlockchainError::TransactionNotFound)?;
+
+            storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
+        };
+
+        let index = block
+            .body
+            .transactions
+            .iter()
+            .position(|tx| tx.hash() == hash)
+            .expect("transaction not found in block");
+
+        let pool_txs: Vec<Arc<PoolTransaction>> = block.body.transactions[..index]
+            .iter()
+            .map(|tx| {
+                let pending_tx =
+                    PendingTransaction::from_maybe_impersonated(tx.clone()).expect("is valid");
+                Arc::new(PoolTransaction {
+                    pending_transaction: pending_tx,
+                    requires: vec![],
+                    provides: vec![],
+                    priority: crate::eth::pool::transactions::TransactionPriority(0),
+                })
+            })
+            .collect();
+
+        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
+            let mut cache_db = CacheDB::new(Box::new(parent_state));
+
             let mut env = self.env.read().clone();
 
             env.evm_env.block_env = BlockEnv {

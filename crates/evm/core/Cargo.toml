@@ -55,6 +55,9 @@ revm-inspectors.workspace = true
 op-revm.workspace = true
 alloy-op-evm.workspace = true
 
+tempo-revm = { workspace = true, optional = true }
+tempo-chainspec = { workspace = true, optional = true }
+
 auto_impl.workspace = true
 eyre.workspace = true
 futures.workspace = true
@@ -69,3 +72,6 @@ url.workspace = true
 
 [dev-dependencies]
 foundry-test-utils.workspace = true
+
+[features]
+tempo = ["dep:tempo-revm", "dep:tempo-chainspec"]

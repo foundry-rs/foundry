@@ -11,6 +11,8 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
+#[cfg(feature = "tempo")]
+use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use futures::FutureExt;
@@ -218,6 +220,17 @@ impl NodeArgs {
 
         let hardfork = match &self.hardfork {
             Some(hf) => {
+                #[cfg(feature = "tempo")]
+                if let Some(tempo_hf) = hf.strip_prefix("tempo:").or_else(|| hf.strip_prefix("t:"))
+                {
+                    Some(TempoHardfork::from_str(tempo_hf)?.into())
+                } else if self.evm.networks.is_optimism() {
+                    Some(OpHardfork::from_str(hf)?.into())
+                } else {
+                    Some(EthereumHardfork::from_str(hf)?.into())
+                }
+
+                #[cfg(not(feature = "tempo"))]
                 if self.evm.networks.is_optimism() {
                     Some(OpHardfork::from_str(hf)?.into())
                 } else {

@@ -95,8 +95,7 @@ impl ExecutedTransaction {
                     logs_bloom: receipt_with_bloom.logs_bloom,
                 })
             }
-            // TODO(onbjerg): we should impl support for Tempo transactions
-            FoundryTxEnvelope::Tempo(_) => todo!(),
+            FoundryTxEnvelope::Tempo(_) => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
         }
     }
 }
@@ -491,6 +490,7 @@ fn build_logs_bloom(logs: &[Log], bloom: &mut Bloom) {
 }
 
 /// Creates a database with given database and inspector.
+#[cfg(not(feature = "tempo"))]
 pub fn new_evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
@@ -501,6 +501,46 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.networks.is_optimism() {
+        let evm_env = EvmEnv::new(
+            env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS),
+            env.evm_env.block_env.clone(),
+        );
+        EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
+    } else {
+        EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
+            db,
+            env.evm_env.clone(),
+            inspector,
+        ))
+    }
+}
+
+/// Creates a database with given database and inspector.
+#[cfg(feature = "tempo")]
+pub fn new_evm_with_inspector<DB, I>(
+    db: DB,
+    env: &Env,
+    inspector: I,
+) -> EitherEvm<DB, I, PrecompilesMap>
+where
+    DB: Database<Error = DatabaseError> + Debug,
+    I: Inspector<EthEvmContext<DB>>
+        + Inspector<OpContext<DB>>
+        + Inspector<tempo_revm::evm::TempoContext<DB>>,
+{
+    use foundry_evm::core::either_evm::FoundryTempoEvm;
+    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_revm::TempoBlockEnv;
+
+    if env.networks.is_tempo() {
+        let tempo_hardfork: TempoHardfork = env.evm_env.cfg_env.spec.into();
+        let tempo_block_env =
+            TempoBlockEnv { inner: env.evm_env.block_env.clone(), timestamp_millis_part: 0 };
+        let tempo_evm_env =
+            EvmEnv::new(env.evm_env.cfg_env.clone().with_spec(tempo_hardfork), tempo_block_env);
+        let evm = FoundryTempoEvm::new(db, tempo_evm_env).with_inspector(inspector);
+        EitherEvm::Tempo(evm, std::marker::PhantomData)
+    } else if env.networks.is_optimism() {
         let evm_env = EvmEnv::new(
             env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS),
             env.evm_env.block_env.clone(),

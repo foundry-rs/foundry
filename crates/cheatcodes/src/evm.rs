@@ -6,8 +6,9 @@ use crate::{
     inspector::{Ecx, RecordDebugStepInfo},
 };
 use alloy_consensus::TxEnvelope;
+use alloy_evm::{Evm as _, FromRecoveredTx};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
+use alloy_network::eip2718::{Decodable2718, EIP4844_TX_TYPE_ID};
 use alloy_primitives::{
     Address, B256, U256, hex, keccak256,
     map::{B256Map, HashMap},
@@ -29,6 +30,7 @@ use foundry_evm_core::{
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceMode;
+use foundry_primitives::FoundryTxEnvelope;
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
@@ -1062,6 +1064,40 @@ impl Cheatcode for broadcastRawTransactionCall {
         }
 
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for executeTransactionCall {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let tx = FoundryTxEnvelope::decode_2718(&mut self.txData.as_ref())
+            .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
+
+        let caller = tx
+            .recover()
+            .map_err(|err| fmt_err!("failed to recover signer from transaction: {err}"))?;
+
+        let tx_env = revm::context::TxEnv::from_recovered_tx(&tx, caller);
+
+        let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
+
+        let mut new_env = env.to_owned();
+        new_env.tx = tx_env.clone();
+
+        let mut inspector = executor.get_inspector(ccx.state);
+        let mut evm = foundry_evm_core::evm::new_evm_with_inspector(db, new_env, &mut *inspector);
+        evm.journaled_state.depth = journal.depth + 1;
+
+        let result = evm
+            .transact(tx_env)
+            .map_err(|err| fmt_err!("transaction execution failed: {err:?}"))?;
+
+        let success = result.result.is_success();
+        let return_data = result.result.output().cloned().unwrap_or_default();
+
+        db.commit(result.state);
+        foundry_evm_core::backend::update_state(&mut journal.state, db, None)?;
+
+        Ok((success, return_data.to_vec()).abi_encode())
     }
 }
 

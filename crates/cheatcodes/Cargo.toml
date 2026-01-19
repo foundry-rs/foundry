@@ -22,6 +22,7 @@ foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-fuzz.workspace = true
 foundry-evm-traces.workspace = true
+foundry-primitives.workspace = true
 foundry-wallets.workspace = true
 forge-script-sequence.workspace = true
 

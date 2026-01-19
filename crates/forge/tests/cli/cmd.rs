@@ -695,6 +695,57 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
     );
 });
 
+// checks that forge can init with --network tempo
+forgetest!(can_init_tempo_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.arg("init").arg(prj.root()).args(["--network", "tempo"]).assert_success().stdout_eq(str![
+        [r#"
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+    Installed forge-std[..]
+Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
+    Installed tempo-std[..]
+    Initialized forge project
+
+"#]
+    ]);
+
+    // Verify basic project structure
+    assert!(prj.root().join(".git").exists());
+    assert!(prj.root().join("foundry.toml").exists());
+
+    // Verify forge-std and tempo-std are installed
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("lib/tempo-std").exists());
+
+    // Verify Tempo-specific template files are created
+    assert!(prj.root().join("src/Mail.sol").exists());
+    assert!(prj.root().join("test/Mail.t.sol").exists());
+    assert!(prj.root().join("script/Mail.s.sol").exists());
+
+    // Verify Counter.sol is NOT created (Tempo uses Mail.sol instead)
+    assert!(!prj.root().join("src/Counter.sol").exists());
+    assert!(!prj.root().join("test/Counter.t.sol").exists());
+    assert!(!prj.root().join("script/Counter.s.sol").exists());
+
+    // Verify Tempo README is installed
+    let readme_content = std::fs::read_to_string(prj.root().join("README.md")).unwrap();
+    assert!(
+        readme_content.contains("Tempo") || readme_content.contains("tempo"),
+        "README should mention Tempo"
+    );
+
+    // Verify Tempo workflow is installed
+    let workflow = prj.root().join(".github/workflows/test.yml");
+    assert!(workflow.exists());
+    let workflow_content = std::fs::read_to_string(workflow).unwrap();
+    assert!(
+        workflow_content.contains("Tempo") || workflow_content.contains("tempo"),
+        "Workflow should be Tempo-specific"
+    );
+});
+
 // checks that clone works
 forgetest!(can_clone, |prj, cmd| {
     prj.wipe();
@@ -896,41 +947,6 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 
     assert!(prj.root().join(".github").join("workflows").exists());
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
-});
-
-// checks that `forge init --network tempo` works.
-forgetest!(can_init_tempo_project, |prj, cmd| {
-    prj.wipe();
-
-    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success().stdout_eq(str![[
-        r#"
-Initializing [..]...
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
-    Installed tempo-std[..]
-    Initialized forge project
-
-"#
-    ]]);
-
-    assert!(prj.root().join("foundry.toml").exists());
-    assert!(prj.root().join("lib/forge-std").exists());
-    assert!(prj.root().join("lib/tempo-std").exists());
-
-    assert!(prj.root().join("src").exists());
-    assert!(prj.root().join("src").join("Mail.sol").exists());
-
-    assert!(prj.root().join("test").exists());
-    assert!(prj.root().join("test").join("Mail.t.sol").exists());
-
-    assert!(prj.root().join("script").exists());
-    assert!(prj.root().join("script").join("Mail.s.sol").exists());
-
-    assert!(prj.root().join(".github").join("workflows").exists());
-    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
-
-    assert!(prj.root().join("README.md").exists());
 });
 
 // checks that clone works with raw src containing `node_modules`

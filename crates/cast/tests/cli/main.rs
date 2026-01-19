@@ -26,6 +26,7 @@ extern crate foundry_test_utils;
 
 mod erc20;
 mod selectors;
+mod tempo;
 
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"

@@ -29,3 +29,4 @@ serde_json.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 derive_more.workspace = true
 tempo-primitives.workspace = true
+tempo-alloy.workspace = true
