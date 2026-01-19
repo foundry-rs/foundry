@@ -4,7 +4,6 @@ test = "./"
 optimizer = true
 optimizer_runs = 200
 via_ir = false
-evm_version = "cancun"
 ignored_error_codes = [
     1878, # SPDX license identifier not provided
     2018, # Function state mutability can be restricted
