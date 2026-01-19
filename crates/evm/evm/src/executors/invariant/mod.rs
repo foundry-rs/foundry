@@ -569,25 +569,6 @@ impl<'a> InvariantExecutor<'a> {
         )
         .no_shrink();
 
-        // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
-        // EVM execution.
-        let mut call_generator = None;
-        if self.config.call_override {
-            let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
-
-            call_generator = Some(RandomCallGenerator::new(
-                invariant_contract.address,
-                self.runner.clone(),
-                override_call_strat(
-                    fuzz_state.clone(),
-                    targeted_contracts.clone(),
-                    target_contract_ref.clone(),
-                    fuzz_fixtures.clone(),
-                ),
-                target_contract_ref,
-            ));
-        }
-
         // If any of the targeted contracts have the storage layout enabled then we can sample
         // mapping values. To accomplish, we need to record the mapping storage slots and keys.
         let fuzz_state =
@@ -597,8 +578,11 @@ impl<'a> InvariantExecutor<'a> {
                 fuzz_state
             };
 
+        // Set up fuzzer WITHOUT call_generator initially.
+        // We defer call_override until after the initial invariant check to avoid
+        // injecting random calls during setup which would break the invariant assertion.
         self.executor.inspector_mut().set_fuzzer(Fuzzer {
-            call_generator,
+            call_generator: None,
             fuzz_state: fuzz_state.clone(),
             collect: true,
         });
@@ -618,6 +602,35 @@ impl<'a> InvariantExecutor<'a> {
         )?;
         if let Some(error) = failures.error {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
+        }
+
+        // NOW enable call_override after the initial invariant check has passed.
+        // This allows `override_call_strat` to inject calls during actual fuzz runs
+        // for reentrancy vulnerability detection.
+        if self.config.call_override {
+            let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
+
+            // Collect handler addresses - these are the contracts we want to inject
+            // reentrancy into (simulating malicious receive() functions).
+            let handler_addresses: std::collections::HashSet<Address> =
+                targeted_contracts.targets.lock().keys().copied().collect();
+
+            let call_generator = RandomCallGenerator::new(
+                invariant_contract.address,
+                handler_addresses,
+                self.runner.clone(),
+                override_call_strat(
+                    fuzz_state.clone(),
+                    targeted_contracts.clone(),
+                    target_contract_ref.clone(),
+                    fuzz_fixtures.clone(),
+                ),
+                target_contract_ref,
+            );
+
+            if let Some(fuzzer) = self.executor.inspector_mut().fuzzer.as_mut() {
+                fuzzer.call_generator = Some(call_generator);
+            }
         }
 
         let corpus_manager = CorpusManager::new(

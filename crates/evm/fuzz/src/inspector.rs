@@ -7,7 +7,6 @@ use revm::{
     inspector::JournalExt,
     interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
 };
-use tracing::trace;
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -50,7 +49,10 @@ where
 
     fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, _outcome: &mut CallOutcome) {
         if let Some(ref mut call_generator) = self.call_generator {
-            call_generator.used = false;
+            // Decrement depth when any call ends while inside an override
+            if call_generator.override_depth > 0 {
+                call_generator.override_depth -= 1;
+            }
         }
 
         // We only collect `stack` and `memory` data before and after calls.
@@ -97,56 +99,51 @@ impl Fuzzer {
             return;
         };
 
-        // We only override external calls which are not coming from the test contract.
-        // Only CALL scheme can trigger reentrancy; skip DELEGATECALL, STATICCALL, etc.
-        // Also skip calls to the cheatcode address (vm.prank, vm.deal, etc.).
+        // Skip if:
+        // - Caller is test contract (don't override the initial calls from the test)
+        // - Not a CALL scheme (only override CALLs, not STATICCALLs, DELEGATECALLs, etc.)
+        // - Inside an override (prevent recursive overrides)
+        // - Target is cheatcode address
+        // - Target is NOT a handler contract (we only inject reentrancy on calls TO handlers)
+        //
+        // The key insight: we only override calls TO handler contracts.
+        // This simulates a malicious handler's receive() function that reenters.
         if call.caller == call_generator.test_address
             || call.scheme != CallScheme::Call
-            || call_generator.used
+            || call_generator.override_depth > 0
             || call.target_address == CHEATCODE_ADDRESS
+            || !call_generator.is_handler(call.target_address)
         {
             return;
         }
 
         // There's only a ~27% chance that an override happens (90% * 30% from strategy).
         let Some(tx) = call_generator.next(call.caller, call.target_address) else {
-            trace!(caller = ?call.caller, target = ?call.target_address, "call_override: no tx generated");
             return;
         };
 
-        // Check if this call transfers ETH value.
-        // If so, perform the transfer first before injecting callback.
+        // For value transfers, perform the ETH transfer before injecting the callback.
+        // This simulates a malicious receive() that gets the ETH and then reenters.
         let value = call.transfer_value().unwrap_or_default();
         let has_value = !value.is_zero() && call.gas_limit > 2300;
-
-        if has_value {
-            // Transfer ETH first, then inject callback.
-            // This simulates a malicious receive() function that reenters.
-            let from = call.caller;
-            let to = call.target_address;
-            trace!(from = ?from, to = ?to, value = ?value, "call_override: transferring ETH before callback");
-            let _ = ecx.journal_mut().transfer(from, to, value);
+        if has_value && ecx.journal_mut().transfer(call.caller, call.target_address, value).is_err()
+        {
+            return;
         }
 
-        // Replace the call with a reentrant callback.
-        // tx.sender = original_target (the callee becomes the attacker)
-        // tx.call_details.target = handler/target contract (where we call back)
-        trace!(
-            new_caller = ?tx.sender,
-            new_target = ?tx.call_details.target,
-            calldata_len = tx.call_details.calldata.len(),
-            "call_override: replacing call with reentrant callback"
-        );
-
+        // Replace the call with a reentrant callback
         call.input = CallInput::Bytes(tx.call_details.calldata.0.into());
         call.caller = tx.sender;
         call.target_address = tx.call_details.target;
         call.bytecode_address = tx.call_details.target;
-
-        // Clear the value since the reentrant callback doesn't transfer ETH.
-        // For value transfers, the ETH was already transferred above.
+        // Clear known_bytecode to force REVM to load bytecode from the new target.
+        // Without this, REVM uses cached bytecode from the original target (e.g., empty
+        // bytecode for EOA), causing the call to short-circuit before executing any code.
+        call.known_bytecode = None;
+        // Clear value since ETH was already transferred above
         call.value = CallValue::Transfer(alloy_primitives::U256::ZERO);
 
-        call_generator.used = true;
+        // Track that we're inside an overridden call to avoid recursive overrides
+        call_generator.override_depth = 1;
     }
 }
