@@ -30,6 +30,8 @@ foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-primitives.workspace = true
 tempo-primitives.workspace = true
+tempo-revm = { workspace = true, optional = true }
+tempo-chainspec = { workspace = true, optional = true }
 
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
@@ -136,3 +138,4 @@ cmd = [
     "tokio/signal",
 ]
 js-tracer = ["revm-inspectors/js-tracer"]
+tempo = ["foundry-evm/tempo", "dep:tempo-revm", "dep:tempo-chainspec"]

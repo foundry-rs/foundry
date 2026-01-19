@@ -108,6 +108,10 @@ pub enum BlockchainError {
         "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
     )]
     DepositTransactionUnsupported,
+    #[error(
+        "Tempo transactions are not supported.\n\nYou can use them by running anvil with '--tempo'."
+    )]
+    TempoTransactionUnsupported,
     #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
     #[error("Excess blob gas not set.")]
@@ -562,6 +566,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::DepositTransactionUnsupported => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::TempoTransactionUnsupported => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::ExcessBlobGasNotSet => {

@@ -3016,6 +3016,14 @@ interface Vm {
     /// RLP decodes an RLP payload into a list of bytes.
     #[cheatcode(group = Utilities)]
     function fromRlp(bytes calldata rlp) external pure returns (bytes[] memory data);
+
+    /// Executes an RLP-encoded transaction and returns the result.
+    /// The transaction is decoded, the signer is recovered, and it is executed in the current EVM context.
+    /// @param txData The RLP-encoded transaction bytes (EIP-2718 format)
+    /// @return success Whether the transaction succeeded
+    /// @return returnData The return data from the transaction
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function executeTransaction(bytes calldata txData) external returns (bool success, bytes memory returnData);
 }
 }
 

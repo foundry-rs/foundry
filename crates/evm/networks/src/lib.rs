@@ -2,8 +2,9 @@
 //!
 //! Foundry EVM network configuration.
 
-use crate::celo::transfer::{
-    CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
+use crate::{
+    celo::transfer::{CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER},
+    tempo::TEMPO_PRECOMPILES,
 };
 use alloy_chains::{
     NamedChain,
@@ -18,6 +19,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod celo;
+pub mod tempo;
+
+/// Represents the active chain variant for EVM execution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChainVariant {
+    #[default]
+    Ethereum,
+    Optimism,
+    Celo,
+    Tempo,
+}
 
 #[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize, PartialEq)]
 pub struct NetworkConfigs {
@@ -30,6 +42,10 @@ pub struct NetworkConfigs {
     #[arg(help_heading = "Networks", long, conflicts_with = "optimism")]
     #[serde(default)]
     celo: bool,
+    /// Enable Tempo network features.
+    #[arg(help_heading = "Networks", long)]
+    #[serde(default)]
+    tempo: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
     #[serde(default)]
@@ -45,8 +61,30 @@ impl NetworkConfigs {
         Self { celo: true, ..Default::default() }
     }
 
+    pub fn with_tempo() -> Self {
+        Self { tempo: true, ..Default::default() }
+    }
+
     pub fn is_optimism(&self) -> bool {
         self.optimism
+    }
+
+    pub fn is_tempo(&self) -> bool {
+        self.tempo
+    }
+
+    /// Returns the active chain variant based on network flags.
+    /// Priority: Tempo > Optimism > Celo > Ethereum (default)
+    pub fn variant(&self) -> ChainVariant {
+        if self.tempo {
+            ChainVariant::Tempo
+        } else if self.optimism {
+            ChainVariant::Optimism
+        } else if self.celo {
+            ChainVariant::Celo
+        } else {
+            ChainVariant::Ethereum
+        }
     }
 
     /// Returns the base fee parameters for the configured network.
@@ -54,15 +92,18 @@ impl NetworkConfigs {
     /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
     /// at the given timestamp, otherwise returns pre-Canyon parameters.
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
-        if self.is_optimism() {
-            let op_hardforks = OpChainHardforks::op_mainnet();
-            if op_hardforks.is_canyon_active_at_timestamp(timestamp) {
-                BaseFeeParams::optimism_canyon()
-            } else {
-                BaseFeeParams::optimism()
+        match self.variant() {
+            ChainVariant::Optimism => {
+                let op_hardforks = OpChainHardforks::op_mainnet();
+                if op_hardforks.is_canyon_active_at_timestamp(timestamp) {
+                    BaseFeeParams::optimism_canyon()
+                } else {
+                    BaseFeeParams::optimism()
+                }
             }
-        } else {
-            BaseFeeParams::ethereum()
+            ChainVariant::Ethereum | ChainVariant::Celo | ChainVariant::Tempo => {
+                BaseFeeParams::ethereum()
+            }
         }
     }
 
@@ -84,6 +125,10 @@ impl NetworkConfigs {
         if let Ok(NamedChain::Celo | NamedChain::CeloSepolia) = NamedChain::try_from(chain_id) {
             self.celo = true;
         }
+        // Tempo mainnet: 52014, Tempo testnet: 52015
+        if chain_id == 52014 || chain_id == 52015 {
+            self.tempo = true;
+        }
         self
     }
 
@@ -102,6 +147,11 @@ impl NetworkConfigs {
         if self.celo {
             labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
         }
+        if self.tempo {
+            for precompile in TEMPO_PRECOMPILES {
+                labels.insert(precompile.address(), precompile.name().to_string());
+            }
+        }
         labels
     }
 
@@ -111,6 +161,11 @@ impl NetworkConfigs {
         if self.celo {
             precompiles
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
+        }
+        if self.tempo {
+            for precompile in TEMPO_PRECOMPILES {
+                precompiles.insert(precompile.name().to_string(), precompile.address());
+            }
         }
         precompiles
     }

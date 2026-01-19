@@ -18,6 +18,8 @@ mod revert;
 mod sign;
 mod simulate;
 mod state;
+#[cfg(feature = "tempo")]
+mod tempo;
 mod traces;
 mod transaction;
 mod txpool;

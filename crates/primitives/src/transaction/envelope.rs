@@ -1,6 +1,6 @@
 use alloy_consensus::{
-    Sealed, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxType,
-    Typed2718,
+    Sealed, Signed, Transaction, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
+    TxType, Typed2718,
     crypto::RecoveryError,
     transaction::{
         TxEip7702,
@@ -187,6 +187,23 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
     }
 }
 
+fn tempo_tx_to_tx_env(tx: &TempoTransaction, caller: Address) -> TxEnv {
+    TxEnv {
+        tx_type: tx.ty(),
+        caller,
+        gas_limit: tx.gas_limit(),
+        gas_price: tx.max_fee_per_gas(),
+        kind: tx.kind(),
+        value: tx.value(),
+        data: tx.input().clone(),
+        nonce: tx.nonce(),
+        chain_id: tx.chain_id(),
+        gas_priority_fee: tx.max_priority_fee_per_gas(),
+        access_list: tx.access_list().cloned().unwrap_or_default(),
+        ..Default::default()
+    }
+}
+
 impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
     fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
         match tx {
@@ -198,7 +215,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
             FoundryTxEnvelope::Deposit(sealed_tx) => {
                 Self::from_recovered_tx(sealed_tx.inner(), caller)
             }
-            FoundryTxEnvelope::Tempo(_) => panic!("unsupported tx type on ethereum"),
+            FoundryTxEnvelope::Tempo(aa_signed) => tempo_tx_to_tx_env(aa_signed.tx(), caller),
         }
     }
 }
@@ -214,7 +231,10 @@ impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
             FoundryTxEnvelope::Deposit(sealed_tx) => {
                 Self::from_recovered_tx(sealed_tx.inner(), caller)
             }
-            FoundryTxEnvelope::Tempo(_) => panic!("unsupported tx type on optimism"),
+            FoundryTxEnvelope::Tempo(aa_signed) => {
+                let base = tempo_tx_to_tx_env(aa_signed.tx(), caller);
+                Self { base, enveloped_tx: None, deposit: Default::default() }
+            }
         }
     }
 }

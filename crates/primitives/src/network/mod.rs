@@ -29,7 +29,7 @@ impl Network for FoundryNetwork {
 
     type ReceiptEnvelope = crate::FoundryReceiptEnvelope;
 
-    type Header = alloy_consensus::Header;
+    type Header = crate::FoundryHeader;
 
     type TransactionRequest = crate::FoundryTransactionRequest;
 
@@ -37,7 +37,7 @@ impl Network for FoundryNetwork {
 
     type ReceiptResponse = crate::FoundryTxReceipt;
 
-    type HeaderResponse = alloy_rpc_types_eth::Header;
+    type HeaderResponse = alloy_rpc_types_eth::Header<crate::FoundryHeader>;
 
     type BlockResponse =
         alloy_rpc_types_eth::Block<Self::TransactionResponse, Self::HeaderResponse>;
