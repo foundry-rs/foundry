@@ -830,7 +830,6 @@ async fn test_fork_init_base_fee() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "flaky external RPC"]
 async fn flaky_test_reset_fork_on_new_blocks() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
@@ -1203,7 +1202,6 @@ async fn test_fork_reset_basefee() {
 
 // <https://github.com/foundry-rs/foundry/issues/6795>
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "flaky external RPC"]
 async fn flaky_test_arbitrum_fork_dev_balance() {
     let (api, handle) = spawn(
         fork_config()
@@ -1242,7 +1240,6 @@ async fn test_arb_fork_mining() {
 
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "flaky external RPC"]
 async fn flaky_test_arbitrum_fork_block_number() {
     // fork to get initial block for test
     let (_, handle) = spawn(

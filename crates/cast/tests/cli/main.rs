@@ -2154,76 +2154,61 @@ casttest!(storage, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_with_valid_solc_version_1,
-    |_prj, cmd| {
-        cmd.args([
+casttest!(flaky_storage_with_valid_solc_version_1, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.10",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(flaky_storage_with_valid_solc_version_2, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.23",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(flaky_storage_with_invalid_solc_version_1, |_prj, cmd| {
+    let output = cmd
+        .args([
             "storage",
             "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
             "--solc-version",
-            "0.8.10",
+            "0.4.0",
             "--rpc-url",
             next_http_archive_rpc_url().as_str(),
             "--etherscan-api-key",
             next_etherscan_api_key().as_str(),
         ])
-        .assert_success();
-    }
-);
-
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_with_valid_solc_version_2,
-    |_prj, cmd| {
-        cmd.args([
-            "storage",
-            "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
-            "--solc-version",
-            "0.8.23",
-            "--rpc-url",
-            next_http_archive_rpc_url().as_str(),
-            "--etherscan-api-key",
-            next_etherscan_api_key().as_str(),
-        ])
-        .assert_success();
-    }
-);
-
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_with_invalid_solc_version_1,
-    |_prj, cmd| {
-        let output = cmd
-            .args([
-                "storage",
-                "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
-                "--solc-version",
-                "0.4.0",
-                "--rpc-url",
-                next_http_archive_rpc_url().as_str(),
-                "--etherscan-api-key",
-                next_etherscan_api_key().as_str(),
-            ])
-            .assert_failure()
-            .get_output()
-            .stderr
-            .clone();
-        let stderr = String::from_utf8_lossy(&output);
-        assert!(
+        .assert_failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&output);
+    assert!(
         stderr.contains(
             "Warning: The provided --solc-version is 0.4.0 while the minimum version for storage layouts is 0.6.5"
         ),
         "stderr did not contain expected warning. Full stderr:\n{stderr}"
     );
-    }
-);
+});
 
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_with_invalid_solc_version_2,
-    |_prj, cmd| {
-        cmd.args([
+casttest!(flaky_storage_with_invalid_solc_version_2, |_prj, cmd| {
+    cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
         "--solc-version",
@@ -2238,15 +2223,11 @@ casttest!(
 Error: Encountered invalid solc version in contracts/Create2Deployer.sol: No solc version exists that matches the version requirement: ^0.8.9
 
 "#]]);
-    }
-);
+});
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_layout_simple,
-    |_prj, cmd| {
-        cmd.args([
+casttest!(flaky_storage_layout_simple, |_prj, cmd| {
+    cmd.args([
         "storage",
         "--rpc-url",
         next_http_archive_rpc_url().as_str(),
@@ -2269,36 +2250,28 @@ casttest!(
 
 
 "#]]);
-    }
-);
+});
 
 // <https://github.com/foundry-rs/foundry/pull/9332>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_layout_simple_json,
-    |_prj, cmd| {
-        cmd.args([
-            "storage",
-            "--rpc-url",
-            next_http_archive_rpc_url().as_str(),
-            "--block",
-            "21034138",
-            "--etherscan-api-key",
-            next_etherscan_api_key().as_str(),
-            "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
-            "--json",
-        ])
-        .assert_success()
-        .stdout_eq(file!["../fixtures/storage_layout_simple.json": Json]);
-    }
-);
+casttest!(flaky_storage_layout_simple_json, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../fixtures/storage_layout_simple.json": Json]);
+});
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_layout_complex,
-    |_prj, cmd| {
-        cmd.args([
+casttest!(flaky_storage_layout_complex, |_prj, cmd| {
+    cmd.args([
         "storage",
         "--rpc-url",
         next_http_archive_rpc_url().as_str(),
@@ -2343,14 +2316,10 @@ casttest!(
 
 
 "#]]);
-    }
-);
+});
 
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_layout_complex_md,
-    |_prj, cmd| {
-        cmd.args([
+casttest!(flaky_storage_layout_complex_md, |_prj, cmd| {
+    cmd.args([
         "storage",
         "--rpc-url",
         next_http_archive_rpc_url().as_str(),
@@ -2382,14 +2351,10 @@ casttest!(
 
 
 "#]]);
-    }
-);
+});
 
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_layout_complex_proxy,
-    |_prj, cmd| {
-        cmd.args([
+casttest!(flaky_storage_layout_complex_proxy, |_prj, cmd| {
+    cmd.args([
         "storage",
         "--rpc-url",
         next_rpc_endpoint(NamedChain::Sepolia).as_str(),
@@ -2428,28 +2393,23 @@ casttest!(
 
 
 "#]]);
-    }
-);
+});
 
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_storage_layout_complex_json,
-    |_prj, cmd| {
-        cmd.args([
-            "storage",
-            "--rpc-url",
-            next_http_archive_rpc_url().as_str(),
-            "--block",
-            "21034138",
-            "--etherscan-api-key",
-            next_etherscan_api_key().as_str(),
-            "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
-            "--json",
-        ])
-        .assert_success()
-        .stdout_eq(file!["../fixtures/storage_layout_complex.json": Json]);
-    }
-);
+casttest!(flaky_storage_layout_complex_json, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../fixtures/storage_layout_complex.json": Json]);
+});
 
 casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -2528,18 +2488,15 @@ interface Interface {
 
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_fetch_weth_interface_from_etherscan,
-    |_prj, cmd| {
-        cmd.args([
-            "interface",
-            "--etherscan-api-key",
-            &next_etherscan_api_key(),
-            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
+casttest!(flaky_fetch_weth_interface_from_etherscan, |_prj, cmd| {
+    cmd.args([
+        "interface",
+        "--etherscan-api-key",
+        &next_etherscan_api_key(),
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
@@ -2565,8 +2522,7 @@ interface WETH9 {
 }
 
 "#]]);
-    }
-);
+});
 
 casttest!(ens_namehash, |_prj, cmd| {
     cmd.args(["namehash", "emo.eth"]).assert_success().stdout_eq(str![[r#"
@@ -2917,12 +2873,9 @@ casttest!(format_units, |_prj, cmd| {
 
 // tests that fetches a sample contract creation code
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_fetch_creation_code_from_etherscan,
-    |_prj, cmd| {
-        let eth_rpc_url = next_http_rpc_endpoint();
-        cmd.args([
+casttest!(flaky_fetch_creation_code_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
         "creation-code",
         "--etherscan-api-key",
         &next_etherscan_api_key(),
@@ -2935,41 +2888,33 @@ casttest!(
 0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033
 
 "#]]);
-    }
-);
+});
 
 // tests that fetches a sample contract creation args bytes
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_fetch_creation_code_only_args_from_etherscan,
-    |_prj, cmd| {
-        let eth_rpc_url = next_http_rpc_endpoint();
-        cmd.args([
-            "creation-code",
-            "--etherscan-api-key",
-            &next_etherscan_api_key(),
-            "0x6982508145454ce325ddbe47a25d4ec3d2311933",
-            "--rpc-url",
-            eth_rpc_url.as_str(),
-            "--only-args",
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
+casttest!(flaky_fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "creation-code",
+        "--etherscan-api-key",
+        &next_etherscan_api_key(),
+        "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--only-args",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000
 
 "#]]);
-    }
-);
+});
 
 // tests that displays a sample contract creation args
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_fetch_constructor_args_from_etherscan,
-    |_prj, cmd| {
-        let eth_rpc_url = next_http_rpc_endpoint();
-        cmd.args([
+casttest!(flaky_fetch_constructor_args_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
         "constructor-args",
         "--etherscan-api-key",
         &next_etherscan_api_key(),
@@ -2982,16 +2927,12 @@ casttest!(
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000 → Uint(420690000000000000000000000000000, 256)
 
 "#]]);
-    }
-);
+});
 
 // <https://github.com/foundry-rs/foundry/issues/3473>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_test_non_mainnet_traces,
-    |prj, cmd| {
-        prj.clear();
-        cmd.args([
+casttest!(flaky_test_non_mainnet_traces, |prj, cmd| {
+    prj.clear();
+    cmd.args([
         "run",
         "0xa003e419e2d7502269eb5eda56947b580120e00abfd5b5460d08f8af44a0c24f",
         "--rpc-url",
@@ -3011,17 +2952,13 @@ Traces:
 ...
 
 "#]]);
-    }
-);
+});
 
 // tests that displays a sample contract artifact
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_fetch_artifact_from_etherscan,
-    |_prj, cmd| {
-        let eth_rpc_url = next_http_rpc_endpoint();
-        cmd.args([
+casttest!(flaky_fetch_artifact_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
         "artifact",
         "--etherscan-api-key",
         &next_etherscan_api_key(),
@@ -3038,8 +2975,7 @@ casttest!(
 }
 
 "#]]);
-    }
-);
+});
 
 // tests cast can decode traces when using project artifacts
 forgetest_async!(decode_traces_with_project_artifacts, |prj, cmd| {
@@ -3211,14 +3147,11 @@ Transaction successfully executed.
 });
 
 // tests cast can decode external libraries traces with project cached selectors
-forgetest_async!(
-    #[ignore = "flaky cache selectors"]
-    flaky_decode_external_libraries_with_cached_selectors,
-    |prj, cmd| {
-        let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+forgetest_async!(flaky_decode_external_libraries_with_cached_selectors, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-        foundry_test_utils::util::initialize(prj.root());
-        prj.add_source(
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
         "ExternalLib",
         r#"
 import "./CounterInExternalLib.sol";
@@ -3229,9 +3162,9 @@ library ExternalLib {
 }
    "#,
     );
-        prj.add_source(
-            "CounterInExternalLib",
-            r#"
+    prj.add_source(
+        "CounterInExternalLib",
+        r#"
 import "./ExternalLib.sol";
 contract CounterInExternalLib {
     struct Info {
@@ -3243,10 +3176,10 @@ contract CounterInExternalLib {
     }
 }
    "#,
-        );
-        prj.add_script(
-            "CounterInExternalLibScript",
-            r#"
+    );
+    prj.add_script(
+        "CounterInExternalLibScript",
+        r#"
 import "forge-std/Script.sol";
 import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
 contract CounterInExternalLibScript is Script {
@@ -3257,34 +3190,34 @@ contract CounterInExternalLibScript is Script {
     }
 }
    "#,
-        );
+    );
 
-        cmd.args([
-            "script",
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            "--rpc-url",
-            &handle.http_endpoint(),
-            "--broadcast",
-            "CounterInExternalLibScript",
-        ])
-        .assert_success();
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterInExternalLibScript",
+    ])
+    .assert_success();
 
-        let tx_hash = api
-            .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-            .await
-            .unwrap()
-            .unwrap()
-            .tx_hash();
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
 
-        // Build and cache project selectors.
-        cmd.forge_fuse().args(["build"]).assert_success();
-        cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
-        // Assert cast with local artifacts can decode external lib signature.
-        cmd.cast_fuse()
-            .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
-            .assert_success()
-            .stdout_eq(str![[r#"
+    // Build and cache project selectors.
+    cmd.forge_fuse().args(["build"]).assert_success();
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+    // Assert cast with local artifacts can decode external lib signature.
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 Traces:
   [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
@@ -3297,8 +3230,7 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-    }
-);
+});
 
 // https://github.com/foundry-rs/foundry/issues/9476
 forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
@@ -3671,61 +3603,69 @@ Transaction successfully executed.
 });
 
 // https://github.com/foundry-rs/foundry/issues/9541
-forgetest_async!(
-    #[ignore = "flaky external RPC"]
-    flaky_cast_run_impersonated_tx,
-    |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(
-            NodeConfig::test()
-                .with_auto_impersonate(true)
-                .with_eth_rpc_url(Some("https://sepolia.base.org")),
-        )
-        .await;
+forgetest_async!(flaky_cast_run_impersonated_tx, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_auto_impersonate(true)
+            .with_eth_rpc_url(Some("https://sepolia.base.org")),
+    )
+    .await;
 
-        let http_endpoint = handle.http_endpoint();
+    let http_endpoint = handle.http_endpoint();
 
-        let provider = ProviderBuilder::new().connect_http(http_endpoint.parse().unwrap());
+    let provider = ProviderBuilder::new().connect_http(http_endpoint.parse().unwrap());
 
-        // send impersonated tx
-        let tx = TransactionRequest::default()
-            .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
-            .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-            .with_input(
-                Bytes::from_str(
-                    "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-                )
-                .unwrap(),
-            );
+    // send impersonated tx
+    let tx = TransactionRequest::default()
+        .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_input(
+            Bytes::from_str(
+                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
+            )
+            .unwrap(),
+        );
 
-        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-        assert!(receipt.status());
+    assert!(receipt.status());
 
-        // run impersonated tx
-        cmd.cast_fuse()
-            .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
-            .assert_success();
-    }
-);
+    // run impersonated tx
+    cmd.cast_fuse()
+        .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
+        .assert_success();
+});
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
-casttest!(
-    #[ignore = "flaky external API"]
-    flaky_fetch_src_blockscout,
-    |_prj, cmd| {
-        let url = "https://eth.blockscout.com/api";
+casttest!(flaky_fetch_src_blockscout, |_prj, cmd| {
+    let url = "https://eth.blockscout.com/api";
 
-        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-        cmd.args([
-            "source",
-            &weth.to_string(),
-            "--chain-id",
-            "1",
-            "--explorer-api-url",
-            url,
-            "--flatten",
-        ])
+    cmd.args([
+        "source",
+        &weth.to_string(),
+        "--chain-id",
+        "1",
+        "--explorer-api-url",
+        url,
+        "--flatten",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+});
+
+casttest!(flaky_fetch_src_default, |_prj, cmd| {
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let etherscan_api_key = next_etherscan_api_key();
+
+    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -3734,41 +3674,12 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-    }
-);
-
-casttest!(
-    #[ignore = "flaky etherscan API"]
-    flaky_fetch_src_default,
-    |_prj, cmd| {
-        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-        let etherscan_api_key = next_etherscan_api_key();
-
-        cmd.args([
-            "source",
-            &weth.to_string(),
-            "--flatten",
-            "--etherscan-api-key",
-            &etherscan_api_key,
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-contract WETH9 {
-    string public name     = "Wrapped Ether";
-    string public symbol   = "WETH";
-    uint8  public decimals = 18;
-..."#]]);
-    }
-);
+});
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
-casttest!(
-    #[ignore = "flaky external RPC"]
-    flaky_osaka_can_run_p256_precompile,
-    |_prj, cmd| {
-        cmd.args([
+casttest!(flaky_osaka_can_run_p256_precompile, |_prj, cmd| {
+    cmd.args([
         "run",
         "0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de",
         "--rpc-url",
@@ -3843,8 +3754,7 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-    }
-);
+});
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>
@@ -4635,12 +4545,9 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 });
 
 // Test cast run Celo transfer with precompiles.
-casttest!(
-    #[ignore = "flaky celo rpc url"]
-    flaky_run_celo_with_precompiles,
-    |_prj, cmd| {
-        let rpc = next_rpc_endpoint(NamedChain::Celo);
-        cmd.args([
+casttest!(flaky_run_celo_with_precompiles, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Celo);
+    cmd.args([
         "run",
         "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
         "--quick",
@@ -4663,8 +4570,7 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-    }
-);
+});
 casttest!(keccak_stdin_bytes, |_prj, cmd| {
     cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
 0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
