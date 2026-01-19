@@ -16,3 +16,25 @@ jobs:
       contents: read
     with:
       profile: isolate
+
+  # If any of the jobs fail, this will create a high-priority issue to signal so.
+  issue:
+    name: Open an issue
+    runs-on: ubuntu-latest
+    needs: [nextest]
+    if: failure()
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_URL: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          update_existing: true
+          filename: .github/TEST_ISOLATE_FAILURE_TEMPLATE.md
