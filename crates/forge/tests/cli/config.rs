@@ -137,6 +137,7 @@ docs_style = "preserve"
 ignore = []
 contract_new_lines = false
 sort_imports = false
+namespace_import_style = "prefer_plain"
 pow_no_space = false
 prefer_compact = "all"
 single_line_imports = false
@@ -1336,6 +1337,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false,
+    "namespace_import_style": "prefer_plain",
     "pow_no_space": false,
     "prefer_compact": "all",
     "single_line_imports": false

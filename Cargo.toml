@@ -30,7 +30,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.5.1"
+version = "1.6.0"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Foundry Contributors"]
@@ -423,7 +423,8 @@ tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
-vergen = { version = "8", default-features = false }
+vergen = { version = "9", default-features = false, features = ["build", "cargo"] }
+vergen-git2 = "9"
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = { version = "0.2", default-features = false, features = [
