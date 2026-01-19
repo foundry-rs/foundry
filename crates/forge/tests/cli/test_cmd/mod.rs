@@ -3878,7 +3878,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 // <https://github.com/foundry-rs/foundry/issues/10544>
 forgetest_init!(
     #[ignore = "flaky filesystem issue"]
-    should_not_panic_on_cool,
+    flaky_should_not_panic_on_cool,
     |prj, cmd| {
         prj.initialize_default_contracts();
         prj.add_test(
