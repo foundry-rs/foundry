@@ -36,7 +36,9 @@ impl SessionSource {
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
             Ok((bytecode.into_owned(), output.final_pc(contract)?))
         })?;
-        let final_pc = final_pc.unwrap_or_default();
+
+        let Some(final_pc) = final_pc else { return Ok(Default::default()) };
+
         let mut runner = self.build_runner(final_pc).await?;
         runner.run(bytecode)
     }
@@ -57,7 +59,7 @@ impl SessionSource {
         let mut source = match self.clone_with_new_line(line) {
             Ok((source, _)) => source,
             Err(err) => {
-                debug!(%err, "failed to build new source for inspection");
+                debug!(%err, "failed to build new source");
                 return Ok((ControlFlow::Continue(()), None));
             }
         };

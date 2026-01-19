@@ -7,7 +7,7 @@ use foundry_compilers::{
     solc::{Restriction, SolcRestrictions},
 };
 use semver::VersionReq;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// Keeps possible overrides for default settings which users may configure to construct additional
 /// settings profile.
@@ -69,7 +69,6 @@ pub enum RestrictionsError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompilationRestrictions {
     pub paths: GlobMatcher,
-    #[serde(default, deserialize_with = "deserialize_version_req")]
     pub version: Option<VersionReq>,
     pub via_ir: Option<bool>,
     pub bytecode_hash: Option<BytecodeHash>,
@@ -84,36 +83,6 @@ pub struct CompilationRestrictions {
     pub evm_version: Option<EvmVersion>,
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
     pub max_evm_version: Option<EvmVersion>,
-}
-
-/// Custom deserializer for version field that rejects ambiguous bare version numbers.
-fn deserialize_version_req<'de, D>(deserializer: D) -> Result<Option<VersionReq>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt_string: Option<String> = Option::deserialize(deserializer)?;
-    let Some(opt_string) = opt_string else {
-        return Ok(None);
-    };
-
-    let version = opt_string.trim();
-    // Reject bare versions like "0.8.11" that lack an operator prefix
-    if version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-        return Err(serde::de::Error::custom(format!(
-            "Invalid version format '{opt_string}' in compilation_restrictions. \
-             Bare version numbers are ambiguous and default to caret requirements (e.g. '^{version}'). \
-             Use an explicit constraint such as '={version}' for an exact version or '>={version}' for a minimum version."
-        )));
-    }
-
-    let req = VersionReq::parse(&opt_string).map_err(|e| {
-        serde::de::Error::custom(format!(
-            "Invalid version requirement '{opt_string}': {e}. \
-             Examples: '=0.8.11' (exact), '>=0.8.11' (minimum), '>=0.8.11 <0.9.0' (range)."
-        ))
-    })?;
-
-    Ok(Some(req))
 }
 
 impl TryFrom<CompilationRestrictions> for RestrictionsWithVersion<MultiCompilerRestrictions> {

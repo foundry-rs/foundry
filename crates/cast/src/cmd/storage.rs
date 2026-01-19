@@ -140,10 +140,14 @@ impl StorageArgs {
             }
         }
 
+        if !self.etherscan.has_key() {
+            eyre::bail!(
+                "You must provide an Etherscan API key if you're fetching a remote contract's storage."
+            );
+        }
+
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain)).or_else(|| self.etherscan.key()).ok_or_else(|| {
-            eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
-        })?;
+        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain, api_key)?;
         let source = if let Some(proxy) = self.proxy {
             find_source(client, proxy.resolve(&provider).await?).await?
@@ -155,22 +159,11 @@ impl StorageArgs {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
         }
 
-        // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir
-        let root_path = if let Some(cache_root) =
-            foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
-        {
-            let sources_root = cache_root.join("sources");
-            let contract_root = sources_root.join(format!("{address}"));
-            if let Err(err) = std::fs::create_dir_all(&contract_root) {
-                sh_warn!("Could not create etherscan cache dir, falling back to temp: {err}")?;
-                tempfile::tempdir()?.path().to_path_buf()
-            } else {
-                contract_root
-            }
-        } else {
-            tempfile::tempdir()?.keep()
-        };
-        let mut project = etherscan_project(metadata, &root_path)?;
+        // Create a new temp project
+        // TODO: Cache instead of using a temp directory: metadata from Etherscan won't change
+        let root = tempfile::tempdir()?;
+        let root_path = root.path();
+        let mut project = etherscan_project(metadata, root_path)?;
         add_storage_layout_output(&mut project);
 
         // Decide on compiler to use (user override -> metadata -> autodetect)
@@ -220,6 +213,9 @@ impl StorageArgs {
 
             artifact
         };
+
+        // Clear temp directory
+        root.close()?;
 
         fetch_and_print_storage(provider, address, block, artifact).await
     }

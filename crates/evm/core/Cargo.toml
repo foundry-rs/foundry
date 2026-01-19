@@ -25,7 +25,6 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-evm.workspace = true
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
-alloy-op-hardforks.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = [
     "serde",

@@ -36,6 +36,10 @@ pub const BASE_FEE_CHANGE_DENOMINATOR: u128 = 8;
 /// Minimum suggested priority fee
 pub const MIN_SUGGESTED_PRIORITY_FEE: u128 = 1e9 as u128;
 
+pub fn default_elasticity() -> f64 {
+    1f64 / BaseFeeParams::ethereum().elasticity_multiplier as f64
+}
+
 /// Stores the fee related information
 #[derive(Clone, Debug)]
 pub struct FeeManager {
@@ -58,8 +62,6 @@ pub struct FeeManager {
     /// This will be constant value unless changed manually
     gas_price: Arc<RwLock<u128>>,
     elasticity: Arc<RwLock<f64>>,
-    /// Network-specific base fee params for EIP-1559 calculations
-    base_fee_params: BaseFeeParams,
 }
 
 impl FeeManager {
@@ -70,9 +72,7 @@ impl FeeManager {
         gas_price: u128,
         blob_excess_gas_and_price: BlobExcessGasAndPrice,
         blob_params: BlobParams,
-        base_fee_params: BaseFeeParams,
     ) -> Self {
-        let elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
         Self {
             spec_id,
             blob_params: Arc::new(RwLock::new(blob_params)),
@@ -80,14 +80,8 @@ impl FeeManager {
             is_min_priority_fee_enforced,
             gas_price: Arc::new(RwLock::new(gas_price)),
             blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
-            elasticity: Arc::new(RwLock::new(elasticity)),
-            base_fee_params,
+            elasticity: Arc::new(RwLock::new(default_elasticity())),
         }
-    }
-
-    /// Returns the base fee params used for EIP-1559 calculations
-    pub fn base_fee_params(&self) -> BaseFeeParams {
-        self.base_fee_params
     }
 
     pub fn elasticity(&self) -> f64 {
@@ -162,7 +156,7 @@ impl FeeManager {
         if self.base_fee() == 0 {
             return 0;
         }
-        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, self.base_fee_params)
+        calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
     }
 
     /// Calculates the next block blob base fee.
@@ -191,12 +185,7 @@ impl FeeManager {
     }
 }
 
-/// Calculate base fee for next block using Ethereum mainnet parameters.
-///
-/// See [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec.
-///
-/// Note: This uses Ethereum's base fee params. For network-specific calculations
-/// (e.g., Optimism), use [`FeeManager::get_next_block_base_fee_per_gas`] instead.
+/// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
 pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u64 {
     calc_next_block_base_fee(gas_used, gas_limit, base_fee, BaseFeeParams::ethereum())
 }

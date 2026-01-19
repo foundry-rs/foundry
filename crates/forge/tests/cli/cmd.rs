@@ -871,41 +871,6 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
 });
 
-// checks that `forge init --network tempo` works.
-forgetest!(can_init_tempo_project, |prj, cmd| {
-    prj.wipe();
-
-    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success().stdout_eq(str![[
-        r#"
-Initializing [..]...
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
-    Installed tempo-std[..]
-    Initialized forge project
-
-"#
-    ]]);
-
-    assert!(prj.root().join("foundry.toml").exists());
-    assert!(prj.root().join("lib/forge-std").exists());
-    assert!(prj.root().join("lib/tempo-std").exists());
-
-    assert!(prj.root().join("src").exists());
-    assert!(prj.root().join("src").join("Mail.sol").exists());
-
-    assert!(prj.root().join("test").exists());
-    assert!(prj.root().join("test").join("Mail.t.sol").exists());
-
-    assert!(prj.root().join("script").exists());
-    assert!(prj.root().join("script").join("Mail.s.sol").exists());
-
-    assert!(prj.root().join(".github").join("workflows").exists());
-    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
-
-    assert!(prj.root().join("README.md").exists());
-});
-
 // checks that clone works with raw src containing `node_modules`
 // <https://github.com/foundry-rs/foundry/issues/10115>
 forgetest!(can_clone_with_node_modules, |prj, cmd| {
@@ -2642,7 +2607,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                   | Deployment Size |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
-| 117171                                            | 471             |       |        |       |         |
+| 117159                                            | 471             |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                   |                 |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2681,7 +2646,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:DelegateProxy",
     "deployment": {
-      "gas": 117171,
+      "gas": 117159,
       "size": 471
     },
     "functions": {
@@ -2780,7 +2745,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 +=====================================================================================================================+
 | Deployment Cost                                                | Deployment Size |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
-| 132459                                                         | 396             |       |        |       |         |
+| 132471                                                         | 396             |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                                |                 |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2803,7 +2768,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/FallbackWithCalldataTest.sol:CounterWithFallback",
     "deployment": {
-      "gas": 132459,
+      "gas": 132471,
       "size": 396
     },
     "functions": {

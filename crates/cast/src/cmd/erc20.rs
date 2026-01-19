@@ -57,7 +57,7 @@ pub enum Erc20Subcommand {
     },
 
     /// Transfer ERC20 tokens.
-    #[command(visible_aliases = ["t", "send"])]
+    #[command(visible_alias = "t")]
     Transfer {
         /// The ERC20 token contract address.
         #[arg(value_parser = NameOrAddress::from_str)]

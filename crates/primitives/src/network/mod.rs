@@ -2,7 +2,7 @@ use alloy_network::Network;
 
 mod receipt;
 
-pub use receipt::*;
+pub use receipt::FoundryTxReceipt;
 
 /// Foundry network type.
 ///

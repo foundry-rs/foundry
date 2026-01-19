@@ -16,8 +16,8 @@ snapshots/
 # NPM
 .env
 node_modules
-npm/dist
-npm/bin
+dist
+bin
 _
 *.tgz
 .vercel

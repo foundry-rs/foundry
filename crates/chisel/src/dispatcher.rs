@@ -132,6 +132,8 @@ impl ChiselDispatcher {
         // Create new source with exact input appended and parse
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
+        // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
+        // Should change up how this works.
         let (cf, res) = source.inspect(input).await?;
         if let Some(res) = &res {
             let _ = sh_println!("{res}");

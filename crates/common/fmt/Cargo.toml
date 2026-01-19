@@ -29,9 +29,6 @@ chrono.workspace = true
 revm.workspace = true
 yansi.workspace = true
 
-# foundry primitives
-foundry-primitives.workspace = true
-
 [dev-dependencies]
 foundry-macros.workspace = true
 similar-asserts.workspace = true

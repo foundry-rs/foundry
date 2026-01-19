@@ -6,7 +6,7 @@ use crate::{
     evm::new_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::{configure_tx_env, configure_tx_req_env, get_blob_base_fee_update_fraction},
+    utils::{configure_tx_env, configure_tx_req_env, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use alloy_consensus::Typed2718;
 use alloy_evm::Evm;
@@ -1954,7 +1954,7 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
         env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
             excess_blob_gas,
-            get_blob_base_fee_update_fraction(env.cfg.chain_id, block.header.timestamp),
+            get_blob_base_fee_update_fraction_by_spec_id(env.cfg.spec),
         ));
     }
 }

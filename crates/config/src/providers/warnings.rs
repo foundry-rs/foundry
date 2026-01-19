@@ -45,12 +45,18 @@ impl<P: Provider> WarningsProvider<P> {
         let mut out = self.old_warnings.clone()?;
 
         // Add warning for unknown sections.
-        out.extend(data.keys().filter(|k| !Config::is_standalone_section(k.as_str())).map(
-            |unknown_section| {
-                let source = self.provider.metadata().source.map(|s| s.to_string());
-                Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
-            },
-        ));
+        out.extend(
+            data.keys()
+                .filter(|k| {
+                    **k != Config::PROFILE_SECTION
+                        && **k != Config::EXTERNAL_SECTION
+                        && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+                })
+                .map(|unknown_section| {
+                    let source = self.provider.metadata().source.map(|s| s.to_string());
+                    Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
+                }),
+        );
 
         // Add warning for deprecated keys.
         let deprecated_key_warning = |key| {

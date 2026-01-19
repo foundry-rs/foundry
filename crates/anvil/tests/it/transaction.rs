@@ -3,6 +3,7 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_consensus::Transaction;
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
 use alloy_provider::{Provider, WsConnect};
@@ -15,7 +16,6 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
 use eyre::Ok;
-use foundry_evm::hardfork::EthereumHardfork;
 use futures::{FutureExt, StreamExt, future::join_all};
 use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::{str::FromStr, time::Duration};

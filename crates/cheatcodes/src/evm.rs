@@ -1418,13 +1418,15 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
     let mut contract_names = HashMap::new();
     let mut storage_layouts = HashMap::new();
     for address in addresses_to_lookup {
-        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
+        if let Some((artifact_id, _)) = get_contract_data(ccx, address) {
             contract_names.insert(address, artifact_id.identifier());
+        }
 
-            // Also get storage layout if available
-            if let Some(storage_layout) = &contract_data.storage_layout {
-                storage_layouts.insert(address, storage_layout.clone());
-            }
+        // Also get storage layout if available
+        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address)
+            && let Some(storage_layout) = &contract_data.storage_layout
+        {
+            storage_layouts.insert(address, storage_layout.clone());
         }
     }
 

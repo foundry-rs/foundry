@@ -37,7 +37,7 @@ impl Default for LinterConfig {
     fn default() -> Self {
         Self {
             lint_on_build: true,
-            severity: vec![Severity::High, Severity::Med, Severity::Low],
+            severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
             mixed_case_exceptions: vec!["ERC".to_string(), "URI".to_string()],
@@ -46,7 +46,7 @@ impl Default for LinterConfig {
 }
 
 /// Severity of a lint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
 pub enum Severity {
     High,
     Med,
@@ -57,28 +57,6 @@ pub enum Severity {
 }
 
 impl Severity {
-    fn to_str(self) -> &'static str {
-        match self {
-            Self::High => "High",
-            Self::Med => "Med",
-            Self::Low => "Low",
-            Self::Info => "Info",
-            Self::Gas => "Gas",
-            Self::CodeSize => "CodeSize",
-        }
-    }
-
-    fn to_str_kebab(self) -> &'static str {
-        match self {
-            Self::High => "high",
-            Self::Med => "medium",
-            Self::Low => "low",
-            Self::Info => "info",
-            Self::Gas => "gas",
-            Self::CodeSize => "code-size",
-        }
-    }
-
     pub fn color(&self, message: &str) -> String {
         match self {
             Self::High => Paint::red(message).bold().to_string(),
@@ -102,16 +80,15 @@ impl From<Severity> for Level {
 
 impl fmt::Display for Severity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.color(self.to_str()))
-    }
-}
-
-impl Serialize for Severity {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.to_str_kebab().serialize(serializer)
+        let colored = match self {
+            Self::High => self.color("High"),
+            Self::Med => self.color("Med"),
+            Self::Low => self.color("Low"),
+            Self::Info => self.color("Info"),
+            Self::Gas => self.color("Gas"),
+            Self::CodeSize => self.color("CodeSize"),
+        };
+        write!(f, "{colored}")
     }
 }
 

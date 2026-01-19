@@ -1,13 +1,11 @@
 //! general eth api tests
 
 use crate::{
-    abi::{Multicall, SimpleStorage, VendingMachine},
+    abi::{Multicall, SimpleStorage},
     utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
 use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559};
-use alloy_network::{
-    EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync,
-};
+use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844, TxSignerSync};
 use alloy_primitives::{
     Address, B256, ChainId, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
@@ -18,7 +16,6 @@ use alloy_rpc_types::{
     state::AccountOverride,
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::SolCall;
 use anvil::{CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn};
 use foundry_test_utils::rpc;
 use futures::join;
@@ -435,8 +432,8 @@ async fn can_send_raw_tx_sync() {
     tx.eip2718_encode(&mut encoded);
 
     let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
-    assert_eq!(receipt.from(), wallets[1].address());
-    assert_eq!(receipt.to(), tx.to());
+    assert_eq!(receipt.from, wallets[1].address());
+    assert_eq!(receipt.to, tx.to());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -455,7 +452,7 @@ async fn can_send_tx_sync() {
         .with_input(logger_bytecode);
 
     let receipt = api.send_transaction_sync(WithOtherFields::new(tx)).await.unwrap();
-    assert_eq!(receipt.from(), wallets[0].address());
+    assert_eq!(receipt.from, wallets[0].address());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -571,7 +568,7 @@ async fn test_fill_transaction_eip4844_blob_fee() {
 
     // EIP-4844 blob transaction with sidecar but no blob fee
     let mut tx_req = TransactionRequest::default().with_from(from).with_to(Address::random());
-    tx_req.sidecar = Some(sidecar.into());
+    tx_req.sidecar = Some(sidecar);
     tx_req.transaction_type = Some(3); // EIP-4844
 
     let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
@@ -602,7 +599,7 @@ async fn test_fill_transaction_eip4844_preserves_blob_fee() {
         .with_from(from)
         .with_to(Address::random())
         .with_max_fee_per_blob_gas(provided_blob_fee);
-    tx_req.sidecar = Some(sidecar.into());
+    tx_req.sidecar = Some(sidecar);
     tx_req.transaction_type = Some(3); // EIP-4844
 
     let filled = api.fill_transaction(WithOtherFields::new(tx_req)).await.unwrap();
@@ -631,36 +628,5 @@ async fn test_fill_transaction_non_blob_tx_no_blob_fee() {
     assert!(
         filled.tx.max_fee_per_blob_gas().is_none(),
         "max_fee_per_blob_gas should not be set for non-blob tx"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_fill_transaction_reverts_on_gas_estimation_failure() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-
-    let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumWallet = accounts[0].clone().into();
-    let from = accounts[0].address();
-
-    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
-
-    // Deploy VendingMachine contract
-    let contract = VendingMachine::deploy(&provider).await.unwrap();
-    let contract_address = *contract.address();
-
-    // Call buy function with insufficient ether
-    let tx_req = TransactionRequest::default()
-        .with_from(from)
-        .with_to(contract_address)
-        .with_input(VendingMachine::buyCall { amount: U256::from(10) }.abi_encode());
-
-    // fill_transaction should fail because gas estimation fails due to revert
-    let result = api.fill_transaction(WithOtherFields::new(tx_req)).await;
-
-    assert!(result.is_err(), "fill_transaction should return an error when gas estimation fails");
-    let error_message = result.unwrap_err().to_string();
-    assert!(
-        error_message.contains("execution reverted"),
-        "Error should indicate a revert, got: {error_message}"
     );
 }

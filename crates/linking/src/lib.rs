@@ -697,7 +697,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "addresses depend on testdata utils internals for some reason"]
     fn link_create2_nested() {
         link_test(testdata().join("default/linking/nested"), |linker| {
             linker

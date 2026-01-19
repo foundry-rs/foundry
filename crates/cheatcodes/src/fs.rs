@@ -477,76 +477,63 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                 .collect::<Vec<_>>();
 
             let artifact = match &filtered[..] {
-                [] => None,
-                [artifact] => Some(Ok(*artifact)),
+                [] => Err(fmt_err!("no matching artifact found")),
+                [artifact] => Ok(*artifact),
                 filtered => {
                     let mut filtered = filtered.to_vec();
                     // If we know the current script/test contract solc version, try to filter by it
-                    Some(
-                        state
-                            .config
-                            .running_artifact
-                            .as_ref()
-                            .and_then(|running| {
-                                // Firstly filter by version
-                                filtered.retain(|(id, _)| id.version == running.version);
+                    state
+                        .config
+                        .running_artifact
+                        .as_ref()
+                        .and_then(|running| {
+                            // Firstly filter by version
+                            filtered.retain(|(id, _)| id.version == running.version);
 
-                                // Return artifact if only one matched
-                                if filtered.len() == 1 {
-                                    return Some(filtered[0]);
-                                }
+                            // Return artifact if only one matched
+                            if filtered.len() == 1 {
+                                return Some(filtered[0]);
+                            }
 
-                                // Try filtering by profile as well
-                                filtered.retain(|(id, _)| id.profile == running.profile);
+                            // Try filtering by profile as well
+                            filtered.retain(|(id, _)| id.profile == running.profile);
 
-                                if filtered.len() == 1 { Some(filtered[0]) } else { None }
-                            })
-                            .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
-                    )
+                            if filtered.len() == 1 { Some(filtered[0]) } else { None }
+                        })
+                        .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }
+            }?;
+
+            let maybe_bytecode = if deployed {
+                artifact.1.deployed_bytecode().cloned()
+            } else {
+                artifact.1.bytecode().cloned()
             };
 
-            if let Some(artifact) = artifact {
-                let artifact = artifact?;
-                let maybe_bytecode = if deployed {
-                    artifact.1.deployed_bytecode().cloned()
-                } else {
-                    artifact.1.bytecode().cloned()
+            return maybe_bytecode
+                .ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"));
+        } else {
+            let path_in_artifacts =
+                match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                    (Some(file), Some(contract_name)) => {
+                        PathBuf::from(format!("{file}/{contract_name}.json"))
+                    }
+                    (None, Some(contract_name)) => {
+                        PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
+                    }
+                    (Some(file), None) => {
+                        let name = file.replace(".sol", "");
+                        PathBuf::from(format!("{file}/{name}.json"))
+                    }
+                    _ => bail!("invalid artifact path"),
                 };
 
-                return maybe_bytecode.ok_or_else(|| {
-                    fmt_err!("no bytecode for contract; is it abstract or unlinked?")
-                });
-            }
+            state.config.paths.artifacts.join(path_in_artifacts)
         }
-
-        // Fallback: construct path manually when no artifacts list or no match found
-        let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name)
-        {
-            (Some(file), Some(contract_name)) => {
-                PathBuf::from(format!("{file}/{contract_name}.json"))
-            }
-            (None, Some(contract_name)) => {
-                PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
-            }
-            (Some(file), None) => {
-                let name = file.replace(".sol", "");
-                PathBuf::from(format!("{file}/{name}.json"))
-            }
-            _ => bail!("invalid artifact path"),
-        };
-
-        state.config.paths.artifacts.join(path_in_artifacts)
     };
 
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-    let data = fs::read_to_string(path).map_err(|e| {
-        if state.config.available_artifacts.is_some() {
-            fmt_err!("no matching artifact found")
-        } else {
-            e.into()
-        }
-    })?;
+    let data = fs::read_to_string(path)?;
     let artifact = serde_json::from_str::<ContractObject>(&data)?;
     let maybe_bytecode = if deployed { artifact.deployed_bytecode } else { artifact.bytecode };
     maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))

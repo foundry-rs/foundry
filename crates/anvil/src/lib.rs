@@ -25,7 +25,6 @@ use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
-pub use foundry_evm::hardfork::EthereumHardfork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use revm::primitives::hardfork::SpecId;
@@ -50,6 +49,8 @@ pub use config::{
     AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, ForkChoice, NodeConfig, VERSION_MESSAGE,
 };
 
+mod hardfork;
+pub use alloy_hardforks::EthereumHardfork;
 mod error;
 /// ethereum related implementations
 pub mod eth;
