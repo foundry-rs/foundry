@@ -202,6 +202,7 @@ show_edge_coverage = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
+check_interval = 1
 
 [labels]
 
@@ -1279,7 +1280,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "timeout": null,
     "show_solidity": false,
     "max_time_delay": null,
-    "max_block_delay": null
+    "max_block_delay": null,
+    "check_interval": 1
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
