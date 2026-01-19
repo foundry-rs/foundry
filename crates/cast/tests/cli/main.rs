@@ -4561,7 +4561,7 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 // Test cast run Celo transfer with precompiles.
 casttest!(
     #[ignore = "flaky celo rpc url"]
-    run_celo_with_precompiles,
+    flaky_run_celo_with_precompiles,
     |_prj, cmd| {
         let rpc = next_rpc_endpoint(NamedChain::Celo);
         cmd.args([

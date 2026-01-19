@@ -1,6 +1,6 @@
-# Daily CI job to run flaky verification tests that are ignored in regular CI
+# Daily CI job to run flaky tests that are ignored in regular CI
 
-name: test-flaky-verification
+name: test-flaky
 
 permissions: {}
 
@@ -20,7 +20,7 @@ env:
 
 jobs:
   test:
-    name: flaky verification tests
+    name: flaky tests
     runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
     permissions:
@@ -38,12 +38,12 @@ jobs:
           tool: nextest
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - name: Test flaky verification tests
+      - name: Test flaky tests
         env:
           SVM_TARGET_PLATFORM: linux-amd64
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
-        run: cargo nextest run --run-ignored ignored-only -E 'test(/verify_bytecode/)' --no-fail-fast
+        run: cargo nextest run --run-ignored ignored-only -E 'test(/^flaky_/)' --no-fail-fast
 
   # If any of the jobs fail, this will create a normal-priority issue to signal so.
   issue:
@@ -65,4 +65,4 @@ jobs:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           update_existing: true
-          filename: .github/FLAKY_VERIFICATION_FAILURE_TEMPLATE.md
+          filename: .github/FLAKY_TEST_FAILURE_TEMPLATE.md

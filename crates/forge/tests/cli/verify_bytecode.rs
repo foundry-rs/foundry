@@ -147,7 +147,7 @@ fn test_verify_bytecode_with_ignore(
 
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_verify_bytecode_no_metadata,
+    flaky_verify_bytecode_no_metadata,
     |prj, cmd| {
         test_verify_bytecode(
             prj,
@@ -172,7 +172,7 @@ forgetest_async!(
 
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_verify_bytecode_with_metadata,
+    flaky_verify_bytecode_with_metadata,
     |prj, cmd| {
         test_verify_bytecode(
             prj,
@@ -196,7 +196,7 @@ forgetest_async!(
 // Test non-CREATE2 deployed contract with blockscout
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_verify_bytecode_with_blockscout,
+    flaky_verify_bytecode_with_blockscout,
     |prj, cmd| {
         test_verify_bytecode(
             prj,
@@ -220,7 +220,7 @@ forgetest_async!(
 // Test CREATE2 deployed contract with blockscout
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_vb_create2_with_blockscout,
+    flaky_verify_bytecode_create2_with_blockscout,
     |prj, cmd| {
         test_verify_bytecode(
             prj,
@@ -246,7 +246,7 @@ forgetest_async!(
 // Test `--constructor-args`
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_verify_bytecode_with_constructor_args,
+    flaky_verify_bytecode_with_constructor_args,
     |prj, cmd| {
         let constructor_args = vec![
             "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
@@ -275,7 +275,7 @@ forgetest_async!(
 // `--ignore` tests
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_ignore_creation,
+    flaky_verify_bytecode_ignore_creation,
     |prj, cmd| {
         test_verify_bytecode_with_ignore(
             prj,
@@ -301,7 +301,7 @@ forgetest_async!(
 
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_ignore_runtime,
+    flaky_verify_bytecode_ignore_runtime,
     |prj, cmd| {
         test_verify_bytecode_with_ignore(
             prj,
@@ -328,7 +328,7 @@ forgetest_async!(
 // Test that verification fails when source code doesn't match deployed bytecode
 forgetest_async!(
     #[ignore = "flaky due to rate limits"]
-    can_verify_bytecode_fails_on_source_mismatch,
+    flaky_verify_bytecode_fails_on_source_mismatch,
     |prj, cmd| {
         let etherscan_key = next_etherscan_api_key();
         let rpc_url = next_http_archive_rpc_url();
