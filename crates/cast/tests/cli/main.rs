@@ -2154,61 +2154,76 @@ casttest!(storage, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(storage_with_valid_solc_version_1, |_prj, cmd| {
-    cmd.args([
-        "storage",
-        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
-        "--solc-version",
-        "0.8.10",
-        "--rpc-url",
-        next_http_archive_rpc_url().as_str(),
-        "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
-    ])
-    .assert_success();
-});
-
-casttest!(storage_with_valid_solc_version_2, |_prj, cmd| {
-    cmd.args([
-        "storage",
-        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
-        "--solc-version",
-        "0.8.23",
-        "--rpc-url",
-        next_http_archive_rpc_url().as_str(),
-        "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
-    ])
-    .assert_success();
-});
-
-casttest!(storage_with_invalid_solc_version_1, |_prj, cmd| {
-    let output = cmd
-        .args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_with_valid_solc_version_1,
+    |_prj, cmd| {
+        cmd.args([
             "storage",
             "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
             "--solc-version",
-            "0.4.0",
+            "0.8.10",
             "--rpc-url",
             next_http_archive_rpc_url().as_str(),
             "--etherscan-api-key",
             next_etherscan_api_key().as_str(),
         ])
-        .assert_failure()
-        .get_output()
-        .stderr
-        .clone();
-    let stderr = String::from_utf8_lossy(&output);
-    assert!(
+        .assert_success();
+    }
+);
+
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_with_valid_solc_version_2,
+    |_prj, cmd| {
+        cmd.args([
+            "storage",
+            "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+            "--solc-version",
+            "0.8.23",
+            "--rpc-url",
+            next_http_archive_rpc_url().as_str(),
+            "--etherscan-api-key",
+            next_etherscan_api_key().as_str(),
+        ])
+        .assert_success();
+    }
+);
+
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_with_invalid_solc_version_1,
+    |_prj, cmd| {
+        let output = cmd
+            .args([
+                "storage",
+                "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+                "--solc-version",
+                "0.4.0",
+                "--rpc-url",
+                next_http_archive_rpc_url().as_str(),
+                "--etherscan-api-key",
+                next_etherscan_api_key().as_str(),
+            ])
+            .assert_failure()
+            .get_output()
+            .stderr
+            .clone();
+        let stderr = String::from_utf8_lossy(&output);
+        assert!(
         stderr.contains(
             "Warning: The provided --solc-version is 0.4.0 while the minimum version for storage layouts is 0.6.5"
         ),
         "stderr did not contain expected warning. Full stderr:\n{stderr}"
     );
-});
+    }
+);
 
-casttest!(storage_with_invalid_solc_version_2, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_with_invalid_solc_version_2,
+    |_prj, cmd| {
+        cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
         "--solc-version",
@@ -2223,11 +2238,15 @@ casttest!(storage_with_invalid_solc_version_2, |_prj, cmd| {
 Error: Encountered invalid solc version in contracts/Create2Deployer.sol: No solc version exists that matches the version requirement: ^0.8.9
 
 "#]]);
-});
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(storage_layout_simple, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_layout_simple,
+    |_prj, cmd| {
+        cmd.args([
         "storage",
         "--rpc-url",
         next_http_archive_rpc_url().as_str(),
@@ -2250,28 +2269,36 @@ casttest!(storage_layout_simple, |_prj, cmd| {
 
 
 "#]]);
-});
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/pull/9332>
-casttest!(storage_layout_simple_json, |_prj, cmd| {
-    cmd.args([
-        "storage",
-        "--rpc-url",
-        next_http_archive_rpc_url().as_str(),
-        "--block",
-        "21034138",
-        "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
-        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
-        "--json",
-    ])
-    .assert_success()
-    .stdout_eq(file!["../fixtures/storage_layout_simple.json": Json]);
-});
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_layout_simple_json,
+    |_prj, cmd| {
+        cmd.args([
+            "storage",
+            "--rpc-url",
+            next_http_archive_rpc_url().as_str(),
+            "--block",
+            "21034138",
+            "--etherscan-api-key",
+            next_etherscan_api_key().as_str(),
+            "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/storage_layout_simple.json": Json]);
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(storage_layout_complex, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_layout_complex,
+    |_prj, cmd| {
+        cmd.args([
         "storage",
         "--rpc-url",
         next_http_archive_rpc_url().as_str(),
@@ -2316,10 +2343,14 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 
 
 "#]]);
-});
+    }
+);
 
-casttest!(storage_layout_complex_md, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_layout_complex_md,
+    |_prj, cmd| {
+        cmd.args([
         "storage",
         "--rpc-url",
         next_http_archive_rpc_url().as_str(),
@@ -2351,10 +2382,14 @@ casttest!(storage_layout_complex_md, |_prj, cmd| {
 
 
 "#]]);
-});
+    }
+);
 
-casttest!(storage_layout_complex_proxy, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_layout_complex_proxy,
+    |_prj, cmd| {
+        cmd.args([
         "storage",
         "--rpc-url",
         next_rpc_endpoint(NamedChain::Sepolia).as_str(),
@@ -2393,23 +2428,28 @@ casttest!(storage_layout_complex_proxy, |_prj, cmd| {
 
 
 "#]]);
-});
+    }
+);
 
-casttest!(storage_layout_complex_json, |_prj, cmd| {
-    cmd.args([
-        "storage",
-        "--rpc-url",
-        next_http_archive_rpc_url().as_str(),
-        "--block",
-        "21034138",
-        "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
-        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
-        "--json",
-    ])
-    .assert_success()
-    .stdout_eq(file!["../fixtures/storage_layout_complex.json": Json]);
-});
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_storage_layout_complex_json,
+    |_prj, cmd| {
+        cmd.args([
+            "storage",
+            "--rpc-url",
+            next_http_archive_rpc_url().as_str(),
+            "--block",
+            "21034138",
+            "--etherscan-api-key",
+            next_etherscan_api_key().as_str(),
+            "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/storage_layout_complex.json": Json]);
+    }
+);
 
 casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -2873,9 +2913,12 @@ casttest!(format_units, |_prj, cmd| {
 
 // tests that fetches a sample contract creation code
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_fetch_creation_code_from_etherscan,
+    |_prj, cmd| {
+        let eth_rpc_url = next_http_rpc_endpoint();
+        cmd.args([
         "creation-code",
         "--etherscan-api-key",
         &next_etherscan_api_key(),
@@ -2888,33 +2931,41 @@ casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
 0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033
 
 "#]]);
-});
+    }
+);
 
 // tests that fetches a sample contract creation args bytes
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args([
-        "creation-code",
-        "--etherscan-api-key",
-        &next_etherscan_api_key(),
-        "0x6982508145454ce325ddbe47a25d4ec3d2311933",
-        "--rpc-url",
-        eth_rpc_url.as_str(),
-        "--only-args",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_fetch_creation_code_only_args_from_etherscan,
+    |_prj, cmd| {
+        let eth_rpc_url = next_http_rpc_endpoint();
+        cmd.args([
+            "creation-code",
+            "--etherscan-api-key",
+            &next_etherscan_api_key(),
+            "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+            "--only-args",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000
 
 "#]]);
-});
+    }
+);
 
 // tests that displays a sample contract creation args
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_fetch_constructor_args_from_etherscan,
+    |_prj, cmd| {
+        let eth_rpc_url = next_http_rpc_endpoint();
+        cmd.args([
         "constructor-args",
         "--etherscan-api-key",
         &next_etherscan_api_key(),
@@ -2927,12 +2978,16 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000 → Uint(420690000000000000000000000000000, 256)
 
 "#]]);
-});
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/3473>
-casttest!(test_non_mainnet_traces, |prj, cmd| {
-    prj.clear();
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_test_non_mainnet_traces,
+    |prj, cmd| {
+        prj.clear();
+        cmd.args([
         "run",
         "0xa003e419e2d7502269eb5eda56947b580120e00abfd5b5460d08f8af44a0c24f",
         "--rpc-url",
@@ -2952,13 +3007,17 @@ Traces:
 ...
 
 "#]]);
-});
+    }
+);
 
 // tests that displays a sample contract artifact
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args([
+casttest!(
+    #[ignore = "flaky etherscan API"]
+    flaky_fetch_artifact_from_etherscan,
+    |_prj, cmd| {
+        let eth_rpc_url = next_http_rpc_endpoint();
+        cmd.args([
         "artifact",
         "--etherscan-api-key",
         &next_etherscan_api_key(),
@@ -2975,7 +3034,8 @@ casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
 }
 
 "#]]);
-});
+    }
+);
 
 // tests cast can decode traces when using project artifacts
 forgetest_async!(decode_traces_with_project_artifacts, |prj, cmd| {
