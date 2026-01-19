@@ -596,14 +596,20 @@ impl CorpusManager {
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
     ) -> eyre::Result<()> {
+        // Early return if function has no inputs to mutate
+        if function.inputs.is_empty() {
+            return Ok(());
+        }
+
         // let rng = test_runner.rng();
+        let inputs_len = function.inputs.len();
         let mut arg_mutation_rounds =
-            test_runner.rng().random_range(0..=function.inputs.len()).max(1);
-        let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
+            if inputs_len <= 1 { 1 } else { test_runner.rng().random_range(1..=inputs_len) };
+        let round_arg_idx: Vec<usize> = if inputs_len == 1 {
             vec![0]
         } else {
             (0..arg_mutation_rounds)
-                .map(|_| test_runner.rng().random_range(0..function.inputs.len()))
+                .map(|_| test_runner.rng().random_range(0..inputs_len))
                 .collect()
         };
         let mut prev_inputs = function
