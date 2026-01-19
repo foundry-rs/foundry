@@ -251,7 +251,8 @@ impl OpenChainClient {
         offline: bool,
     ) -> eyre::Result<PossibleSigs> {
         let mut possible_info = PossibleSigs::new();
-        let calldata = calldata.as_ref().trim_start_matches("0x");
+        let calldata = calldata.as_ref();
+        let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
 
         let selector =
             calldata.get(..8).ok_or_else(|| eyre::eyre!("calldata cannot be less that 4 bytes"))?;
