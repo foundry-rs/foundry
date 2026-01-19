@@ -3404,10 +3404,10 @@ forgetest_init!(
     #[ignore = "flaky external API"]
     flaky_can_upload_selectors_with_path,
     |prj, cmd| {
-    prj.initialize_default_contracts();
-    prj.add_source(
-        "CounterV1.sol",
-        r#"
+        prj.initialize_default_contracts();
+        prj.add_source(
+            "CounterV1.sol",
+            r#"
 contract Counter {
     uint256 public number;
 
@@ -3420,11 +3420,11 @@ contract Counter {
     }
 }
     "#,
-    );
+        );
 
-    prj.add_source(
-        "CounterV2.sol",
-        r#"
+        prj.add_source(
+            "CounterV2.sol",
+            r#"
 contract CounterV2 {
     uint256 public number;
 
@@ -3437,43 +3437,44 @@ contract CounterV2 {
     }
 }
     "#,
-    );
+        );
 
-    // Upload Counter without path fails as there are multiple contracts with same name.
-    cmd.args(["selectors", "upload", "Counter"]).assert_failure().stderr_eq(str![[r#"
+        // Upload Counter without path fails as there are multiple contracts with same name.
+        cmd.args(["selectors", "upload", "Counter"]).assert_failure().stderr_eq(str![[r#"
 ...
 Error: Multiple contracts found with the name `Counter`
 ...
 
 "#]]);
 
-    // Upload without contract name should fail.
-    cmd.forge_fuse().args(["selectors", "upload", "src/Counter.sol"]).assert_failure().stderr_eq(
-        str![[r#"
+        // Upload without contract name should fail.
+        cmd.forge_fuse()
+            .args(["selectors", "upload", "src/Counter.sol"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
 ...
 Error: No contract name provided.
 ...
 
-"#]],
-    );
+"#]]);
 
-    // Upload single CounterV2.
-    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
-        r#"
+        // Upload single CounterV2.
+        cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(
+            str![[r#"
 ...
 Uploading selectors for CounterV2...
 ...
 Selectors successfully uploaded to OpenChain
 ...
 
-"#
-    ]]);
+"#]],
+        );
 
-    // Upload CounterV1 with path.
-    cmd.forge_fuse()
-        .args(["selectors", "upload", "src/CounterV1.sol:Counter"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+        // Upload CounterV1 with path.
+        cmd.forge_fuse()
+            .args(["selectors", "upload", "src/CounterV1.sol:Counter"])
+            .assert_success()
+            .stdout_eq(str![[r#"
 ...
 Uploading selectors for Counter...
 ...
@@ -3482,11 +3483,11 @@ Selectors successfully uploaded to OpenChain
 
 "#]]);
 
-    // Upload Counter with path.
-    cmd.forge_fuse()
-        .args(["selectors", "upload", "src/Counter.sol:Counter"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+        // Upload Counter with path.
+        cmd.forge_fuse()
+            .args(["selectors", "upload", "src/Counter.sol:Counter"])
+            .assert_success()
+            .stdout_eq(str![[r#"
 ...
 Uploading selectors for Counter...
 ...
@@ -3494,7 +3495,8 @@ Selectors successfully uploaded to OpenChain
 ...
 
 "#]]);
-});
+    }
+);
 
 forgetest_init!(selectors_list_cmd, |prj, cmd| {
     prj.add_source(
@@ -4137,21 +4139,21 @@ forgetest_init!(
     #[ignore = "flaky cache selectors"]
     flaky_build_with_selectors_cache,
     |prj, cmd| {
-    prj.initialize_default_contracts();
-    prj.add_source(
-        "LocalProjectContract",
-        r#"
+        prj.initialize_default_contracts();
+        prj.add_source(
+            "LocalProjectContract",
+            r#"
 contract ContractWithCustomError {
     error AnotherValueTooHigh(uint256, address);
     event MyUniqueEventWithinLocalProject(uint256 a, address b);
 }
    "#,
-    );
-    // Build and cache project selectors.
-    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+        );
+        // Build and cache project selectors.
+        cmd.forge_fuse().args(["build", "--force"]).assert_success();
 
-    // Assert cast can decode custom error with local cache.
-    cmd.cast_fuse()
+        // Assert cast can decode custom error with local cache.
+        cmd.cast_fuse()
         .args(["decode-error", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -4160,8 +4162,8 @@ AnotherValueTooHigh(uint256,address)
 0x0000000000000000000000000000000000D0004F
 
 "#]]);
-    // Assert cast can decode event with local cache.
-    cmd.cast_fuse()
+        // Assert cast can decode event with local cache.
+        cmd.cast_fuse()
         .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -4170,7 +4172,8 @@ MyUniqueEventWithinLocalProject(uint256,address)
 0x00000000000000000000000000000DD00000004e
 
 "#]]);
-});
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/11021>
 forgetest_init!(revm_27_prank_bug_fix, |prj, cmd| {

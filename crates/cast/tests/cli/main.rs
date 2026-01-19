@@ -3151,10 +3151,10 @@ forgetest_async!(
     #[ignore = "flaky cache selectors"]
     flaky_decode_external_libraries_with_cached_selectors,
     |prj, cmd| {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+        let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
-    prj.add_source(
+        foundry_test_utils::util::initialize(prj.root());
+        prj.add_source(
         "ExternalLib",
         r#"
 import "./CounterInExternalLib.sol";
@@ -3165,9 +3165,9 @@ library ExternalLib {
 }
    "#,
     );
-    prj.add_source(
-        "CounterInExternalLib",
-        r#"
+        prj.add_source(
+            "CounterInExternalLib",
+            r#"
 import "./ExternalLib.sol";
 contract CounterInExternalLib {
     struct Info {
@@ -3179,10 +3179,10 @@ contract CounterInExternalLib {
     }
 }
    "#,
-    );
-    prj.add_script(
-        "CounterInExternalLibScript",
-        r#"
+        );
+        prj.add_script(
+            "CounterInExternalLibScript",
+            r#"
 import "forge-std/Script.sol";
 import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
 contract CounterInExternalLibScript is Script {
@@ -3193,31 +3193,31 @@ contract CounterInExternalLibScript is Script {
     }
 }
    "#,
-    );
+        );
 
-    cmd.args([
-        "script",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "CounterInExternalLibScript",
-    ])
-    .assert_success();
+        cmd.args([
+            "script",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--broadcast",
+            "CounterInExternalLibScript",
+        ])
+        .assert_success();
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-        .await
-        .unwrap()
-        .unwrap()
-        .tx_hash();
+        let tx_hash = api
+            .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+            .await
+            .unwrap()
+            .unwrap()
+            .tx_hash();
 
-    // Build and cache project selectors.
-    cmd.forge_fuse().args(["build"]).assert_success();
-    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
-    // Assert cast with local artifacts can decode external lib signature.
-    cmd.cast_fuse()
+        // Build and cache project selectors.
+        cmd.forge_fuse().args(["build"]).assert_success();
+        cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+        // Assert cast with local artifacts can decode external lib signature.
+        cmd.cast_fuse()
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -3233,7 +3233,8 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+    }
+);
 
 // https://github.com/foundry-rs/foundry/issues/9476
 forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
