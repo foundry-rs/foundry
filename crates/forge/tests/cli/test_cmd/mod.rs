@@ -2719,7 +2719,7 @@ Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
 "#]]);
 });
 
-forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
+forgetest_async!(flaky_can_get_broadcast_txs, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
     let (_api, handle) = spawn(NodeConfig::test().silent()).await;
@@ -3402,7 +3402,7 @@ Traces:
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10068>
-forgetest_init!(can_upload_selectors_with_path, |prj, cmd| {
+forgetest_init!(flaky_can_upload_selectors_with_path, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_source(
         "CounterV1.sol",
@@ -3867,7 +3867,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10544>
-forgetest_init!(should_not_panic_on_cool, |prj, cmd| {
+forgetest_init!(flaky_should_not_panic_on_cool, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
         "Counter.t.sol",
@@ -4132,7 +4132,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 // This test is a copy of `error_event_decode_with_cache` in cast/tests/cli/selectors.rs
 // but it uses `forge build` to check that the project selectors are cached by default.
-forgetest_init!(build_with_selectors_cache, |prj, cmd| {
+forgetest_init!(flaky_build_with_selectors_cache, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_source(
         "LocalProjectContract",

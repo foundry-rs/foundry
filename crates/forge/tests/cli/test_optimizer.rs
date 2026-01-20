@@ -1057,7 +1057,7 @@ Compiling 1 files with [..]
 });
 
 // Test preprocessing contracts with payable constructor, value and salt named args.
-forgetest_init!(preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
+forgetest_init!(flaky_preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
