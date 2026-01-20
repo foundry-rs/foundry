@@ -45,7 +45,7 @@ pub(crate) struct RichInvariantResults {
 }
 
 impl RichInvariantResults {
-    fn new(can_continue: bool, call_result: Option<RawCallResult>) -> Self {
+    pub(crate) fn new(can_continue: bool, call_result: Option<RawCallResult>) -> Self {
         Self { can_continue, call_result }
     }
 }

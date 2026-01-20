@@ -38,7 +38,6 @@ impl RpcArgs {
         let Self { raw, method, params, rpc } = self;
 
         let config = rpc.load_config()?;
-        let provider = utils::get_provider(&config)?;
 
         let params = if raw {
             if params.is_empty() {
@@ -53,6 +52,8 @@ impl RpcArgs {
         } else {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
+
+        let provider = utils::get_provider_with_curl(&config, rpc.curl)?;
         let result = Cast::new(provider).rpc(&method, params).await?;
         if shell::is_json() {
             let result: serde_json::Value = serde_json::from_str(&result)?;
