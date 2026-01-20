@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use super::TempoOpts;
 use crate::utils::{parse_ether_value, parse_json};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, U64, U256, hex};
@@ -76,11 +77,18 @@ pub struct TransactionOpts {
     #[arg(long)]
     pub legacy: bool,
 
-    /// Send a EIP-4844 blob transaction.
+    /// Send a blob transaction using EIP-7594 (PeerDAS) format.
+    ///
+    /// Note: Use with `--eip4844` for the legacy EIP-4844 format.
     #[arg(long, conflicts_with = "legacy")]
     pub blob: bool,
 
-    /// Gas price for EIP-4844 blob transaction.
+    /// Send a blob transaction using EIP-4844 (legacy) format instead of EIP-7594. Must be used
+    /// with `--blob`.
+    #[arg(long, conflicts_with = "legacy", requires = "blob")]
+    pub eip4844: bool,
+
+    /// Gas price for EIP-7594/EIP-4844 blob transaction.
     #[arg(long, conflicts_with = "legacy", value_parser = parse_ether_value, env = "ETH_BLOB_GAS_PRICE", value_name = "BLOB_PRICE")]
     pub blob_gas_price: Option<U256>,
 
@@ -97,6 +105,9 @@ pub struct TransactionOpts {
     /// the `cast access-list` command.
     #[arg(long, value_parser = parse_json::<AccessList>)]
     pub access_list: Option<Option<AccessList>>,
+
+    #[command(flatten)]
+    pub tempo: TempoOpts,
 }
 
 #[cfg(test)]

@@ -6,11 +6,12 @@ use alloy_serde::WithOtherFields;
 use derive_more::AsRef;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use serde::{Deserialize, Serialize};
+use tempo_primitives::TEMPO_TX_TYPE_ID;
 
 use crate::FoundryReceiptEnvelope;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, AsRef)]
-pub struct FoundryTxReceipt(WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);
+pub struct FoundryTxReceipt(pub WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);
 
 impl FoundryTxReceipt {
     pub fn new(inner: TransactionReceipt<FoundryReceiptEnvelope<Log>>) -> Self {
@@ -118,6 +119,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x02 => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
                     0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
+                    TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
                     0x7E => {
                         // Construct the deposit receipt, extracting optional deposit fields
                         // These fields may not be present in all receipts, so missing/invalid

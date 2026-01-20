@@ -223,7 +223,16 @@ impl EvmOpts {
     pub fn get_fork(&self, config: &Config, env: crate::Env) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
         let enable_caching = config.enable_caching(&url, env.evm_env.cfg_env.chain_id);
-        Some(CreateFork { url, enable_caching, env, evm_opts: self.clone() })
+
+        // Pin fork_block_number to the block that was already fetched in env, so subsequent
+        // fork operations use the same block. This prevents inconsistencies when forking at
+        // "latest" where the chain could advance between calls.
+        let mut evm_opts = self.clone();
+        if evm_opts.fork_block_number.is_none() {
+            evm_opts.fork_block_number = Some(env.evm_env.block_env.number.to());
+        }
+
+        Some(CreateFork { url, enable_caching, env, evm_opts })
     }
 
     /// Returns the gas limit to use
@@ -320,4 +329,57 @@ pub struct Env {
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_fork_pins_block_number_from_env() {
+        let endpoint = foundry_test_utils::rpc::next_http_rpc_endpoint();
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.clone());
+        // Explicitly leave fork_block_number as None to simulate --fork-url without --block-number
+        assert!(evm_opts.fork_block_number.is_none());
+
+        // Fetch the environment (this resolves "latest" to an actual block number)
+        let env = evm_opts.evm_env().await.unwrap();
+        let resolved_block = env.evm_env.block_env.number;
+        assert!(resolved_block > U256::ZERO, "should have resolved to a real block number");
+
+        // Create the fork - this should pin the block number
+        let fork = evm_opts.get_fork(&Config::default(), env).unwrap();
+
+        // The fork's evm_opts should now have fork_block_number set to the resolved block
+        assert_eq!(
+            fork.evm_opts.fork_block_number,
+            Some(resolved_block.to::<u64>()),
+            "get_fork should pin fork_block_number to the block from env"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_fork_preserves_explicit_block_number() {
+        let endpoint = foundry_test_utils::rpc::next_http_rpc_endpoint();
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.clone());
+        // Set an explicit block number
+        evm_opts.fork_block_number = Some(12345678);
+
+        let env = evm_opts.evm_env().await.unwrap();
+
+        let fork = evm_opts.get_fork(&Config::default(), env).unwrap();
+
+        // Should preserve the explicit block number, not override it
+        assert_eq!(
+            fork.evm_opts.fork_block_number,
+            Some(12345678),
+            "get_fork should preserve explicitly set fork_block_number"
+        );
+    }
 }

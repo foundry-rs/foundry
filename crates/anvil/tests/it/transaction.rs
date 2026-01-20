@@ -180,17 +180,16 @@ async fn can_replace_transaction() {
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(BlockTransactions::Hashes(vec![higher_tx_hash]), block.transactions);
 
-    // FIXME: Unable to get receipt despite hotfix in https://github.com/alloy-rs/alloy/pull/614
+    // verify the higher priced transaction was included
+    let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
+    assert_eq!(higher_priced_receipt.transaction_hash, higher_tx_hash);
 
-    // lower priced transaction was replaced
-    // let _lower_priced_receipt = lower_priced_pending_tx.get_receipt().await.unwrap();
-    // let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
-
-    // assert_eq!(1, block.transactions.len());
-    // assert_eq!(
-    //     BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
-    //     block.transactions
-    // );
+    // verify only one transaction was included in the block (lower priced was replaced)
+    assert_eq!(1, block.transactions.len());
+    assert_eq!(
+        BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
+        block.transactions
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

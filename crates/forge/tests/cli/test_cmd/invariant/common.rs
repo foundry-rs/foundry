@@ -991,6 +991,118 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
+// Tests that call_override detects the classic DAO-style reentrancy vulnerability
+// in EtherStore where balances are updated AFTER the external call.
+forgetest!(invariant_reentrancy_ether_store, |prj, cmd| {
+    prj.insert_utils();
+    prj.update_config(|config| {
+        config.invariant.depth = 15;
+        config.invariant.fail_on_revert = false;
+        config.invariant.call_override = true;
+    });
+
+    prj.add_test(
+        "InvariantReentrancyEtherStore.t.sol",
+        r#"
+import "./utils/Test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+// Classic reentrancy-vulnerable contract
+contract EtherStore {
+    mapping(address => uint256) public balances;
+
+    function deposit() public payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    function withdraw() public {
+        uint256 bal = balances[msg.sender];
+        require(bal > 0);
+        // BUG: External call before state update
+        (bool sent,) = msg.sender.call{value: bal}("");
+        require(sent, "Failed to send Ether");
+        balances[msg.sender] = 0;
+    }
+}
+
+contract InvariantReentrancyEtherStore is Test {
+    EtherStore store;
+    address attacker;
+
+    function setUp() public {
+        store = new EtherStore();
+        attacker = address(0x1337);
+
+        vm.deal(address(this), 10 ether);
+        store.deposit{value: 5 ether}();
+
+        // Attacker gets 2 ether, deposits 1 ether, keeps 1 ether in wallet.
+        // After withdrawing their deposit, attacker wallet balance cannot exceed 2 ether.
+        vm.deal(attacker, 2 ether);
+        vm.prank(attacker);
+        store.deposit{value: 1 ether}();
+    }
+
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(store);
+        return targets;
+    }
+
+    function targetSenders() public view returns (address[] memory) {
+        address[] memory senders = new address[](1);
+        senders[0] = attacker;
+        return senders;
+    }
+
+    function targetSelectors() public view returns (FuzzSelector[] memory) {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = EtherStore.withdraw.selector;
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        targets[0] = FuzzSelector(address(store), selectors);
+        return targets;
+    }
+
+    // Attacker should never have more than 2 ether (1 kept + 1 withdrawn)
+    function invariantSolvency() public view {
+        require(attacker.balance <= 2 ether, "reentrancy: attacker wallet > 2 ether");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+Ran 1 test for test/InvariantReentrancyEtherStore.t.sol:InvariantReentrancyEtherStore
+[FAIL: reentrancy: attacker wallet > 2 ether]
+	[SEQUENCE]
+ invariantSolvency() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantReentrancyEtherStore.t.sol:InvariantReentrancyEtherStore
+[FAIL: reentrancy: attacker wallet > 2 ether]
+	[SEQUENCE]
+ invariantSolvency() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
 forgetest_init!(invariant_roll_fork, |prj, cmd| {
     prj.add_rpc_endpoints();
     prj.update_config(|config| {
@@ -1613,5 +1725,60 @@ Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=579093 roll=23244 calldata=increment() args=[]
 ...
 
+"#]]);
+});
+
+// Test that state is preserved across calls during invariant replay.
+// Regression test for commit 0584a581b which changed replay_run to use execute_tx
+// (which uses call_raw) instead of transact_raw, but forgot to add the commit() call.
+forgetest_init!(invariant_replay_state_preserved, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+    });
+
+    prj.add_test(
+        "InvariantReplayState.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Handler is Test {
+    uint256 public counter;
+
+    function increment(uint256 amount) public {
+        uint256 before = counter;
+        counter += 1;
+        console.log("before:", before, "after:", counter);
+    }
+}
+
+contract InvariantReplayStateTest is Test {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+        targetContract(address(handler));
+    }
+
+    function invariant_counter_increases() public view {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With -vvv we see logs from replay. The "before" value of each call should
+    // match the "after" value from the previous call, proving state persists.
+    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_counter_increases() (runs: 1, calls: 5, reverts: 0)
+...
+Logs:
+  before: 0 after: 1
+  before: 1 after: 2
+  before: 2 after: 3
+  before: 3 after: 4
+  before: 4 after: 5
+...
 "#]]);
 });

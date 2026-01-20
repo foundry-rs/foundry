@@ -904,6 +904,119 @@ casttest!(wallet_mnemonic_from_entropy_json_verbose, |_prj, cmd| {
 "#]]);
 });
 
+// tests that `cast wallet derive` outputs the addresses of the accounts derived from the mnemonic
+casttest!(wallet_derive_mnemonic, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "derive",
+        "--accounts",
+        "3",
+        "test test test test test test test test test test test junk",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+- Account 0:
+[ADDRESS]
+
+- Account 1:
+[ADDRESS]
+
+- Account 2:
+[ADDRESS]
+
+
+"#]]);
+});
+
+// tests that `cast wallet derive` with insecure flag outputs the addresses and private keys of the
+// accounts derived from the mnemonic
+casttest!(wallet_derive_mnemonic_insecure, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "derive",
+        "--accounts",
+        "3",
+        "--insecure",
+        "test test test test test test test test test test test junk",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+- Account 0:
+[ADDRESS]
+[PRIVATE_KEY]
+
+- Account 1:
+[ADDRESS]
+[PRIVATE_KEY]
+
+- Account 2:
+[ADDRESS]
+[PRIVATE_KEY]
+
+
+"#]]);
+});
+
+// tests that `cast wallet derive` with json flag outputs the addresses of the accounts derived from
+// the mnemonic in JSON format
+casttest!(wallet_derive_mnemonic_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "derive",
+        "--accounts",
+        "3",
+        "--json",
+        "test test test test test test test test test test test junk",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[
+  {
+    "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+  },
+  {
+    "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+  },
+  {
+    "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+  }
+]
+
+"#]]);
+});
+
+// tests that `cast wallet derive` with insecure and json flag outputs the addresses and private
+// keys of the accounts derived from the mnemonic in JSON format
+casttest!(wallet_derive_mnemonic_insecure_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "derive",
+        "--accounts",
+        "3",
+        "--insecure",
+        "--json",
+        "test test test test test test test test test test test junk",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[
+  {
+    "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  },
+  {
+    "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+  },
+  {
+    "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+    "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+  }
+]
+
+"#]]);
+});
+
 // tests that `cast wallet private-key` with arguments outputs the private key
 casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
     cmd.args([
@@ -1912,7 +2025,6 @@ blockNumber          22287055
 from                 0x4648451b5F87FF8F0F7D622bD40574bb97E25980
 transactionIndex     230
 effectiveGasPrice    363392048
-
 accessList           []
 chainId              1
 gasLimit             350000
@@ -2042,7 +2154,7 @@ casttest!(storage, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(storage_with_valid_solc_version_1, |_prj, cmd| {
+casttest!(flaky_storage_with_valid_solc_version_1, |_prj, cmd| {
     cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
@@ -2056,7 +2168,7 @@ casttest!(storage_with_valid_solc_version_1, |_prj, cmd| {
     .assert_success();
 });
 
-casttest!(storage_with_valid_solc_version_2, |_prj, cmd| {
+casttest!(flaky_storage_with_valid_solc_version_2, |_prj, cmd| {
     cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
@@ -2070,7 +2182,7 @@ casttest!(storage_with_valid_solc_version_2, |_prj, cmd| {
     .assert_success();
 });
 
-casttest!(storage_with_invalid_solc_version_1, |_prj, cmd| {
+casttest!(flaky_storage_with_invalid_solc_version_1, |_prj, cmd| {
     let output = cmd
         .args([
             "storage",
@@ -2095,7 +2207,7 @@ casttest!(storage_with_invalid_solc_version_1, |_prj, cmd| {
     );
 });
 
-casttest!(storage_with_invalid_solc_version_2, |_prj, cmd| {
+casttest!(flaky_storage_with_invalid_solc_version_2, |_prj, cmd| {
     cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
@@ -2114,7 +2226,7 @@ Error: Encountered invalid solc version in contracts/Create2Deployer.sol: No sol
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(storage_layout_simple, |_prj, cmd| {
+casttest!(flaky_storage_layout_simple, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -2141,7 +2253,7 @@ casttest!(storage_layout_simple, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/pull/9332>
-casttest!(storage_layout_simple_json, |_prj, cmd| {
+casttest!(flaky_storage_layout_simple_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -2158,7 +2270,7 @@ casttest!(storage_layout_simple_json, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(storage_layout_complex, |_prj, cmd| {
+casttest!(flaky_storage_layout_complex, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -2206,7 +2318,7 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(storage_layout_complex_md, |_prj, cmd| {
+casttest!(flaky_storage_layout_complex_md, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -2241,7 +2353,7 @@ casttest!(storage_layout_complex_md, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(storage_layout_complex_proxy, |_prj, cmd| {
+casttest!(flaky_storage_layout_complex_proxy, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -2283,7 +2395,7 @@ casttest!(storage_layout_complex_proxy, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(storage_layout_complex_json, |_prj, cmd| {
+casttest!(flaky_storage_layout_complex_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -2376,7 +2488,7 @@ interface Interface {
 
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
-casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
+casttest!(flaky_fetch_weth_interface_from_etherscan, |_prj, cmd| {
     cmd.args([
         "interface",
         "--etherscan-api-key",
@@ -2761,7 +2873,7 @@ casttest!(format_units, |_prj, cmd| {
 
 // tests that fetches a sample contract creation code
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
+casttest!(flaky_fetch_creation_code_from_etherscan, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "creation-code",
@@ -2780,7 +2892,7 @@ casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
 
 // tests that fetches a sample contract creation args bytes
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
+casttest!(flaky_fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "creation-code",
@@ -2800,7 +2912,7 @@ casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
 
 // tests that displays a sample contract creation args
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
+casttest!(flaky_fetch_constructor_args_from_etherscan, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "constructor-args",
@@ -2818,7 +2930,7 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/3473>
-casttest!(test_non_mainnet_traces, |prj, cmd| {
+casttest!(flaky_test_non_mainnet_traces, |prj, cmd| {
     prj.clear();
     cmd.args([
         "run",
@@ -2844,7 +2956,7 @@ Traces:
 
 // tests that displays a sample contract artifact
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
+casttest!(flaky_fetch_artifact_from_etherscan, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "artifact",
@@ -3035,7 +3147,7 @@ Transaction successfully executed.
 });
 
 // tests cast can decode external libraries traces with project cached selectors
-forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
+forgetest_async!(flaky_decode_external_libraries_with_cached_selectors, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
@@ -3109,9 +3221,9 @@ contract CounterInExternalLibScript is Script {
 ...
 Traces:
   [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-    ├─ [..] 0x6fD8bf6770F4bEe578348D24028000cE9c4D2bB9::updateCounterInExternalLib(0, 100) [delegatecall]
+    ├─ [..] [..]::updateCounterInExternalLib(0, 100) [delegatecall]
     │   └─ ← [Stop]
-    └─ ← [Return] 62 bytes of code
+    └─ ← [Return] [..] bytes of code
 
 
 Transaction successfully executed.
@@ -3491,7 +3603,7 @@ Transaction successfully executed.
 });
 
 // https://github.com/foundry-rs/foundry/issues/9541
-forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
+forgetest_async!(flaky_cast_run_impersonated_tx, |_prj, cmd| {
     let (_api, handle) = anvil::spawn(
         NodeConfig::test()
             .with_auto_impersonate(true)
@@ -3525,23 +3637,35 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
-casttest!(
-    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
-    fetch_src_blockscout,
-    |_prj, cmd| {
-        let url = "https://eth.blockscout.com/api";
+casttest!(flaky_fetch_src_blockscout, |_prj, cmd| {
+    let url = "https://eth.blockscout.com/api";
 
-        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-        cmd.args([
-            "source",
-            &weth.to_string(),
-            "--chain-id",
-            "1",
-            "--explorer-api-url",
-            url,
-            "--flatten",
-        ])
+    cmd.args([
+        "source",
+        &weth.to_string(),
+        "--chain-id",
+        "1",
+        "--explorer-api-url",
+        url,
+        "--flatten",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+});
+
+casttest!(flaky_fetch_src_default, |_prj, cmd| {
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let etherscan_api_key = next_etherscan_api_key();
+
+    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -3550,37 +3674,11 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-    }
-);
-
-casttest!(
-    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
-    fetch_src_default,
-    |_prj, cmd| {
-        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-        let etherscan_api_key = next_etherscan_api_key();
-
-        cmd.args([
-            "source",
-            &weth.to_string(),
-            "--flatten",
-            "--etherscan-api-key",
-            &etherscan_api_key,
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-contract WETH9 {
-    string public name     = "Wrapped Ether";
-    string public symbol   = "WETH";
-    uint8  public decimals = 18;
-..."#]]);
-    }
-);
+});
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
-casttest!(osaka_can_run_p256_precompile, |_prj, cmd| {
+casttest!(flaky_osaka_can_run_p256_precompile, |_prj, cmd| {
     cmd.args([
         "run",
         "0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de",
@@ -3609,7 +3707,7 @@ Traces:
     │   │   │   │   └─ ← [Return] 0xc13089327d3c20c0ce35f2f058c423de29977e6950e406c095e366a8fabd463f
     │   │   │   ├─ [96] PRECOMPILES::sha256(0x424242424242424242424242424242424242424242424242424242424242424201000000c13089327d3c20c0ce35f2f058c423de29977e6950e406c095e366a8fabd463f) [staticcall]
     │   │   │   │   └─ ← [Return] 0xc544bd9a4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0
-    │   │   │   ├─ [6900] 0x0000000000000000000000000000000000000100::c544bd9a(4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0dd519280ec730727f07aa36550bde31a1d5f3097818f3425c2f083ed33a91f080fa2afac0071f6e1af9a0e9c09b851bf01e68bc8a1c1f89f686c48205762f925bf54fa13f88658092efa36c51b1e3c4db31d3afb92812fb852dac7cf9614bc479bf5da7241d9c4ab1b431b57ec3369587b4c831d7a564438990da053708c3289) [staticcall]
+    │   │   │   ├─ [6900] P256VERIFY::c544bd9a(4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0dd519280ec730727f07aa36550bde31a1d5f3097818f3425c2f083ed33a91f080fa2afac0071f6e1af9a0e9c09b851bf01e68bc8a1c1f89f686c48205762f925bf54fa13f88658092efa36c51b1e3c4db31d3afb92812fb852dac7cf9614bc479bf5da7241d9c4ab1b431b57ec3369587b4c831d7a564438990da053708c3289) [staticcall]
     │   │   │   │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
     │   │   │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000011bde17b8de18819c9eb86cefc3920ddb5d3d4254de276e3d6e18dd2b399f732b
     │   │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000011bde17b8de18819c9eb86cefc3920ddb5d3d4254de276e3d6e18dd2b399f732b
@@ -3722,7 +3820,7 @@ contract SimpleStorageScript is Script {
             &handle.http_endpoint(),
         ])
         .assert_failure().stderr_eq(str![[r#"
-Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8": AddressInsufficientBalance(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1000)
+Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8"[..]
 
 "#]]);
 });
@@ -4232,6 +4330,69 @@ casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
     .assert_success();
 });
 
+// Test cast mktx with EIP-4844 blob transaction (legacy format)
+casttest!(cast_mktx_eip4844_blob, |prj, cmd| {
+    // Create a temporary blob data file
+    let blob_data = b"dummy blob data for testing";
+    let blob_path = prj.root().join("blob_data.bin");
+    fs::write(&blob_path, blob_data).unwrap();
+
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "100000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--blob",
+        "--eip4844",
+        "--blob-gas-price",
+        "1000000",
+        "--path",
+        blob_path.to_str().unwrap(),
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_success();
+});
+
+// Test cast mktx with EIP-7594 blob transaction (default format)
+casttest!(cast_mktx_eip7594_blob, |prj, cmd| {
+    // Create a temporary blob data file
+    let blob_data = b"dummy peerdas blob data for testing";
+    let blob_path = prj.root().join("peerdas_blob_data.bin");
+    fs::write(&blob_path, blob_data).unwrap();
+
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "100000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--blob",
+        "--blob-gas-price",
+        "1000000",
+        "--path",
+        blob_path.to_str().unwrap(),
+        "0x0000000000000000000000000000000000000001",
+    ])
+    .assert_success();
+});
+
 // Test cast access-list with negative numbers
 casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
@@ -4384,12 +4545,9 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 });
 
 // Test cast run Celo transfer with precompiles.
-casttest!(
-    #[ignore = "flaky celo rpc url"]
-    run_celo_with_precompiles,
-    |_prj, cmd| {
-        let rpc = next_rpc_endpoint(NamedChain::Celo);
-        cmd.args([
+casttest!(flaky_run_celo_with_precompiles, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Celo);
+    cmd.args([
         "run",
         "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
         "--quick",
@@ -4412,8 +4570,7 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-    }
-);
+});
 casttest!(keccak_stdin_bytes, |_prj, cmd| {
     cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
 0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
@@ -4494,4 +4651,87 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+});
+
+// tests that the --curl flag outputs a valid curl command for cast rpc
+casttest!(curl_rpc, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["rpc", "eth_blockNumber", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("-H 'Content-Type: application/json'"));
+    assert!(output.contains("eth_blockNumber"));
+    assert!(output.contains("jsonrpc"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast block-number
+casttest!(curl_block_number, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["block-number", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_blockNumber"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast chain-id
+casttest!(curl_chain_id, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["chain-id", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_chainId"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast gas-price
+casttest!(curl_gas_price, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+
+    let output = cmd
+        .args(["gas-price", "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_gasPrice"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast call
+casttest!(curl_call, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["call", to, "balanceOf(address)(uint256)", to, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
 });

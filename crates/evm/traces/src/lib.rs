@@ -204,7 +204,7 @@ pub fn render_trace_arena_inner(
     with_storage_changes: bool,
 ) -> String {
     if shell::is_json() {
-        return serde_json::to_string(&arena.resolve_arena()).expect("Failed to write traces");
+        return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
     let mut w = TraceWriter::new(Vec::<u8>::new())
