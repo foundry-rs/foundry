@@ -20,12 +20,13 @@ async fn test_verify_bytecode(
     verifier: &str,
     verifier_url: &str,
     expected_matches: (&str, &str),
+    chain: Chain,
 ) {
     let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
 
     // fetch and flatten source code using the library directly
-    let source_code = fetch_etherscan_source_flattened(addr, &etherscan_key, Chain::mainnet())
+    let source_code = fetch_etherscan_source_flattened(addr, &etherscan_key, chain)
         .await
         .expect("failed to fetch source code from etherscan");
 
@@ -152,6 +153,7 @@ forgetest_async!(flaky_verify_bytecode_no_metadata, |prj, cmd| {
         "etherscan",
         "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
+        Chain::mainnet(),
     )
     .await;
 });
@@ -172,6 +174,7 @@ forgetest_async!(flaky_verify_bytecode_with_metadata, |prj, cmd| {
         "etherscan",
         "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
+        Chain::mainnet(),
     )
     .await;
 });
@@ -193,6 +196,7 @@ forgetest_async!(flaky_verify_bytecode_with_blockscout, |prj, cmd| {
         "blockscout",
         "https://eth.blockscout.com/api",
         ("partial", "partial"),
+        Chain::mainnet(),
     )
     .await;
 });
@@ -216,6 +220,7 @@ forgetest_async!(flaky_verify_bytecode_create2_with_blockscout, |prj, cmd| {
         "blockscout",
         "https://eth.blockscout.com/api",
         ("partial", "partial"),
+        Chain::mainnet(),
     )
     .await;
 });
@@ -242,6 +247,7 @@ forgetest_async!(flaky_verify_bytecode_with_constructor_args, |prj, cmd| {
         "etherscan",
         "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
+        Chain::mainnet(),
     )
     .await;
 });
