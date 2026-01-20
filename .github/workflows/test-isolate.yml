@@ -9,10 +9,6 @@ on:
     - cron: "0 0 * * *" # Run daily at midnight UTC
   workflow_dispatch: # Needed so we can run it manually
 
-concurrency:
-  group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
