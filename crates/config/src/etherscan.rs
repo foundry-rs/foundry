@@ -311,9 +311,12 @@ impl ResolvedEtherscanConfig {
         }
 
         let api_url = into_url(&api_url)?;
+        // Disable automatic system proxy detection to prevent panics on macOS in sandboxed
+        // environments. See: https://github.com/foundry-rs/foundry/issues/12733
         let client = reqwest::Client::builder()
             .user_agent(ETHERSCAN_USER_AGENT)
             .tls_built_in_root_certs(api_url.scheme() == "https")
+            .no_proxy()
             .build()?;
         let mut client_builder = foundry_block_explorers::Client::builder()
             .with_client(client)

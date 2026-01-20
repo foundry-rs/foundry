@@ -161,10 +161,16 @@ impl RuntimeTransport {
 
     /// Creates a new reqwest client from this transport.
     pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
+        // Disable automatic system proxy detection to prevent panics on macOS in sandboxed
+        // environments (e.g., Cursor IDE sandbox, App Sandbox). On macOS, reqwest reads system
+        // proxy settings via SCDynamicStore, which panics when it returns NULL in sandboxes.
+        // Users can still configure proxies via HTTP_PROXY/HTTPS_PROXY environment variables
+        // by using a custom client.
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .tls_built_in_root_certs(self.url.scheme() == "https")
-            .danger_accept_invalid_certs(self.accept_invalid_certs);
+            .danger_accept_invalid_certs(self.accept_invalid_certs)
+            .no_proxy();
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
