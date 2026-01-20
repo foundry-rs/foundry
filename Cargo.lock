@@ -4256,6 +4256,7 @@ dependencies = [
  "similar-asserts",
  "solar-compiler",
  "soldeer-commands",
+ "soldeer-core",
  "strum",
  "svm-rs",
  "tempfile",
@@ -4669,9 +4670,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.19.12"
+version = "0.19.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dde08d155d44039c2c05bc474e03e4e01323006d9660a9ef68c644bcde9aaee"
+checksum = "98c3c49c3889180a6f77d088144fb28e7a21fc6a44542859f982694cf1c93897"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4701,9 +4702,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.19.12"
+version = "0.19.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9e0ffe73c1857652a1600eb5a917babee8adad33b0699754dba28da9f07d07d"
+checksum = "b76721ae42a214de61a87e2590be4dd2fd6e8f69247a874774e47beb2c06ebfe"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4711,9 +4712,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.19.12"
+version = "0.19.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e874e6e777eba39614e17c403ecd34ddbc685d600bd487bc8b3ae3c6cc1d14d8"
+checksum = "5b3ea2597bb2b79f65e9c9f3edb8d2cae25f5c7d3ea2170092917ed7e5266de6"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4732,9 +4733,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.19.12"
+version = "0.19.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "642198c91aaa950191ef39c9e779dadb9993afd78355f2e76e25161da8958423"
+checksum = "88aea5bce07d749aac9377b02e0197af2606b9d2331b0925c46ef6436a205d19"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4747,9 +4748,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.19.12"
+version = "0.19.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b69f38b9d2d75df367a0cdc604c58227cb5e7ae935fe0c3a065acc65990354bb"
+checksum = "343e2934f8b851b3f4192cb42ca80cff1e88b15747b245d3045e98efcbc863cb"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5737,7 +5738,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -8064,7 +8065,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -8101,7 +8102,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]

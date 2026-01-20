@@ -2751,7 +2751,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // <https://github.com/foundry-rs/foundry/issues/9858>
-forgetest_init!(gas_report_fallback_with_calldata, |prj, cmd| {
+forgetest_init!(flaky_gas_report_fallback_with_calldata, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
         "FallbackWithCalldataTest.sol",
