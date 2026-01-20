@@ -263,7 +263,8 @@ forgetest!(can_override_config_lint, |prj, cmd| {
             ..Default::default()
         };
     });
-    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[r#"
+    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
+        r#"
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ src/ContractWithLints.sol:13:26
    │
@@ -273,7 +274,8 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
 
-"#]]);
+"#
+    ]]);
 });
 
 forgetest!(build_runs_linter_by_default, |prj, cmd| {
