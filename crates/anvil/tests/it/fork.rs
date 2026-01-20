@@ -20,7 +20,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn};
+use anvil::{EthereumHardfork, NodeConfig, PrecompileFactory, eth::EthApi, spawn};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
@@ -37,32 +37,6 @@ const BLOCK_NUMBER: u64 = 14_608_400u64;
 const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
 
 const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
-
-/// Represents an anvil fork of an anvil node
-#[expect(unused)]
-pub struct LocalFork {
-    origin_api: EthApi,
-    origin_handle: NodeHandle,
-    fork_api: EthApi,
-    fork_handle: NodeHandle,
-}
-
-#[expect(dead_code)]
-impl LocalFork {
-    /// Spawns two nodes with the test config
-    pub async fn new() -> Self {
-        Self::setup(NodeConfig::test(), NodeConfig::test()).await
-    }
-
-    /// Spawns two nodes where one is a fork of the other
-    pub async fn setup(origin: NodeConfig, fork: NodeConfig) -> Self {
-        let (origin_api, origin_handle) = spawn(origin).await;
-
-        let (fork_api, fork_handle) =
-            spawn(fork.with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
-        Self { origin_api, origin_handle, fork_api, fork_handle }
-    }
-}
 
 pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
