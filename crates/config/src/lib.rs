@@ -747,6 +747,18 @@ impl Config {
         Self::from_provider(Self::figment_with_root(root.as_ref()))
     }
 
+    /// Loads the `Config` from the given root directory, allowing profile fallback.
+    ///
+    /// Unlike [`load_with_root`](Self::load_with_root), if the selected profile (via
+    /// `FOUNDRY_PROFILE`) does not exist in the config, this falls back to the default profile
+    /// instead of returning an error. This is useful for loading nested lib/dependency configs
+    /// that may not define all profiles the main project uses.
+    #[track_caller]
+    pub fn load_with_root_and_fallback(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
+        let figment = Self::figment_with_root(root.as_ref());
+        Self::from_figment_fallback(Figment::from(figment))
+    }
+
     /// Attempts to extract a `Config` from `provider`, returning the result.
     ///
     /// # Example
@@ -774,25 +786,49 @@ impl Config {
     }
 
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
+        Self::from_figment_inner(figment, true)
+    }
+
+    /// Same as `from_figment` but allows unknown profiles, falling back to default profile.
+    /// Used when loading nested lib configs that may not define all profiles.
+    fn from_figment_fallback(figment: Figment) -> Result<Self, ExtractConfigError> {
+        Self::from_figment_inner(figment, false)
+    }
+
+    fn from_figment_inner(
+        figment: Figment,
+        strict_profile: bool,
+    ) -> Result<Self, ExtractConfigError> {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
-        config.profile = figment.profile().clone();
+        let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
-        let mut add_profile = |profile: &Profile| {
-            if !config.profiles.contains(profile) {
-                config.profiles.push(profile.clone());
+        fn add_profile(profiles: &mut Vec<Profile>, profile: &Profile) {
+            if !profiles.contains(profile) {
+                profiles.push(profile.clone());
             }
-        };
+        }
         let figment = figment.select(Self::PROFILE_SECTION);
         if let Ok(data) = figment.data()
             && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
         {
             for profile in profiles.keys() {
-                add_profile(&Profile::new(profile));
+                add_profile(&mut config.profiles, &Profile::new(profile));
             }
         }
-        add_profile(&Self::DEFAULT_PROFILE);
-        add_profile(&config.profile);
+        add_profile(&mut config.profiles, &Self::DEFAULT_PROFILE);
+
+        // Check if the selected profile exists.
+        if config.profiles.contains(&selected_profile) {
+            config.profile = selected_profile;
+        } else if strict_profile {
+            return Err(ExtractConfigError::new(Error::from(format!(
+                "selected profile `{selected_profile}` does not exist"
+            ))));
+        } else {
+            // Fall back to default profile for nested lib configs.
+            config.profile = Self::DEFAULT_PROFILE;
+        }
 
         config.normalize_optimizer_settings();
 
@@ -6464,6 +6500,116 @@ mod tests {
 
             let config = Config::load().expect("should accept explicit version requirements");
             assert_eq!(config.compilation_restrictions.len(), 2);
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
+    #[test]
+    fn fails_on_unknown_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_PROFILE", "nonexistent");
+            let err = Config::load().expect_err("expected unknown profile to fail");
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("selected profile `nonexistent` does not exist"),
+                "Expected error about nonexistent profile, got: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12844: known profile should work
+    #[test]
+    fn succeeds_on_known_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci]
+                src = "src"
+                fuzz = { runs = 10000 }
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().expect("known profile should work");
+            assert_eq!(config.profile.as_str(), "ci");
+            assert_eq!(config.fuzz.runs, 10000);
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12963: nested lib configs should fallback to default profile
+    // when they don't define the requested profile
+    #[test]
+    fn nested_lib_config_falls_back_to_default_profile() {
+        figment::Jail::expect_with(|jail| {
+            // Create a lib directory with only default profile
+            let lib_path = jail.directory().join("lib/mylib");
+            std::fs::create_dir_all(&lib_path).unwrap();
+            jail.create_file(
+                "lib/mylib/foundry.toml",
+                r#"
+                [profile.default]
+                src = "contracts"
+                "#,
+            )?;
+
+            // Set a profile that doesn't exist in the lib
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            // load_with_root_and_fallback should succeed and fall back to default
+            let config = Config::load_with_root_and_fallback(&lib_path)
+                .expect("lib config should load with fallback");
+            assert_eq!(config.profile, Config::DEFAULT_PROFILE);
+            assert_eq!(config.src.as_os_str(), "contracts");
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12963: nested lib configs should use requested profile if it exists
+    #[test]
+    fn nested_lib_config_uses_profile_if_exists() {
+        figment::Jail::expect_with(|jail| {
+            // Create a lib directory with both default and ci profiles
+            let lib_path = jail.directory().join("lib/mylib");
+            std::fs::create_dir_all(&lib_path).unwrap();
+            jail.create_file(
+                "lib/mylib/foundry.toml",
+                r#"
+                [profile.default]
+                src = "contracts"
+
+                [profile.ci]
+                src = "contracts"
+                fuzz = { runs = 5000 }
+                "#,
+            )?;
+
+            // Set a profile that exists in the lib
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            // load_with_root_and_fallback should use the ci profile
+            let config = Config::load_with_root_and_fallback(&lib_path)
+                .expect("lib config should load with profile");
+            assert_eq!(config.profile.as_str(), "ci");
+            assert_eq!(config.fuzz.runs, 5000);
 
             Ok(())
         });
