@@ -283,7 +283,10 @@ impl BuildArgs {
         let git = Git::new(&config.root);
 
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-        if lockfile.read().is_err() {
+        if let Err(e) = lockfile.read() {
+            if !e.to_string().contains("Lockfile not found") {
+                sh_warn!("Failed to parse foundry.lock: {}", e).ok();
+            }
             return;
         }
 

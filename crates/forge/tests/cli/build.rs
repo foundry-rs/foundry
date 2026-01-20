@@ -488,3 +488,32 @@ forgetest_init!(build_no_warning_with_empty_soldeer_lock, |prj, cmd| {
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 "#]]);
 });
+
+// tests that malformed foundry.lock triggers a warning during build
+forgetest_init!(build_warns_on_malformed_foundry_lock, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    fs::write(&foundry_lock, "this is not valid toml { [ }").unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: Failed to parse foundry.lock: [..]
+...
+"#]]);
+});
+
+// tests that build succeeds without warning when no foundry.lock exists
+forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    assert!(!foundry_lock.exists());
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
+});
+
+// tests that build succeeds without warning when foundry.lock is valid but empty
+forgetest_init!(build_no_warning_with_empty_foundry_lock, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    fs::write(&foundry_lock, "").unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
+});
