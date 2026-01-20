@@ -1,13 +1,16 @@
+use alloy_chains::Chain;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
 use foundry_test_utils::{
-    TestCommand, TestProject, forgetest_async,
+    TestCommand, TestProject,
+    etherscan::fetch_etherscan_source_flattened,
+    forgetest_async,
     rpc::{next_etherscan_api_key, next_http_archive_rpc_url},
     util::OutputExt,
 };
 
 #[expect(clippy::too_many_arguments)]
-fn test_verify_bytecode(
+async fn test_verify_bytecode(
     prj: TestProject,
     mut cmd: TestCommand,
     addr: &str,
@@ -17,17 +20,15 @@ fn test_verify_bytecode(
     verifier: &str,
     verifier_url: &str,
     expected_matches: (&str, &str),
+    chain: Chain,
 ) {
     let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
 
-    // fetch and flatten source code
-    let source_code = cmd
-        .cast_fuse()
-        .args(["source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    // fetch and flatten source code using the library directly
+    let source_code = fetch_etherscan_source_flattened(addr, &etherscan_key, chain)
+        .await
+        .expect("failed to fetch source code from etherscan");
 
     prj.add_source(contract_name, &source_code);
     prj.write_config(config);
@@ -65,7 +66,7 @@ fn test_verify_bytecode(
 }
 
 #[expect(clippy::too_many_arguments)]
-fn test_verify_bytecode_with_ignore(
+async fn test_verify_bytecode_with_ignore(
     prj: TestProject,
     mut cmd: TestCommand,
     addr: &str,
@@ -75,26 +76,15 @@ fn test_verify_bytecode_with_ignore(
     verifier_url: &str,
     expected_matches: (&str, &str),
     ignore: &str,
-    chain: &str,
+    chain: Chain,
 ) {
     let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
 
-    // fetch and flatten source code
-    let source_code = cmd
-        .cast_fuse()
-        .args([
-            "source",
-            addr,
-            "--flatten",
-            "--etherscan-api-key",
-            &etherscan_key,
-            "--chain",
-            chain,
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    // fetch and flatten source code using the library directly
+    let source_code = fetch_etherscan_source_flattened(addr, &etherscan_key, chain)
+        .await
+        .expect("failed to fetch source code from etherscan");
 
     prj.add_source(contract_name, &source_code);
     prj.write_config(config);
@@ -163,7 +153,9 @@ forgetest_async!(flaky_verify_bytecode_no_metadata, |prj, cmd| {
         "etherscan",
         "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
-    );
+        Chain::mainnet(),
+    )
+    .await;
 });
 
 forgetest_async!(flaky_verify_bytecode_with_metadata, |prj, cmd| {
@@ -182,7 +174,9 @@ forgetest_async!(flaky_verify_bytecode_with_metadata, |prj, cmd| {
         "etherscan",
         "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
-    );
+        Chain::mainnet(),
+    )
+    .await;
 });
 
 // Test non-CREATE2 deployed contract with blockscout
@@ -202,7 +196,9 @@ forgetest_async!(flaky_verify_bytecode_with_blockscout, |prj, cmd| {
         "blockscout",
         "https://eth.blockscout.com/api",
         ("partial", "partial"),
-    );
+        Chain::mainnet(),
+    )
+    .await;
 });
 
 // Test CREATE2 deployed contract with blockscout
@@ -224,7 +220,9 @@ forgetest_async!(flaky_verify_bytecode_create2_with_blockscout, |prj, cmd| {
         "blockscout",
         "https://eth.blockscout.com/api",
         ("partial", "partial"),
-    );
+        Chain::mainnet(),
+    )
+    .await;
 });
 
 // Test `--constructor-args`
@@ -249,7 +247,9 @@ forgetest_async!(flaky_verify_bytecode_with_constructor_args, |prj, cmd| {
         "etherscan",
         "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
-    );
+        Chain::mainnet(),
+    )
+    .await;
 });
 
 // `--ignore` tests
@@ -271,8 +271,9 @@ forgetest_async!(flaky_verify_bytecode_can_ignore_creation, |prj, cmd| {
         "https://api.etherscan.io/v2/api?chainid=1",
         ("ignored", "partial"),
         "creation",
-        "1",
-    );
+        Chain::mainnet(),
+    )
+    .await;
 });
 
 forgetest_async!(flaky_verify_bytecode_can_ignore_runtime, |prj, cmd| {
@@ -293,8 +294,9 @@ forgetest_async!(flaky_verify_bytecode_can_ignore_runtime, |prj, cmd| {
         "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "ignored"),
         "runtime",
-        "1",
-    );
+        Chain::mainnet(),
+    )
+    .await;
 });
 
 // Test that verification fails when source code doesn't match deployed bytecode
@@ -302,19 +304,14 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
     let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
 
-    // Fetch real source code
-    let real_source = cmd
-        .cast_fuse()
-        .args([
-            "source",
-            "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
-            "--flatten",
-            "--etherscan-api-key",
-            &etherscan_key,
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    // Fetch real source code using the library directly
+    let real_source = fetch_etherscan_source_flattened(
+        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+        &etherscan_key,
+        Chain::mainnet(),
+    )
+    .await
+    .expect("failed to fetch source code from etherscan");
 
     prj.add_source("SystemConfig", &real_source);
     prj.write_config(Config {
@@ -340,6 +337,7 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
 
     // Now replace with different incorrect source code
     prj.add_source("SystemConfig", source_code);
+    let etherscan_key = next_etherscan_api_key();
     let args = vec![
         "verify-bytecode",
         "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
@@ -381,6 +379,6 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
 //         "https://api.basescan.org/api",
 //         ("ignored", "partial"),
 //         "creation",
-//         "base",
-//     );
+//         Chain::base_mainnet(),
+//     ).await;
 // });

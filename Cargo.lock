@@ -5085,6 +5085,7 @@ dependencies = [
 name = "foundry-test-utils"
 version = "1.6.0"
 dependencies = [
+ "alloy-chains",
  "alloy-primitives",
  "alloy-provider",
  "eyre",
