@@ -542,8 +542,7 @@ mod tests {
     #[test]
     #[cfg(feature = "turnkey")]
     fn turnkey_address_returns_address_when_flag_set() {
-        let args: MultiWalletOpts =
-            MultiWalletOpts::parse_from(["foundry-cli", "--turnkey"]);
+        let args: MultiWalletOpts = MultiWalletOpts::parse_from(["foundry-cli", "--turnkey"]);
         assert!(args.turnkey);
 
         unsafe {
