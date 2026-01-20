@@ -16,7 +16,7 @@ forgetest_init!(call, |prj, cmd| {
     cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
-  ╭▸ test/call.t.sol:9:20
+  [FILE]:9:20
   │
 9 │                 vm.ffi(inputs);
   │                    ━━━
@@ -47,7 +47,7 @@ forgetest_init!(assignment, |prj, cmd| {
     cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
-  ╭▸ test/assignment.t.sol:9:41
+  [FILE]:9:41
   │
 9 │                 bytes memory stuff = vm.ffi(inputs);
   │                                         ━━━
@@ -79,7 +79,7 @@ forgetest_init!(exit_code, |prj, cmd| {
     cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
-  ╭▸ test/multiple.t.sol:9:20
+  [FILE]:9:20
   │
 9 │                 vm.ffi(inputs);
   │                    ━━━
@@ -87,7 +87,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
-   ╭▸ test/multiple.t.sol:10:20
+   [FILE]:10:20
    │
 10 │                 vm.ffi(inputs);
    │                    ━━━
@@ -95,7 +95,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
-   ╭▸ test/multiple.t.sol:11:20
+   [FILE]:11:20
    │
 11 │                 vm.ffi(inputs);
    │                    ━━━

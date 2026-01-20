@@ -128,7 +128,7 @@ forgetest!(can_use_config, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-   ╭▸ src/ContractWithLints.sol:16:9
+   [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
@@ -155,7 +155,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
-  ╭▸ src/OtherContract.sol:9:14
+  [FILE]:9:14
   │
 9 │     function functionMIXEDCaseInfo() public {}
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
@@ -211,7 +211,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
-  ╭▸ src/OtherContractWithLints.sol:9:14
+  [FILE]:9:14
   │
 9 │     function functionMIXEDCaseInfo() public {}
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
@@ -238,7 +238,7 @@ forgetest!(can_override_config_path, |prj, cmd| {
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-   ╭▸ src/ContractWithLints.sol:16:9
+   [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
@@ -266,7 +266,7 @@ forgetest!(can_override_config_lint, |prj, cmd| {
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
         r#"
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
-   ╭▸ src/ContractWithLints.sol:13:26
+   [FILE]:13:26
    │
 13 │         uint256 result = 8 >> localValue;
    │                          ━━━━━━━━━━━━━━━
@@ -295,7 +295,7 @@ forgetest!(build_runs_linter_by_default, |prj, cmd| {
     // Run forge build and expect linting output before compilation
     cmd.arg("build").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-   ╭▸ src/ContractWithLints.sol:16:9
+   [FILE]:16:9
    │
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
@@ -456,7 +456,7 @@ forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
 note[unused-import]: unused imports should be removed
-  ╭▸ src/OnlyImports.sol:8:10
+  [FILE]:8:10
   │
 8 │ import { _PascalCaseInfo } from "./ContractWithLints.sol";
   │          ━━━━━━━━━━━━━━━
@@ -488,7 +488,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
     let args = ["build", "src/CounterBWithLints.sol"];
     cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
-  ╭▸ src/CounterBWithLints.sol:6:20
+  [FILE]:6:20
   │
 6 │     uint256 public CounterB_Fail_Lint;
   │                    ━━━━━━━━━━━━━━━━━━ help: consider using: `counterBFailLint`
