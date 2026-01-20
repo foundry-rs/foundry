@@ -78,7 +78,7 @@ jobs:
           node-version: 24
       - name: Install Bun
         if: contains(matrix.name, 'external')
-        uses: oven-sh/setup-bun@b7a1c7ccf290d58743029c4f6903da283811b979 # v2
+        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2
         with:
           bun-version: latest
       - name: Setup Python
