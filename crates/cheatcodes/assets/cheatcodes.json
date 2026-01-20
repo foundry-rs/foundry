@@ -6526,6 +6526,26 @@
     },
     {
       "func": {
+        "id": "getRecordedLogsJson",
+        "description": "Gets all the recorded logs, in JSON format.",
+        "declaration": "function getRecordedLogsJson() external view returns (string memory logsJson);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getRecordedLogsJson()",
+        "selector": "0x3b171111",
+        "selectorBytes": [
+          59,
+          23,
+          17,
+          17
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
         "declaration": "function getStateDiff() external view returns (string memory diff);",
