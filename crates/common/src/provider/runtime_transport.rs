@@ -80,6 +80,8 @@ pub struct RuntimeTransport {
     timeout: std::time::Duration,
     /// Whether to accept invalid certificates.
     accept_invalid_certs: bool,
+    /// Whether to disable automatic proxy detection.
+    no_proxy: bool,
 }
 
 /// A builder for [RuntimeTransport].
@@ -90,6 +92,7 @@ pub struct RuntimeTransportBuilder {
     jwt: Option<String>,
     timeout: std::time::Duration,
     accept_invalid_certs: bool,
+    no_proxy: bool,
 }
 
 impl RuntimeTransportBuilder {
@@ -101,6 +104,7 @@ impl RuntimeTransportBuilder {
             jwt: None,
             timeout: REQUEST_TIMEOUT,
             accept_invalid_certs: false,
+            no_proxy: false,
         }
     }
 
@@ -128,6 +132,15 @@ impl RuntimeTransportBuilder {
         self
     }
 
+    /// Set whether to disable automatic proxy detection.
+    ///
+    /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
+    /// where system proxy detection via SCDynamicStore causes crashes.
+    pub fn no_proxy(mut self, no_proxy: bool) -> Self {
+        self.no_proxy = no_proxy;
+        self
+    }
+
     /// Builds the [RuntimeTransport] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
@@ -138,6 +151,7 @@ impl RuntimeTransportBuilder {
             jwt: self.jwt,
             timeout: self.timeout,
             accept_invalid_certs: self.accept_invalid_certs,
+            no_proxy: self.no_proxy,
         }
     }
 }
@@ -161,16 +175,18 @@ impl RuntimeTransport {
 
     /// Creates a new reqwest client from this transport.
     pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
-        // Disable automatic system proxy detection to prevent panics on macOS in sandboxed
-        // environments (e.g., Cursor IDE sandbox, App Sandbox). On macOS, reqwest reads system
-        // proxy settings via SCDynamicStore, which panics when it returns NULL in sandboxes.
-        // Users can still configure proxies via HTTP_PROXY/HTTPS_PROXY environment variables
-        // by using a custom client.
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .tls_built_in_root_certs(self.url.scheme() == "https")
-            .danger_accept_invalid_certs(self.accept_invalid_certs)
-            .no_proxy();
+            .danger_accept_invalid_certs(self.accept_invalid_certs);
+
+        // Disable automatic proxy detection if requested. This helps in sandboxed environments
+        // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
+        // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
+        if self.no_proxy {
+            client_builder = client_builder.no_proxy();
+        }
+
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
