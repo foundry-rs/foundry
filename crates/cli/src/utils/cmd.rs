@@ -133,6 +133,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::MoonbeamDev
                     | NamedChain::Moonriver
                     | NamedChain::PolkadotTestnet
+                    | NamedChain::Kusama
+                    | NamedChain::Polkadot
             );
     }
     false
