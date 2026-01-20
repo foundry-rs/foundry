@@ -1,13 +1,17 @@
-# Daily CI job to run tests with isolation mode enabled by default
+# Daily CI job to run flaky tests that are excluded from regular CI via nextest default-filter
 
-name: test-isolate
+name: test-flaky
 
 permissions: {}
 
 on:
   schedule:
-    - cron: "0 0 * * *" # Run daily at midnight UTC
+    - cron: "0 1 * * *" # Run daily at 1 AM UTC (offset from test-isolate)
   workflow_dispatch: # Needed so we can run it manually
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,16 +19,8 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  nextest:
-    uses: ./.github/workflows/test.yml
-    permissions:
-      contents: read
-    with:
-      profile: isolate
-
-  # Run flaky tests with isolation enabled
-  flaky:
-    name: flaky tests (isolate)
+  test:
+    name: flaky tests
     runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
     permissions:
@@ -42,40 +38,18 @@ jobs:
           tool: nextest
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - name: Test flaky tests with isolation
+      - name: Test flaky tests
         env:
           SVM_TARGET_PLATFORM: linux-amd64
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
-        run: cargo nextest run --profile flaky --features=isolate-by-default --no-fail-fast
+        run: cargo nextest run --profile flaky --no-fail-fast
 
-  # If nextest fails, create a high-priority issue for isolation failures.
-  issue-isolate:
-    name: Open isolation issue
+  # If any of the jobs fail, this will create a normal-priority issue to signal so.
+  issue:
+    name: Open an issue
     runs-on: ubuntu-latest
-    needs: [nextest]
-    if: failure()
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WORKFLOW_URL: |
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        with:
-          update_existing: true
-          filename: .github/TEST_ISOLATE_FAILURE_TEMPLATE.md
-
-  # If flaky tests fail, create a normal-priority issue for flaky failures.
-  issue-flaky:
-    name: Open flaky issue
-    runs-on: ubuntu-latest
-    needs: [flaky]
+    needs: [test]
     if: failure()
     permissions:
       contents: read
