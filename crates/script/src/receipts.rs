@@ -124,15 +124,15 @@ pub fn format_receipt(
             "gas_price": gas_price,
         });
 
-        if let Some(name) = &contract_name {
-            if !name.is_empty() {
-                json["contract_name"] = serde_json::Value::String(name.clone());
-            }
+        if let Some(name) = &contract_name
+            && !name.is_empty()
+        {
+            json["contract_name"] = serde_json::Value::String(name.clone());
         }
-        if let Some(func) = &function {
-            if !func.is_empty() {
-                json["function"] = serde_json::Value::String(func.clone());
-            }
+        if let Some(func) = &function
+            && !func.is_empty()
+        {
+            json["function"] = serde_json::Value::String(func.clone());
         }
 
         let _ = sh_println!("{}", json);
