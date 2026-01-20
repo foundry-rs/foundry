@@ -9,7 +9,7 @@ error CustomErrorWithNamedArgs(uint256 x, string message);
 
 contract CustomErrors {
     // Require examples
-    function requireWithString1(uint256 a, uint256 b) public pure {
+    function requireWithString(uint256 a, uint256 b) public pure {
         require(a > 0, "Value must be greater than zero"); //~NOTE: prefer using custom errors on revert and require calls
         require(a >= 0 && a <= 100 || b == 50, "Complex condition should be linted"); //~NOTE: prefer using custom errors on revert and require calls
     }
@@ -22,7 +22,7 @@ contract CustomErrors {
     }
 
     // Custom error examples
-    function requireWithCustomError(uint256 value) public pure {
+    function customErrors(uint256 value) public pure {
         require(value > 0, CustomError());
         require(value < 100, CustomErrorWithArg(value));
         require(value > 0);
