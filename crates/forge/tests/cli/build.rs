@@ -490,3 +490,24 @@ forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 "#]]);
 });
+
+// tests that build warns when foundry.lock revision differs from actual submodule revision
+forgetest_init!(build_warns_on_foundry_lock_revision_mismatch, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+
+    // Write a foundry.lock with a fake/old revision for forge-std that differs from the actual
+    let lockfile_content = r#"{
+  "lib/forge-std": {
+    "tag": {
+      "name": "v1.9.7",
+      "rev": "0000000000000000000000000000000000000000"
+    }
+  }
+}"#;
+    fs::write(&foundry_lock, lockfile_content).unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: Dependency 'lib/forge-std' revision mismatch: expected '0000000000000000000000000000000000000000', found '[..]'
+
+"#]]);
+});
