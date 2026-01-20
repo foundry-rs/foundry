@@ -26,6 +26,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unsafe-cheatcode`: Usage of unsafe cheatcodes that can perform dangerous operations.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
+  - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
 - **Code Size:**
   - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
 
@@ -33,13 +34,13 @@ It helps enforce best practices and improve code quality within Foundry projects
 
 The behavior of the `SolidityLinter` can be customized with the following options:
 
-| Option              | Default | Description                                                                                                |
-| ------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| Option              | Default | Description                                                                                                            |
+| ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `with_severity`     | `None`  | Filters active lints by their severity (`High`, `Med`, `Low`, `Info`, `Gas`, `CodeSize`). `None` means all severities. |
-| `with_lints`        | `None`  | Specifies a list of `SolLint` instances to include. Overrides severity filter if a lint matches.           |
-| `without_lints`     | `None`  | Specifies a list of `SolLint` instances to exclude, even if they match other criteria.                     |
-| `with_description`  | `true`  | Whether to include the lint's description in the diagnostic output.                                        |
-| `with_json_emitter` | `false` | If `true`, diagnostics are output in rustc-compatible JSON format; otherwise, human-readable text.         |
+| `with_lints`        | `None`  | Specifies a list of `SolLint` instances to include. Overrides severity filter if a lint matches.                       |
+| `without_lints`     | `None`  | Specifies a list of `SolLint` instances to exclude, even if they match other criteria.                                 |
+| `with_description`  | `true`  | Whether to include the lint's description in the diagnostic output.                                                    |
+| `with_json_emitter` | `false` | If `true`, diagnostics are output in rustc-compatible JSON format; otherwise, human-readable text.                     |
 
 ## Contributing
 
@@ -74,3 +75,4 @@ Guidelines for contributing to `forge lint`:
 ### Developing a New Lint Rule
 
 Check the [dev docs](../../docs/dev/lintrules.md) for a full implementation guide.
+

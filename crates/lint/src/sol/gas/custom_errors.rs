@@ -3,8 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::ast::{CallArgsKind, Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit};
-use std::ops::ControlFlow;
+use solar::ast::{CallArgsKind, Expr, ExprKind};
 
 declare_forge_lint!(
     CUSTOM_ERRORS,
@@ -14,31 +13,13 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for CustomErrors {
-    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
-        if let Some(body) = &func.body {
-            let mut checker = CustomErrorsChecker { ctx };
-            let _ = checker.visit_block(body);
-        }
-    }
-}
-
-/// Visitor that detects require/revert statements with string messages.
-struct CustomErrorsChecker<'a, 's> {
-    ctx: &'a LintContext<'s, 'a>,
-}
-
-impl<'ast> Visit<'ast> for CustomErrorsChecker<'_, '_> {
-    type BreakValue = ();
-
-    fn visit_stmt(&mut self, stmt: &'ast Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
-        if let StmtKind::Expr(expr) = &stmt.kind
-            && let ExprKind::Call(callee, args) = &expr.kind
+    fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
+        if let ExprKind::Call(callee, args) = &expr.kind
             && ((is_require_call(callee) && should_lint_require(args))
                 || (is_revert_call(callee) && should_lint_revert(args)))
         {
-            self.ctx.emit(&CUSTOM_ERRORS, expr.span);
+            ctx.emit(&CUSTOM_ERRORS, expr.span);
         }
-        self.walk_stmt(stmt)
     }
 }
 
