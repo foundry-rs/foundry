@@ -212,11 +212,7 @@ mod tests {
             },
         }))
         .unwrap();
-        ScriptSequence {
-            transactions: VecDeque::from([tx]),
-            chain: 1,
-            ..Default::default()
-        }
+        ScriptSequence { transactions: VecDeque::from([tx]), chain: 1, ..Default::default() }
     }
 
     #[test]
@@ -252,8 +248,11 @@ mod tests {
     #[test]
     fn format_receipt_handles_missing_tx_in_sequence() {
         let seq = mock_sequence(B256::repeat_byte(0x99), Some("Other"), Some("other()"));
-        let out =
-            format_receipt(Chain::mainnet(), &mock_receipt(B256::repeat_byte(0x42), true), Some(&seq));
+        let out = format_receipt(
+            Chain::mainnet(),
+            &mock_receipt(B256::repeat_byte(0x42), true),
+            Some(&seq),
+        );
 
         assert!(!out.contains("Contract:"));
         assert!(!out.contains("Function:"));
