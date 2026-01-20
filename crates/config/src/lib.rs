@@ -4664,6 +4664,48 @@ mod tests {
     }
 
     #[test]
+    fn test_model_checker_settings_with_bool_flags() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+
+                [profile.default.model_checker]
+                engine = 'chc'
+                show_unproved = true
+                show_unsupported = true
+                show_proved_safe = false
+                div_mod_with_slacks = true
+            ",
+            )?;
+            let mut loaded = Config::load().unwrap();
+            clear_warning(&mut loaded);
+
+            let mc = loaded.model_checker.as_ref().unwrap();
+            assert_eq!(mc.show_unproved, Some(true));
+            assert_eq!(mc.show_unsupported, Some(true));
+            assert_eq!(mc.show_proved_safe, Some(false));
+            assert_eq!(mc.div_mod_with_slacks, Some(true));
+
+            // Test round-trip: serialize and reload
+            let s = loaded.to_string_pretty().unwrap();
+            jail.create_file("foundry.toml", &s)?;
+
+            let mut reloaded = Config::load().unwrap();
+            clear_warning(&mut reloaded);
+
+            let mc_reloaded = reloaded.model_checker.as_ref().unwrap();
+            assert_eq!(mc_reloaded.show_unproved, Some(true));
+            assert_eq!(mc_reloaded.show_unsupported, Some(true));
+            assert_eq!(mc_reloaded.show_proved_safe, Some(false));
+            assert_eq!(mc_reloaded.div_mod_with_slacks, Some(true));
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_model_checker_settings_relative_paths() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
