@@ -7,4 +7,3 @@ contract TestConditionFormatting {
         }
     }
 }
-
