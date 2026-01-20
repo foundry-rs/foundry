@@ -477,6 +477,16 @@ impl MultiWalletOpts {
 
         Ok(None)
     }
+
+    /// Returns the Turnkey address if `--turnkey` flag is set and `TURNKEY_ADDRESS` is available.
+    pub fn turnkey_address(&self) -> Option<alloy_primitives::Address> {
+        #[cfg(feature = "turnkey")]
+        if self.turnkey {
+            return std::env::var("TURNKEY_ADDRESS").ok().and_then(|addr| addr.parse().ok());
+        }
+
+        None
+    }
 }
 
 #[cfg(test)]
