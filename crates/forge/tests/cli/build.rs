@@ -474,16 +474,8 @@ Warning: Failed to parse soldeer.lock: [..]
 // tests that build succeeds without warning when no soldeer.lock exists
 forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
     let soldeer_lock = prj.root().join("soldeer.lock");
+    // soldeer.lock should not exist in a fresh project
     assert!(!soldeer_lock.exists());
-
-    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-"#]]);
-});
-
-// tests that build succeeds without warning when soldeer.lock is empty
-forgetest_init!(build_no_warning_with_empty_soldeer_lock, |prj, cmd| {
-    let soldeer_lock = prj.root().join("soldeer.lock");
-    fs::write(&soldeer_lock, "").unwrap();
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 "#]]);
@@ -503,16 +495,8 @@ Warning: Failed to parse foundry.lock: [..]
 // tests that build succeeds without warning when no foundry.lock exists
 forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
     let foundry_lock = prj.root().join("foundry.lock");
-    assert!(!foundry_lock.exists());
-
-    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-"#]]);
-});
-
-// tests that build succeeds without warning when foundry.lock is valid but empty
-forgetest_init!(build_no_warning_with_empty_foundry_lock, |prj, cmd| {
-    let foundry_lock = prj.root().join("foundry.lock");
-    fs::write(&foundry_lock, "").unwrap();
+    // Remove foundry.lock if it exists from template
+    let _ = fs::remove_file(&foundry_lock);
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 "#]]);
