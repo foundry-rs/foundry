@@ -3,6 +3,7 @@ use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
 use eyre::{Result, eyre};
+use forge_script_sequence::ScriptSequence;
 use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
 
@@ -89,34 +90,67 @@ pub async fn check_tx_status(
 }
 
 /// Prints parts of the receipt to stdout
-pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
+pub fn format_receipt(
+    chain: Chain,
+    receipt: &AnyTransactionReceipt,
+    sequence: Option<&ScriptSequence>,
+) -> String {
     let gas_used = receipt.gas_used;
     let gas_price = receipt.effective_gas_price;
     let block_number = receipt.block_number.unwrap_or_default();
     let success = receipt.inner.inner.inner.receipt.status.coerce_status();
 
+    let (contract_name, function) = sequence
+        .and_then(|seq| {
+            seq.transactions
+                .iter()
+                .find(|tx| tx.hash == Some(receipt.transaction_hash))
+                .map(|tx| (tx.contract_name.clone(), tx.function.clone()))
+        })
+        .unwrap_or((None, None));
+
     if shell::is_json() {
-        let _ = sh_println!(
-            "{}",
-            serde_json::json!({
-                "chain": chain,
-                "status": if success {
-                    "success"
-                } else {
-                    "failed"
-                },
-                "tx_hash": receipt.transaction_hash,
-                "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
-                "block_number": block_number,
-                "gas_used": gas_used,
-                "gas_price": gas_price,
-            })
-        );
+        let mut json = serde_json::json!({
+            "chain": chain,
+            "status": if success {
+                "success"
+            } else {
+                "failed"
+            },
+            "tx_hash": receipt.transaction_hash,
+            "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
+            "block_number": block_number,
+            "gas_used": gas_used,
+            "gas_price": gas_price,
+        });
+
+        if let Some(name) = &contract_name {
+            if !name.is_empty() {
+                json["contract_name"] = serde_json::Value::String(name.clone());
+            }
+        }
+        if let Some(func) = &function {
+            if !func.is_empty() {
+                json["function"] = serde_json::Value::String(func.clone());
+            }
+        }
+
+        let _ = sh_println!("{}", json);
 
         String::new()
     } else {
+        let contract_info = match &contract_name {
+            Some(name) if !name.is_empty() => format!("\nContract: {name}"),
+            _ => String::new(),
+        };
+
+        let function_info = match &function {
+            Some(func) if !func.is_empty() => format!("\nFunction: {func}"),
+            _ => String::new(),
+        };
+
         format!(
-            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
+            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_info}{function_info}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
             status = if success { "✅  [Success]" } else { "❌  [Failed]" },
             tx_hash = receipt.transaction_hash,
             contract_address = if let Some(addr) = &receipt.contract_address {
