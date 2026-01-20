@@ -1,6 +1,9 @@
 //! Support for generating the state root for memdb storage
 
-use alloy_primitives::{Address, B256, U256, keccak256, map::HashMap};
+use alloy_primitives::{
+    B256, U256, keccak256,
+    map::{AddressMap, HashMap},
+};
 use alloy_rlp::Encodable;
 use alloy_trie::{HashBuilder, Nibbles};
 use revm::{database::DbAccount, state::AccountInfo};
@@ -14,7 +17,7 @@ pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 
 }
 
 /// Builds state root from the given accounts
-pub fn state_root(accounts: &HashMap<Address, DbAccount>) -> B256 {
+pub fn state_root(accounts: &AddressMap<DbAccount>) -> B256 {
     build_root(trie_accounts(accounts))
 }
 
@@ -38,14 +41,14 @@ pub fn trie_storage(storage: &HashMap<U256, U256>) -> Vec<(Nibbles, Vec<u8>)> {
 }
 
 /// Builds iterator over stored key-value pairs ready for account trie root calculation.
-pub fn trie_accounts(accounts: &HashMap<Address, DbAccount>) -> Vec<(Nibbles, Vec<u8>)> {
-    let mut accounts = accounts
+pub fn trie_accounts(accounts: &AddressMap<DbAccount>) -> Vec<(Nibbles, Vec<u8>)> {
+    let mut accounts: Vec<(Nibbles, Vec<u8>)> = accounts
         .iter()
         .map(|(address, account)| {
             let data = trie_account_rlp(&account.info, &account.storage);
             (Nibbles::unpack(keccak256(*address)), data)
         })
-        .collect::<Vec<_>>();
+        .collect();
     accounts.sort_by(|(key1, _), (key2, _)| key1.cmp(key2));
 
     accounts
