@@ -135,6 +135,19 @@ impl CoverageReporter for LcovReporter {
             writeln!(out, "TN:")?;
             writeln!(out, "SF:{}", path.display())?;
 
+            // First pass: collect line hits for DA records.
+            // Track both which lines have been recorded and the max hits per line.
+            let mut line_hits: HashMap<u32, u32> = HashMap::default();
+            for item in items.iter() {
+                if matches!(item.kind, CoverageItemKind::Line | CoverageItemKind::Statement) {
+                    let line = item.loc.lines.start;
+                    line_hits
+                        .entry(line)
+                        .and_modify(|h| *h = (*h).max(item.hits))
+                        .or_insert(item.hits);
+                }
+            }
+
             let mut recorded_lines = HashSet::new();
 
             for item in items {
@@ -166,7 +179,17 @@ impl CoverageReporter for LcovReporter {
                         }
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
-                        let hits_str = if hits == 0 { "-" } else { &hits.to_string() };
+                        // Per LCOV spec: "-" means the expression was never evaluated (line not
+                        // executed), "0" means branch exists but was never taken.
+                        // Check if the line containing this branch was hit.
+                        let line_was_hit = line_hits.get(&line).is_some_and(|&h| h > 0);
+                        let hits_str = if hits > 0 {
+                            hits.to_string()
+                        } else if line_was_hit {
+                            "0".to_string()
+                        } else {
+                            "-".to_string()
+                        };
                         writeln!(out, "BRDA:{line},{branch_id},{path_id},{hits_str}")?;
                     }
                 }
