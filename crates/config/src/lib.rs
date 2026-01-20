@@ -1856,6 +1856,8 @@ impl Config {
         Self {
             root: paths.root,
             src: paths.sources.file_name().unwrap().into(),
+            test: paths.tests.file_name().unwrap().into(),
+            script: paths.scripts.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
             remappings: paths
