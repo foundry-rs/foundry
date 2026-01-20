@@ -4256,6 +4256,7 @@ dependencies = [
  "similar-asserts",
  "solar-compiler",
  "soldeer-commands",
+ "soldeer-core",
  "strum",
  "svm-rs",
  "tempfile",
