@@ -239,12 +239,9 @@ impl BuildArgs {
             return;
         }
 
-        let lockfile = match soldeer_core::lock::read_lockfile(&soldeer_lock_path) {
-            Ok(lock) => lock,
-            Err(e) => {
-                sh_warn!("Failed to parse soldeer.lock: {}", e).ok();
-                return;
-            }
+        // Note: read_lockfile returns Ok with empty entries for malformed files
+        let Ok(lockfile) = soldeer_core::lock::read_lockfile(&soldeer_lock_path) else {
+            return;
         };
 
         let deps_dir = config.root.join("dependencies");

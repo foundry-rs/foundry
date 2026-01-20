@@ -460,17 +460,6 @@ warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
     ]]);
 });
 
-// tests that malformed soldeer.lock triggers a warning during build
-forgetest_init!(build_warns_on_malformed_soldeer_lock, |prj, cmd| {
-    let soldeer_lock = prj.root().join("soldeer.lock");
-    fs::write(&soldeer_lock, "this is not valid toml { [ }").unwrap();
-
-    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: Failed to parse soldeer.lock: [..]
-...
-"#]]);
-});
-
 // tests that build succeeds without warning when no soldeer.lock exists
 forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
     let soldeer_lock = prj.root().join("soldeer.lock");

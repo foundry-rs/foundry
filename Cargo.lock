@@ -4257,7 +4257,7 @@ dependencies = [
  "solar-compiler",
  "soldeer-commands",
  "soldeer-core",
- "strum 0.27.2",
+ "strum",
  "svm-rs",
  "tempfile",
  "thiserror 2.0.18",
