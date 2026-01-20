@@ -1,6 +1,7 @@
 use crate::utils::generate_large_init_contract;
-use foundry_test_utils::{forgetest, snapbox::IntoData, str};
+use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
+use std::fs;
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
@@ -457,4 +458,33 @@ warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
 
 "#
     ]]);
+});
+
+// tests that malformed soldeer.lock triggers a warning during build
+forgetest_init!(build_warns_on_malformed_soldeer_lock, |prj, cmd| {
+    let soldeer_lock = prj.root().join("soldeer.lock");
+    fs::write(&soldeer_lock, "this is not valid toml { [ }").unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: Failed to parse soldeer.lock: [..]
+...
+"#]]);
+});
+
+// tests that build succeeds without warning when no soldeer.lock exists
+forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
+    let soldeer_lock = prj.root().join("soldeer.lock");
+    assert!(!soldeer_lock.exists());
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
+});
+
+// tests that build succeeds without warning when soldeer.lock is empty
+forgetest_init!(build_no_warning_with_empty_soldeer_lock, |prj, cmd| {
+    let soldeer_lock = prj.root().join("soldeer.lock");
+    fs::write(&soldeer_lock, "").unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
 });
