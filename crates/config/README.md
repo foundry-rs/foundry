@@ -79,7 +79,7 @@ allow_paths = []
 # additional solc include paths
 include_paths = []
 force = false
-evm_version = 'prague'
+evm_version = 'osaka'
 gas_reports = ['*']
 gas_reports_ignore = []
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
@@ -194,23 +194,91 @@ fs_permissions = [{ access = "read", path = "./out"}]
 assertions_revert = true
 # whether `failed()` should be invoked to check if the test have failed
 legacy_assertions = false
+
 [fuzz]
 runs = 256
 max_test_rejects = 65536
 seed = '0x3e8'
+# Fails the fuzz test if a revert occurs
+fail_on_revert = true
+# Number of runs to execute and include in the gas report
+gas_report_samples = 256
+# Show `console.log` in fuzz test
+show_logs = false
+# Optional timeout (in seconds) for each property test
+# timeout = 60
+# Path where fuzz failures are recorded and replayed
+# failure_persist_dir = 'cache/fuzz'
+
+# Fuzz dictionary configuration
 dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
+# Maximum addresses to record for the fuzz dictionary
+max_fuzz_dictionary_addresses = 15728640
+# Maximum values to record for the fuzz dictionary
+max_fuzz_dictionary_values = 9830400
+# Maximum literals to seed from the AST for the fuzz dictionary
+max_fuzz_dictionary_literals = 6553600
+
+# Fuzz corpus configuration (for coverage-guided fuzzing)
+# Path to corpus directory, enables coverage guided fuzzing mode
+# corpus_dir = 'corpus'
+# Whether corpus uses gzip compression
+corpus_gzip = true
+# Number of mutations until entry marked as eligible to be flushed from in-memory corpus
+corpus_min_mutations = 5
+# Minimum corpus size that won't be evicted from memory
+corpus_min_size = 0
+# Whether to collect and display edge coverage metrics
+show_edge_coverage = false
 
 [invariant]
 runs = 256
 depth = 500
 fail_on_revert = false
 call_override = false
+# The maximum number of attempts to shrink the sequence
+shrink_run_limit = 5000
+# The maximum number of rejects via `vm.assume` which can be encountered during a single invariant run
+max_assume_rejects = 65536
+# Number of runs to execute and include in the gas report
+gas_report_samples = 256
+# Whether to collect and display fuzzed selectors metrics
+show_metrics = true
+# Optional timeout (in seconds) for each invariant test
+# timeout = 60
+# Display counterexample as solidity calls
+show_solidity = false
+# Maximum time (in seconds) between generated txs
+# max_time_delay = 86400
+# Maximum number of blocks elapsed between generated txs
+# max_block_delay = 10000
+# Path where invariant failures are recorded and replayed
+# failure_persist_dir = 'cache/invariant'
+
+# Invariant dictionary configuration
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
-shrink_run_limit = 5000
+# Maximum addresses to record for the fuzz dictionary
+max_fuzz_dictionary_addresses = 15728640
+# Maximum values to record for the fuzz dictionary
+max_fuzz_dictionary_values = 9830400
+# Maximum literals to seed from the AST for the fuzz dictionary
+max_fuzz_dictionary_literals = 6553600
+
+# Invariant corpus configuration (for coverage-guided fuzzing)
+# Path to corpus directory, enables coverage guided fuzzing mode
+# corpus_dir = 'corpus'
+# Whether corpus uses gzip compression
+corpus_gzip = true
+# Number of mutations until entry marked as eligible to be flushed from in-memory corpus
+corpus_min_mutations = 5
+# Minimum corpus size that won't be evicted from memory
+corpus_min_size = 0
+# Whether to collect and display edge coverage metrics
+show_edge_coverage = false
 
 [fmt]
 line_length = 100

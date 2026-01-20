@@ -52,7 +52,7 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/rpc",
-        "reth-ethereum-full.ithaca.xyz/rpc",
+        // "reth-ethereum-full.ithaca.xyz/rpc",
     ],
 );
 shuffled_list!(
@@ -67,7 +67,7 @@ shuffled_list!(
     vec![
         //
         "reth-ethereum.ithaca.xyz/ws",
-        "reth-ethereum-full.ithaca.xyz/ws",
+        // "reth-ethereum-full.ithaca.xyz/ws",
     ],
 );
 
@@ -185,6 +185,13 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
 
     if matches!(chain, Celo) {
         return "https://celo.drpc.org".to_string();
+    }
+
+    if matches!(chain, Sepolia) {
+        let rpc_url = env::var("ETH_SEPOLIA_RPC").unwrap_or_default();
+        if !rpc_url.is_empty() {
+            return rpc_url;
+        }
     }
 
     if matches!(chain, Arbitrum) {

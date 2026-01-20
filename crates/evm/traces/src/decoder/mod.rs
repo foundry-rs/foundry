@@ -15,14 +15,12 @@ use foundry_common::{
 };
 use foundry_evm_core::{
     abi::{Vm, console},
-    constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
-        TEST_CONTRACT_ADDRESS,
-    },
+    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     decode::RevertDecoder,
     precompiles::{
-        BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
-        RIPEMD_160, SHA_256,
+        BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
+        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
+        MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
 use itertools::Itertools;
@@ -176,7 +174,6 @@ impl CallTraceDecoder {
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
                 (CALLER, "DefaultSender".to_string()),
-                (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
                 (EC_RECOVER, "ECRecover".to_string()),
                 (SHA_256, "SHA-256".to_string()),
                 (RIPEMD_160, "RIPEMD-160".to_string()),
@@ -187,6 +184,14 @@ impl CallTraceDecoder {
                 (EC_PAIRING, "ECPairing".to_string()),
                 (BLAKE_2F, "Blake2F".to_string()),
                 (POINT_EVALUATION, "PointEvaluation".to_string()),
+                (BLS12_G1ADD, "BLS12_G1ADD".to_string()),
+                (BLS12_G1MSM, "BLS12_G1MSM".to_string()),
+                (BLS12_G2ADD, "BLS12_G2ADD".to_string()),
+                (BLS12_G2MSM, "BLS12_G2MSM".to_string()),
+                (BLS12_PAIRING_CHECK, "BLS12_PAIRING_CHECK".to_string()),
+                (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
+                (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
+                (P256_VERIFY, "P256VERIFY".to_string()),
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),

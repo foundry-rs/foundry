@@ -171,8 +171,8 @@ impl ScriptProgress {
         progress
     }
 
-    /// Traverses a set of pendings and either finds receipts, or clears them from
-    /// the deployment sequence.
+    /// Traverses a set of pending transactions and either finds receipts, or clears
+    /// them from the deployment sequence.
     ///
     /// For each `tx_hash`, we check if it has confirmed. If it has
     /// confirmed, we push the receipt (if successful) or push an error (if
@@ -242,7 +242,11 @@ impl ScriptProgress {
                 Ok(TxStatus::Success(receipt)) => {
                     trace!(tx_hash=?tx_hash, "received tx receipt");
 
-                    let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                    let msg = format_receipt(
+                        deployment_sequence.chain.into(),
+                        &receipt,
+                        Some(deployment_sequence),
+                    );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
                     deployment_sequence.remove_pending(receipt.transaction_hash);
@@ -255,7 +259,11 @@ impl ScriptProgress {
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
                     deployment_sequence.remove_pending(receipt.transaction_hash);
 
-                    let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                    let msg = format_receipt(
+                        deployment_sequence.chain.into(),
+                        &receipt,
+                        Some(deployment_sequence),
+                    );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
                     errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));

@@ -752,3 +752,127 @@ Ran 1 test for test/Issue8383.t.sol:Issue8383Test
 ...
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/9272
+forgetest_init!(issue_9272, |prj, cmd| {
+    prj.update_config(|config| {
+        config.allow_paths.push("..".into());
+    });
+
+    prj.add_source(
+        "Contract.sol",
+        r#"
+pragma solidity ^0.8.0;
+import '../Missing.sol';
+contract Contract {}
+"#,
+    );
+
+    // We expect a compilation error due to the missing import
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+Error: Compiler run failed:
+Error (6275): Source "Missing.sol" not found: File not found. Searched the following locations: [..]
+ParserError: Source "Missing.sol" not found: File not found. Searched the following locations: [..]
+ [FILE]:4:1:
+  |
+4 | import '../Missing.sol';
+  | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/12803
+// Test gas underflow prevention on Cancun (no EIP-7702 gas floor)
+forgetest_init!(issue_12803_cancun, |prj, cmd| {
+    prj.add_test(
+        "Issue12803.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Issue12803Test is Test {
+    uint a;
+    function test_negativeGas() public {
+        vm.pauseGasMetering();
+        a = 100;
+        vm.resumeGasMetering();
+        delete a;
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=cancun"]).with_no_redact().assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/Issue12803.t.sol:Issue12803Test
+[PASS] test_negativeGas() (gas: 0)
+...
+"#
+    ]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/12803
+// Test gas underflow prevention on Shanghai (also no EIP-7702 gas floor)
+forgetest_init!(issue_12803_shanghai, |prj, cmd| {
+    prj.add_test(
+        "Issue12803.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Issue12803Test is Test {
+    uint a;
+    function test_negativeGas() public {
+        vm.pauseGasMetering();
+        a = 100;
+        vm.resumeGasMetering();
+        delete a;
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=shanghai"]).with_no_redact().assert_success().stdout_eq(str![
+        [r#"
+...
+Ran 1 test for test/Issue12803.t.sol:Issue12803Test
+[PASS] test_negativeGas() (gas: 0)
+...
+"#]
+    ]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/12803
+// Test multiple storage deletions (higher refund) don't cause underflow
+forgetest_init!(issue_12803_multiple_deletes, |prj, cmd| {
+    prj.add_test(
+        "Issue12803Multi.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Issue12803MultiTest is Test {
+    uint a;
+    uint b;
+    uint c;
+    function test_multipleDeletes() public {
+        vm.pauseGasMetering();
+        a = 100;
+        b = 200;
+        c = 300;
+        vm.resumeGasMetering();
+        delete a;
+        delete b;
+        delete c;
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=cancun"]).with_no_redact().assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
+[PASS] test_multipleDeletes() (gas: 0)
+...
+"#
+    ]]);
+});

@@ -433,16 +433,13 @@ mod tests {
     };
     use alloy_primitives::B256;
     use foundry_common::abi::get_func;
-    use foundry_config::FuzzDictionaryConfig;
-    use revm::database::{CacheDB, EmptyDB};
     use std::collections::HashSet;
 
     #[test]
     fn can_fuzz_array() {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
-        let db = CacheDB::new(EmptyDB::default());
-        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None, None);
+        let state = EvmFuzzState::test();
         let strategy = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
             40 => fuzz_calldata_from_state(func, &state),
@@ -467,8 +464,7 @@ mod tests {
         literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("hello"));
         literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("world"));
 
-        let db = CacheDB::new(EmptyDB::default());
-        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None, None);
+        let state = EvmFuzzState::test();
         state.seed_literals(literals);
 
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };

@@ -7,7 +7,7 @@ use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
-use foundry_wallets::{WalletSigner, multi_wallet::MultiWallet};
+use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
     bytecode::Bytecode,
@@ -228,8 +228,12 @@ impl Cheatcode for attachBlobCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(blob);
-        let sidecar = sidecar.build().map_err(|e| format!("{e}"))?;
-        ccx.state.active_blob_sidecar = Some(sidecar);
+        let sidecar_variant = if ccx.ecx.cfg.spec < SpecId::OSAKA {
+            sidecar.build_4844().map_err(|e| format!("{e}"))?.into()
+        } else {
+            sidecar.build_7594().map_err(|e| format!("{e}"))?.into()
+        };
+        ccx.state.active_blob_sidecar = Some(sidecar_variant);
         Ok(Default::default())
     }
 }
@@ -318,12 +322,6 @@ impl Wallets {
         Arc::into_inner(self.inner)
             .map(|m| m.into_inner().multi_wallet)
             .unwrap_or_else(|| panic!("not all instances were dropped"))
-    }
-
-    /// Locks inner Mutex and adds a signer to the [MultiWallet].
-    pub fn add_private_key(&self, private_key: &B256) -> Result<()> {
-        self.add_local_signer(PrivateKeySigner::from_bytes(private_key)?);
-        Ok(())
     }
 
     /// Locks inner Mutex and adds a signer to the [MultiWallet].

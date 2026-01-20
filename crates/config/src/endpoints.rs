@@ -348,7 +348,7 @@ impl Serialize for RpcEndpoint {
             // serialize as endpoint if there's no additional config
             self.endpoint.serialize(serializer)
         } else {
-            let mut map = serializer.serialize_map(Some(4))?;
+            let mut map = serializer.serialize_map(Some(5))?;
             map.serialize_entry("endpoint", &self.endpoint)?;
             map.serialize_entry("retries", &self.config.retries)?;
             map.serialize_entry("retry_backoff", &self.config.retry_backoff)?;

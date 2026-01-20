@@ -1,7 +1,7 @@
 use foundry_test_utils::util::OutputExt;
 use std::path::Path;
 
-casttest!(error_decode_with_openchain, |prj, cmd| {
+casttest!(flaky_error_decode_with_openchain, |prj, cmd| {
     prj.clear_cache();
     cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
 ValueTooHigh(uint256,uint256)
@@ -11,7 +11,7 @@ ValueTooHigh(uint256,uint256)
 "#]]);
 });
 
-casttest!(fourbyte, |_prj, cmd| {
+casttest!(flaky_fourbyte, |_prj, cmd| {
     cmd.args(["4byte", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
 transfer(address,uint256)
 
@@ -27,7 +27,7 @@ For more information, try '--help'.
 "#]]);
 });
 
-casttest!(fourbyte_calldata, |_prj, cmd| {
+casttest!(flaky_fourbyte_calldata, |_prj, cmd| {
     cmd.args(["4byte-calldata", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
 1) "transfer(address,uint256)"
 0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
@@ -36,14 +36,14 @@ casttest!(fourbyte_calldata, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(fourbyte_calldata_only_selector, |_prj, cmd| {
+casttest!(flaky_fourbyte_calldata_only_selector, |_prj, cmd| {
     cmd.args(["4byte-calldata", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
 transfer(address,uint256)
 
 "#]]);
 });
 
-casttest!(fourbyte_calldata_alias, |_prj, cmd| {
+casttest!(flaky_fourbyte_calldata_alias, |_prj, cmd| {
     cmd.args(["4byte-decode", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
 1) "transfer(address,uint256)"
 0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
@@ -52,7 +52,7 @@ casttest!(fourbyte_calldata_alias, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(fourbyte_event, |_prj, cmd| {
+casttest!(flaky_fourbyte_event, |_prj, cmd| {
     cmd.args(["4byte-event", "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -61,7 +61,7 @@ updateAuthority(address,uint8)
 "#]]);
 });
 
-casttest!(fourbyte_event_2, |_prj, cmd| {
+casttest!(flaky_fourbyte_event_2, |_prj, cmd| {
     cmd.args(["4byte-event", "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -70,7 +70,7 @@ canCall(address,address,bytes4)
 "#]]);
 });
 
-casttest!(upload_signatures, |_prj, cmd| {
+casttest!(flaky_upload_signatures, |_prj, cmd| {
     // test no prefix is accepted as function
     let output = cmd
         .args(["upload-signature", "transfer(address,uint256)"])
@@ -148,7 +148,7 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 });
 
 // tests cast can decode event with Openchain API
-casttest!(event_decode_with_openchain, |prj, cmd| {
+casttest!(flaky_event_decode_with_openchain, |prj, cmd| {
     prj.clear_cache();
     cmd.args(["decode-event", "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"]).assert_success().stdout_eq(str![[r#"
 BaseCurrencySet(address,uint256)
@@ -176,7 +176,7 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 });
 
 // tests cast can decode error and event when using local sig identifiers cache
-forgetest_init!(error_event_decode_with_cache, |prj, cmd| {
+forgetest_init!(flaky_error_event_decode_with_cache, |prj, cmd| {
     prj.add_source(
         "LocalProjectContract",
         r#"
@@ -208,6 +208,41 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
+
+"#]]);
+});
+
+forgetest!(flaky_cache_selectors_from_extra_abis, |prj, cmd| {
+    // Create folder with ABI JSON files containing a unique error
+    let abis_dir = prj.root().join("external_abis");
+    std::fs::create_dir(&abis_dir).unwrap();
+    std::fs::write(
+        abis_dir.join("test.json"),
+        r#"[{
+          "type": "error",
+          "name": "MyUniqueExtraAbiError",
+          "inputs": [
+              {"name": "value", "type": "uint256"},
+              {"name": "flag", "type": "bool"}
+          ]
+      }]"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse()
+        .args(["selectors", "cache", "--extra-abis-path", abis_dir.to_str().unwrap()])
+        .assert_success();
+
+    // Verify with cast decode-error (uses local cache via SignaturesIdentifier)
+    // Selector for MyUniqueExtraAbiError(uint256,bool) is 0x7819b107
+    // Encoded: selector + uint256(42) + bool(true)
+    cmd.cast_fuse()
+        .args(["decode-error", "0x7819b107000000000000000000000000000000000000000000000000000000000000002a0000000000000000000000000000000000000000000000000000000000000001"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueExtraAbiError(uint256,bool)
+42
+true
 
 "#]]);
 });

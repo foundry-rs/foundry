@@ -26,9 +26,7 @@ use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
-use revm::precompile::{Precompile, PrecompileId, PrecompileOutput, PrecompileResult};
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
     thread::sleep,
@@ -832,7 +830,7 @@ async fn test_fork_init_base_fee() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_reset_fork_on_new_blocks() {
+async fn flaky_test_reset_fork_on_new_blocks() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
 
@@ -1204,7 +1202,7 @@ async fn test_fork_reset_basefee() {
 
 // <https://github.com/foundry-rs/foundry/issues/6795>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_arbitrum_fork_dev_balance() {
+async fn flaky_test_arbitrum_fork_dev_balance() {
     let (api, handle) = spawn(
         fork_config()
             .with_fork_block_number(None::<u64>)
@@ -1242,7 +1240,7 @@ async fn test_arb_fork_mining() {
 
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_arbitrum_fork_block_number() {
+async fn flaky_test_arbitrum_fork_block_number() {
     // fork to get initial block for test
     let (_, handle) = spawn(
         fork_config()
@@ -1868,22 +1866,23 @@ async fn test_config_with_osaka_hardfork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_config_with_osaka_hardfork_with_precompile_factory() {
-    fn custom_echo_precompile(input: &[u8], _gas_limit: u64) -> PrecompileResult {
-        Ok(PrecompileOutput { bytes: Bytes::copy_from_slice(input), gas_used: 0, reverted: false })
-    }
-
     #[derive(Debug)]
     struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
-        fn precompiles(&self) -> Vec<(Precompile, u64)> {
+        fn precompiles(&self) -> Vec<(Address, alloy_evm::precompiles::DynPrecompile)> {
             vec![(
-                Precompile::from((
-                    PrecompileId::Custom(Cow::Borrowed("custom_echo")),
-                    address!("0x0000000000000000000000000000000000000071"),
-                    custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
-                )),
-                1000,
+                address!("0x0000000000000000000000000000000000000071"),
+                alloy_evm::precompiles::DynPrecompile::from(
+                    |input: alloy_evm::precompiles::PrecompileInput<'_>| {
+                        Ok(revm::precompile::PrecompileOutput {
+                            bytes: Bytes::copy_from_slice(input.data),
+                            gas_used: 0,
+                            gas_refunded: 0,
+                            reverted: false,
+                        })
+                    },
+                ),
             )]
         }
     }

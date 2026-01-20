@@ -187,6 +187,15 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
     render_trace_arena_inner(arena, false, false)
 }
 
+/// Prunes trace depth if depth is provided as an argument
+pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
+    for node in arena.nodes_mut() {
+        if node.trace.depth >= depth {
+            node.ordering.clear();
+        }
+    }
+}
+
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
 /// and in JSON format.
 pub fn render_trace_arena_inner(
@@ -195,7 +204,7 @@ pub fn render_trace_arena_inner(
     with_storage_changes: bool,
 ) -> String {
     if shell::is_json() {
-        return serde_json::to_string(&arena.resolve_arena()).expect("Failed to write traces");
+        return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
     let mut w = TraceWriter::new(Vec::<u8>::new())

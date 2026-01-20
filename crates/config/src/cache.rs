@@ -1,9 +1,9 @@
 //! Support types for configuring storage caching
 
 use crate::Chain;
-use number_prefix::NumberPrefix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, fmt::Formatter, str::FromStr};
+use unit_prefix::NumberPrefix;
 
 /// Settings to configure caching of remote.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

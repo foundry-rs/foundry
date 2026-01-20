@@ -108,7 +108,7 @@ jobs:
       RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -126,7 +126,7 @@ jobs:
           ls -la "$ARTIFACT_DIR" || true
 
       - name: Download Release Assets
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           merge-multiple: true
           # Download all foundry artifacts from the triggering release run
@@ -137,7 +137,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2
         with:
           bun-version: latest
 
@@ -254,12 +254,12 @@ jobs:
       RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2
         with:
           bun-version: latest
 

@@ -47,6 +47,10 @@ pub struct RunArgs {
     #[arg(long)]
     decode_internal: bool,
 
+    /// Defines the depth of a trace
+    #[arg(long)]
+    trace_depth: Option<usize>,
+
     /// Print out opcode traces.
     #[arg(long, short)]
     trace_printer: bool,
@@ -56,6 +60,10 @@ pub struct RunArgs {
     /// May result in different results than the live execution!
     #[arg(long)]
     quick: bool,
+
+    /// Whether to replay system transactions.
+    #[arg(long, alias = "sys")]
+    replay_system_txes: bool,
 
     /// Disables the labels in the traces.
     #[arg(long, default_value_t = false)]
@@ -127,7 +135,7 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_cli::utils::get_provider_builder(&config)?
+        let provider = foundry_cli::utils::get_provider_builder(&config, false)?
             .compute_units_per_second_opt(compute_units_per_second)
             .build()?;
 
@@ -139,8 +147,9 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from())
-            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+        if !self.replay_system_txes
+            && (is_known_system_sender(tx.from())
+                || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
         {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
@@ -236,11 +245,12 @@ impl RunArgs {
                 };
 
                 for (index, tx) in txs.iter().enumerate() {
-                    // System transactions such as on L2s don't contain any pricing info so
-                    // we skip them otherwise this would cause
-                    // reverts
-                    if is_known_system_sender(tx.from())
-                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+                    // Replay system transactions only if running with `sys` option.
+                    // System transactions such as on L2s don't contain any pricing info so it
+                    // could cause reverts.
+                    if !self.replay_system_txes
+                        && (is_known_system_sender(tx.from())
+                            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE))
                     {
                         pb.set_position((index + 1) as u64);
                         continue;
@@ -315,6 +325,7 @@ impl RunArgs {
             debug,
             decode_internal,
             disable_labels,
+            self.trace_depth,
         )
         .await?;
 

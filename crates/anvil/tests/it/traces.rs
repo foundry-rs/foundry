@@ -6,7 +6,6 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_eips::BlockId;
-use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
     Address, Bytes, U256,
@@ -32,6 +31,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use anvil::{NodeConfig, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -777,8 +777,7 @@ async fn test_trace_address_fork2() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "flaky"]
-async fn test_trace_filter() {
+async fn flaky_test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
@@ -1237,7 +1236,7 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
     let expected = r#"
 {
   "0x0000000000000000000000000000000000000000": {
-    "balance": "0x0"
+    "balance": "1206031000000000"
   },
   "0x5fbdb2315678afecb367f032d93f642f64180aa3": {
     "balance": "0x0",

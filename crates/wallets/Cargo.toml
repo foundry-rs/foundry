@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 foundry-config.workspace = true
+foundry-primitives.workspace = true
 
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
@@ -25,12 +26,26 @@ alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-dyn-abi.workspace = true
 
+tempo-primitives.workspace = true
+
+# browser wallet
+alloy-rpc-types.workspace = true
+axum.workspace = true
+foundry-common.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+uuid.workspace = true
+webbrowser = "1.0.6"
+
 # aws-kms
 alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
 aws-config = { version = "1", default-features = true, optional = true }
 
 # gcp-kms
 alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
+
+# turnkey
+alloy-signer-turnkey = { workspace = true, features = ["eip712"], optional = true }
 
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -39,12 +54,16 @@ eyre.workspace = true
 rpassword = "7"
 serde.workspace = true
 thiserror.workspace = true
+tower.workspace = true
+tower-http = { workspace = true, features = ["cors", "set-header"] }
 tracing.workspace = true
 eth-keystore = "0.5.0"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
+reqwest = { workspace = true, features = ["json"] }
 
 [features]
 aws-kms = ["dep:alloy-signer-aws", "dep:aws-config"]
 gcp-kms = ["dep:alloy-signer-gcp"]
+turnkey = ["dep:alloy-signer-turnkey"]

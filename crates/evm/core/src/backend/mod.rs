@@ -6,7 +6,7 @@ use crate::{
     evm::new_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::{configure_tx_env, configure_tx_req_env, get_blob_base_fee_update_fraction_by_spec_id},
+    utils::{configure_tx_env, configure_tx_req_env, get_blob_base_fee_update_fraction},
 };
 use alloy_consensus::Typed2718;
 use alloy_evm::Evm;
@@ -21,7 +21,10 @@ use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
     context::JournalInner,
-    context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
+    context_interface::{
+        block::BlobExcessGasAndPrice, journaled_state::account::JournaledAccountTr,
+        result::ResultAndState,
+    },
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
@@ -1423,39 +1426,37 @@ impl DatabaseExt for Backend {
     ) -> Result<(), BackendError> {
         // Fetch the account from the journaled state. Will create a new account if it does
         // not already exist.
-        let mut state_acc = journaled_state.load_account(self, *target)?;
+        let mut state_acc = journaled_state.load_account_mut(self, *target)?;
 
         // Set the account's bytecode and code hash, if the `bytecode` field is present.
         if let Some(bytecode) = source.code.as_ref() {
-            state_acc.info.code_hash = keccak256(bytecode);
+            let bytecode_hash = keccak256(bytecode);
             let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
-            state_acc.info.code = Some(bytecode);
+            state_acc.set_code(bytecode_hash, bytecode);
         }
 
+        // Set the account's balance.
+        state_acc.set_balance(source.balance);
+
         // Set the account's storage, if the `storage` field is present.
-        if let Some(storage) = source.storage.as_ref() {
-            state_acc.storage = storage
-                .iter()
-                .map(|(slot, value)| {
+        if let Some(acc) = journaled_state.state.get_mut(target) {
+            if let Some(storage) = source.storage.as_ref() {
+                for (slot, value) in storage {
                     let slot = U256::from_be_bytes(slot.0);
-                    (
+                    acc.storage.insert(
                         slot,
                         EvmStorageSlot::new_changed(
-                            state_acc
-                                .storage
-                                .get(&slot)
-                                .map(|s| s.present_value)
-                                .unwrap_or_default(),
+                            acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
                             U256::from_be_bytes(value.0),
                             0,
                         ),
-                    )
-                })
-                .collect();
-        }
-        // Set the account's nonce and balance.
-        state_acc.info.nonce = source.nonce.unwrap_or_default();
-        state_acc.info.balance = source.balance;
+                    );
+                }
+            }
+
+            // Set the account's nonce.
+            acc.info.nonce = source.nonce.unwrap_or_default();
+        };
 
         // Touch the account to ensure the loaded information persists if called in `setUp`.
         journaled_state.touch(*target);
@@ -1956,7 +1957,7 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
         env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
             excess_blob_gas,
-            get_blob_base_fee_update_fraction_by_spec_id(env.cfg.spec),
+            get_blob_base_fee_update_fraction(env.cfg.chain_id, block.header.timestamp),
         ));
     }
 }

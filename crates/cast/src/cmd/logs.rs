@@ -7,7 +7,10 @@ use alloy_primitives::{Address, B256, hex::FromHex};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
+use foundry_cli::{
+    opts::RpcOpts,
+    utils::{self, LoadConfig},
+};
 use itertools::Itertools;
 use std::{io, str::FromStr};
 
@@ -45,16 +48,29 @@ pub struct LogsArgs {
     #[arg(long)]
     subscribe: bool,
 
+    /// Number of blocks to query in each chunk when the provider has range limits.
+    /// Defaults to 10000 blocks per chunk.
+    #[arg(long, default_value_t = 10000)]
+    query_size: u64,
+
     #[command(flatten)]
-    eth: EthereumOpts,
+    rpc: RpcOpts,
 }
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, eth } =
-            self;
+        let Self {
+            from_block,
+            to_block,
+            address,
+            sig_or_topic,
+            topics_or_args,
+            subscribe,
+            query_size,
+            rpc,
+        } = self;
 
-        let config = eth.load_config()?;
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         let cast = Cast::new(&provider);
@@ -77,7 +93,7 @@ impl LogsArgs {
         let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
-            let logs = cast.filter_logs(filter).await?;
+            let logs = cast.filter_logs_chunked(filter, query_size).await?;
             sh_println!("{logs}")?;
             return Ok(());
         }

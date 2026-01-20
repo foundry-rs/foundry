@@ -11,23 +11,27 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    inject_custom_precompiles,
     mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
-    Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root,
+    Header, Receipt, ReceiptWithBloom, Transaction, constants::EMPTY_WITHDRAWALS,
+    proofs::calculate_receipt_root, transaction::Either,
 };
-use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
+use alloy_eips::{
+    eip7685::EMPTY_REQUESTS_HASH,
+    eip7702::{RecoveredAuthority, RecoveredAuthorization},
+    eip7840::BlobParams,
+};
 use alloy_evm::{
-    EthEvm, Evm,
+    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
-use alloy_op_evm::OpEvm;
+use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
-    block::{Block, BlockInfo, PartialHeader},
-    transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    block::{BlockInfo, create_block},
+    transaction::{PendingTransaction, TransactionInfo},
 };
 use foundry_evm::{
     backend::DatabaseError,
@@ -35,15 +39,13 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
-use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use op_revm::{OpContext, OpTransaction};
 use revm::{
-    Database, DatabaseRef, Inspector, Journal,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
+    Database, Inspector,
+    context::{Block as RevmBlock, Cfg, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
-    database::WrapDatabaseRef,
-    handler::{EthPrecompiles, instructions::EthInstructions},
     interpreter::InstructionResult,
-    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
 use std::{fmt::Debug, sync::Arc};
@@ -64,7 +66,7 @@ pub struct ExecutedTransaction {
 
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
-    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> TypedReceipt {
+    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> FoundryReceiptEnvelope {
         let logs = self.logs.clone();
         *cumulative_gas_used = cumulative_gas_used.saturating_add(self.gas_used);
 
@@ -77,14 +79,14 @@ impl ExecutedTransaction {
         }
         .into();
 
-        match &self.transaction.pending_transaction.transaction.transaction {
-            TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
-            TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
-            TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
-            TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
-            TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(_tx) => {
-                TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+        match self.transaction.pending_transaction.transaction.as_ref() {
+            FoundryTxEnvelope::Legacy(_) => FoundryReceiptEnvelope::Legacy(receipt_with_bloom),
+            FoundryTxEnvelope::Eip2930(_) => FoundryReceiptEnvelope::Eip2930(receipt_with_bloom),
+            FoundryTxEnvelope::Eip1559(_) => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
+            FoundryTxEnvelope::Eip4844(_) => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
+            FoundryTxEnvelope::Eip7702(_) => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
+            FoundryTxEnvelope::Deposit(_tx) => {
+                FoundryReceiptEnvelope::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
                     receipt: op_alloy_consensus::OpDepositReceipt {
                         inner: receipt_with_bloom.receipt,
                         deposit_nonce: Some(0),
@@ -93,6 +95,8 @@ impl ExecutedTransaction {
                     logs_bloom: receipt_with_bloom.logs_bloom,
                 })
             }
+            // TODO(onbjerg): we should impl support for Tempo transactions
+            FoundryTxEnvelope::Tempo(_) => todo!(),
         }
     }
 }
@@ -117,9 +121,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub validator: &'a V,
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
-    pub block_env: BlockEnv,
-    /// The configuration environment and spec id
-    pub cfg_env: CfgEnv,
+    pub evm_env: EvmEnv,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: u64,
@@ -147,23 +149,24 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut cumulative_gas_used = 0u64;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
-        let gas_limit = self.block_env.gas_limit;
+        let gas_limit = self.evm_env.block_env().gas_limit;
         let parent_hash = self.parent_hash;
-        let block_number = self.block_env.number;
-        let difficulty = self.block_env.difficulty;
-        let mix_hash = self.block_env.prevrandao;
-        let beneficiary = self.block_env.beneficiary;
-        let timestamp = self.block_env.timestamp;
-        let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
-            Some(self.block_env.basefee)
+        let block_number = self.evm_env.block_env().number;
+        let difficulty = self.evm_env.block_env().difficulty;
+        let mix_hash = self.evm_env.block_env().prevrandao;
+        let beneficiary = self.evm_env.block_env().beneficiary;
+        let timestamp = self.evm_env.block_env().timestamp;
+        let base_fee = if self.evm_env.cfg_env().spec.is_enabled_in(SpecId::LONDON) {
+            Some(self.evm_env.block_env().basefee)
         } else {
             None
         };
 
-        let is_shanghai = self.cfg_env.spec >= SpecId::SHANGHAI;
-        let is_cancun = self.cfg_env.spec >= SpecId::CANCUN;
-        let is_prague = self.cfg_env.spec >= SpecId::PRAGUE;
-        let excess_blob_gas = if is_cancun { self.block_env.blob_excess_gas() } else { None };
+        let is_shanghai = self.evm_env.cfg_env().spec >= SpecId::SHANGHAI;
+        let is_cancun = self.evm_env.cfg_env().spec >= SpecId::CANCUN;
+        let is_prague = self.evm_env.cfg_env().spec >= SpecId::PRAGUE;
+        let excess_blob_gas =
+            if is_cancun { self.evm_env.block_env().blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
         for tx in self.into_iter() {
@@ -177,7 +180,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                     continue;
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
-                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
+                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas_used().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
                     continue;
                 }
                 TransactionExecutionOutcome::TransactionGasExhausted(tx) => {
@@ -197,13 +200,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                 }
             };
             if is_cancun {
-                let tx_blob_gas = tx
-                    .transaction
-                    .pending_transaction
-                    .transaction
-                    .transaction
-                    .blob_gas()
-                    .unwrap_or(0);
+                let tx_blob_gas =
+                    tx.transaction.pending_transaction.transaction.blob_gas_used().unwrap_or(0);
                 cumulative_blob_gas_used =
                     Some(cumulative_blob_gas_used.unwrap_or(0u64).saturating_add(tx_blob_gas));
             }
@@ -242,10 +240,12 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
 
         let receipts_root = calculate_receipt_root(&receipts);
 
-        let partial_header = PartialHeader {
+        let header = Header {
             parent_hash,
+            ommers_hash: Default::default(),
             beneficiary,
             state_root: self.db.maybe_state_root().unwrap_or_default(),
+            transactions_root: Default::default(), // Will be computed by create_block
             receipts_root,
             logs_bloom: bloom,
             difficulty,
@@ -256,7 +256,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             extra_data: Default::default(),
             mix_hash: mix_hash.unwrap_or_default(),
             nonce: Default::default(),
-            base_fee,
+            base_fee_per_gas: base_fee,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             blob_gas_used: cumulative_blob_gas_used,
             excess_blob_gas,
@@ -264,19 +264,49 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
         };
 
-        let block = Block::new(partial_header, transactions);
+        let block = create_block(header, transactions);
         let block = BlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let mut tx_env = tx.to_revm_tx_env();
+        let mut tx_env: OpTransaction<TxEnv> =
+            FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
 
-        if self.networks.is_optimism() {
-            tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
+        if let FoundryTxEnvelope::Eip7702(tx_7702) = tx.transaction.as_ref()
+            && self.cheats.has_recover_overrides()
+        {
+            // Override invalid recovered authorizations with signature overrides from cheat manager
+            let cheated_auths = tx_7702
+                .tx()
+                .authorization_list
+                .iter()
+                .zip(tx_env.base.authorization_list)
+                .map(|(signed_auth, either_auth)| {
+                    either_auth.right_and_then(|recovered_auth| {
+                        if recovered_auth.authority().is_none()
+                            && let Ok(signature) = signed_auth.signature()
+                            && let Some(override_addr) =
+                                self.cheats.get_recover_override(&signature.as_bytes().into())
+                        {
+                            Either::Right(RecoveredAuthorization::new_unchecked(
+                                recovered_auth.into_parts().0,
+                                RecoveredAuthority::Valid(override_addr),
+                            ))
+                        } else {
+                            Either::Right(recovered_auth)
+                        }
+                    })
+                })
+                .collect();
+            tx_env.base.authorization_list = cheated_auths;
         }
 
-        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.networks)
+        if self.networks.is_optimism() {
+            tx_env.enveloped_tx = Some(alloy_rlp::encode(tx.transaction.as_ref()).into());
+        }
+
+        Env::new(self.evm_env.clone(), tx_env, self.networks)
     }
 }
 
@@ -327,7 +357,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
-            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
+            transaction.pending_transaction.transaction.blob_gas_used().unwrap_or(0),
         );
         if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction));
@@ -361,7 +391,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             self.networks.inject_precompiles(evm.precompiles_mut());
 
             if let Some(factory) = &self.precompile_factory {
-                inject_custom_precompiles(&mut evm, factory.precompiles());
+                evm.precompiles_mut().extend_precompiles(factory.precompiles());
             }
 
             let cheats = Arc::new(self.cheats.clone());
@@ -430,7 +460,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         self.gas_used = self.gas_used.saturating_add(gas_used);
 
         // Track the total blob gas used for total blob gas per blob checks
-        if let Some(blob_gas) = transaction.pending_transaction.transaction.transaction.blob_gas() {
+        if let Some(blob_gas) = transaction.pending_transaction.transaction.blob_gas_used() {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas);
         }
 
@@ -471,78 +501,19 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.networks.is_optimism() {
-        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
-        let op_context = OpContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                // Converting SpecId into OpSpecId
-                journal.set_spec_id(env.evm_env.cfg_env.spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: op_cfg.clone(),
-            tx: env.tx.clone(),
-            chain: L1BlockInfo::default(),
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
-        let op_evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
-            op_context,
-            inspector,
-            EthInstructions::default(),
-            PrecompilesMap::from_static(op_precompiles),
-        ));
-
-        let op = OpEvm::new(op_evm, true);
-
-        EitherEvm::Op(op)
-    } else {
-        let spec = env.evm_env.cfg_env.spec;
-        let eth_context = EthEvmContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                journal.set_spec_id(spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone(),
-            tx: env.tx.base.clone(),
-            chain: (),
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let eth_precompiles = EthPrecompiles {
-            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
-            spec,
-        }
-        .precompiles;
-        let eth_evm = RevmEvm::new_with_inspector(
-            eth_context,
-            inspector,
-            EthInstructions::default(),
-            PrecompilesMap::from_static(eth_precompiles),
+        let evm_env = EvmEnv::new(
+            env.evm_env
+                .cfg_env
+                .clone()
+                .with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS),
+            env.evm_env.block_env.clone(),
         );
-
-        let eth = EthEvm::new(eth_evm, true);
-
-        EitherEvm::Eth(eth)
+        EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
+    } else {
+        EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
+            db,
+            env.evm_env.clone(),
+            inspector,
+        ))
     }
-}
-
-/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'db, DB, I>(
-    db: &'db DB,
-    env: &Env,
-    inspector: &'db mut I,
-) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
-where
-    DB: DatabaseRef<Error = DatabaseError> + Debug + 'db + ?Sized,
-    I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-        + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
-    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-{
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

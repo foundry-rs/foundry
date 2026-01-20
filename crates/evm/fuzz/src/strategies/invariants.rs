@@ -5,7 +5,8 @@ use crate::{
     strategies::{EvmFuzzState, fuzz_calldata_from_state, fuzz_param},
 };
 use alloy_json_abi::Function;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
+use foundry_config::InvariantConfig;
 use parking_lot::RwLock;
 use proptest::prelude::*;
 use rand::seq::IteratorRandom;
@@ -28,20 +29,30 @@ pub fn override_call_strat(
         let fuzz_state = fuzz_state.clone();
         let fuzz_fixtures = fuzz_fixtures.clone();
 
-        let func = {
+        let (actual_target, func) = {
             let contracts = contracts.targets.lock();
-            let contract = contracts.get(&target_address).unwrap_or_else(|| {
-                // Choose a random contract if target selected by lazy strategy is not in fuzz run
-                // identified contracts. This can happen when contract is created in `setUp` call
-                // but is not included in targetContracts.
-                contracts.values().choose(&mut rand::rng()).unwrap()
-            });
+            // If the target address is in the contracts map, use it directly.
+            // Otherwise, fall back to a random contract from the targeted contracts.
+            // This can happen when call_override sets target_reference to a contract
+            // that is not in targetContracts (e.g., the protocol contract during reentrancy).
+            let (actual_target, contract) =
+                contracts.get(&target_address).map(|c| (target_address, c)).unwrap_or_else(|| {
+                    let entry = contracts
+                        .iter()
+                        .choose(&mut rand::rng())
+                        .expect("at least one target contract");
+                    (*entry.0, entry.1)
+                });
             let fuzzed_functions: Vec<_> = contract.abi_fuzzed_functions().cloned().collect();
-            any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
+            (
+                actual_target,
+                any::<prop::sample::Index>()
+                    .prop_map(move |index| index.get(&fuzzed_functions).clone()),
+            )
         };
 
         func.prop_flat_map(move |func| {
-            fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, target_address, func)
+            fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, actual_target, func)
         })
     })
 }
@@ -60,25 +71,44 @@ pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
-    dictionary_weight: u32,
+    config: InvariantConfig,
     fuzz_fixtures: FuzzFixtures,
 ) -> impl Strategy<Value = BasicTxDetails> {
     let senders = Rc::new(senders);
+    let dictionary_weight = config.dictionary.dictionary_weight;
+
+    // Strategy to generate values for tx warp and roll.
+    let warp_roll_strat = |cond: bool| {
+        if cond { any::<U256>().prop_map(Some).boxed() } else { Just(None).boxed() }
+    };
+
     any::<prop::sample::Selector>()
         .prop_flat_map(move |selector| {
             let contracts = contracts.targets.lock();
             let functions = contracts.fuzzed_functions();
             let (target_address, target_function) = selector.select(functions);
+
             let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
+
             let call_details = fuzz_contract_with_calldata(
                 &fuzz_state,
                 &fuzz_fixtures,
                 *target_address,
                 target_function.clone(),
             );
-            (sender, call_details)
+
+            let warp = warp_roll_strat(config.max_time_delay.is_some());
+            let roll = warp_roll_strat(config.max_block_delay.is_some());
+
+            (warp, roll, sender, call_details)
         })
-        .prop_map(|(sender, call_details)| BasicTxDetails { sender, call_details })
+        .prop_map(move |(warp, roll, sender, call_details)| {
+            let warp =
+                warp.map(|time| time % U256::from(config.max_time_delay.unwrap_or_default()));
+            let roll =
+                roll.map(|block| block % U256::from(config.max_block_delay.unwrap_or_default()));
+            BasicTxDetails { warp, roll, sender, call_details }
+        })
 }
 
 /// Strategy to select a sender address:

@@ -19,11 +19,11 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: DeterminateSystems/determinate-nix-action@762d7fdba79d046449732c729c1d3aaad021baa2 # v3
-      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/determinate-nix-action@1d699fc25db3f9e079cd2f168ca007a4183389be # v3
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/update-flake-lock@4d443398067153ddd6191a9d9c89533f9a100c26 # main
+      - uses: DeterminateSystems/update-flake-lock@727cc5b0b19bc265bd5ef28fc66bccb284473b5d # main
         with:
           pr-title: "Update flake.lock"
           pr-labels: |
@@ -38,8 +38,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: DeterminateSystems/determinate-nix-action@762d7fdba79d046449732c729c1d3aaad021baa2 # v3
-      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/determinate-nix-action@1d699fc25db3f9e079cd2f168ca007a4183389be # v3
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 

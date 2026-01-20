@@ -107,6 +107,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     if resp.result.starts_with("Unable to locate ContractCode at")
                         || resp.result.starts_with("The address is not a smart contract")
+                        || resp.result.starts_with("Address is not a smart-contract")
                     {
                         warn!("{}", resp.result);
                         return Err(eyre!("Could not detect deployment: {}", resp.result));
@@ -171,7 +172,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     resp.result
                 );
 
-                if resp.result == "Pending in queue" {
+                if resp.result == "Pending in queue"
+                    || resp.result.starts_with("Error: contract does not exist")
+                {
                     return Err(RetryError::Retry(eyre!("Verification is still pending...")));
                 }
 
@@ -281,7 +284,7 @@ impl EtherscanVerificationProvider {
             let api_url = api_url.trim_end_matches('/');
             let base_url = if !is_etherscan {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
-                api_url.strip_prefix("/api").unwrap_or(api_url)
+                api_url.strip_suffix("/api").unwrap_or(api_url)
             } else {
                 base_url.unwrap_or(api_url)
             };

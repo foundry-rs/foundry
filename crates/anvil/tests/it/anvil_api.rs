@@ -6,7 +6,6 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
-use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -22,6 +21,7 @@ use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
+use foundry_evm::hardfork::EthereumHardfork;
 
 use revm::primitives::hardfork::SpecId;
 use std::{
@@ -440,7 +440,7 @@ async fn can_get_node_info() {
 
     let block_number = provider.get_block_number().await.unwrap();
     let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
-    let hard_fork: &str = SpecId::PRAGUE.into();
+    let hard_fork: &str = SpecId::OSAKA.into();
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
@@ -658,8 +658,7 @@ async fn can_remove_pool_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "flaky"]
-async fn test_reorg() {
+async fn flaky_test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 

@@ -1,6 +1,7 @@
 use crate::utils::generate_large_init_contract;
-use foundry_test_utils::{forgetest, snapbox::IntoData, str};
+use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
+use std::fs;
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
@@ -409,6 +410,104 @@ with remappings:
       forge-std/=[..]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/12458>
+// <https://github.com/foundry-rs/foundry/issues/12496>
+forgetest!(build_with_invalid_natspec, |prj, cmd| {
+    prj.add_source(
+        "ContractWithInvalidNatspec.sol",
+        r#"
+contract ContractA {
+    /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
+}
+
+/// Some editors highlight `@note` or `@todo`
+/// @note foo bar
+
+/// @title ContractB
+contract ContractB {
+    /**
+    some example code in a comment:
+    import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+    */
+}
+   "#,
+    );
+
+    cmd.args(["build", "src/ContractWithInvalidNatspec.sol"]).assert_success().stderr_eq(str![[
+        r#"
+warning: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
+  [FILE]:5:5
+  │
+5 │     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+...
+
+warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
+  [FILE]:9:1
+  │
+9 │ /// @note foo bar
+  │ ━━━━━━━━━━━━━━━━━
+  │
+...
+
+
+"#
+    ]]);
+});
+
+// tests that build succeeds without warning when no soldeer.lock exists
+forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
+    let soldeer_lock = prj.root().join("soldeer.lock");
+    // soldeer.lock should not exist in a fresh project
+    assert!(!soldeer_lock.exists());
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
+});
+
+// tests that malformed foundry.lock triggers a warning during build
+forgetest_init!(build_warns_on_malformed_foundry_lock, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    fs::write(&foundry_lock, "this is not valid toml { [ }").unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: Failed to parse foundry.lock: [..]
+...
+"#]]);
+});
+
+// tests that build succeeds without warning when no foundry.lock exists
+forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    // Remove foundry.lock if it exists from template
+    let _ = fs::remove_file(&foundry_lock);
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
+});
+
+// tests that build warns when foundry.lock revision differs from actual submodule revision
+forgetest_init!(build_warns_on_foundry_lock_revision_mismatch, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+
+    // Write a foundry.lock with a fake/old revision for forge-std that differs from the actual
+    let lockfile_content = r#"{
+  "lib/forge-std": {
+    "tag": {
+      "name": "v1.9.7",
+      "rev": "0000000000000000000000000000000000000000"
+    }
+  }
+}"#;
+    fs::write(&foundry_lock, lockfile_content).unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: Dependency 'lib/forge-std' revision mismatch: expected '0000000000000000000000000000000000000000', found '[..]'
 
 "#]]);
 });
