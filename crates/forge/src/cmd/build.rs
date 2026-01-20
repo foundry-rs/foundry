@@ -178,7 +178,7 @@ impl BuildArgs {
                 .collect::<Vec<_>>();
 
             let solar_sources =
-                get_solar_sources_from_compile_output(config, output, Some(&input_files))?;
+                get_solar_sources_from_compile_output(config, output, Some(&input_files), None)?;
             if solar_sources.input.sources.is_empty() {
                 if !input_files.is_empty() {
                     sh_warn!(

@@ -4,29 +4,58 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, AnyTypedTransaction, TransactionBuilder, TransactionBuilder4844,
-    TransactionBuilder7702,
+    AnyNetwork, TransactionBuilder, TransactionBuilder7594, TransactionBuilder7702,
 };
-use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
-use alloy_provider::Provider;
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
+use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
-use eyre::Result;
+use clap::Args;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::{CliAuthorizationList, TransactionOpts},
-    utils::{self, parse_function_args},
+    opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
+    utils::{self, LoadConfig, get_provider_builder, parse_function_args},
 };
 use foundry_common::{
-    fmt::format_tokens,
-    provider::{RetryProvider, RetryProviderWithSigner},
+    TransactionReceiptWithRevertReason, fmt::*, get_pretty_tx_receipt_attr,
+    provider::RetryProviderWithSigner, shell,
 };
 use foundry_config::{Chain, Config};
+use foundry_primitives::{FoundryTransactionRequest, FoundryTypedTx};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
-use std::fmt::Write;
+use std::{fmt::Write, str::FromStr, time::Duration};
+
+#[derive(Debug, Clone, Args)]
+pub struct SendTxOpts {
+    /// Only print the transaction hash and exit immediately.
+    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
+    pub cast_async: bool,
+
+    /// Wait for transaction receipt synchronously instead of polling.
+    /// Note: uses `eth_sendTransactionSync` which may not be supported by all clients.
+    #[arg(long, conflicts_with = "async")]
+    pub sync: bool,
+
+    /// The number of confirmations until the receipt is fetched.
+    #[arg(long, default_value = "1")]
+    pub confirmations: u64,
+
+    /// Timeout for sending the transaction.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
+    /// Polling interval for transaction receipts (in seconds).
+    #[arg(long, alias = "poll-interval", env = "ETH_POLL_INTERVAL")]
+    pub poll_interval: Option<u64>,
+
+    /// Ethereum options
+    #[command(flatten)]
+    pub eth: EthereumOpts,
+}
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
@@ -131,6 +160,148 @@ pub struct InputState {
     func: Option<Function>,
 }
 
+pub struct CastTxSender<P> {
+    provider: P,
+}
+
+impl<P: Provider<AnyNetwork>> CastTxSender<P> {
+    /// Creates a new Cast instance responsible for sending transactions.
+    pub fn new(provider: P) -> Self {
+        Self { provider }
+    }
+
+    /// Sends a transaction and waits for receipt synchronously
+    pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
+        let mut receipt: TransactionReceiptWithRevertReason =
+            self.provider.send_transaction_sync(tx).await?.into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, None)
+    }
+
+    /// Sends a transaction to the specified address
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::tx::CastTxSender;
+    /// use alloy_primitives::{Address, U256, Bytes};
+    /// use alloy_serde::WithOtherFields;
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
+    /// use std::str::FromStr;
+    /// use alloy_sol_types::{sol, SolCall};    ///
+    ///
+    /// sol!(
+    ///     function greet(string greeting) public;
+    /// );
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
+    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
+    /// let bytes = Bytes::from_iter(greeting.iter());
+    /// let gas = U256::from_str("200000").unwrap();
+    /// let value = U256::from_str("1").unwrap();
+    /// let nonce = U256::from_str("1").unwrap();
+    /// let tx = TransactionRequest::default().to(to).input(bytes.into()).from(from);
+    /// let tx = WithOtherFields::new(tx);
+    /// let cast = CastTxSender::new(provider);
+    /// let data = cast.send(tx).await?;
+    /// println!("{:#?}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn send(
+        &self,
+        tx: WithOtherFields<TransactionRequest>,
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+        let res = self.provider.send_transaction(tx).await?;
+
+        Ok(res)
+    }
+
+    /// Sends a raw RLP-encoded transaction via `eth_sendRawTransaction`.
+    ///
+    /// Used for transaction types that the standard Alloy network stack doesn't understand
+    /// (e.g., Tempo transactions).
+    pub async fn send_raw(&self, raw_tx: &[u8]) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+        let res = self.provider.send_raw_transaction(raw_tx).await?;
+        Ok(res)
+    }
+
+    /// # Example
+    ///
+    /// ```
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
+    /// use cast::tx::CastTxSender;
+    ///
+    /// async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
+    /// let cast = CastTxSender::new(provider);
+    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
+    /// println!("{}", receipt);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn receipt(
+        &self,
+        tx_hash: String,
+        field: Option<String>,
+        confs: u64,
+        timeout: Option<u64>,
+        cast_async: bool,
+    ) -> Result<String> {
+        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+
+        let mut receipt: TransactionReceiptWithRevertReason =
+            match self.provider.get_transaction_receipt(tx_hash).await? {
+                Some(r) => r,
+                None => {
+                    // if the async flag is provided, immediately exit if no tx is found, otherwise
+                    // try to poll for it
+                    if cast_async {
+                        eyre::bail!("tx not found: {:?}", tx_hash)
+                    } else {
+                        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
+                            .with_required_confirmations(confs)
+                            .with_timeout(timeout.map(Duration::from_secs))
+                            .get_receipt()
+                            .await?
+                    }
+                }
+            }
+            .into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
+
+        self.format_receipt(receipt, field)
+    }
+
+    /// Helper method to format transaction receipts consistently
+    fn format_receipt(
+        &self,
+        receipt: TransactionReceiptWithRevertReason,
+        field: Option<String>,
+    ) -> Result<String> {
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(&receipt, field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
+        } else if shell::is_json() {
+            // to_value first to sort json object keys
+            serde_json::to_value(&receipt)?.to_string()
+        } else {
+            receipt.pretty()
+        })
+    }
+}
+
 /// Builder type constructing [TransactionRequest] from cast send/mktx inputs.
 ///
 /// It is implemented as a stateful builder with expected state transition of [InitState] ->
@@ -142,7 +313,9 @@ pub struct CastTxBuilder<P, S> {
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
-    auth: Option<CliAuthorizationList>,
+    /// Whether the blob transaction should use EIP-4844 (legacy) format instead of EIP-7594.
+    eip4844: bool,
+    auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
     access_list: Option<Option<AccessList>>,
@@ -158,7 +331,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
-        let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_none());
+        let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
         if let Some(gas_limit) = tx_opts.gas_limit {
             tx.set_gas_limit(gas_limit.to());
@@ -188,11 +361,21 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx.set_nonce(nonce.to());
         }
 
+        // Set Tempo fee token if provided
+        if let Some(fee_token) = tx_opts.tempo.fee_token {
+            tx.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
+        }
+
+        if let Some(nonce_key) = tx_opts.tempo.sequence_key {
+            tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
+        }
+
         Ok(Self {
             provider,
             tx,
             legacy,
             blob: tx_opts.blob,
+            eip4844: tx_opts.eip4844,
             chain,
             etherscan_api_key,
             auth: tx_opts.auth,
@@ -209,6 +392,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -252,7 +436,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
 
         if self.state.to.is_none() && code.is_none() {
             let has_value = self.tx.value.is_some_and(|v| !v.is_zero());
-            let has_auth = self.auth.is_some();
+            let has_auth = !self.auth.is_empty();
             // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
             // without a value.
             if !has_auth || has_value {
@@ -265,6 +449,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -275,13 +460,14 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
 }
 
 impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
-    /// Builds [TransactionRequest] and fills missing fields. Returns a transaction which is ready
-    /// to be broadcasted.
+    /// Builds a [FoundryTransactionRequest] and fills missing fields. Returns a transaction which
+    /// is ready to be broadcasted.
     pub async fn build(
         self,
         sender: impl Into<SenderKind<'_>>,
-    ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(sender, true, false).await
+    ) -> Result<(FoundryTransactionRequest, Option<Function>)> {
+        let (tx, func) = self._build(sender, true, false).await?;
+        Ok((FoundryTransactionRequest::new(tx), func))
     }
 
     /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
@@ -298,11 +484,26 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
     /// Returns the hex encoded string representation of the transaction.
     pub async fn build_unsigned_raw(self, from: Address) -> Result<String> {
         let (tx, _) = self._build(SenderKind::Address(from), true, true).await?;
-        let tx = tx.build_unsigned()?;
-        match tx {
-            AnyTypedTransaction::Ethereum(t) => Ok(hex::encode_prefixed(t.encoded_for_signing())),
-            _ => eyre::bail!("Cannot generate unsigned transaction for non-Ethereum transactions"),
-        }
+        let ftx = FoundryTransactionRequest::new(tx);
+
+        let tx = ftx.build_unsigned()?;
+        Ok(hex::encode_prefixed(match tx {
+            FoundryTypedTx::Legacy(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip1559(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip2930(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip4844(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Eip7702(t) => t.encoded_for_signing(),
+            FoundryTypedTx::Tempo(t) => t.encoded_for_signing(),
+            _ => eyre::bail!(
+                "Cannot generate unsigned transaction for transaction: unknown transaction type"
+            ),
+        }))
+    }
+
+    /// Returns whether this builder will produce a Tempo transaction.
+    pub fn is_tempo(&self) -> bool {
+        // TODO: Replace this with `FoundryTransactionRequest::is_tempo`
+        self.tx.other.contains_key("feeToken") || self.tx.other.contains_key("nonceKey")
     }
 
     async fn _build(
@@ -334,14 +535,18 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
         if !unsigned {
             self.resolve_auth(sender, tx_nonce).await?;
-        } else if self.auth.is_some() {
-            let Some(CliAuthorizationList::Signed(signed_auth)) = self.auth.take() else {
-                eyre::bail!(
-                    "SignedAuthorization needs to be provided for generating unsigned 7702 txs"
-                )
-            };
+        } else if !self.auth.is_empty() {
+            let mut signed_auths = Vec::with_capacity(self.auth.len());
+            for auth in std::mem::take(&mut self.auth) {
+                let CliAuthorizationList::Signed(signed_auth) = auth else {
+                    eyre::bail!(
+                        "SignedAuthorization needs to be provided for generating unsigned 7702 txs"
+                    )
+                };
+                signed_auths.push(signed_auth);
+            }
 
-            self.tx.set_authorization_list(vec![signed_auth]);
+            self.tx.set_authorization_list(signed_auths);
         }
 
         if let Some(access_list) = match self.access_list.take() {
@@ -410,29 +615,49 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         }
     }
 
-    /// Parses the passed --auth value and sets the authorization list on the transaction.
+    /// Parses the passed --auth values and sets the authorization list on the transaction.
     async fn resolve_auth(&mut self, sender: SenderKind<'_>, tx_nonce: u64) -> Result<()> {
-        let Some(auth) = self.auth.take() else { return Ok(()) };
+        if self.auth.is_empty() {
+            return Ok(());
+        }
 
-        let auth = match auth {
-            CliAuthorizationList::Address(address) => {
-                let auth = Authorization {
-                    chain_id: U256::from(self.chain.id()),
-                    nonce: tx_nonce + 1,
-                    address,
-                };
+        let auths = std::mem::take(&mut self.auth);
 
-                let Some(signer) = sender.as_signer() else {
-                    eyre::bail!("No signer available to sign authorization");
-                };
-                let signature = signer.sign_hash(&auth.signature_hash()).await?;
+        // Validate that at most one address-based auth is provided (multiple addresses are
+        // almost always unintended).
+        let address_auth_count =
+            auths.iter().filter(|a| matches!(a, CliAuthorizationList::Address(_))).count();
+        if address_auth_count > 1 {
+            eyre::bail!(
+                "Multiple address-based authorizations provided. Only one address can be specified; \
+                use pre-signed authorizations (hex-encoded) for multiple authorizations."
+            );
+        }
 
-                auth.into_signed(signature)
-            }
-            CliAuthorizationList::Signed(auth) => auth,
-        };
+        let mut signed_auths = Vec::with_capacity(auths.len());
 
-        self.tx.set_authorization_list(vec![auth]);
+        for auth in auths {
+            let signed_auth = match auth {
+                CliAuthorizationList::Address(address) => {
+                    let auth = Authorization {
+                        chain_id: U256::from(self.chain.id()),
+                        nonce: tx_nonce + 1,
+                        address,
+                    };
+
+                    let Some(signer) = sender.as_signer() else {
+                        eyre::bail!("No signer available to sign authorization");
+                    };
+                    let signature = signer.sign_hash(&auth.signature_hash()).await?;
+
+                    auth.into_signed(signature)
+                }
+                CliAuthorizationList::Signed(auth) => auth,
+            };
+            signed_auths.push(signed_auth);
+        }
+
+        self.tx.set_authorization_list(signed_auths);
 
         Ok(())
     }
@@ -448,9 +673,15 @@ where
 
         let mut coder = SidecarBuilder::<SimpleCoder>::default();
         coder.ingest(&blob_data);
-        let sidecar = coder.build()?;
 
-        self.tx.set_blob_sidecar(sidecar);
+        if self.eip4844 {
+            let sidecar = coder.build()?;
+            alloy_network::TransactionBuilder4844::set_blob_sidecar(&mut self.tx, sidecar);
+        } else {
+            let sidecar = coder.build_7594()?;
+            self.tx.set_blob_sidecar_7594(sidecar);
+        }
+
         self.tx.populate_blob_hashes();
 
         Ok(self)
@@ -476,13 +707,19 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 }
 
 /// Creates a provider with wallet for signing transactions locally.
-pub async fn signing_provider(
-    wallet: WalletOpts,
-    provider: &RetryProvider,
+///
+/// If `curl_mode` is true, the provider will print equivalent curl commands to stdout
+/// instead of executing RPC requests.
+pub(crate) async fn signing_provider_with_curl(
+    tx_opts: &SendTxOpts,
+    curl_mode: bool,
 ) -> eyre::Result<RetryProviderWithSigner> {
-    let wallet = alloy_network::EthereumWallet::from(wallet.signer().await?);
-    Ok(alloy_provider::ProviderBuilder::default()
-        .with_recommended_fillers()
-        .wallet(wallet)
-        .connect_provider(provider.clone()))
+    let config = tx_opts.eth.load_config()?;
+    let signer = tx_opts.eth.wallet.signer().await?;
+    let wallet = alloy_network::EthereumWallet::from(signer);
+    let provider = get_provider_builder(&config, curl_mode)?.build_with_wallet(wallet)?;
+    if let Some(interval) = tx_opts.poll_interval {
+        provider.client().set_poll_interval(Duration::from_secs(interval))
+    }
+    Ok(provider)
 }

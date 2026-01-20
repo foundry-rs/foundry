@@ -7,16 +7,20 @@ use std::{
 };
 
 use alloy_consensus::{BlockBody, Header};
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
+use alloy_primitives::{
+    Address, B256, Bytes, U256, keccak256,
+    map::{AddressMap, HashMap},
+};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -36,7 +40,7 @@ use crate::mem::storage::MinedTransaction;
 
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
     }
 
@@ -59,7 +63,7 @@ impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
 where
     &'a T: DatabaseRef<Error = DatabaseError>,
 {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         T::maybe_as_full_db(self)
     }
 
@@ -167,6 +171,7 @@ pub trait Db:
                         Some(Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)))
                     },
                     nonce,
+                    account_id: None,
                 },
             );
 
@@ -236,7 +241,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
 }
 
 impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.cache.accounts)
     }
 
@@ -344,7 +349,7 @@ impl DatabaseRef for StateDb {
 }
 
 impl MaybeFullDatabase for StateDb {
-    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         self.0.maybe_as_full_db()
     }
 
@@ -569,7 +574,7 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SerializableTransactionType {
-    TypedTransaction(TypedTransaction),
+    TypedTransaction(FoundryTxEnvelope),
     MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
 }
 
@@ -617,7 +622,7 @@ impl From<SerializableTransactionType> for MaybeImpersonatedTransaction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableTransaction {
     pub info: TransactionInfo,
-    pub receipt: TypedReceipt,
+    pub receipt: FoundryReceiptEnvelope,
     pub block_hash: B256,
     pub block_number: u64,
 }
@@ -691,21 +696,20 @@ mod test {
             },
             "transactions": [
                 {
-                    "EIP1559": {
-                        "chainId": "0x7a69",
-                        "nonce": "0x0",
-                        "gas": "0x5209",
-                        "maxFeePerGas": "0x77359401",
-                        "maxPriorityFeePerGas": "0x1",
-                        "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-                        "value": "0x0",
-                        "accessList": [],
-                        "input": "0x",
-                        "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
-                        "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
-                        "yParity": "0x0",
-                        "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
-                    }
+                    "type": "0x2",
+                    "chainId": "0x7a69",
+                    "nonce": "0x0",
+                    "gas": "0x5209",
+                    "maxFeePerGas": "0x77359401",
+                    "maxPriorityFeePerGas": "0x1",
+                    "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                    "value": "0x0",
+                    "accessList": [],
+                    "input": "0x",
+                    "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+                    "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+                    "yParity": "0x0",
+                    "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
                 }
             ],
             "ommers": []

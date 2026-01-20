@@ -7,10 +7,8 @@ yanked = "warn"
 ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
     "RUSTSEC-2024-0436",
-    # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
-    "RUSTSEC-2024-0437",
-    # https://rustsec.org/advisories/RUSTSEC-2025-0119 number_prefix! is unmaintained
-    "RUSTSEC-2025-0119",
+    # https://rustsec.org/advisories/RUSTSEC-2025-0141 bincode is unmaintained
+    "RUSTSEC-2025-0141",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -70,6 +68,8 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    # Rendered mdBook HTML source code includes attribution as required by CC-BY-4.0
+    { allow = ["CC-BY-4.0", "MIT"], name = "font-awesome-as-a-crate" },
 ]
 # copyleft = "deny"
 
@@ -105,4 +105,8 @@ allow-git = [
     "https://github.com/bluealloy/revm",
     # Only for tests.
     "https://github.com/rust-cli/rexpect",
+    # Tempo
+    "https://github.com/tempoxyz/tempo",
+    # Transitive dependency of Tempo
+    "https://github.com/paradigmxyz/reth",
 ]

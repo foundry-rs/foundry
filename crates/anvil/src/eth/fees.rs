@@ -6,13 +6,12 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::Header;
+use alloy_consensus::{Header, Transaction};
 use alloy_eips::{
     calc_next_block_base_fee, eip1559::BaseFeeParams, eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA,
     eip7840::BlobParams,
 };
 use alloy_primitives::B256;
-use anvil_core::eth::transaction::TypedTransaction;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
@@ -37,10 +36,6 @@ pub const BASE_FEE_CHANGE_DENOMINATOR: u128 = 8;
 /// Minimum suggested priority fee
 pub const MIN_SUGGESTED_PRIORITY_FEE: u128 = 1e9 as u128;
 
-pub fn default_elasticity() -> f64 {
-    1f64 / BaseFeeParams::ethereum().elasticity_multiplier as f64
-}
-
 /// Stores the fee related information
 #[derive(Clone, Debug)]
 pub struct FeeManager {
@@ -63,6 +58,8 @@ pub struct FeeManager {
     /// This will be constant value unless changed manually
     gas_price: Arc<RwLock<u128>>,
     elasticity: Arc<RwLock<f64>>,
+    /// Network-specific base fee params for EIP-1559 calculations
+    base_fee_params: BaseFeeParams,
 }
 
 impl FeeManager {
@@ -73,7 +70,9 @@ impl FeeManager {
         gas_price: u128,
         blob_excess_gas_and_price: BlobExcessGasAndPrice,
         blob_params: BlobParams,
+        base_fee_params: BaseFeeParams,
     ) -> Self {
+        let elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
         Self {
             spec_id,
             blob_params: Arc::new(RwLock::new(blob_params)),
@@ -81,8 +80,14 @@ impl FeeManager {
             is_min_priority_fee_enforced,
             gas_price: Arc::new(RwLock::new(gas_price)),
             blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
-            elasticity: Arc::new(RwLock::new(default_elasticity())),
+            elasticity: Arc::new(RwLock::new(elasticity)),
+            base_fee_params,
         }
+    }
+
+    /// Returns the base fee params used for EIP-1559 calculations
+    pub fn base_fee_params(&self) -> BaseFeeParams {
+        self.base_fee_params
     }
 
     pub fn elasticity(&self) -> f64 {
@@ -157,7 +162,7 @@ impl FeeManager {
         if self.base_fee() == 0 {
             return 0;
         }
-        calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
+        calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, self.base_fee_params)
     }
 
     /// Calculates the next block blob base fee.
@@ -184,11 +189,6 @@ impl FeeManager {
     pub fn blob_params(&self) -> BlobParams {
         *self.blob_params.read()
     }
-}
-
-/// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
-pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u64 {
-    calc_next_block_base_fee(gas_used, gas_limit, base_fee, BaseFeeParams::ethereum())
 }
 
 /// An async service that takes care of the `FeeHistory` cache
@@ -252,13 +252,13 @@ impl FeeHistoryService {
         };
 
         let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default();
+        let base_fee = header.base_fee_per_gas.unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
         let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
 
         let mut item = FeeHistoryCacheItem {
-            base_fee,
+            base_fee: base_fee as u128,
             gas_used_ratio: 0f64,
             blob_gas_used_ratio: 0f64,
             rewards: Vec::new(),
@@ -285,31 +285,12 @@ impl FeeHistoryService {
                 .enumerate()
                 .map(|(i, receipt)| {
                     let gas_used = receipt.cumulative_gas_used();
-                    let effective_reward =
-                        match block.body.transactions.get(i).map(|tx| &tx.transaction) {
-                            Some(TypedTransaction::Legacy(t)) => {
-                                t.tx().gas_price.saturating_sub(base_fee)
-                            }
-                            Some(TypedTransaction::EIP2930(t)) => {
-                                t.tx().gas_price.saturating_sub(base_fee)
-                            }
-                            Some(TypedTransaction::EIP1559(t)) => t
-                                .tx()
-                                .max_priority_fee_per_gas
-                                .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
-                            // TODO: This probably needs to be extended to extract 4844 info.
-                            Some(TypedTransaction::EIP4844(t)) => t
-                                .tx()
-                                .tx()
-                                .max_priority_fee_per_gas
-                                .min(t.tx().tx().max_fee_per_gas.saturating_sub(base_fee)),
-                            Some(TypedTransaction::EIP7702(t)) => t
-                                .tx()
-                                .max_priority_fee_per_gas
-                                .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
-                            Some(TypedTransaction::Deposit(_)) => 0,
-                            None => 0,
-                        };
+                    let effective_reward = block
+                        .body
+                        .transactions
+                        .get(i)
+                        .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
+                        .unwrap_or(0);
 
                     (gas_used, effective_reward)
                 })
@@ -334,7 +315,7 @@ impl FeeHistoryService {
                 })
                 .collect();
         } else {
-            item.rewards = reward_percentiles.iter().map(|_| 0).collect();
+            item.rewards = vec![0; reward_percentiles.len()];
         }
         (item, block_number)
     }

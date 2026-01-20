@@ -1,33 +1,43 @@
-use alloy_hardforks::EthereumHardfork;
-use alloy_op_hardforks::OpHardfork::{self};
 use alloy_rpc_types::BlockNumberOrTag;
-
 use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 
+pub use alloy_hardforks::EthereumHardfork;
+pub use alloy_op_hardforks::OpHardfork;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ChainHardfork {
+pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
     Optimism(OpHardfork),
 }
 
-impl From<EthereumHardfork> for ChainHardfork {
+impl FoundryHardfork {
+    pub fn ethereum(h: EthereumHardfork) -> Self {
+        Self::Ethereum(h)
+    }
+
+    pub fn optimism(h: OpHardfork) -> Self {
+        Self::Optimism(h)
+    }
+}
+
+impl From<EthereumHardfork> for FoundryHardfork {
     fn from(value: EthereumHardfork) -> Self {
         Self::Ethereum(value)
     }
 }
 
-impl From<OpHardfork> for ChainHardfork {
+impl From<OpHardfork> for FoundryHardfork {
     fn from(value: OpHardfork) -> Self {
         Self::Optimism(value)
     }
 }
 
-impl From<ChainHardfork> for SpecId {
-    fn from(fork: ChainHardfork) -> Self {
+impl From<FoundryHardfork> for SpecId {
+    fn from(fork: FoundryHardfork) -> Self {
         match fork {
-            ChainHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
-            ChainHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
+            FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
+            FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
         }
     }
 }
@@ -103,6 +113,7 @@ mod tests {
         // Test latest hardforks
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Cancun), SpecId::CANCUN);
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Prague), SpecId::PRAGUE);
+        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Osaka), SpecId::OSAKA);
     }
 
     #[test]

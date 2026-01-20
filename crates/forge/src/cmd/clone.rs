@@ -1,10 +1,13 @@
 use super::{init::InitArgs, install::DependencyInstallOpts};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
+use forge_verify::sourcify::SOURCIFY_URL;
 use foundry_block_explorers::{
     Client,
-    contract::{ContractCreationData, ContractMetadata, Metadata},
+    contract::{
+        ContractCreationData, ContractMetadata, Metadata, SourceCodeEntry, SourceCodeMetadata,
+    },
     errors::EtherscanError,
 };
 use foundry_cli::{
@@ -22,11 +25,16 @@ use foundry_compilers::{
     compilers::solc::Solc,
 };
 use foundry_config::{Chain, Config};
+use reqwest::StatusCode;
+use serde::Deserialize;
 use std::{
+    collections::{BTreeMap, HashMap},
     fs::read_dir,
     path::{Path, PathBuf},
     time::Duration,
 };
+use tracing::trace;
+use url::Url;
 
 /// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a
 /// cloned contract. The metadata can be serialized to a metadata file in the cloned project root.
@@ -52,14 +60,25 @@ pub struct CloneMetadata {
     pub storage_layout: StorageLayout,
 }
 
+/// Source explorer type for `forge clone`.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+pub enum SourceExplorer {
+    /// Use Etherscan API (default).
+    #[default]
+    Etherscan,
+    /// Use Sourcify API.
+    Sourcify,
+}
+
 /// CLI arguments for `forge clone`.
 ///
-/// `forge clone` clones an on-chain contract from block explorers (e.g., Etherscan) in the
-/// following steps:
+/// `forge clone` clones an on-chain contract from block explorers (e.g., Etherscan, Sourcify) in
+/// the following steps:
 /// 1. Fetch the contract source code from the block explorer.
 /// 2. Initialize a empty foundry project at the `root` directory specified in `CloneArgs`.
 /// 3. Dump the contract sources to the source directory.
-/// 4. Update the `foundry.toml` configuration file with the compiler settings from Etherscan.
+/// 4. Update the `foundry.toml` configuration file with the compiler settings from the block
+///    explorer.
 /// 5. Try compile the cloned contract, so that we can get the original storage layout. This
 ///    original storage layout is preserved in the `CloneMetadata` so that if the user later
 ///    modifies the contract, it is possible to quickly check the storage layout compatibility with
@@ -78,13 +97,25 @@ pub struct CloneArgs {
     #[arg(long)]
     pub no_remappings_txt: bool,
 
-    /// Keep the original directory structure collected from Etherscan.
+    /// Keep the original directory structure collected from the block explorer.
     ///
     /// If this flag is set, the directory structure of the cloned project will be kept as is.
     /// By default, the directory structure is re-orgnized to increase the readability, but may
     /// risk some compilation failures.
     #[arg(long)]
     pub keep_directory_structure: bool,
+
+    /// Source explorer to use for fetching contract data.
+    ///
+    /// Can be either "etherscan" (default) or "sourcify".
+    #[arg(long, default_value = "etherscan", value_name = "EXPLORER")]
+    pub source: SourceExplorer,
+
+    /// Custom Sourcify API URL.
+    ///
+    /// Implies `--source sourcify`.
+    #[arg(long, value_name = "URL")]
+    pub sourcify_url: Option<String>,
 
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
@@ -95,19 +126,41 @@ pub struct CloneArgs {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { address, root, install, etherscan, no_remappings_txt, keep_directory_structure } =
-            self;
+        let Self {
+            address,
+            root,
+            install,
+            etherscan,
+            no_remappings_txt,
+            keep_directory_structure,
+            source,
+            sourcify_url,
+        } = self;
 
         // step 0. get the chain and api key from the config
         let config = etherscan.load_config()?;
         let chain = config.chain.unwrap_or_default();
-        let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, etherscan_api_key.clone())?;
 
-        // step 1. get the metadata from client
-        sh_println!("Downloading the source code of {address} from Etherscan...")?;
+        // If sourcify_url is specified, use Sourcify as the source
+        let source = if sourcify_url.is_some() { SourceExplorer::Sourcify } else { source };
 
-        let meta = Self::collect_metadata_from_client(address, &client).await?;
+        // step 1. get the metadata from client based on source type
+        let (meta, explorer_name, sourcify_client) = match source {
+            SourceExplorer::Etherscan => {
+                let etherscan_api_key =
+                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+                let client = Client::new(chain, etherscan_api_key.clone())?;
+                sh_println!("Downloading the source code of {address} from Etherscan...")?;
+                let meta = Self::collect_metadata_from_client(address, &client).await?;
+                (meta, "Etherscan", None)
+            }
+            SourceExplorer::Sourcify => {
+                let client = SourcifyClient::with_url(chain, sourcify_url.as_deref());
+                sh_println!("Downloading the source code of {address} from Sourcify...")?;
+                let meta = Self::collect_metadata_from_client(address, &client).await?;
+                (meta, "Sourcify", Some(client))
+            }
+        };
 
         // step 2. initialize an empty project
         Self::init_an_empty_project(&root, install).await?;
@@ -120,20 +173,31 @@ impl CloneArgs {
             .await?;
 
         // step 4. collect the compilation metadata
-        // if the etherscan api key is not set, we need to wait for 3 seconds between calls
-        sh_println!("Collecting the creation information of {address} from Etherscan...")?;
+        sh_println!("Collecting the creation information of {address} from {explorer_name}...")?;
 
-        if etherscan_api_key.is_empty() {
-            sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+        match source {
+            SourceExplorer::Etherscan => {
+                let etherscan_api_key =
+                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+                let client = Client::new(chain, etherscan_api_key.clone())?;
+                if etherscan_api_key.is_empty() {
+                    sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
+            }
+            SourceExplorer::Sourcify => {
+                // Reuse the client from step 1 to benefit from cached creation data
+                let client = sourcify_client.expect("Sourcify client should exist");
+                Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
+            }
         }
-        Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
 
         // step 5. git add and commit the changes if needed
         if install.commit {
             let git = Git::new(&root);
             git.add(Some("--all"))?;
-            let msg = format!("chore: forge clone {address}");
+            let msg = format!("chore: forge clone {address} from {explorer_name}");
             git.commit(&msg)?;
         }
 
@@ -144,7 +208,7 @@ impl CloneArgs {
     ///
     /// * `address` - the address of the contract to be cloned.
     /// * `client` - the client of the block explorer.
-    pub(crate) async fn collect_metadata_from_client<C: EtherscanClient>(
+    pub(crate) async fn collect_metadata_from_client<C: ExplorerClient>(
         address: Address,
         client: &C,
     ) -> Result<Metadata> {
@@ -175,12 +239,12 @@ impl CloneArgs {
     /// Collect the compilation metadata of the cloned contract.
     /// This function compiles the cloned contract and collects the compilation metadata.
     ///
-    /// * `meta` - the metadata of the contract (from Etherscan).
+    /// * `meta` - the metadata of the contract (from block explorer).
     /// * `chain` - the chain where the contract to be cloned locates.
     /// * `address` - the address of the contract to be cloned.
     /// * `root` - the root directory of the cloned project.
     /// * `client` - the client of the block explorer.
-    pub(crate) async fn collect_compilation_metadata<C: EtherscanClient>(
+    pub(crate) async fn collect_compilation_metadata<C: ExplorerClient>(
         meta: &Metadata,
         chain: Chain,
         address: Address,
@@ -588,10 +652,10 @@ pub fn find_main_contract<'a>(
     rv.ok_or_else(|| eyre::eyre!("contract not found"))
 }
 
-/// EtherscanClient is a trait that defines the methods to interact with Etherscan.
+/// ExplorerClient is a trait that defines the methods to interact with block explorers.
 /// It is defined as a wrapper of the `foundry_block_explorers::Client` to allow mocking.
 #[cfg_attr(test, mockall::automock)]
-pub(crate) trait EtherscanClient {
+pub(crate) trait ExplorerClient {
     async fn contract_source_code(
         &self,
         address: Address,
@@ -602,7 +666,7 @@ pub(crate) trait EtherscanClient {
     ) -> std::result::Result<ContractCreationData, EtherscanError>;
 }
 
-impl EtherscanClient for Client {
+impl ExplorerClient for Client {
     async fn contract_source_code(
         &self,
         address: Address,
@@ -618,13 +682,322 @@ impl EtherscanClient for Client {
     }
 }
 
+/// SourcifyClient is a client for interacting with Sourcify API.
+pub(crate) struct SourcifyClient {
+    client: reqwest::Client,
+    chain: Chain,
+    base_url: String,
+    /// Whether the base_url already contains the full path (v2/contract/chain)
+    is_full_path: bool,
+    /// Cached creation data from the first API call
+    cached_creation_data: std::sync::Arc<std::sync::Mutex<Option<ContractCreationData>>>,
+}
+
+impl SourcifyClient {
+    pub fn with_url(chain: Chain, verifier_url: Option<&str>) -> Self {
+        let (base_url, is_full_path) = match verifier_url {
+            Some(url) => (
+                Url::parse(url).unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap()),
+                true, // Custom URL contains full path
+            ),
+            None => (Url::parse(SOURCIFY_URL).unwrap(), false),
+        };
+        Self {
+            client: reqwest::Client::new(),
+            chain,
+            base_url: base_url.to_string().trim_end_matches('/').to_string(),
+            is_full_path,
+            cached_creation_data: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    fn get_contract_url(&self, address: Address, fields: &str) -> String {
+        if self.is_full_path {
+            // Custom URL already contains v2/contract/chain, just append address and fields
+            format!("{}/{}?fields={}", self.base_url, address, fields)
+        } else {
+            // Default URL, need to build full path
+            format!(
+                "{}/v2/contract/{}/{}?fields={}",
+                self.base_url,
+                self.chain.id(),
+                address,
+                fields
+            )
+        }
+    }
+}
+
+/// Sourcify API response for contract files.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+#[allow(dead_code, clippy::large_enum_variant)]
+enum SourcifyContractResponse {
+    Success(SourcifyContractData),
+    Error(SourcifyErrorResponse),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourcifyContractData {
+    #[serde(default)]
+    sources: Option<BTreeMap<String, SourcifySourceFile>>,
+    #[serde(default)]
+    abi: Option<serde_json::Value>,
+    #[serde(default)]
+    compilation: Option<SourcifyCompilation>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    creation_code: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    deployed_bytecode: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    runtime_bytecode: Option<String>,
+    #[serde(default)]
+    deployment: Option<SourcifyDeployment>,
+    // Additional fields that may be present in the response
+    #[serde(default)]
+    #[allow(dead_code)]
+    match_id: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    creation_match: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    runtime_match: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    verified_at: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    r#match: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    chain_id: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    address: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourcifySourceFile {
+    #[serde(default)]
+    content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourcifyCompilation {
+    #[serde(default)]
+    compiler_version: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    compiler_settings: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourcifyDeployment {
+    #[serde(default)]
+    transaction_hash: Option<String>,
+    #[serde(default)]
+    deployer: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourcifyErrorResponse {
+    #[serde(default)]
+    custom_code: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    error_id: String,
+    // Error responses should not have sources field
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
+    sources: Option<()>,
+}
+
+impl ExplorerClient for SourcifyClient {
+    async fn contract_source_code(
+        &self,
+        address: Address,
+    ) -> std::result::Result<ContractMetadata, EtherscanError> {
+        // Request all fields including creation data to cache them
+        let url = self.get_contract_url(address, "sources,abi,compilation,deployment");
+        let response = self.client.get(&url).send().await?;
+
+        let status = response.status();
+        trace!("Sourcify API response: status={:?}, url={}", status, url);
+
+        match status {
+            StatusCode::NOT_FOUND => return Err(EtherscanError::ContractCodeNotVerified(address)),
+            StatusCode::TOO_MANY_REQUESTS => return Err(EtherscanError::RateLimitExceeded),
+            _ => {}
+        }
+
+        // Read response body once
+        let response_text = response.text().await?;
+        trace!("Sourcify API response body: {}", response_text);
+
+        if !status.is_success() {
+            return Err(EtherscanError::Unknown(format!(
+                "Sourcify API error (status {status}): {response_text}"
+            )));
+        }
+
+        // Use the untagged enum to properly handle both success and error responses
+        let response: SourcifyContractResponse =
+            serde_json::from_str(&response_text).map_err(|e| {
+                // Truncate response for error message to avoid huge output
+                let truncated = if response_text.len() > 500 {
+                    format!("{}... (truncated)", &response_text[..500])
+                } else {
+                    response_text.clone()
+                };
+                EtherscanError::Unknown(format!(
+                    "Failed to parse Sourcify response: {e}. Response: {truncated}"
+                ))
+            })?;
+
+        let data = match response {
+            SourcifyContractResponse::Success(data) => data,
+            SourcifyContractResponse::Error(error) => {
+                let error_msg = if error.custom_code.is_empty() && error.message.is_empty() {
+                    "Unknown Sourcify API error".to_string()
+                } else {
+                    format!("Sourcify API error: {} - {}", error.custom_code, error.message)
+                };
+                return Err(EtherscanError::Unknown(error_msg));
+            }
+        };
+
+        let sources_map = data.sources.ok_or_else(|| {
+            EtherscanError::Unknown("Sourcify response missing sources field".to_string())
+        })?;
+
+        // Convert sources map to SourceCodeMetadata::Sources format
+        let sources: HashMap<String, SourceCodeEntry> = sources_map
+            .into_iter()
+            .map(|(path, source_file)| (path, SourceCodeEntry { content: source_file.content }))
+            .collect();
+
+        let source_code = SourceCodeMetadata::Sources(sources);
+
+        let contract_name = data
+            .compilation
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "Contract".to_string());
+
+        let compiler_version =
+            data.compilation.as_ref().map(|c| c.compiler_version.clone()).unwrap_or_default();
+
+        let abi = data.abi.map(|a| a.to_string()).unwrap_or_default();
+
+        // Cache creation data for later use in contract_creation_data
+        let tx_hash = data
+            .deployment
+            .as_ref()
+            .and_then(|d| d.transaction_hash.as_ref())
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(TxHash::ZERO);
+        let creator = data
+            .deployment
+            .as_ref()
+            .and_then(|d| d.deployer.as_ref())
+            .and_then(|a| a.parse().ok())
+            .unwrap_or(Address::ZERO);
+        let creation_data = ContractCreationData {
+            contract_address: address,
+            contract_creator: creator,
+            transaction_hash: tx_hash,
+        };
+        if let Ok(mut cache) = self.cached_creation_data.lock() {
+            *cache = Some(creation_data);
+        }
+
+        // Extract compiler_settings from compilation if available
+        let constructor_arguments = Bytes::default();
+        let optimization_used = data
+            .compilation
+            .as_ref()
+            .and_then(|c| c.compiler_settings.as_ref())
+            .and_then(|s| s.get("optimizer"))
+            .and_then(|o| o.get("enabled"))
+            .and_then(|e| e.as_bool())
+            .map(|b| if b { 1 } else { 0 })
+            .unwrap_or(0);
+
+        let runs = data
+            .compilation
+            .as_ref()
+            .and_then(|c| c.compiler_settings.as_ref())
+            .and_then(|s| s.get("optimizer"))
+            .and_then(|o| o.get("runs"))
+            .and_then(|r| r.as_u64())
+            .unwrap_or(0);
+
+        Ok(ContractMetadata {
+            items: vec![Metadata {
+                source_code,
+                abi,
+                contract_name,
+                compiler_version,
+                optimization_used,
+                runs,
+                constructor_arguments,
+                evm_version: String::new(),
+                library: String::new(),
+                license_type: String::new(),
+                proxy: 0,
+                implementation: None,
+                swarm_source: String::new(),
+            }],
+        })
+    }
+
+    async fn contract_creation_data(
+        &self,
+        address: Address,
+    ) -> std::result::Result<ContractCreationData, EtherscanError> {
+        // Check cache first
+        if let Ok(cache) = self.cached_creation_data.lock()
+            && let Some(ref cached_data) = *cache
+            && cached_data.contract_address == address
+        {
+            return Ok(*cached_data);
+        }
+
+        // If cache is empty or address doesn't match, use fallback values
+        // This should rarely happen since we cache in contract_source_code
+        trace!("Creation data not in cache for address {address}, using fallback values");
+        let creation_data = ContractCreationData {
+            contract_address: address,
+            contract_creator: Address::ZERO,
+            transaction_hash: TxHash::ZERO,
+        };
+        if let Ok(mut cache) = self.cached_creation_data.lock() {
+            *cache = Some(creation_data);
+        }
+
+        Ok(creation_data)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::hex;
     use foundry_compilers::CompilerContract;
     use foundry_test_utils::rpc::next_etherscan_api_key;
-    use std::collections::BTreeMap;
 
     #[expect(clippy::disallowed_macros)]
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
@@ -652,7 +1025,7 @@ mod tests {
         });
     }
 
-    fn mock_etherscan(address: Address) -> impl super::EtherscanClient {
+    fn mock_etherscan(address: Address) -> impl super::ExplorerClient {
         // load mock data
         let mut mocked_data = BTreeMap::new();
         let data_folder =
@@ -679,7 +1052,7 @@ mod tests {
         let (metadata, creation_data) = mocked_data.get(&address).unwrap();
         let metadata = metadata.clone();
         let creation_data = *creation_data;
-        let mut mocked_client = super::MockEtherscanClient::new();
+        let mut mocked_client = super::MockExplorerClient::new();
         mocked_client
             .expect_contract_source_code()
             .times(1)

@@ -909,6 +909,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     }
 
     #[allow(clippy::redundant_clone)]
+    fn log(&mut self, ecx: &mut EthEvmContext<&mut dyn DatabaseExt>, log: Log) {
+        call_inspectors!(
+            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
+            |inspector| inspector.log(ecx, log.clone()),
+        );
+    }
+
+    #[allow(clippy::redundant_clone)]
     fn log_full(
         &mut self,
         interpreter: &mut Interpreter,
@@ -955,12 +963,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
 
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.
-            if let Some(mocks) = cheatcodes.mocked_functions.get(&call.target_address) {
+            if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
+                let input_bytes = call.input.bytes(ecx);
                 // Check if any mock function set for call data or if catch-all mock function set
                 // for selector.
-                if let Some(target) = mocks.get(&call.input.bytes(ecx)).or_else(|| {
-                    call.input.bytes(ecx).get(..4).and_then(|selector| mocks.get(selector))
-                }) {
+                if let Some(target) = mocks
+                    .get(&input_bytes)
+                    .or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
+                {
                     call.bytecode_address = *target;
                     call.known_bytecode = None;
                 }
@@ -1059,7 +1069,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
-        if !matches!(create.scheme, CreateScheme::Create2 { .. })
+        if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
             && !self.in_inner_context
             && ecx.journaled_state.depth == 1
@@ -1067,10 +1077,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             let (result, address) = self.transact_inner(
                 ecx,
                 TxKind::Create,
-                create.caller,
-                create.init_code.clone(),
-                create.gas_limit,
-                create.value,
+                create.caller(),
+                create.init_code().clone(),
+                create.gas_limit(),
+                create.value(),
             );
             return Some(CreateOutcome { result, address });
         }
@@ -1193,6 +1203,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
     ) {
         self.as_mut().initialize_interp(interpreter, ecx)
+    }
+
+    fn log(&mut self, ecx: &mut EthEvmContext<&mut dyn DatabaseExt>, log: Log) {
+        self.as_mut().log(ecx, log)
     }
 
     fn log_full(

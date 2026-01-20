@@ -742,6 +742,33 @@ forgetest!(can_clone_quiet, |prj, cmd| {
     .assert_empty_stdout();
 });
 
+// checks that clone works with sourcify
+forgetest!(can_clone_sourcify, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args(["clone", "--source", "sourcify", "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
 // checks that clone works with --no-remappings-txt
 forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
     prj.wipe();
@@ -869,6 +896,41 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 
     assert!(prj.root().join(".github").join("workflows").exists());
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
+});
+
+// checks that `forge init --network tempo` works.
+forgetest!(can_init_tempo_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success().stdout_eq(str![[
+        r#"
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+    Installed forge-std[..]
+Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
+    Installed tempo-std[..]
+    Initialized forge project
+
+"#
+    ]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("lib/tempo-std").exists());
+
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("src").join("Mail.sol").exists());
+
+    assert!(prj.root().join("test").exists());
+    assert!(prj.root().join("test").join("Mail.t.sol").exists());
+
+    assert!(prj.root().join("script").exists());
+    assert!(prj.root().join("script").join("Mail.s.sol").exists());
+
+    assert!(prj.root().join(".github").join("workflows").exists());
+    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
+
+    assert!(prj.root().join("README.md").exists());
 });
 
 // checks that clone works with raw src containing `node_modules`
@@ -2607,7 +2669,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                   | Deployment Size |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
-| 117159                                            | 471             |       |        |       |         |
+| 117171                                            | 471             |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                   |                 |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2646,7 +2708,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:DelegateProxy",
     "deployment": {
-      "gas": 117159,
+      "gas": 117171,
       "size": 471
     },
     "functions": {
@@ -3608,7 +3670,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
         ]
       }
     },
-    "evmVersion": "prague",
+    "evmVersion": "osaka",
     "viaIR": false,
     "libraries": {}
   }

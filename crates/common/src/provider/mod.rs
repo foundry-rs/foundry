@@ -1,9 +1,11 @@
 //! Provider-related instantiation and usage utilities.
 
+pub mod curl_transport;
 pub mod runtime_transport;
 
 use crate::{
-    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT, provider::runtime_transport::RuntimeTransportBuilder,
+    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+    provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
 use alloy_chains::NamedChain;
 use alloy_provider::{
@@ -98,6 +100,8 @@ pub struct ProviderBuilder {
     is_local: bool,
     /// Whether to accept invalid certificates.
     accept_invalid_certs: bool,
+    /// Whether to output curl commands instead of making requests.
+    curl_mode: bool,
 }
 
 impl ProviderBuilder {
@@ -148,6 +152,7 @@ impl ProviderBuilder {
             headers: vec![],
             is_local,
             accept_invalid_certs: false,
+            curl_mode: false,
         }
     }
 
@@ -251,6 +256,15 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets whether to output curl commands instead of making requests.
+    ///
+    /// When enabled, the provider will print equivalent curl commands to stdout
+    /// instead of actually executing the RPC requests.
+    pub fn curl_mode(mut self, curl_mode: bool) -> Self {
+        self.curl_mode = curl_mode;
+        self
+    }
+
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let Self {
@@ -264,11 +278,23 @@ impl ProviderBuilder {
             headers,
             is_local,
             accept_invalid_certs,
+            curl_mode,
         } = self;
         let url = url?;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+
+        // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
+        if curl_mode {
+            let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
+            let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+
+            let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+                .connect_provider(RootProvider::new(client));
+
+            return Ok(provider);
+        }
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
@@ -309,11 +335,25 @@ impl ProviderBuilder {
             headers,
             is_local,
             accept_invalid_certs,
+            curl_mode,
         } = self;
         let url = url?;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+
+        // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
+        if curl_mode {
+            let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
+            let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+
+            let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+                .with_recommended_fillers()
+                .wallet(wallet)
+                .connect_provider(RootProvider::new(client));
+
+            return Ok(provider);
+        }
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
@@ -356,10 +396,10 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
 
 #[cfg(windows)]
 fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
-    if let Some(s) = path.to_str() {
-        if s.starts_with(r"\\.\pipe\") {
-            return Ok(path.to_path_buf());
-        }
+    if let Some(s) = path.to_str()
+        && s.starts_with(r"\\.\pipe\")
+    {
+        return Ok(path.to_path_buf());
     }
     Err(())
 }

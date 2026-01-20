@@ -6,7 +6,7 @@ use foundry_test_utils::util::ExtTester;
 // <https://github.com/foundry-rs/forge-std>
 #[test]
 fn forge_std() {
-    ExtTester::new("foundry-rs", "forge-std", "a6d71da563bbb8d6eef8fbec3a16c61c603d2764")
+    ExtTester::new("foundry-rs", "forge-std", "b69e66b0ff79924d487d49bf7fb47c9ec326acba")
         // Skip fork tests.
         .args(["--nmc", "Fork"])
         .verbosity(2)
@@ -64,7 +64,17 @@ fn sablier_v2_core() {
 // <https://github.com/Vectorized/solady>
 #[test]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "701406e8126cfed931645727b274df303fbcd94d").run();
+    let mut tester =
+        ExtTester::new("Vectorized", "solady", "cbcfe0009477aa329574f17e8db0a05703bb8bdd");
+
+    // This test expects the mover contract created via CREATE2 to be selfdestructed within the
+    // same transaction. In isolation mode, each top-level call runs as a separate transaction
+    // context, so the selfdestruct doesn't clear the code as expected by the test.
+    if cfg!(feature = "isolate-by-default") {
+        tester = tester.args(["--nmt", "testSafeMoveETHViaMover"]);
+    }
+
+    tester.run();
 }
 
 // <https://github.com/pcaversaccio/snekmate>
