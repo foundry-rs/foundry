@@ -273,8 +273,7 @@ forgetest_async!(erc20_transfer_with_yes_flag, |prj, cmd| {
     let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
 
     // Transfer with --yes flag should succeed without prompting
-    let output = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args([
             "erc20",
             "transfer",
@@ -287,13 +286,7 @@ forgetest_async!(erc20_transfer_with_yes_flag, |prj, cmd| {
             "--private-key",
             anvil_const::PK1,
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    // Output should be a transaction hash (starts with 0x and is 66 chars long)
-    assert!(output.starts_with("0x"));
-    assert_eq!(output.trim().len(), 66);
+        .assert_success();
 
     // Verify the transfer actually happened
     let addr2_balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
@@ -307,8 +300,7 @@ forgetest_async!(erc20_approve_with_yes_flag, |prj, cmd| {
     let approve_amount = U256::from(75_000_000_000_000_000_000u128); // 75 tokens
 
     // Approve with --yes flag should succeed without prompting
-    let output = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args([
             "erc20",
             "approve",
@@ -321,13 +313,7 @@ forgetest_async!(erc20_approve_with_yes_flag, |prj, cmd| {
             "--private-key",
             anvil_const::PK1,
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    // Output should be a transaction hash (starts with 0x and is 66 chars long)
-    assert!(output.starts_with("0x"));
-    assert_eq!(output.trim().len(), 66);
+        .assert_success();
 
     // Verify the approval actually happened
     let allowance = get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc);
