@@ -29,11 +29,10 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
 };
-use alloy_consensus::{Account, Blob, Transaction, TxEip4844Variant, transaction::Recovered};
+use alloy_consensus::{Blob, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
-    eip4844::BlobTransactionSidecar,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -288,9 +287,6 @@ impl EthApi {
             }
             EthRequest::GetBlobByTransactionHash(hash) => {
                 self.anvil_get_blob_by_tx_hash(hash).to_rpc_result()
-            }
-            EthRequest::GetBlobSidecarsByBlockId(block_id) => {
-                self.anvil_get_blob_sidecars_by_block_id(block_id).to_rpc_result()
             }
             EthRequest::GetGenesisTime(()) => self.anvil_get_genesis_time().to_rpc_result(),
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
@@ -751,7 +747,7 @@ impl EthApi {
         &self,
         address: Address,
         block_number: Option<BlockId>,
-    ) -> Result<Account> {
+    ) -> Result<TrieAccount> {
         node_info!("eth_getAccount");
         let block_request = self.block_request(block_number).await?;
 
@@ -1415,15 +1411,6 @@ impl EthApi {
     ) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByBlockId");
         Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
-    }
-
-    /// Handler for RPC call: `anvil_getBlobSidecarsByBlockId`
-    pub fn anvil_get_blob_sidecars_by_block_id(
-        &self,
-        block_id: BlockId,
-    ) -> Result<Option<BlobTransactionSidecar>> {
-        node_info!("anvil_getBlobSidecarsByBlockId");
-        Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
     }
 
     /// Returns the genesis time for the Beacon chain
@@ -2794,15 +2781,6 @@ impl EthApi {
         Ok(blocks)
     }
 
-    /// Sets the reported block number
-    ///
-    /// Handler for ETH RPC call: `anvil_setBlock`
-    pub fn anvil_set_block(&self, block_number: u64) -> Result<()> {
-        node_info!("anvil_setBlock");
-        self.backend.set_block_number(block_number);
-        Ok(())
-    }
-
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
@@ -3376,11 +3354,10 @@ impl EthApi {
                     .max_fee_per_gas()
                     .is_none()
                     .then(|| request.set_max_fee_per_gas(self.gas_price()));
-                // TODO: use suggested tip instead of 0
                 request
                     .max_priority_fee_per_gas()
                     .is_none()
-                    .then(|| request.set_max_priority_fee_per_gas(Default::default()));
+                    .then(|| request.set_max_priority_fee_per_gas(MIN_SUGGESTED_PRIORITY_FEE));
             }
             if tx_type == FoundryTxType::Eip4844 {
                 request.as_ref().max_fee_per_blob_gas().is_none().then(|| {

@@ -29,6 +29,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-primitives.workspace = true
+tempo-primitives.workspace = true
 
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }

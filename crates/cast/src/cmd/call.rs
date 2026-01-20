@@ -6,7 +6,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, map::HashMap};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -16,9 +16,13 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{self, TraceResult, parse_ether_value},
+    utils::{LoadConfig, TraceResult, get_provider_with_curl, parse_ether_value},
 };
-use foundry_common::shell;
+use foundry_common::{
+    abi::{encode_function_args, get_func},
+    provider::curl_transport::generate_curl_command,
+    sh_println, shell,
+};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     Chain, Config,
@@ -209,6 +213,11 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
+        // Handle --curl mode early, before any provider interaction
+        if self.rpc.curl {
+            return self.run_curl().await;
+        }
+
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
@@ -238,7 +247,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = utils::get_provider(&config)?;
+        let provider = get_provider_with_curl(&config, false)?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -405,6 +414,61 @@ impl CallArgs {
         Ok(())
     }
 
+    /// Handle --curl mode by generating curl command without any RPC interaction.
+    async fn run_curl(self) -> Result<()> {
+        let config = self.rpc.load_config()?;
+        let url = config.get_rpc_url_or_localhost_http()?;
+        let jwt = config.get_rpc_jwt_secret()?;
+
+        // Get call data - either from --data or from sig + args
+        let data = if let Some(data) = &self.data {
+            hex::decode(data)?
+        } else if let Some(sig) = &self.sig {
+            // If sig is already hex data, use it directly
+            if let Ok(data) = hex::decode(sig) {
+                data
+            } else {
+                // Parse function signature and encode args
+                let func = get_func(sig)?;
+                encode_function_args(&func, &self.args)?
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Resolve the destination address (must be a raw address for curl mode)
+        let to = self.to.as_ref().map(|n| match n {
+            NameOrAddress::Address(addr) => Ok(*addr),
+            NameOrAddress::Name(name) => {
+                eyre::bail!("ENS names are not supported with --curl. Please use a raw address instead of '{}'", name)
+            }
+        }).transpose()?;
+
+        // Build eth_call params
+        let call_object = serde_json::json!({
+            "to": to,
+            "data": format!("0x{}", hex::encode(&data)),
+        });
+
+        let block_param = self
+            .block
+            .map(|b| serde_json::to_value(b).unwrap_or(serde_json::json!("latest")))
+            .unwrap_or(serde_json::json!("latest"));
+
+        let params = serde_json::json!([call_object, block_param]);
+
+        let curl_cmd = generate_curl_command(
+            url.as_ref(),
+            "eth_call",
+            params,
+            config.eth_rpc_headers.as_deref(),
+            jwt.as_deref(),
+        );
+
+        sh_println!("{}", curl_cmd)?;
+        Ok(())
+    }
+
     /// Parse state overrides from command line arguments.
     pub fn get_state_overrides(&self) -> eyre::Result<Option<StateOverride>> {
         // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
@@ -524,7 +588,7 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U64, address, b256, fixed_bytes, hex};
+    use alloy_primitives::{U64, address, b256, fixed_bytes};
 
     #[test]
     fn test_get_state_overrides() {

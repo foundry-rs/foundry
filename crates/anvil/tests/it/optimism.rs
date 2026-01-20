@@ -5,9 +5,9 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use foundry_evm_networks::NetworkConfigs;
 use op_alloy_consensus::TxDeposit;
 use op_alloy_rpc_types::OpTransactionFields;
@@ -269,4 +269,80 @@ fn preserves_op_fields_in_convert_to_anvil_receipt() {
         let got = converted_json.get(key).and_then(Value::as_str);
         assert_eq!(got, Some(expected), "field `{key}` mismatch");
     }
+}
+
+const GAS_TRANSFER: u64 = 21_000;
+
+/// Test that Optimism uses Canyon base fee params instead of Ethereum params.
+///
+/// Optimism Canyon uses different EIP-1559 parameters:
+/// - elasticity_multiplier: 6 (vs Ethereum's 2)
+/// - base_fee_max_change_denominator: 250 (vs Ethereum's 8)
+///
+/// This means with a full block:
+/// - Ethereum: base_fee increases by base_fee * 1 / 8 = 12.5%
+/// - Optimism: base_fee increases by base_fee * 5 / 250 = 2%
+#[tokio::test(flavor = "multi_thread")]
+async fn test_optimism_base_fee_params() {
+    // Spawn an Optimism node with a gas limit equal to one transfer (full block scenario)
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_gas_limit(Some(GAS_TRANSFER)),
+    )
+    .await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumWallet = wallet.clone().into();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::from(1337));
+    let tx = WithOtherFields::new(tx);
+
+    // Send first transaction to fill the block
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+
+    let base_fee = provider
+        .get_block(BlockId::latest())
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
+
+    // Send second transaction to fill the next block
+    provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+
+    let next_base_fee = provider
+        .get_block(BlockId::latest())
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
+
+    assert!(next_base_fee > base_fee, "base fee should increase with full block");
+
+    // Optimism Canyon formula: base_fee * (elasticity - 1) / denominator = base_fee * 5 / 250
+    // = INITIAL_BASE_FEE * 5 / 250 = 1_000_000_000 * 5 / 250 = 20_000_000
+    //
+    // Note: Ethereum would be INITIAL_BASE_FEE + 125_000_000 (12.5% increase)
+    let expected_op_increase = INITIAL_BASE_FEE * 5 / 250; // 2% increase = 20_000_000
+    assert_eq!(
+        next_base_fee,
+        INITIAL_BASE_FEE + expected_op_increase,
+        "Optimism should use Canyon base fee params (2% max increase), not Ethereum's (12.5%)"
+    );
+
+    // Explicitly verify it's NOT using Ethereum params (which would give 12.5% increase)
+    let ethereum_increase = INITIAL_BASE_FEE / 8; // 125_000_000
+    assert_ne!(
+        next_base_fee,
+        INITIAL_BASE_FEE + ethereum_increase,
+        "Should not be using Ethereum base fee params"
+    );
 }
