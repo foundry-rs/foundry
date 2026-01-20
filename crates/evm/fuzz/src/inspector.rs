@@ -104,15 +104,18 @@ impl Fuzzer {
         // - Not a CALL scheme (only override CALLs, not STATICCALLs, DELEGATECALLs, etc.)
         // - Inside an override (prevent recursive overrides)
         // - Target is cheatcode address
-        // - Target is NOT a handler contract (we only inject reentrancy on calls TO handlers)
+        // - Neither caller nor target is a handler contract
         //
-        // The key insight: we only override calls TO handler contracts.
-        // This simulates a malicious handler's receive() function that reenters.
+        // We override calls when either the caller OR target is a handler. This covers:
+        // 1. EtherStore pattern: handler sends ETH out, attacker reenters handler
+        // 2. Rari pattern: external protocol sends ETH to handler, handler reenters protocol
+        let caller_is_handler = call_generator.is_handler(call.caller);
+        let target_is_handler = call_generator.is_handler(call.target_address);
         if call.caller == call_generator.test_address
             || call.scheme != CallScheme::Call
             || call_generator.override_depth > 0
             || call.target_address == CHEATCODE_ADDRESS
-            || !call_generator.is_handler(call.target_address)
+            || (!caller_is_handler && !target_is_handler)
         {
             return;
         }
