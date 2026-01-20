@@ -2,8 +2,9 @@ use alloy_chains::Chain;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
 use foundry_test_utils::{
-    TestCommand, TestProject, forgetest_async,
+    TestCommand, TestProject,
     etherscan::fetch_etherscan_source_flattened,
+    forgetest_async,
     rpc::{next_etherscan_api_key, next_http_archive_rpc_url},
     util::OutputExt,
 };
