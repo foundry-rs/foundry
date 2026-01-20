@@ -6505,6 +6505,299 @@ mod tests {
         });
     }
 
+    #[test]
+    fn warns_on_unknown_keys_in_all_config_sections() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                unknown_profile_key = "should_warn"
+
+                # Standalone sections with unknown keys
+                [fmt]
+                line_length = 120
+                unknown_fmt_key = "should_warn"
+
+                [lint]
+                severity = ["high"]
+                unknown_lint_key = "should_warn"
+
+                [doc]
+                out = "docs"
+                unknown_doc_key = "should_warn"
+
+                [fuzz]
+                runs = 256
+                unknown_fuzz_key = "should_warn"
+
+                [invariant]
+                runs = 256
+                unknown_invariant_key = "should_warn"
+
+                [vyper]
+                unknown_vyper_key = "should_warn"
+
+                [bind_json]
+                out = "bindings.sol"
+                unknown_bind_json_key = "should_warn"
+
+                # Nested profile sections with unknown keys
+                [profile.default.fmt]
+                line_length = 100
+                unknown_nested_fmt_key = "should_warn"
+
+                [profile.default.lint]
+                severity = ["low"]
+                unknown_nested_lint_key = "should_warn"
+
+                [profile.default.doc]
+                out = "documentation"
+                unknown_nested_doc_key = "should_warn"
+
+                [profile.default.fuzz]
+                runs = 512
+                unknown_nested_fuzz_key = "should_warn"
+
+                [profile.default.invariant]
+                runs = 512
+                unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.vyper]
+                unknown_nested_vyper_key = "should_warn"
+
+                [profile.default.bind_json]
+                out = "nested_bindings.sol"
+                unknown_nested_bind_json_key = "should_warn"
+
+                # Array sections with unknown keys
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                unknown_compilation_key = "should_warn"
+
+                [[profile.default.additional_compiler_profiles]]
+                name = "via-ir"
+                via_ir = true
+                unknown_compiler_profile_key = "should_warn"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+
+            // Expected warnings for profile-level unknown key
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownKey { key, .. } if key == "unknown_profile_key"
+                )),
+                "Expected warning for 'unknown_profile_key' in profile, got: {:?}",
+                cfg.warnings
+            );
+
+            // Expected warnings for standalone sections
+            let standalone_expected = [
+                ("unknown_fmt_key", "fmt"),
+                ("unknown_lint_key", "lint"),
+                ("unknown_doc_key", "doc"),
+                ("unknown_fuzz_key", "fuzz"),
+                ("unknown_invariant_key", "invariant"),
+                ("unknown_vyper_key", "vyper"),
+                ("unknown_bind_json_key", "bind_json"),
+            ];
+
+            for (expected_key, expected_section) in standalone_expected {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in standalone section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Expected warnings for nested profile sections
+            let nested_expected = [
+                ("unknown_nested_fmt_key", "fmt"),
+                ("unknown_nested_lint_key", "lint"),
+                ("unknown_nested_doc_key", "doc"),
+                ("unknown_nested_fuzz_key", "fuzz"),
+                ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_vyper_key", "vyper"),
+                ("unknown_nested_bind_json_key", "bind_json"),
+            ];
+
+            for (expected_key, expected_section) in nested_expected {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in nested section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Expected warnings for array item sections
+            let array_expected = [
+                ("unknown_compilation_key", "compilation_restrictions"),
+                ("unknown_compiler_profile_key", "additional_compiler_profiles"),
+            ];
+
+            for (expected_key, expected_section) in array_expected {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in array section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Verify total count of unknown key warnings
+            let unknown_key_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(w, crate::Warning::UnknownKey { .. })
+                        || matches!(w, crate::Warning::UnknownSectionKey { .. })
+                })
+                .collect();
+
+            // 1 profile key + 7 standalone + 7 nested + 2 array = 17 total
+            assert_eq!(
+                unknown_key_warnings.len(),
+                17,
+                "Expected 17 unknown key warnings (1 profile + 7 standalone + 7 nested + 2 array), got {}: {:?}",
+                unknown_key_warnings.len(),
+                unknown_key_warnings
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_unknown_keys_in_extended_config() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with unknown keys
+            jail.create_file(
+                "base.toml",
+                r#"
+                [profile.default]
+                optimizer_runs = 800
+                unknown_base_profile_key = "should_warn"
+
+                [lint]
+                severity = ["high"]
+                unknown_base_lint_key = "should_warn"
+
+                [fmt]
+                line_length = 100
+                unknown_base_fmt_key = "should_warn"
+                "#,
+            )?;
+
+            // Create local config that extends base with its own unknown keys
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                extends = "base.toml"
+                src = "src"
+                unknown_local_profile_key = "should_warn"
+
+                [lint]
+                unknown_local_lint_key = "should_warn"
+
+                [fuzz]
+                runs = 512
+                unknown_local_fuzz_key = "should_warn"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                unknown_local_restriction_key = "should_warn"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+
+            // Verify base config values are inherited
+            assert_eq!(cfg.optimizer_runs, Some(800));
+
+            // Unknown keys from both base and local configs should be detected.
+            // Note: Due to how figment merges configs before validation, the source
+            // will show the local config file for all warnings. This is a known
+            // limitation - proper source attribution for extended configs would
+            // require validating each file before the merge.
+
+            // Verify all expected unknown keys are detected
+            let expected_unknown_keys = ["unknown_base_profile_key", "unknown_local_profile_key"];
+            for expected_key in expected_unknown_keys {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownKey { key, .. } if key == expected_key
+                    )),
+                    "Expected warning for '{}', got: {:?}",
+                    expected_key,
+                    cfg.warnings
+                );
+            }
+
+            let expected_section_keys = [
+                ("unknown_base_lint_key", "lint"),
+                ("unknown_base_fmt_key", "fmt"),
+                ("unknown_local_lint_key", "lint"),
+                ("unknown_local_fuzz_key", "fuzz"),
+                ("unknown_local_restriction_key", "compilation_restrictions"),
+            ];
+            for (expected_key, expected_section) in expected_section_keys {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Verify total: 2 profile keys + 5 section keys = 7 warnings
+            let unknown_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(w, crate::Warning::UnknownKey { .. })
+                        || matches!(w, crate::Warning::UnknownSectionKey { .. })
+                })
+                .collect();
+            assert_eq!(
+                unknown_warnings.len(),
+                7,
+                "Expected 7 unknown key warnings, got {}: {:?}",
+                unknown_warnings.len(),
+                unknown_warnings
+            );
+
+            Ok(())
+        });
+    }
+
     // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
     #[test]
     fn fails_on_unknown_profile() {
