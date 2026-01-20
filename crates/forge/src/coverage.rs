@@ -138,7 +138,7 @@ impl CoverageReporter for LcovReporter {
             // First pass: collect line hits for DA records.
             // Track both which lines have been recorded and the max hits per line.
             let mut line_hits: HashMap<u32, u32> = HashMap::default();
-            for item in items.iter() {
+            for item in &items {
                 if matches!(item.kind, CoverageItemKind::Line | CoverageItemKind::Statement) {
                     let line = item.loc.lines.start;
                     line_hits
