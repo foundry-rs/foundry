@@ -1688,11 +1688,6 @@ impl<'ast> State<'_, 'ast> {
             let callee_size = get_callee_head_size(child_expr) + member_or_args.member_size();
             let expr_size = self.estimate_size(child_expr.span);
 
-            // Start a new chain if needed
-            if is_call_chain(&child_expr.kind, false) {
-                self.call_stack.push(CallContext::chained(callee_size));
-            }
-
             let callee_fits_line = self.space_left() > callee_size + 1;
             let total_fits_line = self.space_left() > expr_size + member_or_args.size() + 2;
             let no_cmnt_or_mixed =
@@ -1704,13 +1699,19 @@ impl<'ast> State<'_, 'ast> {
                 extra_box = true;
             }
 
-            if !is_call_chain(&child_expr.kind, true)
-                && (no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                && callee_fits_line
-                && (member_depth(0, child_expr) < 2
-                    // calls with cmnts between the args always break
-                    || (total_fits_line && !member_or_args.has_comments()))
-            {
+            // Determine if this chain will add its own indentation
+            let chain_has_indent = is_call_chain(&child_expr.kind, true)
+                || !(no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                || !callee_fits_line
+                || (member_depth(0, child_expr) >= 2
+                    && (!total_fits_line || member_or_args.has_comments()));
+
+            // Start a new chain if needed
+            if is_call_chain(&child_expr.kind, false) {
+                self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
+            }
+
+            if !chain_has_indent {
                 self.skip_index_break = true;
                 self.cbox(0);
             } else {
@@ -1817,7 +1818,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.has_chain())
+                    .without_ind(self.call_stack.has_chain_with_indent())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
