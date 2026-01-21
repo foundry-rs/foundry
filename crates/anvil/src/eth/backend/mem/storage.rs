@@ -173,11 +173,32 @@ impl InMemoryBlockStates {
 
     /// Returns on-disk state for the given `hash` if present
     pub fn get_on_disk_state(&mut self, hash: &B256) -> Option<&StateDb> {
-        if let Some(state) = self.on_disk_states.get_mut(hash)
-            && let Some(cached) = self.disk_cache.read(*hash)
-        {
-            state.init_from_state_snapshot(cached);
-            return Some(state);
+        if let Some(state) = self.on_disk_states.get_mut(hash) {
+            match self.disk_cache.read(*hash) {
+                Some(cached) => {
+                    state.init_from_state_snapshot(cached);
+                    return Some(state);
+                }
+                None => {
+                    // Disk cache is corrupted or missing, clean up inconsistent index
+                    warn!(
+                        target: "backend",
+                        ?hash,
+                        "Detected inconsistent state: on_disk_states index points to missing or \
+                         corrupted disk cache. Cleaning up index."
+                    );
+                    self.on_disk_states.remove(hash);
+                    // Also remove from oldest_on_disk queue if present
+                    if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == hash) {
+                        self.oldest_on_disk.remove(pos);
+                    }
+                    // Remove from present queue to keep count accurate
+                    if let Some(pos) = self.present.iter().position(|h| h == hash) {
+                        self.present.remove(pos);
+                    }
+                    return None;
+                }
+            }
         }
 
         None
@@ -207,12 +228,40 @@ impl InMemoryBlockStates {
             .map(|(hash, state)| (*hash, state.serialize_state()))
             .collect::<Vec<_>>();
 
-        // Get on-disk state snapshots
-        self.on_disk_states.iter().for_each(|(hash, _)| {
-            if let Some(state_snapshot) = self.disk_cache.read(*hash) {
-                states.push((*hash, state_snapshot));
+        // Get on-disk state snapshots and clean up corrupted entries
+        let corrupted_hashes: Vec<B256> = self
+            .on_disk_states
+            .iter()
+            .filter_map(|(hash, _)| {
+                match self.disk_cache.read(*hash) {
+                    Some(state_snapshot) => {
+                        states.push((*hash, state_snapshot));
+                        None
+                    }
+                    None => {
+                        // Mark for cleanup
+                        warn!(
+                            target: "backend",
+                            ?hash,
+                            "Detected corrupted disk cache during serialization. Cleaning up index."
+                        );
+                        Some(*hash)
+                    }
+                }
+            })
+            .collect();
+
+        // Clean up corrupted entries from indexes
+        for hash in corrupted_hashes {
+            self.on_disk_states.remove(&hash);
+            if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == &hash) {
+                self.oldest_on_disk.remove(pos);
             }
-        });
+            // Remove from present queue to keep count accurate
+            if let Some(pos) = self.present.iter().position(|h| h == &hash) {
+                self.present.remove(pos);
+            }
+        }
 
         SerializableHistoricalStates::new(states)
     }
