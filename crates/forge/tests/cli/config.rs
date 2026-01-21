@@ -59,6 +59,7 @@ optimizer = false
 optimizer_runs = 200
 verbosity = 0
 eth_rpc_accept_invalid_certs = false
+eth_rpc_no_proxy = false
 ignored_error_codes = [
     "license",
     "code-size",
@@ -310,6 +311,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_accept_invalid_certs: false,
+        eth_rpc_no_proxy: false,
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
@@ -1215,6 +1217,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "verbosity": 0,
   "eth_rpc_url": null,
   "eth_rpc_accept_invalid_certs": false,
+  "eth_rpc_no_proxy": false,
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,

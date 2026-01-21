@@ -1,5 +1,8 @@
 use crate::{
-    executors::{Executor, RawCallResult},
+    executors::{
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
+        RawCallResult, corpus::WorkerCorpus,
+    },
     inspectors::Fuzzer,
 };
 use alloy_primitives::{
@@ -8,7 +11,11 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    TestFunctionExt,
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    sh_println,
+};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{
@@ -30,6 +37,8 @@ use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
@@ -44,15 +53,9 @@ mod replay;
 pub use replay::{replay_error, replay_run};
 
 mod result;
-use foundry_common::{TestFunctionExt, sh_println};
 pub use result::InvariantFuzzTestResult;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 mod shrink;
-use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, FuzzTestTimer, corpus::CorpusManager,
-};
 pub use shrink::check_sequence;
 
 sol! {
@@ -582,7 +585,7 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
-            failed_corpus_replays: corpus_manager.failed_replays(),
+            failed_corpus_replays: corpus_manager.failed_replays,
         })
     }
 
@@ -594,7 +597,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
-    ) -> Result<(InvariantTest, CorpusManager)> {
+    ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -674,13 +677,15 @@ impl<'a> InvariantExecutor<'a> {
             }
         }
 
-        let corpus_manager = CorpusManager::new(
+        let worker = WorkerCorpus::new(
+            0,
             self.config.corpus.clone(),
             strategy.boxed(),
-            &self.executor,
+            Some(&self.executor),
             None,
             Some(&targeted_contracts),
         )?;
+
         let invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,
@@ -689,7 +694,7 @@ impl<'a> InvariantExecutor<'a> {
             self.runner.clone(),
         );
 
-        Ok((invariant_test, corpus_manager))
+        Ok((invariant_test, worker))
     }
 
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string
