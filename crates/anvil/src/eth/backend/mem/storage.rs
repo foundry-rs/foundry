@@ -173,35 +173,41 @@ impl InMemoryBlockStates {
 
     /// Returns on-disk state for the given `hash` if present
     pub fn get_on_disk_state(&mut self, hash: &B256) -> Option<&StateDb> {
-        if let Some(state) = self.on_disk_states.get_mut(hash) {
-            match self.disk_cache.read(*hash) {
-                Some(cached) => {
+        // Check if hash exists in on_disk_states index
+        if !self.on_disk_states.contains_key(hash) {
+            return None;
+        }
+
+        // Try to read from disk cache first
+        match self.disk_cache.read(*hash) {
+            Some(cached) => {
+                // Successfully read from disk, init state and return
+                if let Some(state) = self.on_disk_states.get_mut(hash) {
                     state.init_from_state_snapshot(cached);
                     return Some(state);
                 }
-                None => {
-                    // Disk cache is corrupted or missing, clean up inconsistent index
-                    warn!(
-                        target: "backend",
-                        ?hash,
-                        "Detected inconsistent state: on_disk_states index points to missing or \
-                         corrupted disk cache. Cleaning up index."
-                    );
-                    self.on_disk_states.remove(hash);
-                    // Also remove from oldest_on_disk queue if present
-                    if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == hash) {
-                        self.oldest_on_disk.remove(pos);
-                    }
-                    // Remove from present queue to keep count accurate
-                    if let Some(pos) = self.present.iter().position(|h| h == hash) {
-                        self.present.remove(pos);
-                    }
-                    return None;
+                None
+            }
+            None => {
+                // Disk cache is corrupted or missing, clean up inconsistent index
+                warn!(
+                    target: "backend",
+                    ?hash,
+                    "Detected inconsistent state: on_disk_states index points to missing or \
+                     corrupted disk cache. Cleaning up index."
+                );
+                self.on_disk_states.remove(hash);
+                // Also remove from oldest_on_disk queue if present
+                if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == hash) {
+                    self.oldest_on_disk.remove(pos);
                 }
+                // Remove from present queue to keep count accurate
+                if let Some(pos) = self.present.iter().position(|h| h == hash) {
+                    self.present.remove(pos);
+                }
+                None
             }
         }
-
-        None
     }
 
     /// Sets the maximum number of stats we keep in memory
