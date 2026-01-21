@@ -175,6 +175,16 @@ impl VerificationProviderType {
         has_url: bool,
     ) -> Result<Box<dyn VerificationProvider>> {
         let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
+
+        // 0. For Tempo chains, default to Blockscout (no API key required).
+        if let Some(chain) = chain
+            && chain.is_tempo()
+            && !has_key
+            && self.is_sourcify()
+        {
+            return Ok(Box::<EtherscanVerificationProvider>::default());
+        }
+
         // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
         if !has_key && self.is_sourcify() {
             sh_println!(
