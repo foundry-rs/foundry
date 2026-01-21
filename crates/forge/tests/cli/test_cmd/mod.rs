@@ -902,14 +902,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 [1.157e77]]] testAddOne(uint256) (runs: 27, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) (runs: [..], [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 [1.157e77]]] testAddOne(uint256) (runs: 27, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) (runs: [..], [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -4410,6 +4410,49 @@ Encountered 1 failing test in test/MemoryLimit.t.sol:MemoryLimitTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
+forgetest_init!(zero_runs, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "ZeroRuns.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Handler is Test {
+    function doSomething(uint256 param) public {
+        revert("unreachable");
+    }
+}
+
+contract ZeroRuns is Test {
+    Handler handler = new Handler();
+
+    /// forge-config: default.fuzz.runs = 0
+    function test_fuzzZeroRuns(uint256 x) public {
+        revert("unreachable");
+    }
+
+    /// forge-config: default.invariant.runs = 0
+    function invariant_zeroRuns() public {}
+
+    /// forge-config: default.invariant.depth = 0
+    function invariant_zeroDepth() public {}
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/ZeroRuns.t.sol:ZeroRuns
+[PASS] invariant_zeroDepth() (runs: 256, calls: 0, reverts: 0)
+[PASS] invariant_zeroRuns() (runs: 0, calls: 0, reverts: 0)
+[PASS] test_fuzzZeroRuns(uint256) (runs: 0, [AVG_GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
 });
