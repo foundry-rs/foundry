@@ -1,9 +1,11 @@
 //! Provider-related instantiation and usage utilities.
 
+pub mod curl_transport;
 pub mod runtime_transport;
 
 use crate::{
-    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT, provider::runtime_transport::RuntimeTransportBuilder,
+    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+    provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
 use alloy_chains::NamedChain;
 use alloy_provider::{
@@ -98,6 +100,10 @@ pub struct ProviderBuilder {
     is_local: bool,
     /// Whether to accept invalid certificates.
     accept_invalid_certs: bool,
+    /// Whether to disable automatic proxy detection.
+    no_proxy: bool,
+    /// Whether to output curl commands instead of making requests.
+    curl_mode: bool,
 }
 
 impl ProviderBuilder {
@@ -148,6 +154,8 @@ impl ProviderBuilder {
             headers: vec![],
             is_local,
             accept_invalid_certs: false,
+            no_proxy: false,
+            curl_mode: false,
         }
     }
 
@@ -251,6 +259,24 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets whether to disable automatic proxy detection.
+    ///
+    /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
+    /// where system proxy detection via SCDynamicStore causes crashes.
+    pub fn no_proxy(mut self, no_proxy: bool) -> Self {
+        self.no_proxy = no_proxy;
+        self
+    }
+
+    /// Sets whether to output curl commands instead of making requests.
+    ///
+    /// When enabled, the provider will print equivalent curl commands to stdout
+    /// instead of actually executing the RPC requests.
+    pub fn curl_mode(mut self, curl_mode: bool) -> Self {
+        self.curl_mode = curl_mode;
+        self
+    }
+
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let Self {
@@ -264,17 +290,31 @@ impl ProviderBuilder {
             headers,
             is_local,
             accept_invalid_certs,
+            no_proxy,
+            curl_mode,
         } = self;
         let url = url?;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
+        // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
+        if curl_mode {
+            let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
+            let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+
+            let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+                .connect_provider(RootProvider::new(client));
+
+            return Ok(provider);
+        }
+
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
             .accept_invalid_certs(accept_invalid_certs)
+            .no_proxy(no_proxy)
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
@@ -309,17 +349,33 @@ impl ProviderBuilder {
             headers,
             is_local,
             accept_invalid_certs,
+            no_proxy,
+            curl_mode,
         } = self;
         let url = url?;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
+        // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
+        if curl_mode {
+            let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
+            let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+
+            let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+                .with_recommended_fillers()
+                .wallet(wallet)
+                .connect_provider(RootProvider::new(client));
+
+            return Ok(provider);
+        }
+
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
             .accept_invalid_certs(accept_invalid_certs)
+            .no_proxy(no_proxy)
             .build();
 
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);

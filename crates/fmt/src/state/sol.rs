@@ -205,16 +205,32 @@ impl<'ast> State<'_, 'ast> {
     fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
-        match items {
-            ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
+
+        use ast::ImportItems;
+        use config::NamespaceImportStyle as NIStyle;
+
+        match (items, self.config.namespace_import_style) {
+            (ImportItems::Plain(None), _) => {
                 self.print_ast_str_lit(path);
-                if let Some(ident) = items.source_alias() {
-                    self.word(" as ");
-                    self.print_ident(&ident);
-                }
             }
 
-            ast::ImportItems::Aliases(aliases) => {
+            (ImportItems::Plain(Some(source_alias)), NIStyle::Preserve | NIStyle::PreferPlain)
+            | (ImportItems::Glob(source_alias), NIStyle::PreferPlain) => {
+                self.print_ast_str_lit(path);
+                self.word(" as ");
+                self.print_ident(source_alias);
+            }
+
+            (ImportItems::Glob(source_alias), NIStyle::Preserve | NIStyle::PreferGlob)
+            | (ImportItems::Plain(Some(source_alias)), NIStyle::PreferGlob) => {
+                self.word("*");
+                self.word(" as ");
+                self.print_ident(source_alias);
+                self.word(" from ");
+                self.print_ast_str_lit(path);
+            }
+
+            (ImportItems::Aliases(aliases), _) => {
                 // Check if we should keep single imports on one line
                 let use_single_line = self.config.single_line_imports && aliases.len() == 1;
 
@@ -795,12 +811,8 @@ impl<'ast> State<'_, 'ast> {
             fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
         let force_break = overflows && fits_alone_no_cmnts;
 
-        // Set up precall size tracking
         if lhs_size <= space_left {
             self.neverbreak();
-            self.call_stack.add_precall(lhs_size + 1);
-        } else {
-            self.call_stack.add_precall(space_left + self.config.tab_width);
         }
 
         // Handle comments before the RHS expression
@@ -932,7 +944,6 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.var_init = cache;
-        self.call_stack.reset_precall();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>, is_var_def: bool) {
@@ -1801,7 +1812,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.is_chain())
+                    .without_ind(self.call_stack.has_chain())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -1954,12 +1965,6 @@ impl<'ast> State<'_, 'ast> {
         );
         self.end();
         self.word(" =");
-
-        // '(' + var + ', ' + var + ')' + ' ='
-        let vars_size = vars.iter().fold(0, |acc, var| {
-            acc + var.as_ref().unspan().map_or(0, |v| self.estimate_size(v.span)) + 2
-        }) + 2;
-        self.call_stack.add_precall(vars_size);
 
         if self.estimate_size(init_expr.span) + self.config.tab_width
             <= std::cmp::max(space_left, self.space_left())

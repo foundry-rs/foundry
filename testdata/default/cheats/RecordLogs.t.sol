@@ -188,6 +188,41 @@ contract RecordLogsTest is Test {
         assertEq(entries[2].emitter, emitter2.getEmitterAddr());
     }
 
+    function testRecordedLogsJson() public {
+        bytes memory testData = "Event Data in String";
+
+        vm.recordLogs();
+        emitter.emitEvent(1, 2, 3, testData);
+        string memory logsJson = vm.getRecordedLogsJson();
+
+        // Verify JSON structure and values
+        assertGt(bytes(logsJson).length, 0);
+
+        // Verify emitter address
+        string memory emitterAddr = vm.parseJsonString(logsJson, "[0].emitter");
+        assertEq(vm.parseAddress(emitterAddr), address(emitter));
+
+        // Verify topics - first topic is event signature
+        string[] memory topics = vm.parseJsonStringArray(logsJson, "[0].topics");
+        assertEq(topics.length, 4);
+        assertEq(vm.parseBytes32(topics[0]), keccak256("LogTopic123(uint256,uint256,uint256,bytes)"));
+        assertEq(vm.parseBytes32(topics[1]), bytes32(uint256(1)));
+        assertEq(vm.parseBytes32(topics[2]), bytes32(uint256(2)));
+        assertEq(vm.parseBytes32(topics[3]), bytes32(uint256(3)));
+
+        // Verify data is hex-encoded
+        string memory data = vm.parseJsonString(logsJson, "[0].data");
+        assertGt(bytes(data).length, 2); // At least "0x"
+    }
+
+    function testRecordedLogsJsonEmpty() public {
+        vm.recordLogs();
+        string memory logsJson = vm.getRecordedLogsJson();
+
+        // Empty array
+        assertEq(logsJson, "[]");
+    }
+
     function testRecordsConsumednAsRead() public {
         Vm.Log[] memory entries;
 

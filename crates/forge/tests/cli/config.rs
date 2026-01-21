@@ -49,7 +49,7 @@ allow_paths = []
 include_paths = []
 skip = []
 force = false
-evm_version = "prague"
+evm_version = "osaka"
 gas_reports = ["*"]
 gas_reports_ignore = []
 gas_reports_include_tests = false
@@ -59,11 +59,14 @@ optimizer = false
 optimizer_runs = 200
 verbosity = 0
 eth_rpc_accept_invalid_certs = false
+eth_rpc_no_proxy = false
 ignored_error_codes = [
     "license",
     "code-size",
     "init-code-size",
     "transient-storage",
+    "transfer-deprecated",
+    "natspec-memory-safe-assembly-deprecated",
 ]
 ignored_warnings_from = []
 deny = "never"
@@ -138,6 +141,7 @@ docs_style = "preserve"
 ignore = []
 contract_new_lines = false
 sort_imports = false
+namespace_import_style = "prefer_plain"
 pow_no_space = false
 prefer_compact = "all"
 single_line_imports = false
@@ -202,6 +206,7 @@ show_edge_coverage = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
+check_interval = 1
 
 [labels]
 
@@ -308,6 +313,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_accept_invalid_certs: false,
+        eth_rpc_no_proxy: false,
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
@@ -1197,7 +1203,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "include_paths": [],
   "skip": [],
   "force": false,
-  "evm_version": "prague",
+  "evm_version": "osaka",
   "gas_reports": [
     "*"
   ],
@@ -1213,6 +1219,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "verbosity": 0,
   "eth_rpc_url": null,
   "eth_rpc_accept_invalid_certs": false,
+  "eth_rpc_no_proxy": false,
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
@@ -1221,7 +1228,9 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "license",
     "code-size",
     "init-code-size",
-    "transient-storage"
+    "transient-storage",
+    "transfer-deprecated",
+    "natspec-memory-safe-assembly-deprecated"
   ],
   "ignored_warnings_from": [],
   "deny": "never",
@@ -1281,7 +1290,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "timeout": null,
     "show_solidity": false,
     "max_time_delay": null,
-    "max_block_delay": null
+    "max_block_delay": null,
+    "check_interval": 1
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
@@ -1339,6 +1349,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false,
+    "namespace_import_style": "prefer_plain",
     "pow_no_space": false,
     "prefer_compact": "all",
     "single_line_imports": false
@@ -1793,7 +1804,7 @@ contract Counter {
     let v1_profile = SettingsOverrides {
         name: "v1".to_string(),
         via_ir: Some(true),
-        evm_version: Some(EvmVersion::Prague),
+        evm_version: Some(EvmVersion::Osaka),
         optimizer: None,
         optimizer_runs: Some(44444444),
         bytecode_hash: None,
@@ -1879,19 +1890,19 @@ contract Counter {
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
     assert_eq!(None, via_ir);
-    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
+    assert_eq!("\"osaka\"", evm_version.unwrap().to_string());
     assert_eq!("false", enabled.unwrap().to_string());
     assert_eq!("200", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v1/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
+    assert_eq!("\"osaka\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("44444444", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v2/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
+    assert_eq!("\"osaka\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("111", runs.unwrap().to_string());
 
