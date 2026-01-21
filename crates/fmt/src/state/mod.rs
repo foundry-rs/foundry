@@ -83,8 +83,8 @@ impl CallStack {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    pub(crate) fn is_chain(&self) -> bool {
-        self.last().is_some_and(|call| call.is_chained())
+    pub(crate) fn has_chain(&self) -> bool {
+        self.stack.iter().any(|call| call.is_chained())
     }
 }
 
