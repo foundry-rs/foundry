@@ -7029,7 +7029,8 @@ mod tests {
             )?;
 
             jail.set_env("FOUNDRY_PROFILE", "ci-venom");
-            let config = Config::load().expect("hyphenated profile with nested sections should work");
+            let config =
+                Config::load().expect("hyphenated profile with nested sections should work");
             assert_eq!(config.profile.as_str(), "ci-venom");
             assert_eq!(config.optimizer_runs, Some(500));
             assert_eq!(config.fuzz.runs, 10000);
