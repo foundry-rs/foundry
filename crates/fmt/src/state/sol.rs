@@ -1351,6 +1351,11 @@ impl<'ast> State<'_, 'ast> {
                         match member_expr.kind {
                             ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
                             ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            // Don't add break when accessing a field after a call with named args.
+                            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
+                            // on the same line as the closing `})`.
+                            // See: https://github.com/foundry-rs/foundry/issues/12399
+                            _ if is_call_with_named_args(&member_expr.kind) => (),
                             _ => s.zerobreak(),
                         }
                         s.word(".");
@@ -2887,6 +2892,18 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
 
 fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
+}
+
+/// Returns true if this is a call with named arguments (struct-style syntax).
+/// Used to determine if `.field` after such a call should avoid breaking.
+/// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
+/// E.g., `someFunc(a, b).field` → false (positional args)
+fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+    if let ast::ExprKind::Call(_, args) = expr_kind {
+        matches!(args.kind, ast::CallArgsKind::Named(_))
+    } else {
+        false
+    }
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
