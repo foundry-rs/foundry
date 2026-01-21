@@ -31,4 +31,15 @@ contract StructFieldAccess {
     function d() external {
         uint256 nested = getOuter().inner.value;
     }
+
+    // Chained calls with named args
+    function e() external {
+        bytes32 guid = firstCall({
+            param1: value1,
+            param2: value2
+        }).secondCall({
+            arg1: val1,
+            arg2: val2
+        }).guid;
+    }
 }
