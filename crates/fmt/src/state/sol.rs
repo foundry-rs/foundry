@@ -1701,7 +1701,8 @@ impl<'ast> State<'_, 'ast> {
 
             // Determine if this chain will add its own indentation
             let chain_has_indent = is_call_chain(&child_expr.kind, true)
-                || !(no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                || !(no_cmnt_or_mixed
+                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
                 || !callee_fits_line
                 || (member_depth(0, child_expr) >= 2
                     && (!total_fits_line || member_or_args.has_comments()));
