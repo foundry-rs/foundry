@@ -4,21 +4,21 @@ contract StructFieldAccess {
     function a() external {
         bytes32 guid =
             _lzSend({
-        _dstEid: dstEid,
-        _message: message,
-        _options: OptionsBuilder.newOptions().addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),
-        _fee: MessagingFee({nativeFee: msg.value, lzTokenFee: 0}),
-        _refundAddress: msg.sender
-    }).guid;
+            _dstEid: dstEid,
+            _message: message,
+            _options: OptionsBuilder.newOptions().addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),
+            _fee: MessagingFee({nativeFee: msg.value, lzTokenFee: 0}),
+            _refundAddress: msg.sender
+        }).guid;
     }
 
     function b() external view returns (uint256) {
         return _quote({
-        _dstEid: dstEid,
-        _message: message,
-        _options: OptionsBuilder.newOptions().addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),
-        _payInLzToken: false
-    }).nativeFee;
+            _dstEid: dstEid,
+            _message: message,
+            _options: OptionsBuilder.newOptions().addExecutorLzReceiveOption({_gas: gasLimit, _value: 0}),
+            _payInLzToken: false
+        }).nativeFee;
     }
 
     // Simple cases
@@ -35,11 +35,11 @@ contract StructFieldAccess {
     // Chained calls with named args
     function e() external {
         bytes32 guid = firstCall({
-        param1: value1,
-        param2: value2
-    }).secondCall({
-        arg1: val1,
-        arg2: val2
-    }).guid;
+            param1: value1,
+            param2: value2
+        }).secondCall({
+            arg1: val1,
+            arg2: val2
+        }).guid;
     }
 }
