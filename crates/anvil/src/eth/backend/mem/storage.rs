@@ -197,14 +197,11 @@ impl InMemoryBlockStates {
                      corrupted disk cache. Cleaning up index."
                 );
                 self.on_disk_states.remove(hash);
-                // Also remove from oldest_on_disk queue if present
+                // Also remove from oldest_on_disk queue
                 if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == hash) {
                     self.oldest_on_disk.remove(pos);
                 }
-                // Remove from present queue to keep count accurate
-                if let Some(pos) = self.present.iter().position(|h| h == hash) {
-                    self.present.remove(pos);
-                }
+                // Note: on-disk states are not in present queue (removed when evicted)
                 None
             }
         }
@@ -263,10 +260,7 @@ impl InMemoryBlockStates {
             if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == &hash) {
                 self.oldest_on_disk.remove(pos);
             }
-            // Remove from present queue to keep count accurate
-            if let Some(pos) = self.present.iter().position(|h| h == &hash) {
-                self.present.remove(pos);
-            }
+            // Note: on-disk states are not in present queue (removed when evicted)
         }
 
         SerializableHistoricalStates::new(states)
@@ -727,6 +721,68 @@ mod tests {
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleans_up_corrupted_disk_cache_index() {
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
+        let one = B256::from(U256::from(1));
+        let two = B256::from(U256::from(2));
+        let three = B256::from(U256::from(3));
+
+        // Insert states - first two will be evicted to disk
+        storage.insert(one, StateDb::new(MemDb::default()));
+        storage.insert(two, StateDb::new(MemDb::default()));
+        storage.insert(three, StateDb::new(MemDb::default()));
+
+        // Wait for disk writes
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        // Verify initial state: two on disk, one in memory
+        assert_eq!(storage.on_disk_states.len(), 2);
+        assert_eq!(storage.oldest_on_disk.len(), 2);
+        assert_eq!(storage.present.len(), 1); // Only 'three' is in memory
+
+        // Simulate disk cache corruption by removing the cache files manually
+        storage.disk_cache.remove(one);
+        storage.disk_cache.remove(two);
+
+        // Try to access corrupted state - should trigger cleanup
+        let result = storage.get_on_disk_state(&one);
+        assert!(result.is_none(), "Should return None for corrupted cache");
+
+        // Verify cleanup happened for hash 'one'
+        assert!(!storage.on_disk_states.contains_key(&one), "Should remove from on_disk_states");
+        assert!(!storage.oldest_on_disk.contains(&one), "Should remove from oldest_on_disk");
+
+        // Hash 'two' should still be in indexes (not accessed yet)
+        assert!(storage.on_disk_states.contains_key(&two));
+        assert_eq!(storage.on_disk_states.len(), 1);
+
+        // Access hash 'two' - should also cleanup
+        let result = storage.get_on_disk_state(&two);
+        assert!(result.is_none());
+        assert!(!storage.on_disk_states.contains_key(&two));
+
+        // Final state: all disk states cleaned up, memory state unchanged
+        assert_eq!(storage.on_disk_states.len(), 0);
+        assert_eq!(storage.oldest_on_disk.len(), 0);
+        assert_eq!(storage.present.len(), 1); // 'three' still in memory
+    }
+
+    #[test]
+    fn normal_cache_miss_does_not_cleanup() {
+        let mut storage = InMemoryBlockStates::new(10, MAX_ON_DISK_HISTORY_LIMIT);
+        let nonexistent = B256::from(U256::from(999));
+
+        // Normal cache miss - hash never existed
+        let result = storage.get_on_disk_state(&nonexistent);
+        assert!(result.is_none());
+
+        // Should be fast O(1) path, no cleanup operations
+        assert_eq!(storage.on_disk_states.len(), 0);
+        assert_eq!(storage.oldest_on_disk.len(), 0);
+        assert_eq!(storage.present.len(), 0);
     }
 
     // verifies that blocks and transactions in BlockchainStorage remain the same when dumped and
