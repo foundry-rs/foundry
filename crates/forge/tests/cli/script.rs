@@ -3298,7 +3298,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 "#]]);
 });
 
-forgetest_async!(can_deploy_with_broadcast_in_setup, |prj, cmd| {
+forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
         "Deploy.s.sol",
