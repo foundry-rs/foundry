@@ -4,12 +4,12 @@ use crate::{
     document::{DocumentContent, read_context},
     helpers::function_signature,
     parser::ParseSource,
+    preprocessor::make_relative_link,
     solang_ext::SafeUnwrap,
     writer::BufWriter,
 };
 use itertools::Itertools;
 use solang_parser::pt::{Base, FunctionDefinition};
-use std::path::Path;
 
 /// The result of [`AsDoc::as_doc`].
 pub type AsDocResult = Result<String, std::fmt::Error>;
@@ -144,6 +144,7 @@ impl AsDoc for Document {
                             let mut bases = vec![];
                             let linked =
                                 read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
+                            let current_path = self.relative_output_path();
                             for base in &contract.base {
                                 let base_doc = base.as_doc()?;
                                 let base_ident = &base.name.identifiers.last().unwrap().name;
@@ -151,14 +152,10 @@ impl AsDoc for Document {
                                 let link = linked
                                     .as_ref()
                                     .and_then(|link| {
-                                        link.get(base_ident).map(|path| {
-                                            let path = if cfg!(windows) {
-                                                Path::new("\\").join(path)
-                                            } else {
-                                                Path::new("/").join(path)
-                                            };
-                                            Markdown::Link(&base_doc, &path.display().to_string())
-                                                .as_doc()
+                                        link.get(base_ident).map(|target_path| {
+                                            let relative_path =
+                                                make_relative_link(current_path, target_path);
+                                            Markdown::Link(&base_doc, &relative_path).as_doc()
                                         })
                                     })
                                     .transpose()?

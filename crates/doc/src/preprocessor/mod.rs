@@ -11,7 +11,7 @@ mod inheritdoc;
 pub use inheritdoc::{INHERITDOC_ID, Inheritdoc};
 
 mod infer_hyperlinks;
-pub use infer_hyperlinks::{INFER_INLINE_HYPERLINKS_ID, InferInlineHyperlinks};
+pub use infer_hyperlinks::{INFER_INLINE_HYPERLINKS_ID, InferInlineHyperlinks, make_relative_link};
 
 mod git_source;
 pub use git_source::{GIT_SOURCE_ID, GitSource};

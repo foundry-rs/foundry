@@ -75,10 +75,12 @@ impl InferInlineHyperlinks {
     /// All items get their own section in the markdown file.
     /// This section uses the identifier of the item: `#functionname`
     ///
-    /// Note: the target path is the relative path to the markdown file.
+    /// Note: the target path is the relative path to the markdown file being searched.
+    /// The current_path is the path of the document where the link appears.
     fn find_match<'a>(
         link: &InlineLink<'a>,
         target_path: &Path,
+        current_path: &Path,
         items: impl Iterator<Item = &'a ParseItem>,
     ) -> Option<InlineLinkTarget<'a>> {
         for item in items {
@@ -90,10 +92,11 @@ impl InferInlineHyperlinks {
                             return Some(InlineLinkTarget::borrowed(
                                 name,
                                 target_path.to_path_buf(),
+                                current_path.to_path_buf(),
                             ));
                         }
                         // try to find the referenced item in the contract's children
-                        return Self::find_match(link, target_path, item.children.iter());
+                        return Self::find_match(link, target_path, current_path, item.children.iter());
                     }
                 }
                 ParseSource::Function(fun) => {
@@ -106,12 +109,14 @@ impl InferInlineHyperlinks {
                             return Some(InlineLinkTarget::borrowed(
                                 &id.name,
                                 target_path.to_path_buf(),
+                                current_path.to_path_buf(),
                             ));
                         }
                     } else if link.ref_name() == "constructor" {
                         return Some(InlineLinkTarget::borrowed(
                             "constructor",
                             target_path.to_path_buf(),
+                            current_path.to_path_buf(),
                         ));
                     }
                 }
@@ -122,6 +127,7 @@ impl InferInlineHyperlinks {
                         return Some(InlineLinkTarget::borrowed(
                             ev_name,
                             target_path.to_path_buf(),
+                            current_path.to_path_buf(),
                         ));
                     }
                 }
@@ -131,6 +137,7 @@ impl InferInlineHyperlinks {
                         return Some(InlineLinkTarget::borrowed(
                             err_name,
                             target_path.to_path_buf(),
+                            current_path.to_path_buf(),
                         ));
                     }
                 }
@@ -140,6 +147,7 @@ impl InferInlineHyperlinks {
                         return Some(InlineLinkTarget::borrowed(
                             struct_name,
                             target_path.to_path_buf(),
+                            current_path.to_path_buf(),
                         ));
                     }
                 }
@@ -154,7 +162,7 @@ impl InferInlineHyperlinks {
     /// Attempts to convert inline links to markdown links.
     fn inline_doc_links(
         documents: &[Document],
-        target_path: &Path,
+        current_path: &Path,
         comments: &mut Comments,
         parent: &Document,
     ) {
@@ -163,28 +171,32 @@ impl InferInlineHyperlinks {
             let val = comment.value.clone();
             // replace all links with inline markdown links
             for link in InlineLink::captures(val.as_str()) {
-                let target = if link.is_external() {
-                    // find in all documents
+                // First, try to find a match in the current document.
+                // This handles both simple `{functionName}` and `{Contract-functionName}`
+                // when the contract and function are in the same file.
+                let target = Self::find_match(
+                    &link,
+                    current_path,
+                    current_path,
+                    parent
+                        .content
+                        .iter_items()
+                        .flat_map(|item| Some(item).into_iter().chain(item.children.iter())),
+                )
+                .or_else(|| {
+                    // If not found locally, search in all other documents
                     documents.iter().find_map(|doc| {
                         Self::find_match(
                             &link,
                             doc.relative_output_path(),
+                            current_path,
                             doc.content.iter_items().flat_map(|item| {
                                 Some(item).into_iter().chain(item.children.iter())
                             }),
                         )
                     })
-                } else {
-                    // find matches in the document
-                    Self::find_match(
-                        &link,
-                        target_path,
-                        parent
-                            .content
-                            .iter_items()
-                            .flat_map(|item| Some(item).into_iter().chain(item.children.iter())),
-                    )
-                };
+                });
+
                 if let Some(target) = target {
                     let display_value = link.markdown_link_display_value();
                     let markdown_link = format!("[{display_value}]({target})");
@@ -200,18 +212,56 @@ impl InferInlineHyperlinks {
 struct InlineLinkTarget<'a> {
     section: Cow<'a, str>,
     target_path: PathBuf,
+    current_path: PathBuf,
 }
 
 impl<'a> InlineLinkTarget<'a> {
-    fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
-        Self { section: Cow::Borrowed(section), target_path }
+    fn borrowed(section: &'a str, target_path: PathBuf, current_path: PathBuf) -> Self {
+        Self { section: Cow::Borrowed(section), target_path, current_path }
     }
 }
 
 impl std::fmt::Display for InlineLinkTarget<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // NOTE: the url should be absolute for markdown and section names are lowercase
-        write!(f, "/{}#{}", self.target_path.display(), self.section.to_lowercase())
+        let anchor = self.section.to_lowercase();
+
+        if self.target_path == self.current_path {
+            write!(f, "#{anchor}")
+        } else {
+            let link = make_relative_link(&self.current_path, &self.target_path);
+            write!(f, "{link}#{anchor}")
+        }
+    }
+}
+
+/// Computes a relative link from the current document path to the target document path.
+/// Both paths should be relative paths from the same root (e.g., `src/Foo.sol/contract.Foo.md`).
+pub fn make_relative_link(current_path: &Path, target_path: &Path) -> String {
+    let current_dir = current_path.parent().unwrap_or(Path::new("."));
+
+    let mut current_components: Vec<_> = current_dir.components().collect();
+    let mut target_components: Vec<_> = target_path.components().collect();
+
+    while !current_components.is_empty()
+        && !target_components.is_empty()
+        && current_components[0] == target_components[0]
+    {
+        current_components.remove(0);
+        target_components.remove(0);
+    }
+
+    let mut result = PathBuf::new();
+    for _ in &current_components {
+        result.push("..");
+    }
+    for component in &target_components {
+        result.push(component);
+    }
+
+    if result.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        result.display().to_string().replace('\\', "/")
     }
 }
 
@@ -273,11 +323,6 @@ impl<'a> InlineLink<'a> {
     fn as_str(&self) -> &str {
         self.outer.as_str()
     }
-
-    /// Returns true if the link is external.
-    fn is_external(&self) -> bool {
-        self.part.is_some()
-    }
 }
 
 #[cfg(test)]
@@ -318,5 +363,28 @@ mod tests {
         let link = InlineLink::capture(s).unwrap();
         assert_eq!(link.link, Some("`Named link`"));
         assert_eq!(link.markdown_link_display_value(), "`Named link`");
+    }
+
+    #[test]
+    fn test_make_relative_link() {
+        // Same directory
+        let current = Path::new("src/Foo.sol/contract.Foo.md");
+        let target = Path::new("src/Foo.sol/interface.IFoo.md");
+        assert_eq!(make_relative_link(current, target), "interface.IFoo.md");
+
+        // Different directory (go up one level)
+        let current = Path::new("src/Borrower.sol/contract.Borrower.md");
+        let target = Path::new("src/Policy.sol/abstract.Policy.md");
+        assert_eq!(make_relative_link(current, target), "../Policy.sol/abstract.Policy.md");
+
+        // Same file should return just the filename (edge case for anchors)
+        let current = Path::new("src/Foo.sol/library.ECDSA.md");
+        let target = Path::new("src/Foo.sol/library.ECDSA.md");
+        assert_eq!(make_relative_link(current, target), "library.ECDSA.md");
+
+        // Deep nesting
+        let current = Path::new("src/a/b/c/contract.C.md");
+        let target = Path::new("src/x/y/contract.Y.md");
+        assert_eq!(make_relative_link(current, target), "../../../x/y/contract.Y.md");
     }
 }
