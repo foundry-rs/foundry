@@ -38,15 +38,16 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
 
     let args = resolve_name_args(&args, provider).await;
 
-    match hex::decode(sig) {
-        Ok(data) => return Ok((data, None)),
-        Err(e) if sig.starts_with("0x") || sig.starts_with("0X") => {
-            eyre::bail!("Invalid hex calldata '{}': {e}", sig);
-        }
-        Err(_) => {}
+    // Try to decode as hex calldata first, otherwise treat as function signature
+    if let Ok(data) = hex::decode(sig) {
+        return Ok((data, None));
+    } else if sig.starts_with("0x") || sig.starts_with("0X") {
+        let e = hex::decode(sig).unwrap_err();
+        eyre::bail!("Invalid hex calldata '{}': {e}", sig);
     }
 
     let func = if sig.contains('(') {
+        // a regular function signature with parentheses
         get_func(sig)?
     } else {
         info!(
