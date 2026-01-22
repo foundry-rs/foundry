@@ -793,15 +793,18 @@ async fn test_reorg_blockhash_opcode_consistency() {
 
     let multicall = Multicall::deploy(&provider).await.unwrap();
 
-    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(200) })).await.unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(200) }))
+        .await
+        .unwrap();
 
     let tip_before_reorg = api.block_number().unwrap().to::<u64>();
 
     let mut cached_hashes: Vec<(u64, alloy_primitives::B256, alloy_primitives::B256)> = Vec::new();
     for i in 1..=10 {
         let block_num = tip_before_reorg - i;
-        let rpc_hash = provider.get_block_by_number(block_num.into()).await.unwrap().unwrap().header.hash;
-        let opcode_hash = multicall.getBlockHash(U256::from(block_num)).call().await.unwrap().blockHash;
+        let rpc_hash =
+            provider.get_block_by_number(block_num.into()).await.unwrap().unwrap().header.hash;
+        let opcode_hash = multicall.getBlockHash(U256::from(block_num)).call().await.unwrap()._0;
         assert_eq!(rpc_hash, opcode_hash, "RPC and BLOCKHASH opcode should match before reorg");
         cached_hashes.push((block_num, rpc_hash, opcode_hash));
     }
@@ -817,8 +820,15 @@ async fn test_reorg_blockhash_opcode_consistency() {
     api.mine_one().await;
 
     for (block_num, _rpc_before, _opcode_before) in &cached_hashes {
-        let rpc_after = provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
-        let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap().blockHash;
+        let rpc_after = provider
+            .get_block_by_number((*block_num).into())
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .hash;
+        let opcode_after =
+            multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap()._0;
         assert_eq!(
             rpc_after, opcode_after,
             "Block {block_num}: RPC ({rpc_after}) and BLOCKHASH opcode ({opcode_after}) should match after reorg"
