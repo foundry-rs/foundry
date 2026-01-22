@@ -836,9 +836,7 @@ async fn test_reorg_deep_blockhash_consistency() {
     let multicall = Multicall::deploy(&provider).await.unwrap();
 
     // Mine 300 blocks (more than BLOCKHASH limit of 256)
-    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(300) }))
-        .await
-        .unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(300) })).await.unwrap();
 
     let tip_before_reorg = api.block_number().unwrap().to::<u64>();
     assert!(tip_before_reorg > 256, "Need more than 256 blocks for this test");
