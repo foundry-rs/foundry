@@ -286,6 +286,11 @@ pub struct Config {
     pub eth_rpc_url: Option<String>,
     /// Whether to accept invalid certificates for the rpc server.
     pub eth_rpc_accept_invalid_certs: bool,
+    /// Whether to disable automatic proxy detection for the rpc server.
+    ///
+    /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
+    /// where system proxy detection via SCDynamicStore causes crashes.
+    pub eth_rpc_no_proxy: bool,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
@@ -2587,6 +2592,7 @@ impl Default for Config {
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_accept_invalid_certs: false,
+            eth_rpc_no_proxy: false,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
@@ -6945,6 +6951,92 @@ mod tests {
                 .expect("lib config should load with profile");
             assert_eq!(config.profile.as_str(), "ci");
             assert_eq!(config.fuzz.runs, 5000);
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13170: profile names with hyphens should work correctly
+    #[test]
+    fn succeeds_on_hyphenated_profile_name() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci-venom]
+                src = "src"
+                fuzz = { runs = 7500 }
+
+                [profile.default-venom]
+                src = "src"
+                fuzz = { runs = 8000 }
+                "#,
+            )?;
+
+            // Test ci-venom profile
+            jail.set_env("FOUNDRY_PROFILE", "ci-venom");
+            let config = Config::load().expect("hyphenated profile should work");
+            assert_eq!(config.profile.as_str(), "ci-venom");
+            assert_eq!(config.fuzz.runs, 7500);
+
+            // Test default-venom profile
+            jail.set_env("FOUNDRY_PROFILE", "default-venom");
+            let config = Config::load().expect("hyphenated profile should work");
+            assert_eq!(config.profile.as_str(), "default-venom");
+            assert_eq!(config.fuzz.runs, 8000);
+
+            // Verify the profiles list contains hyphenated names
+            assert!(
+                config.profiles.iter().any(|p| p.as_str() == "ci-venom"),
+                "profiles should contain 'ci-venom', got: {:?}",
+                config.profiles
+            );
+            assert!(
+                config.profiles.iter().any(|p| p.as_str() == "default-venom"),
+                "profiles should contain 'default-venom', got: {:?}",
+                config.profiles
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13170: hyphenated profile with nested config keys
+    #[test]
+    fn hyphenated_profile_with_nested_sections() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci-venom]
+                src = "src"
+                optimizer_runs = 500
+
+                [profile.ci-venom.fuzz]
+                runs = 10000
+                max_test_rejects = 350000
+
+                [profile.ci-venom.invariant]
+                runs = 375
+                depth = 500
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_PROFILE", "ci-venom");
+            let config =
+                Config::load().expect("hyphenated profile with nested sections should work");
+            assert_eq!(config.profile.as_str(), "ci-venom");
+            assert_eq!(config.optimizer_runs, Some(500));
+            assert_eq!(config.fuzz.runs, 10000);
+            assert_eq!(config.fuzz.max_test_rejects, 350000);
+            assert_eq!(config.invariant.runs, 375);
+            assert_eq!(config.invariant.depth, 500);
 
             Ok(())
         });

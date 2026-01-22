@@ -621,6 +621,7 @@ impl TestResult {
             failed_corpus_replays: 0,
         };
         self.status = TestStatus::Failure;
+        debug!(?e, "failed to set up fuzz testing environment");
         self.reason = Some(format!("failed to set up fuzz testing environment: {e}"));
     }
 
