@@ -61,7 +61,6 @@ impl CallContext {
 #[derive(Debug, Default)]
 pub(super) struct CallStack {
     stack: Vec<CallContext>,
-    precall_size: usize,
 }
 
 impl Deref for CallStack {
@@ -80,20 +79,12 @@ impl CallStack {
         self.stack.pop()
     }
 
-    pub(crate) fn add_precall(&mut self, size: usize) {
-        self.precall_size += size;
-    }
-
-    pub(crate) fn reset_precall(&mut self) {
-        self.precall_size = 0;
-    }
-
     pub(crate) fn is_nested(&self) -> bool {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    pub(crate) fn is_chain(&self) -> bool {
-        self.last().is_some_and(|call| call.is_chained())
+    pub(crate) fn has_chain(&self) -> bool {
+        self.stack.iter().any(|call| call.is_chained())
     }
 }
 

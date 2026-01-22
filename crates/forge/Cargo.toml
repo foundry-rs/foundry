@@ -87,6 +87,8 @@ watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+url.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -95,6 +97,7 @@ opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
+soldeer-core.workspace = true
 quick-junit = "0.5.2"
 
 [dev-dependencies]

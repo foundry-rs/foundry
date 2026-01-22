@@ -30,6 +30,30 @@ pub const BLAKE_2F: Address = address!("0x00000000000000000000000000000000000000
 /// The PointEvaluation precompile address.
 pub const POINT_EVALUATION: Address = address!("0x000000000000000000000000000000000000000a");
 
+/// The BLS12-381 G1ADD precompile address.
+pub const BLS12_G1ADD: Address = address!("0x000000000000000000000000000000000000000b");
+
+/// The BLS12-381 G1MSM precompile address.
+pub const BLS12_G1MSM: Address = address!("0x000000000000000000000000000000000000000c");
+
+/// The BLS12-381 G2ADD precompile address.
+pub const BLS12_G2ADD: Address = address!("0x000000000000000000000000000000000000000d");
+
+/// The BLS12-381 G2MSM precompile address.
+pub const BLS12_G2MSM: Address = address!("0x000000000000000000000000000000000000000e");
+
+/// The BLS12-381 pairing check precompile address.
+pub const BLS12_PAIRING_CHECK: Address = address!("0x000000000000000000000000000000000000000f");
+
+/// The BLS12-381 map Fp to G1 precompile address.
+pub const BLS12_MAP_FP_TO_G1: Address = address!("0x0000000000000000000000000000000000000010");
+
+/// The BLS12-381 map Fp2 to G2 precompile address.
+pub const BLS12_MAP_FP2_TO_G2: Address = address!("0x0000000000000000000000000000000000000011");
+
+/// The P256VERIFY precompile address.
+pub const P256_VERIFY: Address = address!("0x0000000000000000000000000000000000000100");
+
 /// Precompile addresses.
 pub const PRECOMPILES: &[Address] = &[
     EC_RECOVER,
@@ -42,4 +66,12 @@ pub const PRECOMPILES: &[Address] = &[
     EC_PAIRING,
     BLAKE_2F,
     POINT_EVALUATION,
+    BLS12_G1ADD,
+    BLS12_G1MSM,
+    BLS12_G2ADD,
+    BLS12_G2MSM,
+    BLS12_PAIRING_CHECK,
+    BLS12_MAP_FP_TO_G1,
+    BLS12_MAP_FP2_TO_G2,
+    P256_VERIFY,
 ];

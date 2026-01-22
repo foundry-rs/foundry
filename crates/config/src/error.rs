@@ -12,7 +12,7 @@ pub struct ExtractConfigError {
 }
 
 impl ExtractConfigError {
-    /// Wraps the figment error
+    /// Wraps the figment error.
     pub fn new(error: figment::Error) -> Self {
         Self { error }
     }
@@ -63,7 +63,7 @@ impl Error for ExtractConfigError {
 pub enum FoundryConfigError {
     /// An error thrown during toml parsing
     Toml(figment::Error),
-    /// Any other error thrown when constructing the config's figment
+    /// Any other error thrown when constructing the config's figment.
     Other(figment::Error),
 }
 
@@ -140,6 +140,10 @@ pub enum SolidityErrorCode {
     TransientStorageUsed,
     /// There are more than 256 warnings. Ignoring the rest.
     TooManyWarnings,
+    /// Warning: 'transfer' is deprecated and scheduled for removal.
+    TransferDeprecated,
+    /// Warning: Natspec memory-safe-assembly special comment for inline assembly is deprecated.
+    NatspecMemorySafeAssemblyDeprecated,
     /// All other error codes
     Other(u64),
 }
@@ -167,6 +171,8 @@ impl SolidityErrorCode {
             Self::PragmaSolidity => "pragma-solidity",
             Self::TransientStorageUsed => "transient-storage",
             Self::TooManyWarnings => "too-many-warnings",
+            Self::TransferDeprecated => "transfer-deprecated",
+            Self::NatspecMemorySafeAssemblyDeprecated => "natspec-memory-safe-assembly-deprecated",
             Self::Other(code) => return Err(*code),
         };
         Ok(s)
@@ -193,6 +199,8 @@ impl From<SolidityErrorCode> for u64 {
             SolidityErrorCode::PragmaSolidity => 3420,
             SolidityErrorCode::TransientStorageUsed => 2394,
             SolidityErrorCode::TooManyWarnings => 4591,
+            SolidityErrorCode::TransferDeprecated => 9207,
+            SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated => 2424,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -229,6 +237,8 @@ impl FromStr for SolidityErrorCode {
             "pragma-solidity" => Self::PragmaSolidity,
             "transient-storage" => Self::TransientStorageUsed,
             "too-many-warnings" => Self::TooManyWarnings,
+            "transfer-deprecated" => Self::TransferDeprecated,
+            "natspec-memory-safe-assembly-deprecated" => Self::NatspecMemorySafeAssemblyDeprecated,
             _ => return Err(format!("Unknown variant {s}")),
         };
 
@@ -256,6 +266,8 @@ impl From<u64> for SolidityErrorCode {
             3420 => Self::PragmaSolidity,
             2394 => Self::TransientStorageUsed,
             4591 => Self::TooManyWarnings,
+            9207 => Self::TransferDeprecated,
+            2424 => Self::NatspecMemorySafeAssemblyDeprecated,
             other => Self::Other(other),
         }
     }
