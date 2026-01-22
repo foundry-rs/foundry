@@ -809,7 +809,7 @@ async fn test_reorg_blockhash_opcode_consistency() {
 
     let tx = TransactionRequest::default();
     api.anvil_reorg(ReorgOptions {
-        depth: 1,
+        depth: 5,
         tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
     })
     .await

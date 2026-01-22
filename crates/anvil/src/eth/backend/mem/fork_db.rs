@@ -31,10 +31,6 @@ impl Db for ForkedDatabase {
         self.inner().block_hashes().write().insert(number, hash);
     }
 
-    fn remove_block_hash(&mut self, number: U256) {
-        self.inner().block_hashes().write().remove(&number);
-    }
-
     fn dump_state(
         &self,
         at: BlockEnv,

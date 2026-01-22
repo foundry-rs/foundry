@@ -3479,23 +3479,36 @@ impl Backend {
         }
 
         {
-            // Set state to common state
-            self.db.write().await.clear();
+            // Collect block hashes before acquiring db lock to avoid holding blockchain storage
+            // lock across await. Only collect the last 256 blocks since that's all BLOCKHASH can
+            // access.
+            let block_hashes: Vec<_> = {
+                let storage = self.blockchain.storage.read();
+                let min_block = common_block.header.number.saturating_sub(256);
+                storage
+                    .hashes
+                    .iter()
+                    .filter(|(num, _)| **num >= min_block)
+                    .map(|(&num, &hash)| (num, hash))
+                    .collect()
+            };
+
+            // Acquire db lock once for the entire restore operation to reduce lock churn.
+            let mut db = self.db.write().await;
+            db.clear();
+
+            // Insert account info before storage to prevent fork-mode RPC fetches after clear.
             for (address, acc) in common_state {
+                db.insert_account(address, acc.info);
                 for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
+                    db.set_storage_at(address, key.into(), value.into())?;
                 }
-                self.db.write().await.insert_account(address, acc.info);
             }
 
             // Restore block hashes from blockchain storage (now unwound, contains only valid
-            // blocks). Collect first to avoid holding the lock across await.
-            let block_hashes: Vec<_> = {
-                let storage = self.blockchain.storage.read();
-                storage.hashes.iter().map(|(&num, &hash)| (num, hash)).collect()
-            };
+            // blocks).
             for (block_num, hash) in block_hashes {
-                self.db.write().await.insert_block_hash(U256::from(block_num), hash);
+                db.insert_block_hash(U256::from(block_num), hash);
             }
         }
 
