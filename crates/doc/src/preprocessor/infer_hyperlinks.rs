@@ -96,7 +96,12 @@ impl InferInlineHyperlinks {
                             ));
                         }
                         // try to find the referenced item in the contract's children
-                        return Self::find_match(link, target_path, current_path, item.children.iter());
+                        return Self::find_match(
+                            link,
+                            target_path,
+                            current_path,
+                            item.children.iter(),
+                        );
                     }
                 }
                 ParseSource::Function(fun) => {
