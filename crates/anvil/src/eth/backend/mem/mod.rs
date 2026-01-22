@@ -3440,9 +3440,6 @@ impl Backend {
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
-        // Get the current best block number before rollback
-        let best_number = self.blockchain.storage.read().best_number;
-
         // Get the database at the common block
         let common_state = {
             let return_state_or_throw_err =
@@ -3463,6 +3460,15 @@ impl Backend {
             }
         };
 
+        // Collect block hashes that should be preserved (blocks 0 to common_block.number)
+        // before we clear the db cache
+        let preserved_hashes: Vec<(u64, B256)> = {
+            let storage = self.blockchain.storage.read();
+            (0..=common_block.header.number)
+                .filter_map(|num| storage.hashes.get(&num).map(|hash| (num, *hash)))
+                .collect()
+        };
+
         {
             // Set state to common state
             self.db.write().await.clear();
@@ -3473,10 +3479,10 @@ impl Backend {
                 self.db.write().await.insert_account(address, acc.info);
             }
 
-            // Remove stale block hashes for unwound blocks to ensure BLOCKHASH opcode
-            // returns correct values after reorg
-            for block_num in (common_block.header.number + 1)..=best_number {
-                self.db.write().await.remove_block_hash(U256::from(block_num));
+            // Restore block hashes for blocks that still exist after rollback
+            // This ensures BLOCKHASH opcode returns correct values
+            for (block_num, hash) in preserved_hashes {
+                self.db.write().await.insert_block_hash(U256::from(block_num), hash);
             }
         }
 
