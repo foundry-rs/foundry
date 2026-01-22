@@ -33,6 +33,10 @@ impl Db for MemDb {
         self.inner.cache.block_hashes.insert(number, hash);
     }
 
+    fn remove_block_hash(&mut self, number: U256) {
+        self.inner.cache.block_hashes.remove(&number);
+    }
+
     fn dump_state(
         &self,
         at: BlockEnv,

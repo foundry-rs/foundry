@@ -787,6 +787,46 @@ async fn flaky_test_reorg() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_blockhash_opcode_consistency() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(200) })).await.unwrap();
+
+    let tip_before_reorg = api.block_number().unwrap().to::<u64>();
+
+    let mut cached_hashes: Vec<(u64, alloy_primitives::B256, alloy_primitives::B256)> = Vec::new();
+    for i in 1..=10 {
+        let block_num = tip_before_reorg - i;
+        let rpc_hash = provider.get_block_by_number(block_num.into()).await.unwrap().unwrap().header.hash;
+        let opcode_hash = multicall.getBlockHash(U256::from(block_num)).call().await.unwrap().blockHash;
+        assert_eq!(rpc_hash, opcode_hash, "RPC and BLOCKHASH opcode should match before reorg");
+        cached_hashes.push((block_num, rpc_hash, opcode_hash));
+    }
+
+    let tx = TransactionRequest::default();
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+    })
+    .await
+    .unwrap();
+
+    api.mine_one().await;
+
+    for (block_num, _rpc_before, _opcode_before) in &cached_hashes {
+        let rpc_after = provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
+        let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap().blockHash;
+        assert_eq!(
+            rpc_after, opcode_after,
+            "Block {block_num}: RPC ({rpc_after}) and BLOCKHASH opcode ({opcode_after}) should match after reorg"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_rollback() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

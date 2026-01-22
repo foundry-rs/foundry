@@ -3440,6 +3440,9 @@ impl Backend {
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+        // Get the current best block number before rollback
+        let best_number = self.blockchain.storage.read().best_number;
+
         // Get the database at the common block
         let common_state = {
             let return_state_or_throw_err =
@@ -3468,6 +3471,12 @@ impl Backend {
                     self.db.write().await.set_storage_at(address, key.into(), value.into())?;
                 }
                 self.db.write().await.insert_account(address, acc.info);
+            }
+
+            // Remove stale block hashes for unwound blocks to ensure BLOCKHASH opcode
+            // returns correct values after reorg
+            for block_num in (common_block.header.number + 1)..=best_number {
+                self.db.write().await.remove_block_hash(U256::from(block_num));
             }
         }
 

@@ -139,6 +139,9 @@ pub trait Db:
     /// inserts a blockhash for the given number
     fn insert_block_hash(&mut self, number: U256, hash: B256);
 
+    /// removes a blockhash for the given number
+    fn remove_block_hash(&mut self, number: U256);
+
     /// Write all chain data to serialized bytes buffer
     fn dump_state(
         &self,
@@ -214,6 +217,10 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
         self.cache.block_hashes.insert(number, hash);
+    }
+
+    fn remove_block_hash(&mut self, number: U256) {
+        self.cache.block_hashes.remove(&number);
     }
 
     fn dump_state(
