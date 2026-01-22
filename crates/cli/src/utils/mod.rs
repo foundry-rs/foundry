@@ -87,8 +87,6 @@ pub fn subscriber() {
     let registry = tracing_subscriber::Registry::default().with(env_filter());
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
-    registry
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
     registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init()
 }
 
