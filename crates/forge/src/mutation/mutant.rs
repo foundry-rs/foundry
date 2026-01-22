@@ -316,7 +316,7 @@ impl Mutant {
 
     /// Returns a formatted Solidity diff showing the mutation.
     /// Format:
-    /// ```
+    /// ```text
     /// - original_code
     /// + mutated_code
     /// ```
