@@ -793,9 +793,7 @@ async fn test_reorg_blockhash_opcode_consistency() {
 
     let multicall = Multicall::deploy(&provider).await.unwrap();
 
-    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(200) }))
-        .await
-        .unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(200) })).await.unwrap();
 
     let tip_before_reorg = api.block_number().unwrap().to::<u64>();
 
@@ -820,15 +818,9 @@ async fn test_reorg_blockhash_opcode_consistency() {
     api.mine_one().await;
 
     for (block_num, _rpc_before, _opcode_before) in &cached_hashes {
-        let rpc_after = provider
-            .get_block_by_number((*block_num).into())
-            .await
-            .unwrap()
-            .unwrap()
-            .header
-            .hash;
-        let opcode_after =
-            multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap()._0;
+        let rpc_after =
+            provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
+        let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap()._0;
         assert_eq!(
             rpc_after, opcode_after,
             "Block {block_num}: RPC ({rpc_after}) and BLOCKHASH opcode ({opcode_after}) should match after reorg"
