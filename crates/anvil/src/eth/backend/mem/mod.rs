@@ -3489,9 +3489,12 @@ impl Backend {
             }
 
             // Restore block hashes from blockchain storage (now unwound, contains only valid
-            // blocks)
-            let storage = self.blockchain.storage.read();
-            for (&block_num, &hash) in &storage.hashes {
+            // blocks). Collect first to avoid holding the lock across await.
+            let block_hashes: Vec<_> = {
+                let storage = self.blockchain.storage.read();
+                storage.hashes.iter().map(|(&num, &hash)| (num, hash)).collect()
+            };
+            for (block_num, hash) in block_hashes {
                 self.db.write().await.insert_block_hash(U256::from(block_num), hash);
             }
         }
