@@ -38,17 +38,16 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
 
     let args = resolve_name_args(&args, provider).await;
 
-    if let Ok(data) = hex::decode(sig) {
-        return Ok((data, None));
+    match hex::decode(sig) {
+        Ok(data) => return Ok((data, None)),
+        Err(e) if sig.starts_with("0x") || sig.starts_with("0X") => {
+            eyre::bail!("Invalid hex calldata '{}': {e}", sig);
+        }
+        Err(_) => {}
     }
 
     let func = if sig.contains('(') {
         get_func(sig)?
-    } else if sig.starts_with("0x") || sig.starts_with("0X") {
-        eyre::bail!(
-            "Invalid hex calldata: '{}'. Hex strings must have an even number of digits (e.g., use '0x00' instead of '0x0').",
-            sig
-        );
     } else {
         match etherscan_api_key {
             Some(key) => {
