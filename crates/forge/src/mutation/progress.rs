@@ -27,7 +27,7 @@ impl MutationProgressState {
         let overall_progress = multi.add(ProgressBar::new(total_mutants as u64));
         overall_progress.set_style(
             ProgressStyle::with_template(
-                "{bar:40.cyan/blue} {pos:>4}/{len:4} runs ({prefix} jobs) {wide_msg}",
+                "{bar:40.cyan/blue} {pos:>4}/{len:4} mutation runs ({prefix} jobs) {wide_msg}",
             )
             .unwrap()
             .progress_chars("##-"),
