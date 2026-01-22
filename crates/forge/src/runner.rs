@@ -786,6 +786,7 @@ impl<'a> FunctionRunner<'a> {
                         call_details: CallDetails {
                             target: seq.addr.unwrap_or_default(),
                             calldata: seq.calldata.clone(),
+                            value: None,
                         },
                     }
                 })

@@ -1782,3 +1782,84 @@ Logs:
 ...
 "#]]);
 });
+
+// Test that invariant fuzzer generates random msg.value for payable functions.
+// Based on the example from https://github.com/foundry-rs/foundry/pull/8644
+forgetest_init!(invariant_msg_value, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(42u32));
+        config.invariant.runs = 200;
+        config.invariant.depth = 20;
+    });
+
+    prj.add_test(
+        "InvariantMsgValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ValueTarget {
+    bool public valueReceived;
+
+    // Payable function that tracks if any value was received
+    function deposit() external payable {
+        if (msg.value > 0) {
+            valueReceived = true;
+        }
+    }
+}
+
+contract InvariantMsgValue is Test {
+    ValueTarget target;
+    address sender1;
+    address sender2;
+
+    function setUp() public {
+        target = new ValueTarget();
+        // Create and fund specific senders
+        sender1 = makeAddr("sender1");
+        sender2 = makeAddr("sender2");
+        vm.deal(sender1, 1000 ether);
+        vm.deal(sender2, 1000 ether);
+        // Target only these funded senders
+        targetSender(sender1);
+        targetSender(sender2);
+        // Target only the ValueTarget contract
+        targetContract(address(target));
+    }
+
+    function invariant_value_never_received() public view {
+        require(!target.valueReceived(), "Value was received");
+    }
+}
+"#,
+    );
+
+    // The test should fail because the fuzzer generates msg.value > 0 for payable functions
+    // First check regular output format shows value=X
+    cmd.args(["test", "--mt", "invariant_value_never_received"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: Value was received]
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] addr=[test/InvariantMsgValue.t.sol:ValueTarget][..] value=[..] calldata=deposit() args=[]
+...
+"#]]);
+
+    // Now check solidity output format shows proper {value: X} syntax
+    cmd.forge_fuse().arg("clean").assert_success();
+    prj.update_config(|config| {
+        config.invariant.show_solidity = true;
+    });
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_value_never_received"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: Value was received]
+	[Sequence] (original: [..], shrunk: 1)
+		vm.prank([..]);
+		ValueTarget([..]).deposit{value: [..]}();
+...
+"#]]);
+});

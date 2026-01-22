@@ -43,7 +43,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::FuzzRunIdentifiedContracts,
-    strategies::{EvmFuzzState, mutate_param_value},
+    strategies::{EvmFuzzState, generate_msg_value, mutate_param_value},
 };
 use proptest::{
     prelude::{Just, Rng, Strategy},
@@ -560,12 +560,23 @@ impl WorkerCorpus {
 
                     new_seq = corpus.tx_seq.clone();
 
-                    let idx = rng.random_range(0..new_seq.len());
-                    let tx = new_seq.get_mut(idx).unwrap();
-                    if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        // TODO: add call_value to call details and mutate it as well as sender some
-                        // of the time.
-                        if !function.inputs.is_empty() {
+                    // 30% chance to mutate ALL calls in the sequence.
+                    // This helps break multi-constraint bugs where any call could hit the target.
+                    if rng.random_range(0..10) < 3 {
+                        for tx in &mut new_seq {
+                            if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+                                && !function.inputs.is_empty()
+                            {
+                                self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+                            }
+                        }
+                    } else {
+                        // Standard: mutate a single random call.
+                        let idx = rng.random_range(0..new_seq.len());
+                        let tx = new_seq.get_mut(idx).unwrap();
+                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+                            && !function.inputs.is_empty()
+                        {
                             self.abi_mutate(tx, function, test_runner, fuzz_state)?;
                         }
                     }
@@ -687,7 +698,26 @@ impl WorkerCorpus {
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
     ) -> Result<()> {
-        // let rng = test_runner.rng();
+        // Mutate sender with 15% probability using addresses from dictionary.
+        if test_runner.rng().random_ratio(15, 100) {
+            let dict = fuzz_state.dictionary_read();
+            let addresses = dict.addresses();
+            if !addresses.is_empty() {
+                let idx = test_runner.rng().random_range(0..addresses.len());
+                if let Some(&addr) = addresses.get_index(idx) {
+                    tx.sender = addr;
+                }
+            }
+        }
+
+        // Mutate value with 15% probability for payable functions.
+        if function.state_mutability == alloy_json_abi::StateMutability::Payable
+            && test_runner.rng().random_ratio(15, 100)
+        {
+            tx.call_details.value = Some(generate_msg_value(test_runner));
+        }
+
+        // Mutate calldata.
         let mut arg_mutation_rounds =
             test_runner.rng().random_range(0..=function.inputs.len()).max(1);
         let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
@@ -1104,6 +1134,7 @@ mod tests {
             call_details: foundry_evm_fuzz::CallDetails {
                 target: Address::ZERO,
                 calldata: Bytes::new(),
+                value: None,
             },
         }
     }
