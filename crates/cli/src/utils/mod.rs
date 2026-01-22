@@ -89,7 +89,7 @@ pub fn subscriber() {
     let registry = registry.with(tracing_tracy::TracyLayer::default());
     registry
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .init()
+    registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init()
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
