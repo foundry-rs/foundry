@@ -106,8 +106,7 @@ contract Derived is IBase {
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
     assert!(
-        content.contains("[IBase](/src/IBase.sol/interface.IBase.md")
-            || content.contains("[IBase](\\src\\IBase.sol\\interface.IBase.md"),
+        content.contains("[IBase](../IBase.sol/interface.IBase.md)"),
         "Hyperlink should use relative path but found: {:?}",
         content.lines().find(|line| line.contains("[IBase]")).unwrap_or("not found")
     );
