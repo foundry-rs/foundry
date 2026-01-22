@@ -3460,34 +3460,8 @@ impl Backend {
             }
         };
 
-        // Collect block hashes that should be preserved (blocks 0 to common_block.number)
-        // before we clear the db cache
-        let preserved_hashes: Vec<(u64, B256)> = {
-            let storage = self.blockchain.storage.read();
-            (0..=common_block.header.number)
-                .filter_map(|num| storage.hashes.get(&num).map(|hash| (num, *hash)))
-                .collect()
-        };
-
         {
-            // Set state to common state
-            self.db.write().await.clear();
-            for (address, acc) in common_state {
-                for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
-                }
-                self.db.write().await.insert_account(address, acc.info);
-            }
-
-            // Restore block hashes for blocks that still exist after rollback
-            // This ensures BLOCKHASH opcode returns correct values
-            for (block_num, hash) in preserved_hashes {
-                self.db.write().await.insert_block_hash(U256::from(block_num), hash);
-            }
-        }
-
-        {
-            // Unwind the storage back to the common ancestor
+            // Unwind the storage back to the common ancestor first
             self.blockchain
                 .storage
                 .write()
@@ -3503,6 +3477,25 @@ impl Backend {
 
             self.time.reset(env.evm_env.block_env.timestamp.saturating_to());
         }
+
+        {
+            // Set state to common state
+            self.db.write().await.clear();
+            for (address, acc) in common_state {
+                for (key, value) in acc.storage {
+                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
+                }
+                self.db.write().await.insert_account(address, acc.info);
+            }
+
+            // Restore block hashes from blockchain storage (now unwound, contains only valid
+            // blocks)
+            let storage = self.blockchain.storage.read();
+            for (&block_num, &hash) in &storage.hashes {
+                self.db.write().await.insert_block_hash(U256::from(block_num), hash);
+            }
+        }
+
         Ok(())
     }
 }
