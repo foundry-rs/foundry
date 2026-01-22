@@ -12,6 +12,9 @@ impl Mutator for DeleteExpressionMutator {
             span: ctxt.span,
             mutation: MutationType::DeleteExpression,
             path: ctxt.path.clone(),
+            original: ctxt.original_text(),
+            source_line: ctxt.source_line(),
+            line_number: ctxt.line_number(),
         }])
     }
 

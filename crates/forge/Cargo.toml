@@ -65,6 +65,7 @@ alloy-transport.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
+ctrlc = "3"
 dunce.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }

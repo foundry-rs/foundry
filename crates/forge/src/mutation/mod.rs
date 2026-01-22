@@ -1,5 +1,6 @@
 pub mod mutant;
 mod mutators;
+pub mod progress;
 mod reporter;
 pub mod runner;
 mod visitor;
@@ -18,8 +19,12 @@ use crate::mutation::{
 };
 
 pub use crate::mutation::{
+    progress::MutationProgress,
     reporter::MutationReporter,
-    runner::{MutantTestResult, ParallelMutationRunner, run_mutations_parallel},
+    runner::{
+        MutantTestResult, ParallelMutationRunner, run_mutations_parallel,
+        run_mutations_parallel_with_progress,
+    },
 };
 
 use crate::result::TestOutcome;
@@ -294,9 +299,10 @@ impl MutationHandler {
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            // Create visitor with adaptive span filter
+            // Create visitor with adaptive span filter and source code for original text
             let mut mutant_visitor = MutantVisitor::default(path.clone())
-                .with_span_filter(move |span| survived_spans_clone.should_skip(span));
+                .with_span_filter(move |span| survived_spans_clone.should_skip(span))
+                .with_source(&target_content);
             let _ = mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
             // Log skipped mutations for debugging

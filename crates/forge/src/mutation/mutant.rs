@@ -167,9 +167,17 @@ pub enum MutationType {
     Assignment(AssignVarTypes),
 
     /// For a binary op y in BinOpKind ("+", "-", ">=", etc)
-    /// replace y with each non-y in op
+    /// replace y with each non-y in op (legacy, kept for cache compatibility)
     #[serde(serialize_with = "serialize_binop", deserialize_with = "deserialize_binop")]
     BinaryOp(BinOpKind),
+
+    /// Binary operator mutation with full expression context
+    /// Stores both the new operator and the full mutated expression for display
+    BinaryOpExpr {
+        #[serde(serialize_with = "serialize_binop", deserialize_with = "deserialize_binop")]
+        new_op: BinOpKind,
+        mutated_expr: String,
+    },
 
     /// For a delete expr x `delete foo`, replace x with `assert(true)`
     DeleteExpression,
@@ -218,6 +226,7 @@ impl Display for MutationType {
                 AssignVarTypes::Identifier(ident) => write!(f, "{ident}"),
             },
             Self::BinaryOp(kind) => write!(f, "{}", kind.to_str()),
+            Self::BinaryOpExpr { mutated_expr, .. } => write!(f, "{mutated_expr}"),
             Self::DeleteExpression => write!(f, "assert(true)"),
             Self::ElimDelegate => write!(f, "call"),
             Self::UnaryOperator(mutated) => write!(f, "{mutated}"),
@@ -246,6 +255,15 @@ pub struct Mutant {
     #[serde(serialize_with = "serialize_span", deserialize_with = "deserialize_span")]
     pub span: Span,
     pub mutation: MutationType,
+    /// The original source text that will be replaced by this mutation
+    #[serde(default)]
+    pub original: String,
+    /// The full source line for context (e.g., "uint256 x = a * b;")
+    #[serde(default)]
+    pub source_line: String,
+    /// Line number in the source file (1-indexed)
+    #[serde(default)]
+    pub line_number: usize,
 }
 
 // Custom serialization for Span (since solar::parse::ast::Span doesn't implement Serialize)
@@ -276,15 +294,69 @@ where
     Ok(Span::new(BytePos(helper.lo), BytePos(helper.hi)))
 }
 
+impl Mutant {
+    /// Returns a relative path string (strips common prefixes like absolute paths)
+    pub fn relative_path(&self) -> String {
+        let path_str = self.path.display().to_string();
+        // Try to find src/, test/, or lib/ and show from there
+        for prefix in ["src/", "test/", "lib/", "contracts/"] {
+            if let Some(idx) = path_str.find(prefix) {
+                return path_str[idx..].to_string();
+            }
+        }
+        // Fallback to just filename
+        self.path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string()
+    }
+
+    /// Compute line number from byte position given the source content
+    pub fn line_number(&self, source: &str) -> usize {
+        let pos = self.span.lo().0 as usize;
+        source.get(..pos).map(|s| s.lines().count()).unwrap_or(1).max(1)
+    }
+
+    /// Returns a formatted Solidity diff showing the mutation.
+    /// Format:
+    /// ```
+    /// - original_code
+    /// + mutated_code
+    /// ```
+    pub fn format_diff(&self) -> String {
+        let original =
+            if self.original.is_empty() { "<unknown>".to_string() } else { self.original.clone() };
+        let mutated = self.mutation.to_string();
+
+        format!("- {}\n+ {}", original.trim(), mutated.trim())
+    }
+
+    /// Returns a concise one-line description of the mutation (full original code)
+    pub fn short_description(&self) -> String {
+        let original = if self.original.is_empty() {
+            "<unknown>".to_string()
+        } else {
+            self.original.trim().to_string()
+        };
+        let mutated = self.mutation.to_string();
+
+        format!("`{}` → `{}`", original, mutated.trim())
+    }
+
+    /// Returns a description with line context
+    pub fn description_with_context(&self) -> String {
+        let mutation_desc = self.short_description();
+        if self.source_line.is_empty() {
+            mutation_desc
+        } else {
+            format!("{}\n     in: {}", mutation_desc, self.source_line)
+        }
+    }
+}
+
 impl Display for Mutant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}-{}:{}",
-            self.path.display(),
-            self.span.lo().0,
-            self.span.hi().0,
-            self.mutation
-        )
+        if self.line_number > 0 {
+            write!(f, "{}:{}: {}", self.relative_path(), self.line_number, self.short_description())
+        } else {
+            write!(f, "{}: {}", self.relative_path(), self.short_description())
+        }
     }
 }

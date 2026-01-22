@@ -17,6 +17,10 @@ impl Mutator for AssignmentMutator {
             None => return Ok(vec![]), // is_applicable should filter this
         };
 
+        let original = context.original_text();
+        let source_line = context.source_line();
+        let line_number = context.line_number();
+
         match assign_var_type {
             AssignVarTypes::Literal(lit) => match lit {
                 OwnedLiteral::Bool(val) => Ok(vec![Mutant {
@@ -25,6 +29,9 @@ impl Mutator for AssignmentMutator {
                         OwnedLiteral::Bool(!val),
                     )),
                     path: context.path.clone(),
+                    original,
+                    source_line,
+                    line_number,
                 }]),
                 OwnedLiteral::Number(val) => Ok(vec![
                     Mutant {
@@ -33,6 +40,9 @@ impl Mutator for AssignmentMutator {
                             OwnedLiteral::Number(U256::ZERO),
                         )),
                         path: context.path.clone(),
+                        original: original.clone(),
+                        source_line: source_line.clone(),
+                        line_number,
                     },
                     Mutant {
                         span: replacement_span,
@@ -40,6 +50,9 @@ impl Mutator for AssignmentMutator {
                             OwnedLiteral::Number(-val),
                         )),
                         path: context.path.clone(),
+                        original,
+                        source_line,
+                        line_number,
                     },
                 ]),
                 // todo: should we bail instead of returning an empty vec?
@@ -55,6 +68,9 @@ impl Mutator for AssignmentMutator {
                         OwnedLiteral::Number(U256::ZERO),
                     )),
                     path: context.path.clone(),
+                    original: original.clone(),
+                    source_line: source_line.clone(),
+                    line_number,
                 },
                 Mutant {
                     span: replacement_span,
@@ -62,6 +78,9 @@ impl Mutator for AssignmentMutator {
                         "-{ident}"
                     ))),
                     path: context.path.clone(),
+                    original,
+                    source_line,
+                    line_number,
                 },
             ]),
         }

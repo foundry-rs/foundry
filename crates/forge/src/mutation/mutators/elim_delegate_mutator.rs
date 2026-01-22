@@ -13,6 +13,9 @@ impl Mutator for ElimDelegateMutator {
             span: context.span,
             mutation: MutationType::ElimDelegate,
             path: context.path.clone(),
+            original: context.original_text(),
+            source_line: context.source_line(),
+            line_number: context.line_number(),
         }])
     }
 

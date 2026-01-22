@@ -47,6 +47,10 @@ impl Mutator for UnaryOperatorMutator {
             _ => String::new(),
         };
 
+        let original = context.original_text();
+        let source_line = context.source_line();
+        let line_number = context.line_number();
+
         // Bool has only the Not operator as possible target -> we try removing it
         if op == UnOpKind::Not {
             return Ok(vec![Mutant {
@@ -56,6 +60,9 @@ impl Mutator for UnaryOperatorMutator {
                     UnOpKind::Not,
                 )),
                 path: context.path.clone(),
+                original,
+                source_line,
+                line_number,
             }]);
         }
 
@@ -73,6 +80,9 @@ impl Mutator for UnaryOperatorMutator {
                     span: expr.span,
                     mutation: MutationType::UnaryOperator(mutated),
                     path: context.path.clone(),
+                    original: original.clone(),
+                    source_line: source_line.clone(),
+                    line_number,
                 }
             })
             .collect();
@@ -87,6 +97,9 @@ impl Mutator for UnaryOperatorMutator {
                     span: expr.span,
                     mutation: MutationType::UnaryOperator(mutated),
                     path: context.path.clone(),
+                    original: original.clone(),
+                    source_line: source_line.clone(),
+                    line_number,
                 }
             },
         ));

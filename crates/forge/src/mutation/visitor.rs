@@ -17,15 +17,17 @@ pub enum AssignVarTypes {
 }
 
 /// A visitor which collect all expression to mutate as well as the mutation types
-pub struct MutantVisitor {
+pub struct MutantVisitor<'src> {
     pub mutation_to_conduct: Vec<Mutant>,
     pub mutator_registry: MutatorRegistry,
     pub path: PathBuf,
     pub span_filter: Option<Box<dyn Fn(Span) -> bool>>,
     pub skipped_count: usize,
+    /// Source code for extracting original text
+    pub source: Option<&'src str>,
 }
 
-impl MutantVisitor {
+impl<'src> MutantVisitor<'src> {
     /// Use all mutator from registry::default
     pub fn default(path: PathBuf) -> Self {
         Self {
@@ -34,6 +36,7 @@ impl MutantVisitor {
             path,
             span_filter: None,
             skipped_count: 0,
+            source: None,
         }
     }
 
@@ -46,6 +49,7 @@ impl MutantVisitor {
             path,
             span_filter: None,
             skipped_count: 0,
+            source: None,
         }
     }
 
@@ -57,9 +61,15 @@ impl MutantVisitor {
         self.span_filter = Some(Box::new(filter));
         self
     }
+
+    /// Set the source code for extracting original text
+    pub fn with_source(mut self, source: &'src str) -> Self {
+        self.source = Some(source);
+        self
+    }
 }
 
-impl<'ast> Visit<'ast> for MutantVisitor {
+impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
     type BreakValue = ();
 
     fn visit_variable_definition(
@@ -74,12 +84,16 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             return self.walk_variable_definition(var);
         }
 
-        let context = MutationContext::builder()
+        let mut builder = MutationContext::builder()
             .with_path(self.path.clone())
             .with_span(var.span)
-            .with_var_definition(var)
-            .build()
-            .unwrap();
+            .with_var_definition(var);
+
+        if let Some(src) = self.source {
+            builder = builder.with_source(src);
+        }
+
+        let context = builder.build().unwrap();
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
         self.walk_variable_definition(var)
@@ -94,12 +108,16 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             return self.walk_expr(expr);
         }
 
-        let context = MutationContext::builder()
+        let mut builder = MutationContext::builder()
             .with_path(self.path.clone())
             .with_span(expr.span)
-            .with_expr(expr)
-            .build()
-            .unwrap();
+            .with_expr(expr);
+
+        if let Some(src) = self.source {
+            builder = builder.with_source(src);
+        }
+
+        let context = builder.build().unwrap();
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
         self.walk_expr(expr)

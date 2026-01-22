@@ -5,8 +5,8 @@ use crate::{
     gas_report::GasReport,
     multi_runner::matches_artifact,
     mutation::{
-        MutationHandler, MutationReporter, MutationsSummary, mutant::MutationResult,
-        run_mutations_parallel,
+        MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
+        mutant::MutationResult, run_mutations_parallel_with_progress,
     },
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
@@ -494,11 +494,15 @@ impl TestArgs {
                 std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
             });
 
-            sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
+            if !self.show_progress {
+                sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
+            }
             let mut mutation_summary = MutationsSummary::new();
 
             for path in mutate_paths {
-                sh_println!("Running mutation tests for {}", path.display())?;
+                if !self.show_progress {
+                    sh_println!("Running mutation tests for {}", path.display())?;
+                }
 
                 // Check if this file has already been tested and if the build id is the
                 // same - if so, just add the mutants to the summary
@@ -514,7 +518,9 @@ impl TestArgs {
                 // If we have cached results for these mutations and build id, use them and skip
                 // running tests
                 if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id) {
-                    sh_println!("  Using cached results for {} mutants", prior.len())?;
+                    if !self.show_progress {
+                        sh_println!("  Using cached results for {} mutants", prior.len())?;
+                    }
                     for (mutant, status) in prior {
                         match status {
                             MutationResult::Dead => handler.add_dead_mutant(mutant),
@@ -539,7 +545,9 @@ impl TestArgs {
                 };
 
                 if mutants.is_empty() {
-                    sh_println!("  No mutants generated for {}", path.display())?;
+                    if !self.show_progress {
+                        sh_println!("  No mutants generated for {}", path.display())?;
+                    }
                     continue;
                 }
 
@@ -553,10 +561,21 @@ impl TestArgs {
                     }
                 });
 
-                sh_println!("  Generated {} mutants, testing in parallel...", mutants.len())?;
+                // Create progress display if enabled
+                let progress = if self.show_progress {
+                    let p = MutationProgress::new(mutants.len(), num_workers);
+                    // Show relative path from project root
+                    let display_path =
+                        path.strip_prefix(&config.root).unwrap_or(&path).display().to_string();
+                    p.set_current_file(&display_path);
+                    Some(p)
+                } else {
+                    sh_println!("  Generated {} mutants, testing in parallel...", mutants.len())?;
+                    None
+                };
 
                 // Run mutations in parallel using isolated workspaces
-                let results = run_mutations_parallel(
+                let results = run_mutations_parallel_with_progress(
                     mutants.clone(),
                     path.clone(),
                     handler.src.clone(),
@@ -564,6 +583,7 @@ impl TestArgs {
                     evm_opts.clone(),
                     env.clone(),
                     num_workers,
+                    progress.clone(),
                 )?;
 
                 // Collect results for caching
@@ -589,6 +609,14 @@ impl TestArgs {
                 }
 
                 mutation_summary.merge(handler.get_report());
+
+                // If cancelled, show report and exit
+                if let Some(ref p) = progress
+                    && p.is_cancelled()
+                {
+                    MutationReporter::new().report(&mutation_summary);
+                    std::process::exit(130);
+                }
             }
 
             MutationReporter::new().report(&mutation_summary);

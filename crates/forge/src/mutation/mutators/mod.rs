@@ -27,6 +27,46 @@ pub struct MutationContext<'a> {
     pub expr: Option<&'a Expr<'a>>,
 
     pub var_definition: Option<&'a VariableDefinition<'a>>,
+
+    /// The full source code (used to extract original text for mutations)
+    pub source: Option<&'a str>,
+}
+
+impl MutationContext<'_> {
+    /// Extract the original source text covered by this context's span
+    pub fn original_text(&self) -> String {
+        self.source
+            .and_then(|src| {
+                let lo = self.span.lo().0 as usize;
+                let hi = self.span.hi().0 as usize;
+                src.get(lo..hi).map(|s| s.to_string())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get the line number (1-indexed) for this context's span
+    pub fn line_number(&self) -> usize {
+        self.source
+            .map(|src| {
+                let pos = self.span.lo().0 as usize;
+                src.get(..pos).map(|s| s.lines().count()).unwrap_or(0).max(1)
+            })
+            .unwrap_or(1)
+    }
+
+    /// Get the full source line containing this span
+    pub fn source_line(&self) -> String {
+        self.source
+            .and_then(|src| {
+                let pos = self.span.lo().0 as usize;
+                // Find line start
+                let line_start = src[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                // Find line end
+                let line_end = src[pos..].find('\n').map(|i| pos + i).unwrap_or(src.len());
+                src.get(line_start..line_end).map(|s| s.trim().to_string())
+            })
+            .unwrap_or_default()
+    }
 }
 
 impl<'a> MutationContext<'a> {
@@ -40,12 +80,19 @@ pub struct MutationContextBuilder<'a> {
     span: Option<Span>,
     expr: Option<&'a Expr<'a>>,
     var_definition: Option<&'a VariableDefinition<'a>>,
+    source: Option<&'a str>,
 }
 
 impl<'a> MutationContextBuilder<'a> {
     // Create a new empty builder
     pub fn new() -> Self {
-        MutationContextBuilder { path: None, span: None, expr: None, var_definition: None }
+        MutationContextBuilder {
+            path: None,
+            span: None,
+            expr: None,
+            var_definition: None,
+            source: None,
+        }
     }
 
     // Required
@@ -72,11 +119,23 @@ impl<'a> MutationContextBuilder<'a> {
         self
     }
 
+    // Optional - provide source code for extracting original text
+    pub fn with_source(mut self, source: &'a str) -> Self {
+        self.source = Some(source);
+        self
+    }
+
     pub fn build(self) -> Result<MutationContext<'a>, &'static str> {
         let span = self.span.ok_or("Span is required for MutationContext")?;
         let path = self.path.ok_or("Path is required for MutationContext")?;
 
-        Ok(MutationContext { path, span, expr: self.expr, var_definition: self.var_definition })
+        Ok(MutationContext {
+            path,
+            span,
+            expr: self.expr,
+            var_definition: self.var_definition,
+            source: self.source,
+        })
     }
 }
 

@@ -95,3 +95,45 @@ contract SimpleTest {
     cmd.args(["test", "--mutate", "src/Simple.sol", "--mutation-jobs", "4"]);
     cmd.assert_success();
 });
+
+forgetest_init!(mutation_testing_with_show_progress, |prj, cmd| {
+    prj.add_source(
+        "Simple.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Simple {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Simple.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Simple.sol";
+
+contract SimpleTest {
+    Simple public simple;
+
+    function setUp() public {
+        simple = new Simple();
+    }
+
+    function test_Add() public {
+        assert(simple.add(1, 2) == 3);
+    }
+}
+"#,
+    );
+
+    // Run mutation testing with progress display
+    cmd.args(["test", "--mutate", "src/Simple.sol", "--show-progress", "--mutation-jobs", "2"]);
+    cmd.assert_success();
+});

@@ -1,19 +1,17 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
 use eyre::{OptionExt, Result};
-use solar::ast::{BinOp, BinOpKind, ExprKind};
+use solar::ast::{BinOp, BinOpKind, Expr, ExprKind, Span};
 
 pub struct BinaryOpMutator;
 
-// @todo Add the other way to get there
-
 impl Mutator for BinaryOpMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
-        let bin_op = get_bin_op(context)?;
+        let expr = context.expr.ok_or_eyre("BinaryOpMutator: no expression")?;
+        let (bin_op, _op_span, lhs, rhs) = get_bin_op_parts(expr)?;
         let op = bin_op.kind;
 
         let operations_bools = vec![
-            // Bool
             BinOpKind::Lt,
             BinOpKind::Le,
             BinOpKind::Gt,
@@ -22,13 +20,9 @@ impl Mutator for BinaryOpMutator {
             BinOpKind::Ne,
             BinOpKind::Or,
             BinOpKind::And,
-        ]; // this cover the "if" mutations, as every other mutant is tested, at least once
-        // @todo to optimize -> replace whole stmt (need new visitor override for visit_stmt tho)
-        // with true/false and skip operations_bools here (mayve some "level"/depth of
-        // mutation as param?)
+        ];
 
         let operations_num_bitwise = vec![
-            // Arithm
             BinOpKind::Shr,
             BinOpKind::Shl,
             BinOpKind::Sar,
@@ -46,13 +40,36 @@ impl Mutator for BinaryOpMutator {
         let operations =
             if operations_bools.contains(&op) { operations_bools } else { operations_num_bitwise };
 
+        // Extract LHS and RHS text from source
+        let source = context.source.unwrap_or("");
+        let lhs_text = extract_span_text(source, lhs.span);
+        let rhs_text = extract_span_text(source, rhs.span);
+        let op_str = op.to_str();
+
+        // Build original expression: "lhs op rhs"
+        let original_expr = format!("{lhs_text} {op_str} {rhs_text}");
+
+        // Use the full expression span for the mutation (not just the operator span)
+        let expr_span = context.span;
+
+        // Get line context
+        let source_line = context.source_line();
+        let line_number = context.line_number();
+
         Ok(operations
             .into_iter()
             .filter(|&kind| kind != op)
-            .map(|kind| Mutant {
-                span: context.span,
-                mutation: MutationType::BinaryOp(kind),
-                path: context.path.clone(),
+            .map(|kind| {
+                // Build mutated expression: "lhs new_op rhs"
+                let mutated_expr = format!("{} {} {}", lhs_text, kind.to_str(), rhs_text);
+                Mutant {
+                    span: expr_span,
+                    mutation: MutationType::BinaryOpExpr { new_op: kind, mutated_expr },
+                    path: context.path.clone(),
+                    original: original_expr.clone(),
+                    source_line: source_line.clone(),
+                    line_number,
+                }
             })
             .collect())
     }
@@ -70,12 +87,18 @@ impl Mutator for BinaryOpMutator {
     }
 }
 
-fn get_bin_op(ctxt: &MutationContext<'_>) -> Result<BinOp> {
-    let expr = ctxt.expr.ok_or_eyre("BinaryOpMutator: unexpected expression")?;
-
-    match expr.kind {
-        ExprKind::Assign(_, Some(bin_op), _) => Ok(bin_op),
-        ExprKind::Binary(_, op, _) => Ok(op),
+/// Extract the binary operator, its span, and LHS/RHS expressions
+fn get_bin_op_parts<'a>(expr: &'a Expr<'a>) -> Result<(BinOp, Span, &'a Expr<'a>, &'a Expr<'a>)> {
+    match &expr.kind {
+        ExprKind::Assign(lhs, Some(bin_op), rhs) => Ok((*bin_op, bin_op.span, lhs, rhs)),
+        ExprKind::Binary(lhs, op, rhs) => Ok((*op, op.span, lhs, rhs)),
         _ => eyre::bail!("BinaryOpMutator: unexpected expression kind"),
     }
+}
+
+/// Extract text from source given a span
+fn extract_span_text(source: &str, span: Span) -> String {
+    let lo = span.lo().0 as usize;
+    let hi = span.hi().0 as usize;
+    source.get(lo..hi).map(|s| s.trim().to_string()).unwrap_or_default()
 }

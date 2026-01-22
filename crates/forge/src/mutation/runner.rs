@@ -8,6 +8,7 @@ use crate::{
     mutation::{
         MutationHandler, MutationsSummary, SurvivedSpans,
         mutant::{Mutant, MutationResult},
+        progress::MutationProgress,
     },
     result::SuiteResult,
 };
@@ -24,7 +25,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use tempfile::TempDir;
@@ -51,6 +52,10 @@ pub struct SharedMutationState {
     /// Progress counter.
     pub completed: AtomicUsize,
     pub total: AtomicUsize,
+    /// Cancellation flag (Ctrl+C)
+    pub cancelled: AtomicBool,
+    /// Optional progress display
+    pub progress: Option<MutationProgress>,
 }
 
 impl SharedMutationState {
@@ -59,6 +64,29 @@ impl SharedMutationState {
             survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
+            cancelled: AtomicBool::new(false),
+            progress: None,
+        }
+    }
+
+    pub fn with_progress(progress: MutationProgress) -> Self {
+        Self {
+            survived_spans: Mutex::new(SurvivedSpans::new()),
+            completed: AtomicUsize::new(0),
+            total: AtomicUsize::new(0),
+            cancelled: AtomicBool::new(false),
+            progress: Some(progress),
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        if let Some(ref progress) = self.progress {
+            progress.cancel();
         }
     }
 
@@ -199,15 +227,46 @@ pub fn run_mutations_parallel(
     env: Env,
     num_workers: usize,
 ) -> Result<Vec<MutantTestResult>> {
+    run_mutations_parallel_with_progress(
+        mutants,
+        source_path,
+        original_source,
+        config,
+        evm_opts,
+        env,
+        num_workers,
+        None,
+    )
+}
+
+/// Run mutation tests in parallel with optional progress display.
+#[allow(clippy::too_many_arguments)]
+pub fn run_mutations_parallel_with_progress(
+    mutants: Vec<Mutant>,
+    source_path: PathBuf,
+    original_source: Arc<String>,
+    config: Arc<Config>,
+    evm_opts: EvmOpts,
+    env: Env,
+    num_workers: usize,
+    progress: Option<MutationProgress>,
+) -> Result<Vec<MutantTestResult>> {
     let total = mutants.len();
     if total == 0 {
         return Ok(vec![]);
     }
 
-    let shared_state = Arc::new(SharedMutationState::new());
+    let shared_state = Arc::new(if let Some(p) = progress {
+        SharedMutationState::with_progress(p)
+    } else {
+        SharedMutationState::new()
+    });
     shared_state.total.store(total, Ordering::SeqCst);
 
-    let _ = sh_println!("Running {} mutants in parallel with {} workers", total, num_workers);
+    // Only print if no progress bar
+    if shared_state.progress.is_none() {
+        let _ = sh_println!("Running {} mutants in parallel with {} workers", total, num_workers);
+    }
 
     // Get relative path of source within project - MUST be relative for safety
     // Canonicalize paths to handle relative vs absolute path comparisons
@@ -240,6 +299,14 @@ pub fn run_mutations_parallel(
         num_workers
     };
 
+    // Set up Ctrl+C handler - signal cancellation so loop can exit gracefully
+    if shared_state.progress.is_some() {
+        let state_for_ctrlc = Arc::clone(&shared_state);
+        let _ = ctrlc::set_handler(move || {
+            state_for_ctrlc.cancel();
+        });
+    }
+
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
@@ -247,33 +314,64 @@ pub fn run_mutations_parallel(
         .build()
         .map_err(|e| eyre::eyre!("Failed to create thread pool: {}", e))?;
 
-    let results: Vec<MutantTestResult> = pool.install(|| {
-        mutants
-            .into_par_iter()
-            .map(|mutant| {
-                // Wrap in catch_unwind to prevent one panic from aborting the entire run
-                let mutant_clone = mutant.clone();
-                let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    test_single_mutant_isolated(
-                        mutant,
-                        &source_relative,
-                        &original_source,
-                        &config,
-                        &evm_opts,
-                        &env,
-                        &shared_state,
-                    )
-                }));
-                match result {
-                    Ok(r) => r,
-                    Err(_) => {
+    // Use a thread-safe collection to store results as they complete
+    let completed_results: Arc<Mutex<Vec<MutantTestResult>>> =
+        Arc::new(Mutex::new(Vec::with_capacity(total)));
+
+    pool.install(|| {
+        mutants.into_par_iter().for_each(|mutant| {
+            // Skip if cancelled
+            if shared_state.is_cancelled() {
+                return;
+            }
+
+            // Wrap in catch_unwind to prevent one panic from aborting the entire run
+            let mutant_clone = mutant.clone();
+            let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                test_single_mutant_isolated(
+                    mutant,
+                    &source_relative,
+                    &original_source,
+                    &config,
+                    &evm_opts,
+                    &env,
+                    &shared_state,
+                )
+            }));
+
+            let test_result = match result {
+                Ok(r) => r,
+                Err(_) => {
+                    if shared_state.progress.is_none() {
                         let _ = sh_eprintln!("Panic while testing mutant: {}", mutant_clone);
-                        MutantTestResult { mutant: mutant_clone, result: MutationResult::Invalid }
                     }
+                    MutantTestResult { mutant: mutant_clone, result: MutationResult::Invalid }
                 }
-            })
-            .collect()
+            };
+
+            // Store result immediately
+            if let Ok(mut results) = completed_results.lock() {
+                results.push(test_result);
+            }
+        });
     });
+
+    // Extract results
+    let results = Arc::try_unwrap(completed_results)
+        .map(|m| m.into_inner().unwrap_or_default())
+        .unwrap_or_default();
+
+    // Clear progress and handle cancellation
+    if let Some(ref progress) = shared_state.progress {
+        progress.clear();
+        if shared_state.is_cancelled() {
+            let _ = sh_println!(
+                "\nMutation testing cancelled. Showing results for {} completed mutants.\n",
+                results.len()
+            );
+            // Return results so report is shown, then caller should exit
+        }
+    }
 
     Ok(results)
 }
@@ -290,19 +388,28 @@ fn test_single_mutant_isolated(
 ) -> MutantTestResult {
     // Check if we should skip this mutant based on adaptive span tracking
     if shared_state.should_skip_span(mutant.span) {
-        let completed = shared_state.increment_completed();
-        let total = shared_state.total.load(Ordering::SeqCst);
-        let _ = sh_println!(
-            "[{}/{}] Skipping mutant (adaptive: span already has surviving mutation)",
-            completed,
-            total
-        );
+        if let Some(ref progress) = shared_state.progress {
+            progress.complete_mutant(&mutant, &MutationResult::Skipped);
+        } else {
+            let completed = shared_state.increment_completed();
+            let total = shared_state.total.load(Ordering::SeqCst);
+            let _ = sh_println!(
+                "[{}/{}] Skipping mutant (adaptive: span already has surviving mutation)",
+                completed,
+                total
+            );
+        }
         return MutantTestResult { mutant, result: MutationResult::Skipped };
     }
 
-    let completed = shared_state.increment_completed();
-    let total = shared_state.total.load(Ordering::SeqCst);
-    let _ = sh_println!("[{}/{}] Testing mutant: {}", completed, total, mutant);
+    // Show progress or log
+    if let Some(ref progress) = shared_state.progress {
+        progress.start_mutant(&mutant);
+    } else {
+        let completed = shared_state.increment_completed();
+        let total = shared_state.total.load(Ordering::SeqCst);
+        let _ = sh_println!("[{}/{}] Testing mutant: {}", completed, total, mutant);
+    }
 
     // Create isolated workspace using TempDir for automatic cleanup on drop
     let temp_dir = match TempDir::with_prefix("forge_mutation_") {
@@ -371,6 +478,11 @@ fn test_single_mutant_isolated(
         }
         Err(_) => MutationResult::Invalid,
     };
+
+    // Update progress
+    if let Some(ref progress) = shared_state.progress {
+        progress.complete_mutant(&mutant, &result);
+    }
 
     // TempDir automatically cleans up on drop
     MutantTestResult { mutant, result }
