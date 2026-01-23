@@ -18,13 +18,12 @@ contract GetCodeTest is Test {
         // Use full path to avoid ambiguity with other Counter contracts in testdata
         assertEq(vm.getCode("multi-version/Counter.sol:Counter"), type(Counter).creationCode);
         require(
-            keccak256(vm.getCode("multi-version/Counter.sol:Counter")) !=
-                keccak256(vm.getCode("multi-version/Counter.sol:Counter:0.8.17")),
+            keccak256(vm.getCode("multi-version/Counter.sol:Counter"))
+                != keccak256(vm.getCode("multi-version/Counter.sol:Counter:0.8.17")),
             "Invalid artifact"
         );
         assertEq(
-            vm.getCode("multi-version/Counter.sol:Counter"),
-            vm.getCode("multi-version/Counter.sol:Counter:0.8.18")
+            vm.getCode("multi-version/Counter.sol:Counter"), vm.getCode("multi-version/Counter.sol:Counter:0.8.18")
         );
     }
 }
