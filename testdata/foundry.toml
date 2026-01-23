@@ -29,6 +29,8 @@ additional_compiler_profiles = [
 compilation_restrictions = [
     # paris
     { paths = "paris/**", evm_version = "paris" },
+    # multi-profile test contracts compiled with all profiles
+    { paths = "multi-profile/**", via_ir = false, profiles = ["default", "optimized", "unoptimized"] },
 ]
 
 ffi = true
