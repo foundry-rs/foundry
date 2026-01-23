@@ -2,7 +2,7 @@ use crate::executors::{
     EarlyExit, Executor,
     invariant::{call_after_invariant_function, call_invariant_function, execute_tx},
 };
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, I256, U256};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::constants::MAGIC_ASSUME;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
@@ -32,64 +32,109 @@ impl CallSequenceShrinker {
     }
 }
 
+/// Shrinks a call sequence to find the shortest sequence that reproduces the failure
+/// or (for optimization mode) produces the target value.
+///
+/// For check mode (target_value=None): finds shortest sequence that still fails the invariant.
+/// For optimization mode (target_value=Some): finds shortest sequence that produces the target value.
 pub(crate) fn shrink_sequence(
     config: &InvariantConfig,
     invariant_contract: &InvariantContract<'_>,
     calls: &[BasicTxDetails],
     executor: &Executor,
+    target_value: Option<I256>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
-    trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
+    let is_optimization = target_value.is_some();
+    trace!(target: "forge::test", "Shrinking sequence of {} calls (optimization: {}).", calls.len(), is_optimization);
 
-    // Reset run count and display shrinking message.
     if let Some(progress) = progress {
         progress.set_length(config.shrink_run_limit as u64);
         progress.reset();
-        progress.set_message(" Shrink");
+        progress.set_message(if is_optimization { " Shrink (optimization)" } else { " Shrink" });
     }
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = invariant_contract.invariant_function.selector().to_vec().into();
-    // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
-    // break the invariant -- consider emitting a warning.
-    let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
-    if !success {
-        return Ok(vec![]);
+
+    // Check if empty sequence already satisfies the shrink goal.
+    if is_optimization {
+        let initial_value =
+            check_sequence_value(executor.clone(), &[], vec![], target_address, calldata.clone())?;
+        if initial_value == target_value {
+            return Ok(vec![]);
+        }
+
+        // Verify the full sequence produces the target value.
+        // If not, we can't shrink - just return the original sequence.
+        let full_seq_value = check_sequence_value(
+            executor.clone(),
+            calls,
+            (0..calls.len()).collect(),
+            target_address,
+            calldata.clone(),
+        )?;
+        if full_seq_value != target_value {
+            warn!(target: "forge::test", "Optimization shrink: full sequence of {} calls doesn't reproduce target value {:?}, got {:?}.", calls.len(), target_value, full_seq_value);
+            return Ok(calls.to_vec());
+        }
+    } else {
+        let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
+        if !success {
+            return Ok(vec![]);
+        }
     }
 
     let mut call_idx = 0;
-
     let mut shrinker = CallSequenceShrinker::new(calls.len());
+
     for _ in 0..config.shrink_run_limit {
         if early_exit.should_stop() {
             break;
         }
 
-        // Remove call at current index.
         shrinker.included_calls.clear(call_idx);
 
-        match check_sequence(
-            executor.clone(),
-            calls,
-            shrinker.current().collect(),
-            target_address,
-            calldata.clone(),
-            config.fail_on_revert,
-            invariant_contract.call_after_invariant,
-        ) {
-            // If candidate sequence still fails, shrink until shortest possible.
-            Ok((false, _)) if shrinker.included_calls.count() == 1 => break,
-            // Restore last removed call as it caused sequence to pass invariant.
-            Ok((true, _)) => shrinker.included_calls.set(call_idx),
-            _ => {}
+        let should_keep_removal = if is_optimization {
+            // For optimization: check if sequence still produces target value.
+            let value = check_sequence_value(
+                executor.clone(),
+                calls,
+                shrinker.current().collect(),
+                target_address,
+                calldata.clone(),
+            )?;
+            value == target_value
+        } else {
+            // For check mode: check if sequence still fails.
+            match check_sequence(
+                executor.clone(),
+                calls,
+                shrinker.current().collect(),
+                target_address,
+                calldata.clone(),
+                config.fail_on_revert,
+                invariant_contract.call_after_invariant,
+            ) {
+                Ok((false, _)) => true,  // Still fails, keep removal
+                Ok((true, _)) => false,  // Now passes, restore call
+                _ => false,
+            }
+        };
+
+        if should_keep_removal {
+            if shrinker.included_calls.count() == 1 {
+                break;
+            }
+        } else {
+            shrinker.included_calls.set(call_idx);
         }
 
         if let Some(progress) = progress {
             progress.inc(1);
         }
 
-        // Restart from first call once we reach the end of sequence.
         if call_idx + 1 == shrinker.call_sequence_len {
             call_idx = 0;
         } else {
@@ -97,7 +142,33 @@ pub(crate) fn shrink_sequence(
         };
     }
 
-    Ok(shrinker.current().map(|idx| &calls[idx]).cloned().collect())
+    // Build the shrunk sequence, accumulating warps/rolls from removed calls.
+    // When a call is removed, its warp/roll should be added to the next kept call
+    // so that the sequence reproduces the same block environment.
+    let kept_indices: Vec<usize> = shrinker.current().collect();
+    let mut result = Vec::with_capacity(kept_indices.len());
+    let mut accumulated_warp: Option<U256> = None;
+    let mut accumulated_roll: Option<U256> = None;
+
+    for (call_idx, call) in calls.iter().enumerate() {
+        // Accumulate warp/roll from all calls (kept or removed).
+        if let Some(warp) = call.warp {
+            accumulated_warp = Some(accumulated_warp.unwrap_or_default() + warp);
+        }
+        if let Some(roll) = call.roll {
+            accumulated_roll = Some(accumulated_roll.unwrap_or_default() + roll);
+        }
+
+        // If this call is kept, add it with accumulated warp/roll.
+        if kept_indices.contains(&call_idx) {
+            let mut kept_call = call.clone();
+            kept_call.warp = accumulated_warp.take();
+            kept_call.roll = accumulated_roll.take();
+            result.push(kept_call);
+        }
+    }
+
+    Ok(result)
 }
 
 /// Checks if the given call sequence breaks the invariant.
@@ -139,4 +210,65 @@ pub fn check_sequence(
     }
 
     Ok((success, true))
+}
+
+/// Executes a call sequence and returns the optimization value from the invariant function.
+/// Returns None if the invariant call fails or can't be decoded.
+///
+/// The `sequence` parameter contains indices of calls to actually execute.
+/// Warps/rolls from ALL calls are applied to maintain consistent block environment,
+/// but only non-reverted calls in `sequence` affect state.
+pub fn check_sequence_value(
+    mut executor: Executor,
+    calls: &[BasicTxDetails],
+    sequence: Vec<usize>,
+    test_address: Address,
+    calldata: Bytes,
+) -> eyre::Result<Option<I256>> {
+    // Convert sequence to a set for O(1) lookup.
+    let sequence_set: std::collections::HashSet<usize> = sequence.iter().copied().collect();
+
+    // Apply the call sequence, but always apply warps/rolls even for skipped calls.
+    for (call_index, tx) in calls.iter().enumerate() {
+        // Always apply warp/roll to maintain consistent block environment.
+        if let Some(warp) = tx.warp {
+            executor.env_mut().evm_env.block_env.timestamp += warp;
+        }
+        if let Some(roll) = tx.roll {
+            executor.env_mut().evm_env.block_env.number += roll;
+        }
+
+        // Only execute calls that are in the sequence.
+        if sequence_set.contains(&call_index) {
+            // Update inspector's block env before the call.
+            let block_env = executor.env().evm_env.block_env.clone();
+            executor.inspector_mut().set_block(&block_env);
+
+            let mut call_result = executor.call_raw(
+                tx.sender,
+                tx.call_details.target,
+                tx.call_details.calldata.clone(),
+                U256::ZERO,
+            )?;
+
+            // In optimization mode, reverted calls are kept in the sequence for their warp/roll
+            // values, but we skip committing their state changes.
+            if !call_result.reverted {
+                executor.commit(&mut call_result);
+            }
+        }
+    }
+
+    // Call the optimization invariant and decode the value.
+    let (call_result, success) = call_invariant_function(&executor, test_address, calldata)?;
+    if !success {
+        return Ok(None);
+    }
+
+    // Decode int256 from result.
+    if call_result.result.len() >= 32 {
+        Ok(I256::try_from_be_slice(&call_result.result[..32]))
+    } else {
+        Ok(None)
+    }
 }
