@@ -991,6 +991,118 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
+// Tests that call_override detects the classic DAO-style reentrancy vulnerability
+// in EtherStore where balances are updated AFTER the external call.
+forgetest!(invariant_reentrancy_ether_store, |prj, cmd| {
+    prj.insert_utils();
+    prj.update_config(|config| {
+        config.invariant.depth = 15;
+        config.invariant.fail_on_revert = false;
+        config.invariant.call_override = true;
+    });
+
+    prj.add_test(
+        "InvariantReentrancyEtherStore.t.sol",
+        r#"
+import "./utils/Test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+// Classic reentrancy-vulnerable contract
+contract EtherStore {
+    mapping(address => uint256) public balances;
+
+    function deposit() public payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    function withdraw() public {
+        uint256 bal = balances[msg.sender];
+        require(bal > 0);
+        // BUG: External call before state update
+        (bool sent,) = msg.sender.call{value: bal}("");
+        require(sent, "Failed to send Ether");
+        balances[msg.sender] = 0;
+    }
+}
+
+contract InvariantReentrancyEtherStore is Test {
+    EtherStore store;
+    address attacker;
+
+    function setUp() public {
+        store = new EtherStore();
+        attacker = address(0x1337);
+
+        vm.deal(address(this), 10 ether);
+        store.deposit{value: 5 ether}();
+
+        // Attacker gets 2 ether, deposits 1 ether, keeps 1 ether in wallet.
+        // After withdrawing their deposit, attacker wallet balance cannot exceed 2 ether.
+        vm.deal(attacker, 2 ether);
+        vm.prank(attacker);
+        store.deposit{value: 1 ether}();
+    }
+
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(store);
+        return targets;
+    }
+
+    function targetSenders() public view returns (address[] memory) {
+        address[] memory senders = new address[](1);
+        senders[0] = attacker;
+        return senders;
+    }
+
+    function targetSelectors() public view returns (FuzzSelector[] memory) {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = EtherStore.withdraw.selector;
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        targets[0] = FuzzSelector(address(store), selectors);
+        return targets;
+    }
+
+    // Attacker should never have more than 2 ether (1 kept + 1 withdrawn)
+    function invariantSolvency() public view {
+        require(attacker.balance <= 2 ether, "reentrancy: attacker wallet > 2 ether");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+Ran 1 test for test/InvariantReentrancyEtherStore.t.sol:InvariantReentrancyEtherStore
+[FAIL: reentrancy: attacker wallet > 2 ether]
+	[SEQUENCE]
+ invariantSolvency() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantReentrancyEtherStore.t.sol:InvariantReentrancyEtherStore
+[FAIL: reentrancy: attacker wallet > 2 ether]
+	[SEQUENCE]
+ invariantSolvency() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
 forgetest_init!(invariant_roll_fork, |prj, cmd| {
     prj.add_rpc_endpoints();
     prj.update_config(|config| {
