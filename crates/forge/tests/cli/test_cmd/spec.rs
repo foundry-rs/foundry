@@ -29,10 +29,12 @@ contract TestEvmVersionPreserved is Test {
         assertEq(vm.getEvmVersion(), "shanghai", "evm version should remain shanghai after fork");
     }
 }
-   "#.replace("<rpc>", &endpoint),
+   "#
+        .replace("<rpc>", &endpoint),
     );
 
-    cmd.args(["test", "--mc", "TestEvmVersionPreserved", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "TestEvmVersionPreserved", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -47,7 +49,8 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
-"#]]);
+"#]],
+    );
 });
 
 // Test evm version switch during tests / scripts.
