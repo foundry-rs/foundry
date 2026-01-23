@@ -21,6 +21,10 @@ extra_output = ["storageLayout"]
 additional_compiler_profiles = [
     # paris
     { name = "paris", evm_version = "paris" },
+    # optimized - high optimizer runs for production
+    { name = "optimized", optimizer = true, optimizer_runs = 10000 },
+    # unoptimized - no optimization for debugging
+    { name = "unoptimized", optimizer = false },
 ]
 compilation_restrictions = [
     # paris

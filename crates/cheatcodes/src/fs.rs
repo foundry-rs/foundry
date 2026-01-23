@@ -542,18 +542,26 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                             .running_artifact
                             .as_ref()
                             .and_then(|running| {
-                                // Firstly filter by version
-                                filtered.retain(|(id, _)| id.version == running.version);
+                                // Only filter by running version if user did NOT specify a version
+                                if version.is_none() {
+                                    filtered.retain(|(id, _)| id.version == running.version);
 
-                                // Return artifact if only one matched
-                                if filtered.len() == 1 {
-                                    return Some(filtered[0]);
+                                    // Return artifact if only one matched
+                                    if filtered.len() == 1 {
+                                        return Some(filtered[0]);
+                                    }
                                 }
 
-                                // Try filtering by profile as well
-                                filtered.retain(|(id, _)| id.profile == running.profile);
+                                // Only filter by running profile if user did NOT specify a profile
+                                if profile.is_none() {
+                                    filtered.retain(|(id, _)| id.profile == running.profile);
 
-                                if filtered.len() == 1 { Some(filtered[0]) } else { None }
+                                    if filtered.len() == 1 {
+                                        return Some(filtered[0]);
+                                    }
+                                }
+
+                                None
                             })
                             .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
                     )
