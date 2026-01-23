@@ -630,4 +630,28 @@ mod tests {
         let result2 = next_nonce(addr, url, None).await;
         assert!(result2.is_ok(), "subsequent nonce fetch should also succeed");
     }
+
+    /// Tests that Ethereum mainnet RPC (which supports `pending` block tag) works without fallback.
+    ///
+    /// This test is flaky because it depends on external infrastructure.
+    #[tokio::test]
+    #[ignore = "flaky: depends on external RPC"]
+    async fn flaky_next_nonce_pending_supported_on_mainnet() {
+        // Ethereum mainnet RPC (reth) supports pending block tag
+        let url = "https://reth-ethereum.ithaca.xyz/rpc";
+        let addr = Address::ZERO;
+
+        // Clear any previous state for this URL
+        pending_unsupported().write().remove(url);
+
+        // Call should succeed using pending
+        let result = next_nonce(addr, url, None).await;
+        assert!(result.is_ok(), "nonce fetch should succeed with pending");
+
+        // URL should NOT be in the unsupported cache (pending worked)
+        assert!(
+            !pending_unsupported().read().contains(url),
+            "Mainnet RPC should support pending and not be cached as unsupported"
+        );
+    }
 }
