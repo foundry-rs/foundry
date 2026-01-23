@@ -281,11 +281,69 @@ corpus_min_size = 0
 show_edge_coverage = false
 
 [fmt]
-line_length = 100
-tab_width = 2
-bracket_spacing = true
-# Globs to ignore when formatting (useful for vendored files)
-ignore = ["src/vendor/**/*.sol", "lib/**/*.sol"]
+# Maximum line length where the formatter will try to wrap the line.
+# default: 120
+line_length = 120
+# Number of spaces per indentation level. Ignored if `style = "tab"`.
+# default: 4
+tab_width = 4
+# Indentation style: "space" or "tab"
+# default: "space"
+style = "space"
+# Print spaces between brackets.
+# default: false
+bracket_spacing = false
+# Style of uint/int256 types: "preserve", "long", "short"
+# default: "long"
+int_types = "long"
+# Style of multiline function headers when the header does not fit on one line.
+# possible values: "params_always", "params_first_multi", "attributes_first", "all", "all_params"
+# default: "attributes_first"
+multiline_func_header = "attributes_first"
+# Style of quotation marks: "preserve", "double", "single"
+# default: "double"
+quote_style = "double"
+# Style of underscores in decimal number literals: "preserve", "remove", "thousands"
+# default: "preserve"
+number_underscore = "preserve"
+# Style of underscores in hex literals: "preserve", "remove", "bytes"
+# default: "remove"
+hex_underscore = "remove"
+# Style of single-line blocks in statements: "preserve", "single", "multi"
+# default: "preserve"
+single_line_statement_blocks = "preserve"
+# Print space in state variable, function and modifier `override` attribute.
+# default: false
+override_spacing = false
+# Wrap comments when `line_length` is reached.
+# default: false
+wrap_comments = false
+# Style of doc comments: "preserve", "line", "block"
+# default: "preserve"
+docs_style = "preserve"
+# Globs to ignore when formatting (useful for vendored files).
+# default: []
+ignore = []
+# Add a new line at start and end of contract declarations.
+# default: false
+contract_new_lines = false
+# Sort import statements alphabetically in groups (groups are separated by a blank line).
+# default: false
+sort_imports = false
+# Choose between `import "a" as name` and `import * as name from "a"`.
+# possible values: "prefer_plain", "prefer_glob", "preserve"
+# default: "prefer_plain"
+namespace_import_style = "prefer_plain"
+# Whether to suppress spaces around the power operator (`**`).
+# default: false
+pow_no_space = false
+# When a list breaks, prefer keeping elements together on their own lines before breaking individually.
+# possible values: "none", "calls", "events", "errors", "events_errors", "all"
+# default: "all"
+prefer_compact = "all"
+# Keep single imports on a single line even if they exceed `line_length`.
+# default: false
+single_line_imports = false
 ```
 
 #### Additional Optimizer settings
