@@ -20,7 +20,7 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, filter::GlobMatcher};
 use foundry_evm::{Env, opts::EvmOpts};
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 /// Configuration for mutation testing run.
 pub struct MutationConfig {
@@ -81,6 +81,7 @@ pub async fn run_mutation_testing(
 
     let mut mutation_summary = MutationsSummary::new();
     let mut cancelled = false;
+    let start_time = Instant::now();
 
     for path in mutate_paths {
         if !mutation_config.show_progress {
@@ -201,7 +202,8 @@ pub async fn run_mutation_testing(
     }
 
     // Report results
-    MutationReporter::new().report(&mutation_summary);
+    let duration = start_time.elapsed();
+    MutationReporter::new().report(&mutation_summary, duration);
 
     Ok(MutationRunResult { summary: mutation_summary, cancelled })
 }

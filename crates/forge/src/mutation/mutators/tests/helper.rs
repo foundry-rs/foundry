@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 pub struct MutatorTestCase<'a> {
     /// Source code to test - should be valid Solidity code
-    /// e.g., `"// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract C { function f() { x = 1; } }"`
+    /// e.g., `"// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract C { function f()
+    /// { x = 1; } }"`
     pub input: &'a str,
     /// All the mutations expected for this input, using this mutator
     pub expected_mutations: Option<Vec<&'static str>>,

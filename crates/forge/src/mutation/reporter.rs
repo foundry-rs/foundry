@@ -1,5 +1,6 @@
 use crate::mutation::{MutationsSummary, mutant::Mutant};
 use comfy_table::{Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
+use std::time::Duration;
 use yansi::Paint;
 
 pub struct MutationReporter {
@@ -27,7 +28,7 @@ impl MutationReporter {
         Self { table }
     }
 
-    pub fn report(&mut self, summary: &MutationsSummary) {
+    pub fn report(&mut self, summary: &MutationsSummary, duration: Duration) {
         let total = summary.total_mutants();
         if total == 0 {
             let _ = sh_println!("No mutants were generated.");
@@ -46,6 +47,25 @@ impl MutationReporter {
 
         let _ = sh_println!("\n{}\n", self.table);
 
+        // Legend explaining each status
+        let _ = sh_println!("{}", Paint::dim("Legend:"));
+        let _ = sh_println!(
+            "  {} - Mutant survived: tests did not catch this mutation (potential gap)",
+            Paint::red("Survived")
+        );
+        let _ = sh_println!(
+            "  {} - Mutant killed: tests caught this mutation (good coverage)",
+            Paint::green("Killed")
+        );
+        let _ = sh_println!(
+            "  {} - Mutant invalid: mutation caused compilation error",
+            Paint::dim("Invalid")
+        );
+        let _ = sh_println!(
+            "  {} - Mutant skipped: redundant mutation on same expression\n",
+            Paint::yellow("Skipped")
+        );
+
         // Mutation score with color
         let score = summary.mutation_score();
         let score_display = format!("{score:.1}%");
@@ -57,11 +77,19 @@ impl MutationReporter {
             Paint::red(&score_display).bold()
         };
 
+        // Format duration similar to test output
+        let duration_str = if duration.as_secs() >= 60 {
+            format!("{}m {:.2}s", duration.as_secs() / 60, duration.as_secs_f64() % 60.0)
+        } else {
+            format!("{:.2}s", duration.as_secs_f64())
+        };
+
         let _ = sh_println!(
-            "Mutation Score: {} ({}/{} mutants killed)",
+            "Mutation Score: {} ({}/{} mutants killed); finished in {}",
             score_colored,
             summary.total_dead(),
-            summary.total_dead() + summary.total_survived()
+            summary.total_dead() + summary.total_survived(),
+            duration_str
         );
 
         // Survived mutants section - the most important for developers

@@ -15,6 +15,8 @@ mod core;
 mod fuzz;
 mod invariant;
 mod logs;
+
+mod mutation;
 mod repros;
 mod spec;
 mod table;

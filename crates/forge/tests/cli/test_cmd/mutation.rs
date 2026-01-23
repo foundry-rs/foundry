@@ -73,7 +73,13 @@ MUTATION TESTING RESULTS
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 
-Mutation Score: 80.0% (4/5 mutants killed)
+Legend:
+  Survived - Mutant survived: tests did not catch this mutation (potential gap)
+  Killed - Mutant killed: tests caught this mutation (good coverage)
+  Invalid - Mutant invalid: mutation caused compilation error
+  Skipped - Mutant skipped: redundant mutation on same expression
+
+Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 ⚠ SURVIVED MUTANTS (test suite gaps)
@@ -156,7 +162,13 @@ MUTATION TESTING RESULTS
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 
-Mutation Score: 80.0% (8/10 mutants killed)
+Legend:
+  Survived - Mutant survived: tests did not catch this mutation (potential gap)
+  Killed - Mutant killed: tests caught this mutation (good coverage)
+  Invalid - Mutant invalid: mutation caused compilation error
+  Skipped - Mutant skipped: redundant mutation on same expression
+
+Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 ⚠ SURVIVED MUTANTS (test suite gaps)
@@ -242,7 +254,13 @@ MUTATION TESTING RESULTS
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 
-Mutation Score: 80.0% (8/10 mutants killed)
+Legend:
+  Survived - Mutant survived: tests did not catch this mutation (potential gap)
+  Killed - Mutant killed: tests caught this mutation (good coverage)
+  Invalid - Mutant invalid: mutation caused compilation error
+  Skipped - Mutant skipped: redundant mutation on same expression
+
+Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
 ⚠ SURVIVED MUTANTS (test suite gaps)
