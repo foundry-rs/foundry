@@ -199,6 +199,15 @@ pub enum MutationType {
     // expression to handle increment etc
     Require,
 
+    /// For require(condition)/assert(condition), mutate the condition:
+    /// - require(x) -> require(true) (always passes - security critical!)
+    /// - require(x) -> require(false) (always fails)
+    /// - require(x) -> require(!x) (inverted condition)
+    RequireCondition {
+        /// The mutated full call expression
+        mutated_call: String,
+    },
+
     // @todo review if needed -> this might creates *a lot* of combinations for super-polyadic fn
     // tho       only swapping same type (to avoid obvious compilation failure), but should
     // take into account       implicit casting too...
@@ -230,6 +239,7 @@ impl Display for MutationType {
             Self::DeleteExpression => write!(f, "assert(true)"),
             Self::ElimDelegate => write!(f, "call"),
             Self::UnaryOperator(mutated) => write!(f, "{mutated}"),
+            Self::RequireCondition { mutated_call } => write!(f, "{mutated_call}"),
 
             Self::FunctionCall
             | Self::Require
