@@ -578,3 +578,54 @@ impl BundledState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_unsupported_cache_is_initialized() {
+        let cache = pending_unsupported();
+        assert!(cache.read().is_empty());
+    }
+
+    #[test]
+    fn pending_unsupported_cache_memoizes() {
+        let cache = pending_unsupported();
+        let url = "http://test-provider-1.local:8545";
+
+        assert!(!cache.read().contains(url));
+
+        cache.write().insert(url.to_string());
+        assert!(cache.read().contains(url));
+
+        // Different URL should not be affected
+        assert!(!cache.read().contains("http://other-provider.local:8545"));
+    }
+
+    #[tokio::test]
+    async fn next_nonce_with_explicit_block_number() {
+        // When block_number is provided, it should be used directly
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let url = &handle.http_endpoint();
+        let addr = Address::ZERO;
+
+        // Should not error with explicit block number
+        let result = next_nonce(addr, url, Some(0)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn next_nonce_uses_pending_on_anvil() {
+        // Anvil supports pending, so this should work without fallback
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let url = &handle.http_endpoint();
+        let addr = Address::ZERO;
+
+        let result = next_nonce(addr, url, None).await;
+        assert!(result.is_ok());
+
+        // Anvil supports pending, so it should NOT be in the unsupported cache
+        assert!(!pending_unsupported().read().contains(url));
+    }
+}
