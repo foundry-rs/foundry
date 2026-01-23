@@ -301,13 +301,24 @@ pub fn run_mutations_parallel_with_progress(
         num_workers
     };
 
-    // Set up Ctrl+C handler - signal cancellation so loop can exit gracefully
-    if shared_state.progress.is_some() {
+    // Set up Ctrl+C handler using a background thread with tokio signal
+    // This replaces ctrlc crate with tokio's built-in signal handling
+    let ctrlc_handle = if shared_state.progress.is_some() {
         let state_for_ctrlc = Arc::clone(&shared_state);
-        let _ = ctrlc::set_handler(move || {
-            state_for_ctrlc.cancel();
-        });
-    }
+        Some(std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime for signal handler");
+            rt.block_on(async {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    state_for_ctrlc.cancel();
+                }
+            });
+        }))
+    } else {
+        None
+    };
 
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
@@ -374,6 +385,10 @@ pub fn run_mutations_parallel_with_progress(
             // Return results so report is shown, then caller should exit
         }
     }
+
+    // The signal handler thread will exit when the program exits,
+    // no need to join it since it's waiting on a signal that won't come after cancellation
+    drop(ctrlc_handle);
 
     Ok(results)
 }
