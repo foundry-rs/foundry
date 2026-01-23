@@ -408,9 +408,12 @@ fn deploy_code(
 /// - `path/to/contract.sol`
 /// - `path/to/contract.sol:ContractName`
 /// - `path/to/contract.sol:ContractName:0.8.23`
+/// - `path/to/contract.sol:ContractName:profile`
 /// - `path/to/contract.sol:0.8.23`
+/// - `path/to/contract.sol:profile`
 /// - `ContractName`
 /// - `ContractName:0.8.23`
+/// - `ContractName:profile`
 ///
 /// This function is safe to use with contracts that have library dependencies.
 /// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
@@ -424,21 +427,38 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
         let mut file = None;
         let mut contract_name = None;
         let mut version = None;
+        let mut profile = None;
 
         let path_or_name = parts.next().unwrap();
         if path_or_name.contains('.') {
             file = Some(PathBuf::from(path_or_name));
-            if let Some(name_or_version) = parts.next() {
-                if name_or_version.contains('.') {
-                    version = Some(name_or_version);
+            if let Some(name_or_version_or_profile) = parts.next() {
+                if name_or_version_or_profile.contains('.') {
+                    version = Some(name_or_version_or_profile);
+                } else if Version::parse(name_or_version_or_profile).is_ok() {
+                    version = Some(name_or_version_or_profile);
                 } else {
-                    contract_name = Some(name_or_version);
-                    version = parts.next();
+                    contract_name = Some(name_or_version_or_profile);
+                    if let Some(version_or_profile) = parts.next() {
+                        if version_or_profile.contains('.')
+                            || Version::parse(version_or_profile).is_ok()
+                        {
+                            version = Some(version_or_profile);
+                        } else {
+                            profile = Some(version_or_profile);
+                        }
+                    }
                 }
             }
         } else {
             contract_name = Some(path_or_name);
-            version = parts.next();
+            if let Some(version_or_profile) = parts.next() {
+                if version_or_profile.contains('.') || Version::parse(version_or_profile).is_ok() {
+                    version = Some(version_or_profile);
+                } else {
+                    profile = Some(version_or_profile);
+                }
+            }
         }
 
         let version = if let Some(version) = version {
@@ -469,6 +489,11 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         && (id.version.minor != version.minor
                             || id.version.major != version.major
                             || id.version.patch != version.patch)
+                    {
+                        return false;
+                    }
+                    if let Some(ref profile) = profile
+                        && id.profile != *profile
                     {
                         return false;
                     }
