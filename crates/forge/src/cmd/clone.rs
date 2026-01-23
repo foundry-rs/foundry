@@ -731,7 +731,7 @@ impl SourcifyClient {
 /// Sourcify API response for contract files.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-#[allow(dead_code, clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant)]
 enum SourcifyContractResponse {
     Success(SourcifyContractData),
     Error(SourcifyErrorResponse),
@@ -747,38 +747,7 @@ struct SourcifyContractData {
     #[serde(default)]
     compilation: Option<SourcifyCompilation>,
     #[serde(default)]
-    #[allow(dead_code)]
-    creation_code: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    deployed_bytecode: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    runtime_bytecode: Option<String>,
-    #[serde(default)]
     deployment: Option<SourcifyDeployment>,
-    // Additional fields that may be present in the response
-    #[serde(default)]
-    #[allow(dead_code)]
-    match_id: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    creation_match: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    runtime_match: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    verified_at: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    r#match: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    chain_id: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    address: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -815,14 +784,6 @@ struct SourcifyErrorResponse {
     custom_code: String,
     #[serde(default)]
     message: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    error_id: String,
-    // Error responses should not have sources field
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[allow(dead_code)]
-    sources: Option<()>,
 }
 
 impl ExplorerClient for SourcifyClient {
@@ -860,7 +821,7 @@ impl ExplorerClient for SourcifyClient {
                 let truncated = if response_text.len() > 500 {
                     format!("{}... (truncated)", &response_text[..500])
                 } else {
-                    response_text.clone()
+                    response_text
                 };
                 EtherscanError::Unknown(format!(
                     "Failed to parse Sourcify response: {e}. Response: {truncated}"
