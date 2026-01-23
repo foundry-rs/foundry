@@ -110,7 +110,6 @@ reqwest = { workspace = true, features = ["json"] }
 
 mockall = "0.14"
 globset = "0.4"
-paste = "1.0"
 rstest = "0.25.0"
 similar-asserts.workspace = true
 svm.workspace = true

@@ -4219,7 +4219,6 @@ dependencies = [
  "mockall",
  "opener",
  "parking_lot",
- "paste",
  "path-slash",
  "proptest",
  "quick-junit",

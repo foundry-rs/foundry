@@ -69,6 +69,7 @@ impl MutationContext<'_> {
 }
 
 impl<'a> MutationContext<'a> {
+    #[must_use]
     pub fn builder() -> MutationContextBuilder<'a> {
         MutationContextBuilder::new()
     }

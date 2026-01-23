@@ -12,8 +12,7 @@ use crate::mutation::{
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AssignVarTypes {
     Literal(OwnedLiteral),
-    Identifier(String), /* not using Ident as the symbol is slow to convert as to_str() <--
-                         * maybe will have to switch back if validating more aggressively */
+    Identifier(String),
 }
 
 /// A visitor which collect all expression to mutate as well as the mutation types
@@ -23,7 +22,6 @@ pub struct MutantVisitor<'src> {
     pub path: PathBuf,
     pub span_filter: Option<Box<dyn Fn(Span) -> bool>>,
     pub skipped_count: usize,
-    /// Source code for extracting original text
     pub source: Option<&'src str>,
 }
 
