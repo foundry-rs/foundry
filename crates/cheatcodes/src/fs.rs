@@ -433,9 +433,9 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
         if path_or_name.contains('.') {
             file = Some(PathBuf::from(path_or_name));
             if let Some(name_or_version_or_profile) = parts.next() {
-                if name_or_version_or_profile.contains('.') {
-                    version = Some(name_or_version_or_profile);
-                } else if Version::parse(name_or_version_or_profile).is_ok() {
+                if name_or_version_or_profile.contains('.')
+                    || Version::parse(name_or_version_or_profile).is_ok()
+                {
                     version = Some(name_or_version_or_profile);
                 } else {
                     contract_name = Some(name_or_version_or_profile);
@@ -492,8 +492,8 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                     {
                         return false;
                     }
-                    if let Some(ref profile) = profile
-                        && id.profile != *profile
+                    if let Some(profile) = profile
+                        && id.profile != profile
                     {
                         return false;
                     }
