@@ -628,4 +628,33 @@ mod tests {
         // Anvil supports pending, so it should NOT be in the unsupported cache
         assert!(!pending_unsupported().read().contains(url));
     }
+
+    /// Tests that Base mainnet RPC (which doesn't support `pending` block tag on standard endpoints)
+    /// triggers the fallback to `latest` and gets memoized.
+    ///
+    /// This test is flaky because it depends on external infrastructure.
+    #[tokio::test]
+    #[ignore = "flaky: depends on external RPC"]
+    async fn flaky_next_nonce_fallback_on_base() {
+        // Base standard RPC doesn't support pending block tag (only Flashblocks-aware RPCs do)
+        let url = "https://mainnet.base.org";
+        let addr = Address::ZERO;
+
+        // Clear any previous state for this URL
+        pending_unsupported().write().remove(url);
+
+        // First call should try pending, fail, and fall back to latest
+        let result = next_nonce(addr, url, None).await;
+        assert!(result.is_ok(), "nonce fetch should succeed via fallback");
+
+        // URL should now be in the unsupported cache
+        assert!(
+            pending_unsupported().read().contains(url),
+            "Base RPC should be marked as not supporting pending"
+        );
+
+        // Second call should skip pending entirely (memoized)
+        let result2 = next_nonce(addr, url, None).await;
+        assert!(result2.is_ok(), "subsequent nonce fetch should also succeed");
+    }
 }
