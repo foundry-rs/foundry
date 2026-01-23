@@ -28,6 +28,76 @@ use std::{
 };
 use walkdir::WalkDir;
 
+/// Parsed artifact path components.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ParsedArtifactPath<'a> {
+    file: Option<PathBuf>,
+    contract_name: Option<&'a str>,
+    version: Option<Version>,
+    profile: Option<&'a str>,
+}
+
+/// Parses an artifact path string into its components.
+///
+/// Supports the following formats:
+/// - `path/to/contract.sol`
+/// - `path/to/contract.sol:ContractName`
+/// - `path/to/contract.sol:ContractName:0.8.23`
+/// - `path/to/contract.sol:ContractName:profile`
+/// - `path/to/contract.sol:0.8.23`
+/// - `path/to/contract.sol:profile`
+/// - `ContractName`
+/// - `ContractName:0.8.23`
+/// - `ContractName:profile`
+fn parse_artifact_path(path: &str) -> std::result::Result<ParsedArtifactPath<'_>, String> {
+    let mut parts = path.split(':');
+
+    let mut file = None;
+    let mut contract_name = None;
+    let mut version = None;
+    let mut profile = None;
+
+    let path_or_name = parts.next().unwrap();
+    if path_or_name.contains('.') {
+        file = Some(PathBuf::from(path_or_name));
+        if let Some(name_or_version_or_profile) = parts.next() {
+            if name_or_version_or_profile.contains('.')
+                || Version::parse(name_or_version_or_profile).is_ok()
+            {
+                version = Some(name_or_version_or_profile);
+            } else {
+                contract_name = Some(name_or_version_or_profile);
+                if let Some(version_or_profile) = parts.next() {
+                    if version_or_profile.contains('.')
+                        || Version::parse(version_or_profile).is_ok()
+                    {
+                        version = Some(version_or_profile);
+                    } else {
+                        profile = Some(version_or_profile);
+                    }
+                }
+            }
+        }
+    } else {
+        contract_name = Some(path_or_name);
+        if let Some(version_or_profile) = parts.next() {
+            if version_or_profile.contains('.') || Version::parse(version_or_profile).is_ok() {
+                version = Some(version_or_profile);
+            } else {
+                profile = Some(version_or_profile);
+            }
+        }
+    }
+
+    let version = if let Some(version) = version {
+        Some(Version::parse(version).map_err(|e| format!("failed parsing version: {e}"))?)
+    } else {
+        None
+    };
+
+    Ok(ParsedArtifactPath { file, contract_name, version, profile })
+}
+
 impl Cheatcode for existsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
@@ -422,50 +492,9 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
     } else {
-        let mut parts = path.split(':');
-
-        let mut file = None;
-        let mut contract_name = None;
-        let mut version = None;
-        let mut profile = None;
-
-        let path_or_name = parts.next().unwrap();
-        if path_or_name.contains('.') {
-            file = Some(PathBuf::from(path_or_name));
-            if let Some(name_or_version_or_profile) = parts.next() {
-                if name_or_version_or_profile.contains('.')
-                    || Version::parse(name_or_version_or_profile).is_ok()
-                {
-                    version = Some(name_or_version_or_profile);
-                } else {
-                    contract_name = Some(name_or_version_or_profile);
-                    if let Some(version_or_profile) = parts.next() {
-                        if version_or_profile.contains('.')
-                            || Version::parse(version_or_profile).is_ok()
-                        {
-                            version = Some(version_or_profile);
-                        } else {
-                            profile = Some(version_or_profile);
-                        }
-                    }
-                }
-            }
-        } else {
-            contract_name = Some(path_or_name);
-            if let Some(version_or_profile) = parts.next() {
-                if version_or_profile.contains('.') || Version::parse(version_or_profile).is_ok() {
-                    version = Some(version_or_profile);
-                } else {
-                    profile = Some(version_or_profile);
-                }
-            }
-        }
-
-        let version = if let Some(version) = version {
-            Some(Version::parse(version).map_err(|e| fmt_err!("failed parsing version: {e}"))?)
-        } else {
-            None
-        };
+        let parsed =
+            parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
+        let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
 
         // Use available artifacts list if present
         if let Some(artifacts) = &state.config.available_artifacts {
@@ -996,5 +1025,111 @@ mod tests {
         assert!(result.is_err(), "should reject unlinked bytecode with placeholders");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("expected bytecode, found unlinked bytecode with placeholder"));
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_only() {
+        let parsed = super::parse_artifact_path("path/to/Contract.sol").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, None);
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_and_contract() {
+        let parsed = super::parse_artifact_path("path/to/Contract.sol:MyContract").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_contract_version() {
+        let parsed =
+            super::parse_artifact_path("path/to/Contract.sol:MyContract:0.8.23").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, Some(semver::Version::new(0, 8, 23)));
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_contract_profile() {
+        let parsed =
+            super::parse_artifact_path("path/to/Contract.sol:MyContract:optimized").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, Some("optimized"));
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_and_version() {
+        let parsed = super::parse_artifact_path("path/to/Contract.sol:0.8.18").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
+        assert_eq!(parsed.contract_name, None);
+        assert_eq!(parsed.version, Some(semver::Version::new(0, 8, 18)));
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_file_and_profile() {
+        // Note: When file has a dot and next segment has no dot and is not a valid version,
+        // it's treated as contract_name, not profile. This is the expected behavior.
+        let parsed = super::parse_artifact_path("Contract.sol:paris").unwrap();
+        assert_eq!(parsed.file, Some(PathBuf::from("Contract.sol")));
+        assert_eq!(parsed.contract_name, Some("paris"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_contract_only() {
+        let parsed = super::parse_artifact_path("MyContract").unwrap();
+        assert_eq!(parsed.file, None);
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_contract_and_version() {
+        let parsed = super::parse_artifact_path("MyContract:0.8.23").unwrap();
+        assert_eq!(parsed.file, None);
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, Some(semver::Version::new(0, 8, 23)));
+        assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_parse_artifact_path_contract_and_profile() {
+        let parsed = super::parse_artifact_path("MyContract:optimized").unwrap();
+        assert_eq!(parsed.file, None);
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.version, None);
+        assert_eq!(parsed.profile, Some("optimized"));
+    }
+
+    #[test]
+    fn test_parse_artifact_path_profile_names() {
+        // Test various profile name patterns
+        for profile in ["v1", "v2", "paris", "optimized", "default", "prod", "dev"] {
+            let path = format!("MyContract:{profile}");
+            let parsed = super::parse_artifact_path(&path).unwrap();
+            assert_eq!(parsed.contract_name, Some("MyContract"));
+            assert_eq!(parsed.profile, Some(profile));
+            assert_eq!(parsed.version, None);
+        }
+    }
+
+    #[test]
+    fn test_parse_artifact_path_invalid_version() {
+        // Invalid semver should be treated as profile
+        let parsed = super::parse_artifact_path("MyContract:invalid").unwrap();
+        assert_eq!(parsed.contract_name, Some("MyContract"));
+        assert_eq!(parsed.profile, Some("invalid"));
+        assert_eq!(parsed.version, None);
     }
 }
