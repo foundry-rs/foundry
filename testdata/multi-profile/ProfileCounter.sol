@@ -3,7 +3,7 @@ pragma solidity ^0.8.18;
 
 /// @notice A simple counter contract used to test multi-profile compilation.
 /// The optimizer settings affect bytecode, so different profiles produce different bytecode.
-contract Counter {
+contract ProfileCounter {
     uint256 public count;
 
     function increment() public {
