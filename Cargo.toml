@@ -297,7 +297,7 @@ alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "mai
 revm = { version = "34.0.0", default-features = false }
 revm-inspectors = { version = "0.33.2", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
-monad-revm = { git = "https://github.com/haythemsellami/monad-revm", branch = "main" }
+monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main" }
 
 ## cli
 anstream = "0.6"
@@ -449,7 +449,7 @@ alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "mai
 ## revm
 # revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
 # op-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
-monad-revm = { git = "https://github.com/haythemsellami/monad-revm", branch = "main" }
+monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main" }
 revm-inspectors = { git = "https://github.com/haythemsellami/revm-inspectors", branch = "main" }
 
 ## foundry
