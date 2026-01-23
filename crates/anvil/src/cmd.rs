@@ -194,7 +194,11 @@ pub struct NodeArgs {
     #[command(flatten)]
     pub server_config: ServerConfig,
 
-    /// Path to the cache directory where states are stored.
+    /// Path to the cache directory where persisted states are stored (see
+    /// `--max-persisted-states`).
+    ///
+    /// Note: This does not affect the fork RPC cache location (`storage.json`), which is stored in
+    /// `~/.foundry/cache/rpc/<chain>/<block>/`.
     #[arg(long, value_name = "PATH")]
     pub cache_path: Option<PathBuf>,
 }
