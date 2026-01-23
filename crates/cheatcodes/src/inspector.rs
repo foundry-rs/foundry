@@ -1331,7 +1331,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         // (e.g., calls to non-contract addresses that return Stop).
                         //
                         // Only process if:
-                        // 1. It's not a cheatcode call, AND
+                        // 1. It's not a cheatcode call (unless internal_expect_revert is enabled
+                        //    and the cheatcode reverted), AND
                         // 2. Either the call reverted, OR we made an external call (max_depth >
                         //    depth), OR we're at the root call (depth 0)
                         //
@@ -1340,7 +1341,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         // Solidity-generated revert (from extcodesize/returndata check) from
                         // satisfying the expectation.
                         if cheatcode_call {
-                            false
+                            // For cheatcode calls, only process if internal_expect_revert is
+                            // enabled AND the cheatcode reverted. This allows catching cheatcode
+                            // reverts with expectRevert when the flag is set.
+                            self.config.internal_expect_revert && outcome.result.is_revert()
                         } else if outcome.result.is_revert() {
                             // Call reverted - should process
                             true
