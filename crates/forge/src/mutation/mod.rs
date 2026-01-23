@@ -1,5 +1,6 @@
 pub mod mutant;
 mod mutators;
+pub mod orchestrator;
 pub mod progress;
 mod reporter;
 pub mod runner;
@@ -19,6 +20,7 @@ use crate::mutation::{
 };
 
 pub use crate::mutation::{
+    orchestrator::{MutationConfig, MutationRunResult, run_mutation_testing},
     progress::MutationProgress,
     reporter::MutationReporter,
     runner::{

@@ -154,10 +154,10 @@ impl Display for OwnedLiteral {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MutationType {
-    // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for
-    // now, planket and let solc filter out the invalid mutants -> we might/should add a
-    // hashtable of the var to their underlying type (signed or not) so we avoid *a lot* of
-    // invalid mutants
+    // Note: Solar's LitKind::Number(U256) doesn't differentiate int vs uint - it only stores the
+    // numeric value without signedness info. For now we generate mutations for both and let solc
+    // filter out invalid ones (e.g., -x on uint). Future improvement: track variable types in a
+    // symbol table to avoid generating invalid mutants.
     /// For an initializer x, of type
     /// bool: replace x with !x
     /// uint: replace x with 0

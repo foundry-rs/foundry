@@ -4,10 +4,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
-    mutation::{
-        MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
-        mutant::MutationResult, run_mutations_parallel_with_progress,
-    },
+    mutation::{MutationConfig, run_mutation_testing},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -26,12 +23,9 @@ use foundry_cli::{
 };
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
-    ProjectCompileOutput,
+    Language, ProjectCompileOutput,
     artifacts::output_selection::OutputSelection,
-    compilers::{
-        Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
-    },
+    compilers::multi::{MultiCompiler, MultiCompilerLanguage},
     utils::source_files_iter,
 };
 use foundry_config::{
@@ -61,7 +55,6 @@ mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
 pub use filter::FilterArgs;
-use foundry_cli::utils::FoundryPathExt;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
@@ -449,177 +442,33 @@ impl TestArgs {
             }
         }
 
-        // All test have been run once before reaching this point
+        // All tests have been run once before reaching this point
         if let Some(mutate) = &self.mutate {
-            // check outcome here, stop if any test failed
-            // @todo rather set non-allowed failed tests in config and ensure_ok() here?
-            // @todo other checks: no fork (or just exclude based on clap arg?)
+            // Check outcome here, stop if any test failed
             if outcome.failed() > 0 {
                 eyre::bail!("Cannot run mutation testing with failed tests");
             }
 
-            let mutate_paths = if let Some(pattern) = &self.mutate_path {
-                // If --mutate-path is provided, use it to filter paths
-                source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    .filter(|entry| {
-                        // @todo filter out interfaces here?
-                        // we do it in lexing for now
-                        entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry)
-                    })
-                    .collect()
-            } else if let Some(contract_pattern) = &self.mutate_contract {
-                // If --mutate-contract is provided, use it to filter contracts
-                source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    .filter(|entry| {
-                        entry.is_sol()
-                            && !entry.is_sol_test()
-                            && output
-                                .artifact_ids()
-                                .find(|(id, _)| id.source == *entry)
-                                .is_some_and(|(id, _)| contract_pattern.is_match(&id.name))
-                    })
-                    .collect()
-            } else if mutate.is_empty() {
-                // If --mutate is passed without arguments, use all Solidity files
-                source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    .filter(|entry| entry.is_sol() && !entry.is_sol_test())
-                    .collect()
-            } else {
-                // If --mutate is passed with arguments, use those paths
-                mutate.clone()
+            let mutation_config = MutationConfig {
+                mutate_paths: mutate.clone(),
+                mutate_path_pattern: self.mutate_path.clone(),
+                mutate_contract_pattern: self.mutate_contract.clone(),
+                num_workers: self.mutation_jobs.unwrap_or(0),
+                show_progress: self.show_progress,
             };
 
-            // Determine number of parallel workers
-            let num_workers = self.mutation_jobs.unwrap_or_else(|| {
-                std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
-            });
+            let result = run_mutation_testing(
+                config.clone(),
+                output,
+                evm_opts.clone(),
+                env.clone(),
+                mutation_config,
+            )
+            .await?;
 
-            if !self.show_progress {
-                sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
+            if result.cancelled {
+                std::process::exit(130);
             }
-            let mut mutation_summary = MutationsSummary::new();
-
-            for path in mutate_paths {
-                if !self.show_progress {
-                    sh_println!("Running mutation tests for {}", path.display())?;
-                }
-
-                // Check if this file has already been tested and if the build id is the
-                // same - if so, just add the mutants to the summary
-                let mut handler = MutationHandler::new(path.clone(), config.clone());
-
-                handler.read_source_contract()?;
-
-                let build_id = output
-                    .artifact_ids()
-                    .find_map(|(id, _)| if id.source == path { Some(id.build_id) } else { None })
-                    .unwrap_or_default();
-
-                // If we have cached results for these mutations and build id, use them and skip
-                // running tests
-                if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id) {
-                    if !self.show_progress {
-                        sh_println!("  Using cached results for {} mutants", prior.len())?;
-                    }
-                    for (mutant, status) in prior {
-                        match status {
-                            MutationResult::Dead => handler.add_dead_mutant(mutant),
-                            MutationResult::Alive => handler.add_survived_mutant(mutant),
-                            MutationResult::Invalid => handler.add_invalid_mutant(mutant),
-                            MutationResult::Skipped => handler.add_skipped_mutant(mutant),
-                        }
-                    }
-                    mutation_summary.merge(handler.get_report());
-                    continue;
-                }
-
-                // Load survived spans for adaptive mutation testing
-                handler.retrieve_survived_spans(&build_id);
-
-                // Generate or load cached mutants
-                let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
-                    ms
-                } else {
-                    handler.generate_ast().await;
-                    handler.mutations.clone()
-                };
-
-                if mutants.is_empty() {
-                    if !self.show_progress {
-                        sh_println!("  No mutants generated for {}", path.display())?;
-                    }
-                    continue;
-                }
-
-                // Sort mutations by span for optimal adaptive testing
-                mutants.sort_by(|a, b| {
-                    let lo_cmp = a.span.lo().0.cmp(&b.span.lo().0);
-                    if lo_cmp != std::cmp::Ordering::Equal {
-                        lo_cmp
-                    } else {
-                        b.span.hi().0.cmp(&a.span.hi().0)
-                    }
-                });
-
-                // Create progress display if enabled
-                let progress = if self.show_progress {
-                    let p = MutationProgress::new(mutants.len(), num_workers);
-                    // Show relative path from project root
-                    let display_path =
-                        path.strip_prefix(&config.root).unwrap_or(&path).display().to_string();
-                    p.set_current_file(&display_path);
-                    Some(p)
-                } else {
-                    sh_println!("  Generated {} mutants, testing in parallel...", mutants.len())?;
-                    None
-                };
-
-                // Run mutations in parallel using isolated workspaces
-                let results = run_mutations_parallel_with_progress(
-                    mutants.clone(),
-                    path.clone(),
-                    handler.src.clone(),
-                    config.clone(),
-                    evm_opts.clone(),
-                    env.clone(),
-                    num_workers,
-                    progress.clone(),
-                )?;
-
-                // Collect results for caching
-                let mut results_vec = Vec::with_capacity(results.len());
-                for result in results {
-                    results_vec.push((result.mutant.clone(), result.result.clone()));
-                    match result.result {
-                        MutationResult::Dead => handler.add_dead_mutant(result.mutant),
-                        MutationResult::Alive => {
-                            handler.mark_span_survived(result.mutant.span);
-                            handler.add_survived_mutant(result.mutant);
-                        }
-                        MutationResult::Invalid => handler.add_invalid_mutant(result.mutant),
-                        MutationResult::Skipped => handler.add_skipped_mutant(result.mutant),
-                    }
-                }
-
-                // Persist results for caching
-                if !mutants.is_empty() && !build_id.is_empty() {
-                    let _ = handler.persist_cached_mutants(&build_id, &mutants);
-                    let _ = handler.persist_cached_results(&build_id, &results_vec);
-                    let _ = handler.persist_survived_spans(&build_id);
-                }
-
-                mutation_summary.merge(handler.get_report());
-
-                // If cancelled, show report and exit
-                if let Some(ref p) = progress
-                    && p.is_cancelled()
-                {
-                    MutationReporter::new().report(&mutation_summary);
-                    std::process::exit(130);
-                }
-            }
-
-            MutationReporter::new().report(&mutation_summary);
 
             outcome = TestOutcome::empty(Some(runner.clone()), true);
         }
