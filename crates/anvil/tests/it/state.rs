@@ -61,8 +61,7 @@ async fn finalized_block_hash_consistent_after_load_state() {
     api.mine_one().await;
 
     // Get the original genesis block hash
-    let original_genesis =
-        api.block_by_number(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
+    let original_genesis = api.block_by_number(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
     let original_genesis_hash = original_genesis.header.hash;
 
     let state = api.serialized_state(false).await.unwrap();
