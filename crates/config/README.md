@@ -59,319 +59,857 @@ The selected profile is the value of the `FOUNDRY_PROFILE` environment variable,
 The following is a foundry.toml file with all configuration options set. See also [/config/src/lib.rs](./src/lib.rs) and [/cli/tests/it/config.rs](../forge/tests/it/config.rs).
 
 ```toml
-## defaults for _all_ profiles
+# =============================================================================
+# FOUNDRY COMPLETE CONFIGURATION REFERENCE
+# =============================================================================
+# This file documents ALL available configuration options for foundry.toml
+# Generated from the Rust Config structs in foundry/crates/config/src/
+# =============================================================================
+
 [profile.default]
-src = 'src'
-test = 'test'
-script = 'script'
-out = 'out'
-libs = ['lib']
-auto_detect_remappings = true # recursive auto-detection of remappings
+
+# =============================================================================
+# PROJECT PATHS
+# =============================================================================
+
+# Path of the sources directory
+# Default: "src"
+src = "src"
+
+# Path of the tests directory
+# Default: "test"
+test = "test"
+
+# Path of the scripts directory
+# Default: "script"
+script = "script"
+
+# Path to the artifacts directory
+# Default: "out"
+out = "out"
+
+# Paths to all library folders, such as "lib" or "node_modules"
+# Default: ["lib"]
+libs = ["lib"]
+
+# Path to the cache store
+# Default: "cache"
+cache_path = "cache"
+
+# Path to store broadcast logs
+# Default: "broadcast"
+broadcast = "broadcast"
+
+# Where the gas snapshots are stored
+# Default: "snapshots"
+snapshots = "snapshots"
+
+# Path where last test run failures are recorded
+# Default: "cache/test-failures"
+test_failures_file = "cache/test-failures"
+
+# =============================================================================
+# REMAPPINGS & LIBRARIES
+# =============================================================================
+
+# Remappings to use for this repo
+# Format: ["@openzeppelin/=lib/openzeppelin-contracts/"]
 remappings = []
-# list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
-# the <path to lib> supports remappings
+
+# Whether to autodetect remappings by scanning the libs folders
+# Default: true
+auto_detect_remappings = true
+
+# Library addresses to link
+# Format: ["src/MyLib.sol:MyLib:0x..."]
 libraries = []
-cache = true
-cache_path = 'cache'
-broadcast = 'broadcast'
-# additional solc allow paths
+
+# Additional paths passed to solc --allow-paths
 allow_paths = []
-# additional solc include paths
+
+# Additional paths passed to solc --include-path
 include_paths = []
+
+# Glob patterns for file paths to skip when building and executing contracts
+# Example: ["test/invariant/**/*", "script/**/*"]
+skip = []
+
+# =============================================================================
+# BUILD & CACHE
+# =============================================================================
+
+# Whether to enable the build cache
+# Default: true
+cache = true
+
+# Whether to dynamically link tests
+# Default: false
+dynamic_test_linking = false
+
+# Whether to forcefully clean all project artifacts before running commands
+# Default: false
 force = false
-evm_version = 'prague'
-gas_reports = ['*']
-gas_reports_ignore = []
-## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
-# solc = '0.8.10'
-auto_detect_solc = true
-offline = false
-optimizer = false
-optimizer_runs = 200
-model_checker = { contracts = { 'a.sol' = [
-    'A1',
-    'A2',
-], 'b.sol' = [
-    'B1',
-    'B2',
-] }, engine = 'chc', targets = [
-    'assert',
-    'outOfBounds',
-], timeout = 10000 }
-verbosity = 0
-eth_rpc_url = "https://example.com/"
-# Setting this option enables decoding of error traces from mainnet deployed / verified contracts via etherscan
-etherscan_api_key = "YOURETHERSCANAPIKEY"
-# ignore solc warnings for missing license and exceeded contract size
-# known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname", "too-many-warnings", "constructor-visibility", "init-code-size", "missing-receive-ether", "unnamed-return", "transient-storage"]
-# additional warnings can be added using their numeric error code: ["license", 1337]
-ignored_error_codes = ["license", "code-size"]
-ignored_warnings_from = ["path_to_ignore"]
-# Deny compiler warnings and/or notes with:
-# - "never": default behavior, no denial
-# - "warnings": warnings treated as errors
-# - "notes": notes and warnings treated as notes
-deny = "never"
-match_test = "Foo"
-no_match_test = "Bar"
-match_contract = "Foo"
-no_match_contract = "Bar"
-match_path = "*/Foo*"
-no_match_path = "*/Bar*"
-no_match_coverage = "Baz"
-# Number of threads to use. Specifying 0 defaults to the number of logical cores.
-threads = 0
-# whether to show test execution progress
-show_progress = true
-ffi = false
-always_use_create_2_factory = false
-prompt_timeout = 120
-# These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`
-sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
-tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
-initial_balance = '0xffffffffffffffffffffffff'
-block_number = 0
-fork_block_number = 0
-chain_id = 1
-# NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds 2**63-1 (9223372036854775807).
-# `gas_limit = "max"` is equivalent to `gas_limit = "18446744073709551615"`. This is not recommended
-# as it will make infinite loops effectively hang during execution.
-gas_limit = 1073741824
-gas_price = 0
-block_base_fee_per_gas = 0
-block_coinbase = '0x0000000000000000000000000000000000000000'
-block_timestamp = 0
-block_difficulty = 0
-block_prevrandao = '0x0000000000000000000000000000000000000000'
-block_gas_limit = 30000000
-memory_limit = 134217728
-extra_output = ["metadata"]
-extra_output_files = []
-names = false
-sizes = false
-via_ir = false
-ast = false
-# caches storage retrieved locally for certain chains and endpoints
-# can also be restricted to `chains = ["optimism", "mainnet"]`
-# by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
-# to disable storage caching entirely set `no_storage_caching = true`
-rpc_storage_caching = { chains = "all", endpoints = "all" }
-# this overrides `rpc_storage_caching` entirely
-no_storage_caching = false
-# Whether to store the referenced sources in the metadata as literal data.
-use_literal_content = false
-# use ipfs method to generate the metadata hash, solc's default.
-# To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
-bytecode_hash = "ipfs"
-# Whether to append the CBOR-encoded metadata file.
-cbor_metadata = true
-# How to treat revert (and require) reason strings.
-# Possible values are: "default", "strip", "debug" and "verboseDebug".
-#  "default" does not inject compiler-generated revert strings and keeps user-supplied ones.
-# "strip" removes all revert strings (if possible, i.e. if literals are used) keeping side-effects
-# "debug" injects strings for compiler-generated internal reverts, implemented for ABI encoders V1 and V2 for now.
-# "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
-revert_strings = "default"
-# If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
-# this can reduce compile time for `forge test` a bit but is considered experimental at this point.
+
+# Whether to compile in sparse mode
+# If enabled, only required contracts/files will be selected for solc's output
+# Default: false
 sparse_mode = false
-build_info = true
-build_info_path = "build-info"
-root = "root"
-# Configures permissions for cheatcodes that touch the filesystem like `vm.writeFile`
-# `access` restricts how the `path` can be accessed via cheatcodes
-#    `read-write` | `true`   => `read` + `write` access allowed (`vm.readFile` + `vm.writeFile`)
-#    `none`| `false` => no access
-#    `read` => only read access (`vm.readFile`)
-#    `write` => only write access (`vm.writeFile`)
-# The `allowed_paths` further lists the paths that are considered, e.g. `./` represents the project root directory
-# By default, only read access is granted to the project's out dir, so generated artifacts can be read by default
-# following example enables read-write access for the project dir :
-#       `fs_permissions = [{ access = "read-write", path = "./"}]`
-fs_permissions = [{ access = "read", path = "./out"}]
-# whether failed assertions should revert
-# note that this only applies to native (cheatcode) assertions, invoked on Vm contract
+
+# Generates additional build info json files for every new build
+# Contains the CompilerInput and CompilerOutput
+# Default: false
+build_info = false
+
+# The path to the build-info directory that contains the build info json files
+# build_info_path = "build-info"
+
+# =============================================================================
+# GAS SNAPSHOTS
+# =============================================================================
+
+# Whether to check for differences against previously stored gas snapshots
+# Default: false
+gas_snapshot_check = false
+
+# Whether to emit gas snapshots to disk
+# Default: true
+gas_snapshot_emit = true
+
+# =============================================================================
+# SOLIDITY COMPILER
+# =============================================================================
+
+# The Solc instance to use. Takes precedence over auto_detect_solc
+# Can be a version string like "0.8.20" or path to solc binary
+# solc = "0.8.20"
+
+# Whether to autodetect the solc compiler version to use
+# Default: true
+auto_detect_solc = true
+
+# Offline mode - if set, network access (downloading solc) is disallowed
+# If auto_detect_solc = true and offline = true, required solc versions will
+# be auto detected but will not be installed if missing
+# Default: false
+offline = false
+
+# The EVM version to use when building contracts
+# Options: "homestead", "tangerineWhistle", "spuriousDragon", "byzantium",
+#          "constantinople", "petersburg", "istanbul", "berlin", "london",
+#          "paris", "shanghai", "cancun", "osaka"
+# Default: "osaka"
+evm_version = "osaka"
+
+# Whether to activate optimizer
+# optimizer = true
+
+# The number of runs specifies roughly how often each opcode will be executed
+# Trade-off between code size (deploy cost) and execution cost
+# optimizer_runs = 1 produces short but expensive code
+# Higher values produce longer but more gas efficient code
+# Maximum value: 2^32-1
+# optimizer_runs = 200
+
+# Switch optimizer components on or off in detail
+# [profile.default.optimizer_details]
+# peephole = true
+# inliner = true
+# jumpdestRemover = true
+# orderLiterals = true
+# deduplicate = true
+# cse = true
+# constantOptimizer = true
+# yul = true
+
+# Model checker settings for formal verification
+# [profile.default.model_checker]
+# contracts = {}
+# engine = "chc"
+# timeout = 10000
+
+# If set to true, changes compilation pipeline to go through Yul IR
+# Default: false
+via_ir = false
+
+# Whether to include the AST as JSON in the compiler output
+# Default: false
+ast = false
+
+# Whether to store the referenced sources in the metadata as literal data
+# Default: false
+use_literal_content = false
+
+# Whether to include the metadata hash
+# Options: "none", "ipfs", "bzzr1"
+# Set to "none" for deterministic code (machine-independent)
+# Default: "ipfs"
+bytecode_hash = "ipfs"
+
+# Whether to append the metadata hash to the bytecode
+# If false and bytecode_hash is not "none", solc will issue a warning
+# Default: true
+cbor_metadata = true
+
+# How to treat revert (and require) reason strings
+# Options: "default", "strip", "debug", "verboseDebug"
+# revert_strings = "default"
+
+# Additional output selection for all contracts
+# Examples: "ir", "irOptimized", "devdoc", "userdoc", "storageLayout", "ewasm"
+# See Solc Compiler API for full list
+extra_output = []
+
+# Additional output files to emit for every contract
+# Difference from extra_output: emits as separate files instead of in artifact
+# Example: ["metadata"] creates metadata.json for each contract
+extra_output_files = []
+
+# Whether to print the names of the compiled contracts
+# Default: false
+names = false
+
+# Whether to print the sizes of the compiled contracts
+# Default: false
+sizes = false
+
+# Optional additional CLI arguments to pass to solc binary
+extra_args = []
+
+# =============================================================================
+# ERROR HANDLING
+# =============================================================================
+
+# List of solidity error codes to always silence in compiler output
+# Default: [1878, 5574, 5660, 2394, 5733, 3199] (common warnings)
+ignored_error_codes = [1878, 5574, 5660, 2394, 5733, 3199]
+
+# List of file paths to ignore warnings from
+ignored_warnings_from = []
+
+# Diagnostic level (minimum) at which the process should finish with non-zero exit
+# Options: "never", "warnings", "notes"
+# Default: "never"
+deny = "never"
+
+# DEPRECATED: use `deny` instead
+# deny_warnings = false
+
+# =============================================================================
+# TESTING
+# =============================================================================
+
+# The address which will be executing all tests
+# Default: 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
+sender = "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"
+
+# The tx.origin value during EVM execution
+# Default: 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
+tx_origin = "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"
+
+# The initial balance of each deployed test contract
+# Default: 0xffffffffffffffffffffffff (2^96 - 1)
+initial_balance = "0xffffffffffffffffffffffff"
+
+# Only run test functions matching the specified regex pattern
+# match_test = "test_.*"
+
+# Only run test functions that do not match the specified regex pattern
+# no_match_test = "testFail.*"
+
+# Only run tests in contracts matching the specified regex pattern
+# match_contract = ".*Test"
+
+# Only run tests in contracts that do not match the specified regex pattern
+# no_match_contract = ".*Invariant.*"
+
+# Only run tests in source files matching the specified glob pattern
+# match_path = "test/unit/*"
+
+# Only run tests in source files that do not match the specified glob pattern
+# no_match_path = "test/integration/*"
+
+# Only show coverage for files that do not match the specified regex pattern
+# no_match_coverage = "test/.*"
+
+# Max concurrent threads to use
+# threads = 4
+
+# Whether to show test execution progress
+# Default: false
+show_progress = false
+
+# Whether to allow ffi cheatcodes in tests
+# Default: false
+ffi = false
+
+# Whether to allow expectRevert for internal functions
+# Default: false
+allow_internal_expect_revert = false
+
+# Use the CREATE2 factory in all cases including tests and non-broadcasting scripts
+# Default: false
+always_use_create_2_factory = false
+
+# Sets a timeout in seconds for vm.prompt cheatcodes
+# Default: 120
+prompt_timeout = 120
+
+# Whether failed assertions should revert (only for native cheatcode assertions)
+# Default: true
 assertions_revert = true
-# whether `failed()` should be invoked to check if the test have failed
+
+# Whether failed() should be invoked to check if the test has failed
+# Default: false
 legacy_assertions = false
 
+# =============================================================================
+# EVM CONFIGURATION
+# =============================================================================
+
+# The block.number value during EVM execution
+# Default: 1
+block_number = 1
+
+# Pins the block number for the state fork
+# fork_block_number = 12345678
+
+# The chain name or EIP-155 chain ID
+# chain = 1
+
+# Block gas limit
+# Default: ~1B (1 << 30)
+gas_limit = 1073741824
+
+# EIP-170: Contract code size limit in bytes
+# Useful to increase for tests
+# code_size_limit = 24576
+
+# tx.gasprice value during EVM execution
+# If not set, uses remote client's gas price in fork mode
+# gas_price = 0
+
+# The base fee in a block
+# Default: 0
+block_base_fee_per_gas = 0
+
+# The block.coinbase value during EVM execution
+# Default: 0x0000000000000000000000000000000000000000
+block_coinbase = "0x0000000000000000000000000000000000000000"
+
+# The block.timestamp value during EVM execution
+# Default: 1
+block_timestamp = 1
+
+# The block.difficulty value during EVM execution
+# Default: 0
+block_difficulty = 0
+
+# Before merge: block.max_hash, after merge: block.prevrandao
+# Default: 0x0000000000000000000000000000000000000000000000000000000000000000
+block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+# The block.gaslimit value during EVM execution
+# block_gas_limit = 30000000
+
+# The memory limit per EVM execution in bytes
+# If exceeded, a MemoryLimitOOG result is thrown
+# Default: 128MiB (134217728 bytes, 1 << 27)
+memory_limit = 134217728
+
+# Whether to enable call isolation
+# Useful for more correct gas accounting and EVM behavior
+# Default: false (unless isolate-by-default feature is enabled)
+isolate = false
+
+# Whether to disable the block gas limit checks
+# Default: false
+disable_block_gas_limit = false
+
+# Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825)
+# Default: false
+enable_tx_gas_limit = false
+
+# =============================================================================
+# RPC CONFIGURATION
+# =============================================================================
+
+# URL of the RPC server that should be used for any RPC calls
+# eth_rpc_url = "https://eth-mainnet.alchemyapi.io/v2/YOUR_KEY"
+
+# Whether to accept invalid certificates for the RPC server
+# Default: false
+eth_rpc_accept_invalid_certs = false
+
+# Whether to disable automatic proxy detection for the RPC server
+# Helps in sandboxed environments where system proxy detection causes crashes
+# Default: false
+eth_rpc_no_proxy = false
+
+# JWT secret for RPC authentication
+# eth_rpc_jwt = "your-jwt-secret"
+
+# Timeout in seconds for RPC calls
+# eth_rpc_timeout = 30
+
+# Headers to include in RPC calls
+# Format: ["x-custom-header:value", "x-another-header:another-value"]
+# eth_rpc_headers = []
+
+# Etherscan API key, or alias for an EtherscanConfig in etherscan table
+# etherscan_api_key = "YOUR_API_KEY"
+
+# RPC storage caching settings
+[profile.default.rpc_storage_caching]
+# Which chains to cache (e.g., "all", "mainnet,optimism", or chain IDs)
+chains = "all"
+# Which endpoints to cache ("all", "remote", or specific URLs)
+endpoints = "remote"
+
+# Disables storage caching entirely (overrides rpc_storage_caching)
+# Default: false
+# no_storage_caching = false
+
+# Disables rate limiting entirely (overrides compute_units_per_second)
+# Default: false
+# no_rpc_rate_limit = false
+
+# Multiple RPC endpoints and their aliases
+# [profile.default.rpc_endpoints]
+# mainnet = "https://eth-mainnet.alchemyapi.io/v2/${ALCHEMY_KEY}"
+# optimism = "https://opt-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}"
+
+# Multiple Etherscan API configs and their aliases
+# [profile.default.etherscan]
+# mainnet = { key = "${ETHERSCAN_API_KEY}" }
+# optimism = { key = "${OPTIMISM_ETHERSCAN_KEY}", chain = "optimism" }
+
+# =============================================================================
+# GAS REPORTS
+# =============================================================================
+
+# List of contracts to generate gas reports for
+# Use ["*"] for all contracts
+# Default: ["*"]
+gas_reports = ["*"]
+
+# List of contracts to ignore for gas reports
+gas_reports_ignore = []
+
+# Whether to include gas reports for tests
+# Default: false
+gas_reports_include_tests = false
+
+# =============================================================================
+# CREATE2 CONFIGURATION
+# =============================================================================
+
+# CREATE2 salt to use for library deployment in scripts
+# Default: 0x0000000000000000000000000000000000000000000000000000000000000000
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+# The CREATE2 deployer address to use
+# Default: 0x4e59b44847b379578588920ca78fbf26c0b4956c
+create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+
+# =============================================================================
+# FILE SYSTEM PERMISSIONS
+# =============================================================================
+
+# Configures permissions of cheat codes that touch the file system
+# Specifies what operations can be executed (read, write)
+[profile.default.fs_permissions]
+# Default: read access to "out" directory
+# read = ["out"]
+# read-write = ["cache", "broadcast"]
+
+# =============================================================================
+# ADDRESS LABELS
+# =============================================================================
+
+# Address labels for better trace output
+# [profile.default.labels]
+# "0x1234..." = "MyContract"
+# "0xabcd..." = "Treasury"
+
+# =============================================================================
+# CHEATCODE CONFIGURATION
+# =============================================================================
+
+# Verbosity level (0-5)
+# Default: 0
+verbosity = 0
+
+# Whether to enable safety checks for vm.getCode and vm.getDeployedCode
+# If disabled, it's possible to access artifacts which were not recompiled/cached
+# Default: false
+unchecked_cheatcode_artifacts = false
+
+# =============================================================================
+# TRANSACTION CONFIGURATION
+# =============================================================================
+
+# Timeout for transactions in seconds
+# Default: 120
+transaction_timeout = 120
+
+# Whether to enable script execution protection
+# Default: true
+script_execution_protection = true
+
+# =============================================================================
+# VYPER CONFIGURATION
+# =============================================================================
+
+# [profile.default.vyper]
+# path = "vyper"  # Path to vyper binary
+
+# =============================================================================
+# FUZZ TESTING CONFIGURATION
+# =============================================================================
+
 [fuzz]
+# The number of test cases that must execute for each property test
+# Default: 256
 runs = 256
-max_test_rejects = 65536
-seed = '0x3e8'
-# Fails the fuzz test if a revert occurs
+
+# Fails the fuzzed test if a revert occurs
+# Default: true
 fail_on_revert = true
+
+# The maximum number of test case rejections allowed
+# Encountered during usage of vm.assume cheatcode
+# Default: 65536
+max_test_rejects = 65536
+
+# Optional seed for the fuzzing RNG algorithm
+# seed = "0x..."
+
 # Number of runs to execute and include in the gas report
+# Default: 256
 gas_report_samples = 256
-# Show `console.log` in fuzz test
+
+# Path where fuzz failures are recorded and replayed
+# Default: "cache/fuzz"
+failure_persist_dir = "cache/fuzz"
+
+# Show console.log in fuzz test
+# Default: false
 show_logs = false
+
 # Optional timeout (in seconds) for each property test
 # timeout = 60
-# Path where fuzz failures are recorded and replayed
-# failure_persist_dir = 'cache/fuzz'
 
-# Fuzz dictionary configuration
+# --- Fuzz Dictionary Configuration ---
+
+# The weight of the dictionary (percentage 0-100)
+# Default: 40
 dictionary_weight = 40
+
+# Whether to include values from storage
+# Default: true
 include_storage = true
+
+# Whether to include push bytes values
+# Default: true
 include_push_bytes = true
-# Maximum addresses to record for the fuzz dictionary
+
+# Maximum addresses to record in dictionary
+# Once exceeded, starts evicting random entries to prevent memory blowup
+# Default: ~15.7M (300MB / 20 bytes)
 max_fuzz_dictionary_addresses = 15728640
-# Maximum values to record for the fuzz dictionary
+
+# Maximum values to record in dictionary
+# Once exceeded, starts evicting random entries
+# Default: ~9.8M (300MB / 32 bytes)
 max_fuzz_dictionary_values = 9830400
-# Maximum literals to seed from the AST for the fuzz dictionary
+
+# Maximum literal values to seed from the AST
+# Independent from max addresses and values
+# Default: ~6.5M (200MB / 32 bytes)
 max_fuzz_dictionary_literals = 6553600
 
-# Fuzz corpus configuration (for coverage-guided fuzzing)
-# Path to corpus directory, enables coverage guided fuzzing mode
-# corpus_dir = 'corpus'
-# Whether corpus uses gzip compression
+# --- Fuzz Corpus Configuration ---
+
+# Path to corpus directory, enables coverage-guided fuzzing mode
+# If not set, sequences producing new coverage are not persisted and mutated
+# corpus_dir = "corpus/fuzz"
+
+# Whether corpus uses gzip file compression and decompression
+# Default: true
 corpus_gzip = true
-# Number of mutations until entry marked as eligible to be flushed from in-memory corpus
+
+# Number of mutations until entry marked as eligible to be flushed from memory
+# Mutations will be performed at least this many times
+# Default: 5
 corpus_min_mutations = 5
-# Minimum corpus size that won't be evicted from memory
+
+# Number of corpus entries that won't be evicted from memory
+# Default: 0
 corpus_min_size = 0
+
 # Whether to collect and display edge coverage metrics
+# Default: false
 show_edge_coverage = false
+
+# =============================================================================
+# INVARIANT TESTING CONFIGURATION
+# =============================================================================
 
 [invariant]
+# The number of runs that must execute for each invariant test group
+# Default: 256
 runs = 256
-depth = 500
-fail_on_revert = false
-call_override = false
-# The maximum number of attempts to shrink the sequence
-shrink_run_limit = 5000
-# The maximum number of rejects via `vm.assume` which can be encountered during a single invariant run
-max_assume_rejects = 65536
-# Number of runs to execute and include in the gas report
-gas_report_samples = 256
-# Whether to collect and display fuzzed selectors metrics
-show_metrics = true
-# Optional timeout (in seconds) for each invariant test
-# timeout = 60
-# Display counterexample as solidity calls
-show_solidity = false
-# Maximum time (in seconds) between generated txs
-# max_time_delay = 86400
-# Maximum number of blocks elapsed between generated txs
-# max_block_delay = 10000
-# Path where invariant failures are recorded and replayed
-# failure_persist_dir = 'cache/invariant'
 
-# Invariant dictionary configuration
+# The number of calls executed to attempt to break invariants in one run
+# Default: 500
+depth = 500
+
+# Fails the invariant fuzzing if a revert occurs
+# Default: false
+fail_on_revert = false
+
+# Allows overriding an unsafe external call when running invariant tests
+# e.g., reentrancy checks
+# Default: false
+call_override = false
+
+# The maximum number of attempts to shrink the sequence
+# Default: 5000
+shrink_run_limit = 5000
+
+# The maximum number of rejects via vm.assume in a single invariant run
+# Default: 65536
+max_assume_rejects = 65536
+
+# Number of runs to execute and include in the gas report
+# Default: 256
+gas_report_samples = 256
+
+# Path where invariant failures are recorded and replayed
+# Default: "cache/invariant"
+failure_persist_dir = "cache/invariant"
+
+# Whether to collect and display fuzzed selectors metrics
+# Default: true
+show_metrics = true
+
+# Optional timeout (in seconds) for each invariant test
+# timeout = 300
+
+# Display counterexample as solidity calls
+# Default: false
+show_solidity = false
+
+# Maximum time (in seconds) between generated transactions
+# max_time_delay = 86400
+
+# Maximum number of blocks elapsed between generated transactions
+# max_block_delay = 1000
+
+# Number of calls to execute between invariant assertions
+# 0: Only assert on the last call of each run (fastest, may miss exact breaking call)
+# 1 (default): Assert after every call (most precise)
+# N: Assert every N calls AND always on the last call
+# Default: 1
+check_interval = 1
+
+# --- Invariant Dictionary Configuration ---
+
+# The weight of the dictionary (percentage 0-100)
+# Default: 80 (higher than fuzz default)
 dictionary_weight = 80
+
+# Whether to include values from storage
+# Default: true
 include_storage = true
+
+# Whether to include push bytes values
+# Default: true
 include_push_bytes = true
-# Maximum addresses to record for the fuzz dictionary
+
+# Maximum addresses to record in dictionary
 max_fuzz_dictionary_addresses = 15728640
-# Maximum values to record for the fuzz dictionary
+
+# Maximum values to record in dictionary
 max_fuzz_dictionary_values = 9830400
-# Maximum literals to seed from the AST for the fuzz dictionary
+
+# Maximum literal values to seed from the AST
 max_fuzz_dictionary_literals = 6553600
 
-# Invariant corpus configuration (for coverage-guided fuzzing)
-# Path to corpus directory, enables coverage guided fuzzing mode
-# corpus_dir = 'corpus'
+# --- Invariant Corpus Configuration ---
+
+# Path to corpus directory, enables coverage-guided fuzzing mode
+# corpus_dir = "corpus/invariant"
+
 # Whether corpus uses gzip compression
 corpus_gzip = true
-# Number of mutations until entry marked as eligible to be flushed from in-memory corpus
+
+# Minimum mutations before entry can be flushed
 corpus_min_mutations = 5
-# Minimum corpus size that won't be evicted from memory
+
+# Minimum corpus entries to keep in memory
 corpus_min_size = 0
+
 # Whether to collect and display edge coverage metrics
 show_edge_coverage = false
+
+# =============================================================================
+# FORMATTER CONFIGURATION
+# =============================================================================
+
+[fmt]
+# Maximum line length where formatter will try to wrap the line
+# Default: 120
+line_length = 120
+
+# Number of spaces per indentation level (ignored if style is Tab)
+# Default: 4
+tab_width = 4
+
+# Style of indent
+# Options: "space", "tab"
+# Default: "space"
+style = "space"
+
+# Print spaces between brackets
+# Default: false
+bracket_spacing = false
+
+# Style of uint/int256 types
+# Options: "preserve", "long", "short"
+# "preserve": Use the type defined in source code
+# "long": Print full length uint256 or int256
+# "short": Print alias uint or int
+# Default: "long"
+int_types = "long"
+
+# Style of multiline function header when it doesn't fit
+# Options: "params_always", "params_first_multi", "attributes_first", "all", "all_params"
+# Default: "attributes_first"
+multiline_func_header = "attributes_first"
+
+# Style of quotation marks
+# Options: "preserve", "double", "single"
+# Default: "double"
+quote_style = "double"
+
+# Style of underscores in number literals
+# Options: "preserve", "remove", "thousands"
+# "thousands": Add underscore every thousand if > 9999 (e.g., 10000 -> 10_000)
+# Default: "preserve"
+number_underscore = "preserve"
+
+# Style of underscores in hex literals
+# Options: "preserve", "remove", "bytes"
+# "bytes": Add underscore as separator between byte boundaries
+# Default: "remove"
+hex_underscore = "remove"
+
+# Style of single line blocks in statements
+# Options: "preserve", "single", "multi"
+# Default: "preserve"
+single_line_statement_blocks = "preserve"
+
+# Print space in state variable, function, and modifier override attribute
+# Default: false
+override_spacing = false
+
+# Wrap comments on line_length reached
+# Default: false
+wrap_comments = false
+
+# Style of doc comments
+# Options: "preserve", "line", "block"
+# "line": Use single-line style (///)
+# "block": Use block style (/** .. */)
+# Default: "preserve"
+docs_style = "preserve"
+
+# Globs to ignore
+ignore = []
+
+# Add new line at start and end of contract declarations
+# Default: false
+contract_new_lines = false
+
+# Sort import statements alphabetically in groups (groups separated by newline)
+# Default: false
+sort_imports = false
+
+# Choose between import styles
+# Options: "prefer_plain", "prefer_glob", "preserve"
+# "prefer_plain": import "a" as name
+# "prefer_glob": import * as name from "a"
+# Default: "prefer_plain"
+namespace_import_style = "prefer_plain"
+
+# Whether to suppress spaces around the power operator (**)
+# Default: false
+pow_no_space = false
+
+# Style for broken lists - keep elements together before breaking individually
+# Options: "none", "calls", "events", "errors", "events_errors", "all"
+# Default: "all"
+prefer_compact = "all"
+
+# Keep single imports on a single line even if they exceed line length
+# Default: false
+single_line_imports = false
+
+# =============================================================================
+# DOCUMENTATION CONFIGURATION
+# =============================================================================
 
 [doc]
 # Doc output path
+# Default: "docs"
 out = "docs"
+
 # The documentation title
 title = ""
+
 # Path to user provided book.toml
+# Default: "book.toml"
 book = "book.toml"
-# Path to user provided welcome markdown (defaults to README.md)
-# homepage = "README.md"
-# The repository url
-# repository = "https://github.com/..."
-# The path to source code (useful for monorepos)
-# path = "tree/main/packages/contracts"
+
+# Path to user provided welcome markdown
+# If none provided, defaults to README.md
+homepage = "README.md"
+
+# The repository URL
+# repository = "https://github.com/user/repo"
+
+# The path to source code (e.g., "tree/main/packages/contracts")
+# Useful for monorepos or projects with source code in specific directories
+# path = "tree/main/src"
+
 # Globs to ignore
 ignore = []
+
+# =============================================================================
+# LINTER CONFIGURATION
+# =============================================================================
 
 [lint]
-# Whether to run linting during `forge build`
-lint_on_build = true
-# Specifies which lints to run based on severity: "high", "medium", "low", "info", "gas", "code-size"
+# Specifies which lints to run based on severity
+# If uninformed, all severities are checked
+# Options: "high", "medium", "low", "info", "gas", "code-size"
+# Default: ["high", "medium", "low"]
 severity = ["high", "medium", "low"]
-# Deny specific lints based on their ID
+
+# Deny specific lints based on their ID (e.g., "mixed-case-function")
 exclude_lints = []
+
 # Globs to ignore
 ignore = []
-# Patterns excluded from mixedCase lint checks
-mixed_case_exceptions = ["ERC", "URI"]
 
-[fmt]
-# Maximum line length where the formatter will try to wrap the line.
-# default: 120
-line_length = 120
-# Number of spaces per indentation level. Ignored if `style = "tab"`.
-# default: 4
-tab_width = 4
-# Indentation style: "space" or "tab"
-# default: "space"
-style = "space"
-# Print spaces between brackets.
-# default: false
-bracket_spacing = false
-# Style of uint/int256 types: "preserve", "long", "short"
-# default: "long"
-int_types = "long"
-# Style of multiline function headers when the header does not fit on one line.
-# possible values: "params_always", "params_first_multi", "attributes_first", "all", "all_params"
-# default: "attributes_first"
-multiline_func_header = "attributes_first"
-# Style of quotation marks: "preserve", "double", "single"
-# default: "double"
-quote_style = "double"
-# Style of underscores in decimal number literals: "preserve", "remove", "thousands"
-# default: "preserve"
-number_underscore = "preserve"
-# Style of underscores in hex literals: "preserve", "remove", "bytes"
-# default: "remove"
-hex_underscore = "remove"
-# Style of single-line blocks in statements: "preserve", "single", "multi"
-# default: "preserve"
-single_line_statement_blocks = "preserve"
-# Print space in state variable, function and modifier `override` attribute.
-# default: false
-override_spacing = false
-# Wrap comments when `line_length` is reached.
-# default: false
-wrap_comments = false
-# Style of doc comments: "preserve", "line", "block"
-# default: "preserve"
-docs_style = "preserve"
-# Globs to ignore when formatting (useful for vendored files).
-# default: []
-ignore = []
-# Add a new line at start and end of contract declarations.
-# default: false
-contract_new_lines = false
-# Sort import statements alphabetically in groups (groups are separated by a blank line).
-# default: false
-sort_imports = false
-# Choose between `import "a" as name` and `import * as name from "a"`.
-# possible values: "prefer_plain", "prefer_glob", "preserve"
-# default: "prefer_plain"
-namespace_import_style = "prefer_plain"
-# Whether to suppress spaces around the power operator (`**`).
-# default: false
-pow_no_space = false
-# When a list breaks, prefer keeping elements together on their own lines before breaking individually.
-# possible values: "none", "calls", "events", "errors", "events_errors", "all"
-# default: "all"
-prefer_compact = "all"
-# Keep single imports on a single line even if they exceed `line_length`.
-# default: false
-single_line_imports = false
+# Whether to run linting during forge build
+# Default: true
+lint_on_build = true
+
+# Patterns excluded from mixedCase lint checks
+# Default: ["ERC", "URI"] to allow names like rescueERC20, ERC721TokenReceiver, tokenURI
+mixed_case_exceptions = ["ERC", "URI"]
 ```
 
 #### Additional Optimizer settings
