@@ -48,6 +48,66 @@ async fn can_load_state() {
     assert_eq!(num, U256::from(num_from_tag));
 }
 
+// <https://github.com/foundry-rs/foundry/issues/12645>
+#[tokio::test(flavor = "multi_thread")]
+async fn finalized_block_hash_consistent_after_load_state() {
+    use alloy_eips::BlockNumberOrTag;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let state_file = tmp.path().join("state.json");
+
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    api.mine_one().await;
+
+    // Get the original genesis block hash
+    let original_genesis =
+        api.block_by_number(BlockNumberOrTag::Number(0)).await.unwrap().unwrap();
+    let original_genesis_hash = original_genesis.header.hash;
+
+    let state = api.serialized_state(false).await.unwrap();
+    foundry_common::fs::write_json_file(&state_file, &state).unwrap();
+
+    // Load state with a different genesis timestamp.
+    // The new instance will create its own genesis block with a different timestamp,
+    // but then load_state should overwrite it. The bug is that genesis_hash field isn't updated.
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_genesis_timestamp(Some(original_genesis.header.timestamp + 1000))
+            .with_init_state_path(state_file),
+    )
+    .await;
+
+    // Query finalized block - should return genesis (block 0) since best_number is small
+    let finalized_block = api.block_by_number(BlockNumberOrTag::Finalized).await.unwrap().unwrap();
+    let finalized_hash = finalized_block.header.hash;
+    let finalized_number = finalized_block.header.number;
+
+    // Query block by the finalized block's number directly
+    let block_by_number =
+        api.block_by_number(BlockNumberOrTag::Number(finalized_number)).await.unwrap().unwrap();
+    let block_by_number_hash = block_by_number.header.hash;
+
+    // Verify the loaded genesis matches the original
+    assert_eq!(
+        block_by_number_hash, original_genesis_hash,
+        "Loaded genesis should match original genesis hash"
+    );
+
+    // Both finalized and block 0 should return the same hash
+    assert_eq!(
+        finalized_hash, block_by_number_hash,
+        "Finalized block hash should match block queried by number"
+    );
+
+    // Also verify Earliest block tag returns consistent hash
+    let earliest_block = api.block_by_number(BlockNumberOrTag::Earliest).await.unwrap().unwrap();
+    assert_eq!(
+        earliest_block.header.hash, original_genesis_hash,
+        "Earliest block hash should match original genesis hash"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_existing_state_legacy() {
     let state_file = "test-data/state-dump-legacy.json";
