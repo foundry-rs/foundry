@@ -26,9 +26,7 @@ pub struct MutationContext<'a> {
     pub span: Span,
     /// The expression to mutate
     pub expr: Option<&'a Expr<'a>>,
-
     pub var_definition: Option<&'a VariableDefinition<'a>>,
-
     /// The full source code (used to extract original text for mutations)
     pub source: Option<&'a str>,
 }
