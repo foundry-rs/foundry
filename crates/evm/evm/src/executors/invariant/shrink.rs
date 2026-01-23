@@ -30,6 +30,50 @@ impl CallSequenceShrinker {
     fn current(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.call_sequence_len).filter(|&call_id| self.included_calls.test(call_id))
     }
+
+    /// Advance to the next call index, wrapping around to 0 at the end.
+    fn next_index(&self, call_idx: usize) -> usize {
+        if call_idx + 1 == self.call_sequence_len { 0 } else { call_idx + 1 }
+    }
+}
+
+/// Resets the progress bar for shrinking.
+fn reset_shrink_progress(config: &InvariantConfig, progress: Option<&ProgressBar>) {
+    if let Some(progress) = progress {
+        progress.set_length(config.shrink_run_limit as u64);
+        progress.reset();
+        progress.set_message(" Shrink");
+    }
+}
+
+/// Applies accumulated warp/roll to a call, returning a modified copy.
+fn apply_warp_roll(call: &BasicTxDetails, warp: U256, roll: U256) -> BasicTxDetails {
+    let mut result = call.clone();
+    if warp > U256::ZERO {
+        result.warp = Some(warp);
+    }
+    if roll > U256::ZERO {
+        result.roll = Some(roll);
+    }
+    result
+}
+
+/// Applies warp/roll adjustments directly to the executor's environment.
+fn apply_warp_roll_to_env(executor: &mut Executor, warp: U256, roll: U256) {
+    if warp > U256::ZERO || roll > U256::ZERO {
+        executor.env_mut().evm_env.block_env.timestamp += warp;
+        executor.env_mut().evm_env.block_env.number += roll;
+
+        let block_env = executor.env().evm_env.block_env.clone();
+        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
+            if let Some(block) = cheatcodes.block.as_mut() {
+                block.timestamp += warp;
+                block.number += roll;
+            } else {
+                cheatcodes.block = Some(block_env);
+            }
+        }
+    }
 }
 
 pub(crate) fn shrink_sequence(
@@ -42,12 +86,7 @@ pub(crate) fn shrink_sequence(
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
-    // Reset run count and display shrinking message.
-    if let Some(progress) = progress {
-        progress.set_length(config.shrink_run_limit as u64);
-        progress.reset();
-        progress.set_message(" Shrink");
-    }
+    reset_shrink_progress(config, progress);
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = invariant_contract.invariant_function.selector().to_vec().into();
@@ -59,14 +98,13 @@ pub(crate) fn shrink_sequence(
     }
 
     let mut call_idx = 0;
-
     let mut shrinker = CallSequenceShrinker::new(calls.len());
+
     for _ in 0..config.shrink_run_limit {
         if early_exit.should_stop() {
             break;
         }
 
-        // Remove call at current index.
         shrinker.included_calls.clear(call_idx);
 
         match check_sequence(
@@ -89,12 +127,7 @@ pub(crate) fn shrink_sequence(
             progress.inc(1);
         }
 
-        // Restart from first call once we reach the end of sequence.
-        if call_idx + 1 == shrinker.call_sequence_len {
-            call_idx = 0;
-        } else {
-            call_idx += 1;
-        };
+        call_idx = shrinker.next_index(call_idx);
     }
 
     Ok(shrinker.current().map(|idx| &calls[idx]).cloned().collect())
@@ -159,25 +192,14 @@ pub(crate) fn shrink_sequence_value(
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
 
-    // Reset run count and display shrinking message.
-    if let Some(progress) = progress {
-        progress.set_length(config.shrink_run_limit as u64);
-        progress.reset();
-        progress.set_message(" Shrink");
-    }
+    reset_shrink_progress(config, progress);
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = invariant_contract.invariant_function.selector().to_vec().into();
 
-    // Special case: check if target value is achieved with 0 calls
-    if let Some(value) = check_sequence_value(
-        executor.clone(),
-        calls,
-        vec![],
-        target_address,
-        calldata.clone(),
-    )?
-        && value == target_value
+    // Special case: check if target value is achieved with 0 calls.
+    if check_sequence_value(executor.clone(), calls, vec![], target_address, calldata.clone())?
+        == Some(target_value)
     {
         return Ok(vec![]);
     }
@@ -190,28 +212,21 @@ pub(crate) fn shrink_sequence_value(
             break;
         }
 
-        // Remove call at current index.
         shrinker.included_calls.clear(call_idx);
 
-        let current_indices: Vec<usize> = shrinker.current().collect();
-        if let Some(value) = check_sequence_value(
+        let keeps_target = check_sequence_value(
             executor.clone(),
             calls,
-            current_indices,
+            shrinker.current().collect(),
             target_address,
             calldata.clone(),
-        )? {
-            if value == target_value {
-                // Sequence still achieves target, check if we're at minimum
-                if shrinker.included_calls.count() == 1 {
-                    break;
-                }
-            } else {
-                // Target not achieved, restore the call
-                shrinker.included_calls.set(call_idx);
+        )? == Some(target_value);
+
+        if keeps_target {
+            if shrinker.included_calls.count() == 1 {
+                break;
             }
         } else {
-            // Execution failed, restore the call
             shrinker.included_calls.set(call_idx);
         }
 
@@ -219,12 +234,7 @@ pub(crate) fn shrink_sequence_value(
             progress.inc(1);
         }
 
-        // Restart from first call once we reach the end of sequence.
-        if call_idx + 1 == shrinker.call_sequence_len {
-            call_idx = 0;
-        } else {
-            call_idx += 1;
-        };
+        call_idx = shrinker.next_index(call_idx);
     }
 
     // Build the final shrunk sequence, accumulating warp/roll from removed calls.
@@ -233,21 +243,11 @@ pub(crate) fn shrink_sequence_value(
     let mut accumulated_roll = U256::ZERO;
 
     for (idx, call) in calls.iter().enumerate() {
-        // Always accumulate warp/roll from this call
         accumulated_warp += call.warp.unwrap_or(U256::ZERO);
         accumulated_roll += call.roll.unwrap_or(U256::ZERO);
 
         if shrinker.included_calls.test(idx) {
-            // This call is kept - apply accumulated warp/roll to it
-            let mut kept_call = call.clone();
-            if accumulated_warp > U256::ZERO {
-                kept_call.warp = Some(accumulated_warp);
-            }
-            if accumulated_roll > U256::ZERO {
-                kept_call.roll = Some(accumulated_roll);
-            }
-            result.push(kept_call);
-            // Reset accumulators after applying
+            result.push(apply_warp_roll(call, accumulated_warp, accumulated_roll));
             accumulated_warp = U256::ZERO;
             accumulated_roll = U256::ZERO;
         }
@@ -257,12 +257,10 @@ pub(crate) fn shrink_sequence_value(
 }
 
 /// Executes a call sequence and returns the optimization value (int256) from the invariant
-/// function. This is used during shrinking for optimization mode.
+/// function. Used during shrinking for optimization mode.
 ///
-/// Returns None if the invariant call fails or doesn't return a valid int256.
-/// Unlike `check_sequence`, this function:
-/// - Applies warp/roll from ALL calls (including removed ones via accumulation in caller)
-/// - Returns the optimization value rather than success/failure
+/// Returns `None` if the invariant call fails or doesn't return a valid int256.
+/// Unlike `check_sequence`, this applies warp/roll from ALL calls (including removed ones).
 pub fn check_sequence_value(
     mut executor: Executor,
     calls: &[BasicTxDetails],
@@ -270,59 +268,32 @@ pub fn check_sequence_value(
     test_address: Address,
     calldata: Bytes,
 ) -> eyre::Result<Option<I256>> {
-    // Track accumulated warp/roll from all calls up to each kept call
     let mut accumulated_warp = U256::ZERO;
     let mut accumulated_roll = U256::ZERO;
     let mut seq_iter = sequence.iter().peekable();
 
     for (idx, tx) in calls.iter().enumerate() {
-        // Accumulate warp/roll from this call
         accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
         accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
 
-        // Check if this index is in the sequence
         if seq_iter.peek() == Some(&&idx) {
             seq_iter.next();
 
-            // Create a modified tx with accumulated warp/roll
-            let mut tx_with_accumulated = tx.clone();
-            if accumulated_warp > U256::ZERO {
-                tx_with_accumulated.warp = Some(accumulated_warp);
-            }
-            if accumulated_roll > U256::ZERO {
-                tx_with_accumulated.roll = Some(accumulated_roll);
-            }
-
+            let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
             let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
 
-            // Skip commits for reverted calls (but we've already applied warp/roll)
             if !call_result.reverted {
                 executor.commit(&mut call_result);
             }
 
-            // Reset accumulators after applying to a kept call
             accumulated_warp = U256::ZERO;
             accumulated_roll = U256::ZERO;
         }
     }
 
-    // Apply any remaining accumulated warp/roll to the executor's env before calling invariant
-    if accumulated_warp > U256::ZERO || accumulated_roll > U256::ZERO {
-        executor.env_mut().evm_env.block_env.timestamp += accumulated_warp;
-        executor.env_mut().evm_env.block_env.number += accumulated_roll;
+    // Apply any remaining accumulated warp/roll before calling invariant.
+    apply_warp_roll_to_env(&mut executor, accumulated_warp, accumulated_roll);
 
-        let block_env = executor.env().evm_env.block_env.clone();
-        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
-            if let Some(block) = cheatcodes.block.as_mut() {
-                block.timestamp += accumulated_warp;
-                block.number += accumulated_roll;
-            } else {
-                cheatcodes.block = Some(block_env);
-            }
-        }
-    }
-
-    // Call the invariant function and extract the int256 value
     let (inv_result, success) = call_invariant_function(&executor, test_address, calldata)?;
 
     if success
