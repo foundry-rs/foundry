@@ -35,9 +35,8 @@ contract GetCodeMultiProfileTest is Test {
 
         // Optimized vs unoptimized should produce different bytecode
         // (optimizer=true with 10000 runs vs optimizer=false)
-        assertNotEq(
-            keccak256(optimizedCode),
-            keccak256(unoptimizedCode),
+        require(
+            keccak256(optimizedCode) != keccak256(unoptimizedCode),
             "optimized and unoptimized profiles should produce different bytecode"
         );
     }
@@ -57,9 +56,8 @@ contract GetCodeMultiProfileTest is Test {
         assertGt(optimizedAddr.code.length, 0, "should deploy optimized contract");
 
         // Deployed code should differ
-        assertNotEq(
-            keccak256(unoptimizedAddr.code),
-            keccak256(optimizedAddr.code),
+        require(
+            keccak256(unoptimizedAddr.code) != keccak256(optimizedAddr.code),
             "deployed code should differ between profiles"
         );
     }
@@ -73,8 +71,9 @@ contract GetCodeMultiProfileTest is Test {
         assertGt(unoptimizedDeployed.length, 0, "should get unoptimized deployed code");
 
         // Runtime bytecode should also differ
-        assertNotEq(
-            keccak256(optimizedDeployed), keccak256(unoptimizedDeployed), "deployed code should differ between profiles"
+        require(
+            keccak256(optimizedDeployed) != keccak256(unoptimizedDeployed),
+            "deployed code should differ between profiles"
         );
     }
 
