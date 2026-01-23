@@ -284,6 +284,8 @@ show_edge_coverage = false
 line_length = 100
 tab_width = 2
 bracket_spacing = true
+# Globs to ignore when formatting (useful for vendored files)
+ignore = ["src/vendor/**/*.sol", "lib/**/*.sol"]
 ```
 
 #### Additional Optimizer settings
