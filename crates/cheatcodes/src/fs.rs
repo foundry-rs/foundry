@@ -492,8 +492,8 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
     } else {
-        let parsed =
-            parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
+        let parsed = parse_artifact_path(path)
+            .map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
         let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
 
         // Use available artifacts list if present
@@ -1047,8 +1047,7 @@ mod tests {
 
     #[test]
     fn test_parse_artifact_path_file_contract_version() {
-        let parsed =
-            super::parse_artifact_path("path/to/Contract.sol:MyContract:0.8.23").unwrap();
+        let parsed = super::parse_artifact_path("path/to/Contract.sol:MyContract:0.8.23").unwrap();
         assert_eq!(parsed.file, Some(PathBuf::from("path/to/Contract.sol")));
         assert_eq!(parsed.contract_name, Some("MyContract"));
         assert_eq!(parsed.version, Some(semver::Version::new(0, 8, 23)));
