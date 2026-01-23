@@ -54,7 +54,7 @@ pub struct InterfaceArgs {
     ///
     /// This can fail if there are structs with the same name in different interfaces.
     #[arg(long)]
-    all_in_one: bool,
+    flatten: bool,
 
     #[command(flatten)]
     etherscan: EtherscanOpts,
@@ -62,7 +62,7 @@ pub struct InterfaceArgs {
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, name, pragma, output: output_location, all_in_one, etherscan } = self;
+        let Self { contract, name, pragma, output: output_location, flatten, etherscan } = self;
 
         // Determine if the target contract is an ABI file, a local contract or an Ethereum address.
         let abis = if Path::new(&contract).is_file()
@@ -80,7 +80,7 @@ impl InterfaceArgs {
         };
 
         // Build config for to_sol conversion.
-        let config = if all_in_one { Some(ToSolConfig::new().one_contract(true)) } else { None };
+        let config = if flatten { Some(ToSolConfig::new().one_contract(true)) } else { None };
 
         // Retrieve interfaces from the array of ABIs.
         let interfaces = get_interfaces(abis, config)?;

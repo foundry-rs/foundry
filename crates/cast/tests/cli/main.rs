@@ -2486,15 +2486,15 @@ interface Interface {
     ]]);
 });
 
-// tests that `cast interface --all-in-one` inlines inherited struct types into the interface
+// tests that `cast interface --flatten` inlines inherited struct types into the interface
 // <https://github.com/foundry-rs/foundry/issues/9960>
-casttest!(interface_all_in_one, |prj, cmd| {
+casttest!(interface_flatten, |prj, cmd| {
     let interface = include_str!("../fixtures/interface_inherited_struct.json");
 
     let path = prj.root().join("interface_inherited_struct.json");
     fs::write(&path, interface).unwrap();
 
-    // Without --all-in-one, a separate library is generated for the struct
+    // Without --flatten, a separate library is generated for the struct
     cmd.arg("interface").arg(&path).assert_success().stdout_eq(str![[
         r#"// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
@@ -2512,9 +2512,14 @@ interface Interface {
 "#
     ]]);
 
-    // With --all-in-one, the struct is inlined into the interface
-    cmd.cast_fuse().arg("interface").arg("--all-in-one").arg(&path).assert_success().stdout_eq(
-        str![[r#"// SPDX-License-Identifier: UNLICENSED
+    // With --flatten, the struct is inlined into the interface
+    cmd.cast_fuse()
+        .arg("interface")
+        .arg("--flatten")
+        .arg(&path)
+        .assert_success()
+        .stdout_eq(str![[
+            r#"// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
 interface Interface {
@@ -2526,8 +2531,8 @@ interface Interface {
     function test(TestStruct memory param) external;
 }
 
-"#]],
-    );
+"#
+        ]]);
 });
 
 // tests that fetches WETH interface from etherscan
