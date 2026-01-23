@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc, time::Duration};
+use std::{cmp::Ordering, collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
@@ -24,6 +24,15 @@ use foundry_common::{
 use foundry_config::Config;
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
+use parking_lot::RwLock;
+use std::sync::OnceLock;
+
+/// Cache of provider URLs that don't support the `pending` block tag.
+static PENDING_UNSUPPORTED: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+
+fn pending_unsupported() -> &'static RwLock<HashSet<String>> {
+    PENDING_UNSUPPORTED.get_or_init(|| RwLock::new(HashSet::new()))
+}
 
 use crate::{
     ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
@@ -47,6 +56,11 @@ pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     Ok(())
 }
 
+/// Fetches the next nonce for a given address.
+///
+/// Uses `pending` block tag to account for transactions in the mempool, with automatic
+/// fallback to `latest` for providers that don't support `pending`. The fallback is
+/// memoized per provider URL to avoid repeated failed requests.
 pub async fn next_nonce(
     caller: Address,
     provider_url: &str,
@@ -55,8 +69,22 @@ pub async fn next_nonce(
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
 
-    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
-    Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
+    if let Some(num) = block_number {
+        return Ok(provider.get_transaction_count(caller).block_id(BlockId::number(num)).await?);
+    }
+
+    let try_pending = !pending_unsupported().read().contains(provider_url);
+
+    if try_pending {
+        match provider.get_transaction_count(caller).block_id(BlockId::pending()).await {
+            Ok(count) => return Ok(count),
+            Err(_) => {
+                pending_unsupported().write().insert(provider_url.to_string());
+            }
+        }
+    }
+
+    Ok(provider.get_transaction_count(caller).block_id(BlockId::latest()).await?)
 }
 
 /// Represents how to send a single transaction.
