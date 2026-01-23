@@ -1332,7 +1332,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         //
                         // Only process if:
                         // 1. It's not a cheatcode call, AND
-                        // 2. Either the call reverted, OR we made an external call (max_depth > depth)
+                        // 2. Either the call reverted, OR we made an external call (max_depth >
+                        //    depth)
                         //
                         // This fixes the bug where calling a non-contract address would consume
                         // the expectRevert even though the call succeeded, preventing the actual
