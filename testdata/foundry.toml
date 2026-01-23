@@ -19,15 +19,11 @@ ignored_error_codes = [
 extra_output = ["storageLayout"]
 
 additional_compiler_profiles = [
-    # paris
+    # paris - EVM version paris for testing profile selection
     { name = "paris", evm_version = "paris" },
-    # optimized - high optimizer runs for production
-    { name = "optimized", optimizer = true, optimizer_runs = 10000 },
-    # unoptimized - no optimization for debugging
-    { name = "unoptimized", optimizer = false },
 ]
 compilation_restrictions = [
-    # paris
+    # paris - files in paris/ directory use paris EVM version
     { paths = "paris/**", evm_version = "paris" },
 ]
 
