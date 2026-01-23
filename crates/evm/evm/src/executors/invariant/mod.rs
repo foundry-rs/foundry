@@ -1,5 +1,8 @@
 use crate::{
-    executors::{Executor, RawCallResult},
+    executors::{
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
+        RawCallResult, corpus::WorkerCorpus,
+    },
     inspectors::Fuzzer,
 };
 use alloy_primitives::{
@@ -8,7 +11,11 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    TestFunctionExt,
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    sh_println,
+};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{
@@ -30,6 +37,8 @@ use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
@@ -44,15 +53,9 @@ mod replay;
 pub use replay::{replay_error, replay_run};
 
 mod result;
-use foundry_common::{TestFunctionExt, sh_println};
 pub use result::InvariantFuzzTestResult;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 mod shrink;
-use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, FuzzTestTimer, corpus::CorpusManager,
-};
 pub use shrink::check_sequence;
 
 sol! {
@@ -459,15 +462,56 @@ impl<'a> InvariantExecutor<'a> {
                     });
 
                     // Determine if test can continue or should exit.
-                    let result = can_continue(
-                        &invariant_contract,
-                        &mut invariant_test,
-                        &mut current_run,
-                        &self.config,
-                        call_result,
-                        &state_changeset,
-                    )
-                    .map_err(|e| eyre!(e.to_string()))?;
+                    // Check invariants based on check_interval to improve deep run performance.
+                    // - check_interval=0: only assert on the last call
+                    // - check_interval=1 (default): assert after every call
+                    // - check_interval=N: assert every N calls AND always on the last call
+                    let is_last_call = current_run.depth == self.config.depth - 1;
+                    let should_check_invariant = if self.config.check_interval == 0 {
+                        is_last_call
+                    } else {
+                        self.config.check_interval == 1
+                            || (current_run.depth + 1).is_multiple_of(self.config.check_interval)
+                            || is_last_call
+                    };
+
+                    let result = if should_check_invariant {
+                        can_continue(
+                            &invariant_contract,
+                            &mut invariant_test,
+                            &mut current_run,
+                            &self.config,
+                            call_result,
+                            &state_changeset,
+                        )
+                        .map_err(|e| eyre!(e.to_string()))?
+                    } else {
+                        // Skip invariant check but still track reverts
+                        if call_result.reverted {
+                            invariant_test.test_data.failures.reverts += 1;
+                            if self.config.fail_on_revert {
+                                let case_data = error::FailedInvariantCaseData::new(
+                                    &invariant_contract,
+                                    &self.config,
+                                    &invariant_test.targeted_contracts,
+                                    &current_run.inputs,
+                                    call_result,
+                                    &[],
+                                );
+                                invariant_test.test_data.failures.revert_reason =
+                                    Some(case_data.revert_reason.clone());
+                                invariant_test.test_data.failures.error =
+                                    Some(InvariantFuzzError::Revert(case_data));
+                                result::RichInvariantResults::new(false, None)
+                            } else {
+                                current_run.inputs.pop();
+                                result::RichInvariantResults::new(true, None)
+                            }
+                        } else {
+                            result::RichInvariantResults::new(true, None)
+                        }
+                    };
+
                     if !result.can_continue || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
@@ -541,7 +585,7 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
-            failed_corpus_replays: corpus_manager.failed_replays(),
+            failed_corpus_replays: corpus_manager.failed_replays,
         })
     }
 
@@ -553,7 +597,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
-    ) -> Result<(InvariantTest, CorpusManager)> {
+    ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -569,25 +613,6 @@ impl<'a> InvariantExecutor<'a> {
         )
         .no_shrink();
 
-        // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
-        // EVM execution.
-        let mut call_generator = None;
-        if self.config.call_override {
-            let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
-
-            call_generator = Some(RandomCallGenerator::new(
-                invariant_contract.address,
-                self.runner.clone(),
-                override_call_strat(
-                    fuzz_state.clone(),
-                    targeted_contracts.clone(),
-                    target_contract_ref.clone(),
-                    fuzz_fixtures.clone(),
-                ),
-                target_contract_ref,
-            ));
-        }
-
         // If any of the targeted contracts have the storage layout enabled then we can sample
         // mapping values. To accomplish, we need to record the mapping storage slots and keys.
         let fuzz_state =
@@ -597,8 +622,11 @@ impl<'a> InvariantExecutor<'a> {
                 fuzz_state
             };
 
+        // Set up fuzzer WITHOUT call_generator initially.
+        // We defer call_override until after the initial invariant check to avoid
+        // injecting random calls during setup which would break the invariant assertion.
         self.executor.inspector_mut().set_fuzzer(Fuzzer {
-            call_generator,
+            call_generator: None,
             fuzz_state: fuzz_state.clone(),
             collect: true,
         });
@@ -620,13 +648,44 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
-        let corpus_manager = CorpusManager::new(
+        // NOW enable call_override after the initial invariant check has passed.
+        // This allows `override_call_strat` to inject calls during actual fuzz runs
+        // for reentrancy vulnerability detection.
+        if self.config.call_override {
+            let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
+
+            // Collect handler addresses - these are the contracts we want to inject
+            // reentrancy into (simulating malicious receive() functions).
+            let handler_addresses: std::collections::HashSet<Address> =
+                targeted_contracts.targets.lock().keys().copied().collect();
+
+            let call_generator = RandomCallGenerator::new(
+                invariant_contract.address,
+                handler_addresses,
+                self.runner.clone(),
+                override_call_strat(
+                    fuzz_state.clone(),
+                    targeted_contracts.clone(),
+                    target_contract_ref.clone(),
+                    fuzz_fixtures.clone(),
+                ),
+                target_contract_ref,
+            );
+
+            if let Some(fuzzer) = self.executor.inspector_mut().fuzzer.as_mut() {
+                fuzzer.call_generator = Some(call_generator);
+            }
+        }
+
+        let worker = WorkerCorpus::new(
+            0,
             self.config.corpus.clone(),
             strategy.boxed(),
-            &self.executor,
+            Some(&self.executor),
             None,
             Some(&targeted_contracts),
         )?;
+
         let invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,
@@ -635,7 +694,7 @@ impl<'a> InvariantExecutor<'a> {
             self.runner.clone(),
         );
 
-        Ok((invariant_test, corpus_manager))
+        Ok((invariant_test, worker))
     }
 
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string

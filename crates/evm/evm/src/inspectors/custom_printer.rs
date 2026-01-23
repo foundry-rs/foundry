@@ -94,11 +94,11 @@ where
     fn create(&mut self, _context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         let _ = sh_println!(
             "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
-            inputs.caller,
-            inputs.scheme,
-            inputs.value,
-            inputs.init_code,
-            inputs.gas_limit
+            inputs.caller(),
+            inputs.scheme(),
+            inputs.value(),
+            inputs.init_code(),
+            inputs.gas_limit()
         );
         None
     }

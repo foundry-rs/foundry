@@ -210,6 +210,7 @@ fmt_tests! {
     SortedImports,
     StatementBlock,
     StructDefinition,
+    StructFieldAccess,
     ThisExpression,
     #[ignore = "Solar errors when parsing inputs with trailing commas"]
     TrailingComma,
