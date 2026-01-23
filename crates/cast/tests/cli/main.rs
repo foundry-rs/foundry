@@ -2513,13 +2513,8 @@ interface Interface {
     ]]);
 
     // With --flatten, the struct is inlined into the interface
-    cmd.cast_fuse()
-        .arg("interface")
-        .arg("--flatten")
-        .arg(&path)
-        .assert_success()
-        .stdout_eq(str![[
-            r#"// SPDX-License-Identifier: UNLICENSED
+    cmd.cast_fuse().arg("interface").arg("--flatten").arg(&path).assert_success().stdout_eq(str![
+        [r#"// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
 interface Interface {
@@ -2531,8 +2526,8 @@ interface Interface {
     function test(TestStruct memory param) external;
 }
 
-"#
-        ]]);
+"#]
+    ]);
 });
 
 // tests that fetches WETH interface from etherscan
