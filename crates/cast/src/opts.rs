@@ -595,10 +595,20 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["event-decode", "--event-decode", "ed"])]
     DecodeEvent {
         /// The event signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
+        ///
+        /// Supports the `indexed` keyword for indexed parameters, e.g.:
+        /// `Transfer(address indexed from, address indexed to, uint256 value)`
         #[arg(long, visible_alias = "event-sig")]
         sig: Option<String>,
-        /// The event data to decode.
-        data: String,
+        /// The indexed event topics (topic0 is the event selector).
+        ///
+        /// For events with indexed parameters, pass topics separately:
+        /// - topic0: event selector (optional if --sig is provided)
+        /// - topic1..topicN: indexed parameters in order
+        #[arg(long, short)]
+        topics: Vec<String>,
+        /// The non-indexed event data to decode.
+        data: Option<String>,
     },
 
     /// Decode custom error data.

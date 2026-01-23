@@ -147,6 +147,40 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 "#]]);
 });
 
+// tests cast can decode event with indexed parameters using --topics
+casttest!(event_decode_with_indexed_params, |_prj, cmd| {
+    // Transfer(address indexed from, address indexed to, uint256 value)
+    // Topics: [selector, from, to]
+    // Data: value (78)
+    let topic0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"; // keccak256("Transfer(address,address,uint256)")
+    let topic1 = "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // from
+    let topic2 = "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; // to
+    let data = "0x000000000000000000000000000000000000000000000000000000000000004e"; // value = 78
+
+    cmd.args([
+        "decode-event",
+        "--sig", "Transfer(address indexed from, address indexed to, uint256 value)",
+        "-t", topic0,
+        "-t", topic1,
+        "-t", topic2,
+        data,
+    ]).assert_success().stdout_eq(str![[r#"
+0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa
+0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB
+78
+
+"#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+  "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB",
+  78
+]
+
+"#]]);
+});
+
 // tests cast can decode event with Openchain API
 casttest!(flaky_event_decode_with_openchain, |prj, cmd| {
     prj.clear_cache();

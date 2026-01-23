@@ -6,7 +6,8 @@ use crate::{
     tx::CastTxSender,
 };
 use alloy_consensus::transaction::Recovered;
-use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
+use alloy_dyn_abi::{DecodedEvent, DynSolValue, ErrorExt, EventExt};
+use alloy_json_abi::Event;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
@@ -231,26 +232,58 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
             print_tokens(&tokens);
         }
-        CastSubcommand::DecodeEvent { sig, data } => {
-            let decoded_event = if let Some(event_sig) = sig {
+        CastSubcommand::DecodeEvent { sig, topics, data } => {
+            let (event, decoded_event) = if let Some(event_sig) = sig {
                 let event = get_event(event_sig.as_str())?;
-                event.decode_log_parts(core::iter::once(event.selector()), &hex::decode(data)?)?
+
+                // Parse topics from CLI args
+                let parsed_topics: Vec<B256> = if topics.is_empty() {
+                    // No explicit topics provided, use event selector as the only topic
+                    vec![event.selector()]
+                } else {
+                    // Parse provided topics
+                    topics
+                        .iter()
+                        .map(|t| {
+                            let t = crate::strip_0x(t);
+                            t.parse::<B256>()
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+
+                // Get event data (non-indexed parameters)
+                let event_data = data
+                    .as_ref()
+                    .map(|d| hex::decode(crate::strip_0x(d)))
+                    .transpose()?
+                    .unwrap_or_default();
+
+                let decoded =
+                    event.decode_log_parts(parsed_topics.iter().copied(), &event_data)?;
+                (event, decoded)
             } else {
-                let data = crate::strip_0x(&data);
-                let selector = data.get(..64).unwrap_or_default();
-                let selector = selector.parse()?;
+                // No signature provided - try to identify from selector
+                // In this case, data should contain both selector and event data
+                let raw_data = data.as_ref().map(|d| crate::strip_0x(d)).unwrap_or_default();
+                let selector: B256 = raw_data.get(..64).unwrap_or_default().parse()?;
+
                 let identified_event =
                     SignaturesIdentifier::new(false)?.identify_event(selector).await;
                 if let Some(event) = identified_event {
                     let _ = sh_println!("{}", event.signature());
-                    let data = data.get(64..).unwrap_or_default();
-                    get_event(event.signature().as_str())?
-                        .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
+                    let data_bytes = raw_data.get(64..).unwrap_or_default();
+                    let parsed_event = get_event(event.signature().as_str())?;
+                    let decoded = parsed_event
+                        .decode_log_parts(core::iter::once(selector), &hex::decode(data_bytes)?)?;
+                    (parsed_event, decoded)
                 } else {
                     eyre::bail!("No matching event signature found for selector `{selector}`")
                 }
             };
-            print_tokens(&decoded_event.body);
+
+            // Reconstruct params in the correct order (indexed + body interleaved)
+            let params = reconstruct_params(&event, &decoded_event);
+            print_tokens(&params);
         }
         CastSubcommand::DecodeError { sig, data } => {
             let error = if let Some(err_sig) = sig {
@@ -779,6 +812,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 let _ = sh_println!("{t}");
             });
         }
+    }
+
+    /// Restore the order of the params of a decoded event,
+    /// as Alloy returns the indexed and non-indexed params separately.
+    fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue> {
+        let mut indexed = 0;
+        let mut unindexed = 0;
+        let mut inputs = vec![];
+        for input in &event.inputs {
+            if input.indexed && indexed < decoded.indexed.len() {
+                inputs.push(decoded.indexed[indexed].clone());
+                indexed += 1;
+            } else if unindexed < decoded.body.len() {
+                inputs.push(decoded.body[unindexed].clone());
+                unindexed += 1;
+            }
+        }
+        inputs
     }
 
     Ok(())
