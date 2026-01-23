@@ -39,9 +39,7 @@ contract GetCodeMultiProfileTest is Test {
 
         // Should be different due to optimizer settings
         assertNotEq(
-            keccak256(optimizedCode),
-            keccak256(unoptimizedCode),
-            "different profiles should produce different bytecode"
+            keccak256(optimizedCode), keccak256(unoptimizedCode), "different profiles should produce different bytecode"
         );
     }
 
@@ -87,9 +85,7 @@ contract GetCodeMultiProfileTest is Test {
 
         // Runtime bytecode should also differ
         assertNotEq(
-            keccak256(optimizedDeployed),
-            keccak256(unoptimizedDeployed),
-            "deployed code should differ between profiles"
+            keccak256(optimizedDeployed), keccak256(unoptimizedDeployed), "deployed code should differ between profiles"
         );
     }
 }
