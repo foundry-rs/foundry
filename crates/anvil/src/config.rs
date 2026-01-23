@@ -206,7 +206,8 @@ pub struct NodeConfig {
     pub networks: NetworkConfigs,
     /// Do not print log messages.
     pub silent: bool,
-    /// The path where states are cached.
+    /// The path where persisted states are cached (used with `max_persisted_states`).
+    /// This does not affect the fork RPC cache location.
     pub cache_path: Option<PathBuf>,
 }
 
@@ -1044,7 +1045,10 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the path where states are cached
+    /// Sets the path where persisted states are cached (used with `max_persisted_states`).
+    ///
+    /// Note: This does not control the fork RPC cache location (`storage.json`), which uses
+    /// `~/.foundry/cache/rpc/<chain>/<block>/` via [`Config::foundry_block_cache_file`].
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
