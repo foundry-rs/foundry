@@ -713,6 +713,26 @@ forgetest_async!(can_deploy_script_with_lib, |prj, cmd| {
         .await;
 });
 
+// Regression test for https://github.com/foundry-rs/foundry/issues/12646
+// Tests that using vm.startBroadcast(privateKey) without --sender CLI flag
+// correctly updates the sender nonce even when there are no libraries to predeploy.
+forgetest_async!(can_deploy_script_private_key_no_lib, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_addresses(&[address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC")])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployWithPrivateKeyNoLibraries()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(&[(
+            address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+            2,
+        )])
+        .await;
+});
+
 forgetest_async!(can_deploy_script_private_key, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());

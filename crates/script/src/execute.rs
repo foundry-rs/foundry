@@ -177,6 +177,10 @@ impl PreExecutionState {
     ///
     /// If there are multiple candidate addresses, it skips everything and lets `--sender` deploy
     /// them instead.
+    ///
+    /// Also detects when the script uses a different sender than the default (e.g., via
+    /// `vm.startBroadcast(privateKey)`) and returns it so the sender nonce can be updated,
+    /// even when there are no libraries to predeploy.
     fn maybe_new_sender(
         &self,
         transactions: Option<&BroadcastableTransactions>,
@@ -185,20 +189,29 @@ impl PreExecutionState {
 
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
-            if self.build_data.predeploy_libraries.libraries_count() > 0
-                && self.args.evm.sender.is_none()
-            {
+            if self.args.evm.sender.is_none() {
+                let has_libraries = self.build_data.predeploy_libraries.libraries_count() > 0;
+
                 for tx in txs {
-                    if tx.transaction.to().is_none() {
-                        let sender = tx.transaction.from().expect("no sender");
+                    let sender = tx.transaction.from().expect("no sender");
+
+                    // For library predeployment, we only care about CREATE transactions (to is
+                    // None). For sender nonce updates without libraries, we check all
+                    // transactions.
+                    let dominated_by_library_logic = has_libraries && tx.transaction.to().is_none();
+                    let sender_changed = sender != self.script_config.evm_opts.sender;
+
+                    if dominated_by_library_logic || (!has_libraries && sender_changed) {
                         if let Some(ns) = new_sender {
                             if sender != ns {
-                                sh_warn!(
-                                    "You have more than one deployer who could predeploy libraries. Using `--sender` instead."
-                                )?;
+                                if has_libraries {
+                                    sh_warn!(
+                                        "You have more than one deployer who could predeploy libraries. Using `--sender` instead."
+                                    )?;
+                                }
                                 return Ok(None);
                             }
-                        } else if sender != self.script_config.evm_opts.sender {
+                        } else if sender_changed {
                             new_sender = Some(sender);
                         }
                     }

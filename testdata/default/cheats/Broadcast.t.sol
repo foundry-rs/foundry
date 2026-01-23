@@ -247,6 +247,20 @@ contract BroadcastTestNoLinking is ForgeTest {
         vm.broadcast();
         test11.view_me();
     }
+
+    /// Tests that using vm.startBroadcast(privateKey) without --sender CLI flag
+    /// correctly updates the sender nonce even when there are no libraries to predeploy.
+    /// This is a regression test for https://github.com/foundry-rs/foundry/issues/12646
+    function deployWithPrivateKeyNoLibraries() public {
+        // Use the 3rd anvil account private key
+        uint256 privateKey = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
+        // Expected address: 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+
+        vm.startBroadcast(privateKey);
+        NoLink test1 = new NoLink();
+        NoLink test2 = new NoLink();
+        vm.stopBroadcast();
+    }
 }
 
 contract BroadcastMix is ForgeTest {
