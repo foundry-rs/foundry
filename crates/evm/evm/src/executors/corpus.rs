@@ -42,8 +42,10 @@ use eyre::{Result, eyre};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_fuzz::{
     BasicTxDetails,
-    invariant::FuzzRunIdentifiedContracts,
-    strategies::{EvmFuzzState, generate_msg_value, mutate_param_value},
+    invariant::{FuzzRunIdentifiedContracts, SenderFilters},
+    strategies::{
+        EvmFuzzState, generate_msg_value, mutate_param_value, select_random_sender_for_mutation,
+    },
 };
 use proptest::{
     prelude::{Just, Rng, Strategy},
@@ -461,6 +463,7 @@ impl WorkerCorpus {
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
         targeted_contracts: &FuzzRunIdentifiedContracts,
+        senders: Option<&SenderFilters>,
     ) -> Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
 
@@ -567,7 +570,7 @@ impl WorkerCorpus {
                             if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
                                 && !function.inputs.is_empty()
                             {
-                                self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+                                self.abi_mutate(tx, function, test_runner, fuzz_state, senders)?;
                             }
                         }
                     } else {
@@ -577,7 +580,7 @@ impl WorkerCorpus {
                         if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
                             && !function.inputs.is_empty()
                         {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+                            self.abi_mutate(tx, function, test_runner, fuzz_state, senders)?;
                         }
                     }
                 }
@@ -614,7 +617,7 @@ impl WorkerCorpus {
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
-            self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+            self.abi_mutate(&mut tx, function, test_runner, fuzz_state, None)?;
             tx
         } else {
             self.new_tx(test_runner)?
@@ -697,15 +700,24 @@ impl WorkerCorpus {
         function: &Function,
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
+        senders: Option<&SenderFilters>,
     ) -> Result<()> {
-        // Mutate sender with 15% probability using addresses from dictionary.
+        // Mutate sender with 15% probability, respecting targeted/excluded senders if provided.
         if test_runner.rng().random_ratio(15, 100) {
-            let dict = fuzz_state.dictionary_read();
-            let addresses = dict.addresses();
-            if !addresses.is_empty() {
-                let idx = test_runner.rng().random_range(0..addresses.len());
-                if let Some(&addr) = addresses.get_index(idx) {
+            if let Some(senders) = senders {
+                if let Some(addr) =
+                    select_random_sender_for_mutation(test_runner, fuzz_state, senders)
+                {
                     tx.sender = addr;
+                }
+            } else {
+                let dict = fuzz_state.dictionary_read();
+                let addresses = dict.addresses();
+                if !addresses.is_empty() {
+                    let idx = test_runner.rng().random_range(0..addresses.len());
+                    if let Some(&addr) = addresses.get_index(idx) {
+                        tx.sender = addr;
+                    }
                 }
             }
         }

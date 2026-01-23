@@ -158,6 +158,8 @@ struct InvariantTest {
     fuzz_state: EvmFuzzState,
     // Contracts fuzzed by the invariant test.
     targeted_contracts: FuzzRunIdentifiedContracts,
+    // Sender filters (targeted/excluded senders).
+    sender_filters: SenderFilters,
     // Data collected during invariant runs.
     test_data: InvariantTestData,
 }
@@ -167,6 +169,7 @@ impl InvariantTest {
     fn new(
         fuzz_state: EvmFuzzState,
         targeted_contracts: FuzzRunIdentifiedContracts,
+        sender_filters: SenderFilters,
         failures: InvariantFailures,
         last_call_results: Option<RawCallResult>,
         branch_runner: TestRunner,
@@ -187,7 +190,7 @@ impl InvariantTest {
             optimization_best_value: None,
             optimization_best_sequence: vec![],
         };
-        Self { fuzz_state, targeted_contracts, test_data }
+        Self { fuzz_state, targeted_contracts, sender_filters, test_data }
     }
 
     /// Returns number of invariant test reverts.
@@ -381,6 +384,7 @@ impl<'a> InvariantExecutor<'a> {
                 &mut invariant_test.test_data.branch_runner,
                 &invariant_test.fuzz_state,
                 &invariant_test.targeted_contracts,
+                Some(&invariant_test.sender_filters),
             )?;
 
             // Create current invariant run data.
@@ -621,13 +625,13 @@ impl<'a> InvariantExecutor<'a> {
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
-        let (targeted_senders, targeted_contracts) =
+        let (sender_filters, targeted_contracts) =
             self.select_contracts_and_senders(invariant_contract.address)?;
 
         // Creates the invariant strategy.
         let strategy = invariant_strat(
             fuzz_state.clone(),
-            targeted_senders,
+            sender_filters.clone(),
             targeted_contracts.clone(),
             self.config.clone(),
             fuzz_fixtures.clone(),
@@ -710,6 +714,7 @@ impl<'a> InvariantExecutor<'a> {
         let invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,
+            sender_filters,
             failures,
             last_call_results,
             self.runner.clone(),
@@ -1129,16 +1134,7 @@ pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result
     let requested_value = tx.call_details.value.unwrap_or(U256::ZERO);
     let sender_balance = executor.get_balance(tx.sender)?;
     let value = if sender_balance >= requested_value { requested_value } else { U256::ZERO };
-    let mut call_result = executor
+    executor
         .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
-        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-
-    // Propagate block adjustments to call result which will be committed.
-    if let Some(warp) = tx.warp {
-        call_result.env.evm_env.block_env.timestamp += warp;
-    }
-    if let Some(roll) = tx.roll {
-        call_result.env.evm_env.block_env.number += roll;
-    }
-    Ok(call_result)
+        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }

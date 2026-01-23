@@ -283,6 +283,40 @@ pub fn fuzz_param_from_state(
     }
 }
 
+/// Selects a random sender address for mutation, respecting sender filters.
+///
+/// Priority:
+/// 1. If `senders` has targeted addresses, pick randomly from those
+/// 2. Otherwise, pick from the dictionary addresses (excluding any in `senders.excluded`)
+/// 3. Returns `None` if no suitable address is found
+pub fn select_random_sender_for_mutation(
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+    senders: &SenderFilters,
+) -> Option<Address> {
+    if !senders.targeted.is_empty() {
+        let index = test_runner.rng().random_range(0..senders.targeted.len());
+        return Some(senders.targeted[index]);
+    }
+
+    let dict = state.dictionary_read();
+    let addresses = dict.addresses();
+    if addresses.is_empty() {
+        return None;
+    }
+
+    // Try a few times to find a non-excluded address
+    for _ in 0..10 {
+        let index = test_runner.rng().random_range(0..addresses.len());
+        if let Some(&addr) = addresses.get_index(index)
+            && !senders.excluded.contains(&addr)
+        {
+            return Some(addr);
+        }
+    }
+    None
+}
+
 /// Selects a random address for mutation, respecting sender filters if provided.
 ///
 /// Priority:
