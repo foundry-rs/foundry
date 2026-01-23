@@ -1,9 +1,8 @@
-use super::{MutationContext, Mutator};
 use crate::mutation::mutant::Mutant;
 
 use super::{
-    assignment_mutator, binary_op_mutator, delete_expression_mutator, elim_delegate_mutator,
-    require_mutator, unary_op_mutator,
+    MutationContext, Mutator, assignment_mutator, binary_op_mutator, delete_expression_mutator,
+    elim_delegate_mutator, require_mutator, unary_op_mutator,
 };
 
 /// Registry of all available mutators (ie implementing the Mutator trait)

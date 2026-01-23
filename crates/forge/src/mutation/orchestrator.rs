@@ -6,10 +6,8 @@
 //! - Running mutations in parallel with caching
 //! - Aggregating results and reporting
 
-use crate::mutation::{
-    MutationHandler, MutationProgress, MutationReporter, MutationsSummary, mutant::MutationResult,
-    runner::run_mutations_parallel_with_progress,
-};
+use std::{path::PathBuf, sync::Arc, time::Instant};
+
 use eyre::Result;
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::sh_println;
@@ -20,7 +18,11 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, filter::GlobMatcher};
 use foundry_evm::{Env, opts::EvmOpts};
-use std::{path::PathBuf, sync::Arc, time::Instant};
+
+use crate::mutation::{
+    MutationHandler, MutationProgress, MutationReporter, MutationsSummary, mutant::MutationResult,
+    runner::run_mutations_parallel_with_progress,
+};
 
 /// Configuration for mutation testing run.
 pub struct MutationConfig {

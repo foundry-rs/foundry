@@ -1,12 +1,12 @@
+use alloy_primitives::U256;
+use eyre::Result;
+use solar::ast::{ExprKind, Span};
+
 use crate::mutation::{
     mutant::{Mutant, MutationType, OwnedLiteral},
     mutators::{MutationContext, Mutator},
     visitor::AssignVarTypes,
 };
-
-use alloy_primitives::U256;
-use eyre::Result;
-use solar::ast::{ExprKind, Span};
 
 pub struct AssignmentMutator;
 

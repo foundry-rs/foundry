@@ -1,12 +1,12 @@
-// Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
-// select mutants) Use Solar:
-use super::visitor::AssignVarTypes;
+use std::{fmt::Display, path::PathBuf};
+
 use serde::{Deserialize, Serialize};
 use solar::{
     interface::BytePos,
     parse::ast::{BinOpKind, LitKind, Span, StrKind, UnOpKind},
 };
-use std::{fmt::Display, path::PathBuf};
+
+use super::visitor::AssignVarTypes;
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
 #[derive(Debug, Clone, Serialize, Deserialize)]

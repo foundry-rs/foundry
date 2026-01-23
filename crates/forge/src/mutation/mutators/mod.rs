@@ -1,17 +1,17 @@
+use std::path::PathBuf;
+
+use eyre::Result;
+use solar::ast::{Expr, Span, VariableDefinition};
+
+use crate::mutation::Mutant;
+
 pub mod assignment_mutator;
 pub mod binary_op_mutator;
 pub mod delete_expression_mutator;
 pub mod elim_delegate_mutator;
+pub mod mutator_registry;
 pub mod require_mutator;
 pub mod unary_op_mutator;
-
-pub mod mutator_registry;
-
-use eyre::Result;
-use solar::ast::{Expr, Span, VariableDefinition};
-use std::path::PathBuf;
-
-use crate::mutation::Mutant;
 
 pub trait Mutator: Send + Sync {
     /// Generate all mutant corresponding to a given context

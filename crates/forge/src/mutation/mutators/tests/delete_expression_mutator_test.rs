@@ -1,9 +1,9 @@
+use rstest::*;
+
 use crate::mutation::mutators::{
     delete_expression_mutator::DeleteExpressionMutator,
     tests::helper::{MutatorTestCase, MutatorTester},
 };
-
-use rstest::*;
 
 impl MutatorTester for DeleteExpressionMutator {}
 

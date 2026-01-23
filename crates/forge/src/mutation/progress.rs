@@ -1,12 +1,14 @@
 //! Progress display for mutation testing.
 
-use crate::mutation::mutant::{Mutant, MutationResult};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use parking_lot::Mutex;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use parking_lot::Mutex;
+
+use crate::mutation::mutant::{Mutant, MutationResult};
 
 /// State for mutation testing progress display.
 #[derive(Debug)]

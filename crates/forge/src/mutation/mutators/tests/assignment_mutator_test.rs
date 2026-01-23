@@ -1,9 +1,9 @@
+use rstest::*;
+
 use crate::mutation::mutators::{
     assignment_mutator::AssignmentMutator,
     tests::helper::{MutatorTestCase, MutatorTester},
 };
-
-use rstest::*;
 
 impl MutatorTester for AssignmentMutator {}
 

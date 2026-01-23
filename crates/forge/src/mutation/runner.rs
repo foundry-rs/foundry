@@ -3,21 +3,6 @@
 //! This module provides high-performance parallel execution of mutation tests.
 //! Each mutant is tested in an isolated temporary workspace to enable concurrent execution.
 
-use crate::{
-    MultiContractRunnerBuilder,
-    mutation::{
-        MutationHandler, MutationsSummary, SurvivedSpans,
-        mutant::{Mutant, MutationResult},
-        progress::MutationProgress,
-    },
-    result::SuiteResult,
-};
-use eyre::Result;
-use foundry_common::{EmptyTestFilter, compile::ProjectCompiler, sh_eprintln, sh_println};
-use foundry_compilers::compilers::multi::MultiCompiler;
-use foundry_config::Config;
-use foundry_evm::{Env, opts::EvmOpts};
-use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
     fs,
@@ -28,7 +13,24 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
+
+use eyre::Result;
+use foundry_common::{EmptyTestFilter, compile::ProjectCompiler, sh_eprintln, sh_println};
+use foundry_compilers::compilers::multi::MultiCompiler;
+use foundry_config::Config;
+use foundry_evm::{Env, opts::EvmOpts};
+use rayon::prelude::*;
 use tempfile::TempDir;
+
+use crate::{
+    MultiContractRunnerBuilder,
+    mutation::{
+        MutationHandler, MutationsSummary, SurvivedSpans,
+        mutant::{Mutant, MutationResult},
+        progress::MutationProgress,
+    },
+    result::SuiteResult,
+};
 
 /// Check if a path is safe for use as a relative path within a workspace.
 /// Rejects absolute paths, parent directory components (..), and other unsafe patterns.

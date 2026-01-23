@@ -1,23 +1,7 @@
-pub mod mutant;
-mod mutators;
-pub mod orchestrator;
-pub mod progress;
-mod reporter;
-pub mod runner;
-mod visitor;
-
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
-use solar::{
-    ast::interface::{Session, source_map::FileName},
-    parse::Parser,
-};
-use std::sync::Arc;
 
-use crate::mutation::{
-    mutant::{Mutant, MutationResult},
-    visitor::MutantVisitor,
-};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 pub use crate::mutation::{
     orchestrator::{MutationConfig, MutationRunResult, run_mutation_testing},
@@ -28,10 +12,29 @@ pub use crate::mutation::{
         run_mutations_parallel_with_progress,
     },
 };
+use crate::{
+    mutation::{
+        mutant::{Mutant, MutationResult},
+        visitor::MutantVisitor,
+    },
+    result::TestOutcome,
+};
+use solar::{
+    ast::{
+        Span,
+        interface::{Session, source_map::FileName},
+        visit::Visit,
+    },
+    parse::Parser,
+};
 
-use crate::result::TestOutcome;
-use solar::ast::{Span, visit::Visit};
-use std::{collections::HashSet, path::PathBuf};
+pub mod mutant;
+mod mutators;
+pub mod orchestrator;
+pub mod progress;
+mod reporter;
+pub mod runner;
+mod visitor;
 
 pub struct MutationsSummary {
     dead: Vec<Mutant>,

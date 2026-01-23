@@ -1,9 +1,9 @@
+use rstest::*;
+
 use crate::mutation::mutators::{
     tests::helper::{MutatorTestCase, MutatorTester},
     unary_op_mutator::UnaryOperatorMutator,
 };
-
-use rstest::*;
 
 impl MutatorTester for UnaryOperatorMutator {}
 

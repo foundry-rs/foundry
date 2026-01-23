@@ -1,9 +1,9 @@
+use rstest::*;
+
 use crate::mutation::mutators::{
     binary_op_mutator::BinaryOpMutator,
     tests::helper::{MutatorTestCase, MutatorTester},
 };
-
-use rstest::*;
 
 impl MutatorTester for BinaryOpMutator {}
 

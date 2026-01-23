@@ -1,8 +1,9 @@
-use super::{MutationContext, Mutator};
-use crate::mutation::mutant::{Mutant, MutationType};
+use eyre::Result;
 use solar::ast::ExprKind;
 
-use eyre::Result;
+use super::{MutationContext, Mutator};
+
+use crate::mutation::mutant::{Mutant, MutationType};
 
 pub struct DeleteExpressionMutator;
 

@@ -1,9 +1,11 @@
-use super::{MutationContext, Mutator};
-use crate::mutation::mutant::{Mutant, MutationType};
+use std::fmt::Display;
 
 use eyre::Result;
 use solar::ast::ExprKind;
-use std::fmt::Display;
+
+use super::{MutationContext, Mutator};
+
+use crate::mutation::mutant::{Mutant, MutationType};
 
 pub struct ElimDelegateMutator;
 

@@ -1,11 +1,11 @@
-use crate::mutation::mutant::OwnedLiteral;
-#[cfg(test)]
-use crate::mutation::mutators::Mutator;
-use solar::ast::{Expr, Span, VariableDefinition, visit::Visit};
 use std::{ops::ControlFlow, path::PathBuf};
 
+use solar::ast::{Expr, Span, VariableDefinition, visit::Visit};
+
+#[cfg(test)]
+use crate::mutation::mutators::Mutator;
 use crate::mutation::{
-    mutant::Mutant,
+    mutant::{Mutant, OwnedLiteral},
     mutators::{MutationContext, mutator_registry::MutatorRegistry},
 };
 

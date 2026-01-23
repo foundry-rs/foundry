@@ -1,10 +1,11 @@
-use crate::mutation::{Session, mutators::Mutator, visitor::MutantVisitor};
 use solar::{
     ast::{Arena, interface::source_map::FileName, visit::Visit},
     parse::Parser,
 };
 
 use std::path::PathBuf;
+
+use crate::mutation::{Session, mutators::Mutator, visitor::MutantVisitor};
 
 pub struct MutatorTestCase<'a> {
     /// Source code to test - should be valid Solidity code

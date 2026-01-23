@@ -1,9 +1,9 @@
+use rstest::*;
+
 use crate::mutation::mutators::{
     elim_delegate_mutator::ElimDelegateMutator,
     tests::helper::{MutatorTestCase, MutatorTester},
 };
-
-use rstest::*;
 
 impl MutatorTester for ElimDelegateMutator {}
 

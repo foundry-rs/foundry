@@ -1,7 +1,8 @@
-use crate::mutation::{MutationsSummary, mutant::Mutant};
 use comfy_table::{Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use std::time::Duration;
 use yansi::Paint;
+
+use crate::mutation::{MutationsSummary, mutant::Mutant};
 
 pub struct MutationReporter {
     table: Table,

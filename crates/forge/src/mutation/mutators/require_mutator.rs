@@ -14,10 +14,11 @@
 //! - Input validation (bounds checking, address validation)
 //! - State preconditions (reentrancy guards, paused checks)
 
-use super::{MutationContext, Mutator};
-use crate::mutation::mutant::{Mutant, MutationType};
 use eyre::Result;
 use solar::ast::{CallArgsKind, ExprKind};
+
+use super::{MutationContext, Mutator};
+use crate::mutation::mutant::{Mutant, MutationType};
 
 pub struct RequireMutator;
 
