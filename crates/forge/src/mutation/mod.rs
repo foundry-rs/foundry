@@ -1,6 +1,3 @@
-// Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
-// select mutants) Use Solar:
-
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 pub use crate::mutation::{
