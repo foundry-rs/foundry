@@ -55,7 +55,6 @@ impl Mutator for AssignmentMutator {
                         line_number,
                     },
                 ]),
-                // todo: should we bail instead of returning an empty vec?
                 OwnedLiteral::Str { .. } => Ok(vec![]),
                 OwnedLiteral::Rational(_) => Ok(vec![]),
                 OwnedLiteral::Address(_) => Ok(vec![]),
