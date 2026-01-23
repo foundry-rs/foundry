@@ -1433,7 +1433,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         // Only process if:
                         // 1. It's not a cheatcode call, AND
                         // 2. Either the call reverted, OR we made an external call (max_depth >
-                        //    depth)
+                        //    depth), OR we're at the root call (depth 0)
                         //
                         // This fixes the bug where calling a non-contract address would consume
                         // the expectRevert even though the call succeeded, preventing the actual
@@ -1447,6 +1447,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         } else if expected_revert.max_depth > expected_revert.depth {
                             // Call succeeded but we went to a deeper depth (external call was made)
                             // This is the traditional expectRevert case
+                            true
+                        } else if curr_depth == 0 {
+                            // Root call (test function) ended - must process any pending
+                            // expectation to catch "dangling"
+                            // expectReverts
                             true
                         } else if !self.config.internal_expect_revert {
                             // Call succeeded, no deeper call was made, internal_expect_revert is
