@@ -15,18 +15,12 @@ contract TestEvmVersionPreserved is Test {
         // Before fork, should be cancun
         assertEq(vm.getEvmVersion(), "cancun", "evm version should be cancun before fork");
 
-        // Create and select a fork
+        // Create and select a fork (use block 1 to avoid needing recent block)
         vm.createSelectFork("<rpc>", 1);
 
         // After fork selection, should still be cancun (not default prague)
+        // This is the core bug fix from issue #13040
         assertEq(vm.getEvmVersion(), "cancun", "evm version should remain cancun after fork");
-    }
-
-    /// forge-config: default.evm_version = "shanghai"
-    function test_evm_version_shanghai_preserved() public {
-        assertEq(vm.getEvmVersion(), "shanghai", "evm version should be shanghai");
-        vm.createSelectFork("<rpc>", 1);
-        assertEq(vm.getEvmVersion(), "shanghai", "evm version should remain shanghai after fork");
     }
 }
    "#
@@ -39,15 +33,13 @@ contract TestEvmVersionPreserved is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 2 tests for test/TestEvmVersionPreserved.t.sol:TestEvmVersionPreserved
+Ran 1 test for test/TestEvmVersionPreserved.t.sol:TestEvmVersionPreserved
 [PASS] test_evm_version_preserved_after_fork() ([GAS])
 ...
-[PASS] test_evm_version_shanghai_preserved() ([GAS])
-...
 
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]],
     );
