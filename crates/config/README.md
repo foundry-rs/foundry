@@ -138,7 +138,7 @@ sparse_mode = false
 # Contains the CompilerInput and CompilerOutput
 build_info = false
 
-# The path to the build-info directory that contains the build info json files
+# Optional: The path to the build-info directory that contains the build info json files
 # build_info_path = "build-info"
 
 # =============================================================================
@@ -155,7 +155,7 @@ gas_snapshot_emit = true
 # SOLIDITY COMPILER
 # =============================================================================
 
-# The Solc instance to use. Takes precedence over auto_detect_solc
+# Optional: The Solc instance to use. Takes precedence over auto_detect_solc
 # Can be a version string like "0.8.20" or path to solc binary
 # solc = "0.8.20"
 
@@ -173,17 +173,17 @@ offline = false
 #          "paris", "shanghai", "cancun", "osaka"
 evm_version = "osaka"
 
-# Whether to activate optimizer
-optimizer = true
+# Optional: Whether to activate optimizer
+# optimizer = true
 
-# The number of runs specifies roughly how often each opcode will be executed
+# Optional: The number of runs specifies roughly how often each opcode will be executed
 # Trade-off between code size (deploy cost) and execution cost
 # optimizer_runs = 1 produces short but expensive code
 # Higher values produce longer but more gas efficient code
 # Maximum value: 2^32-1
-optimizer_runs = 200
+# optimizer_runs = 200
 
-# Switch optimizer components on or off in detail
+# Optional: Switch optimizer components on or off in detail
 [profile.default.optimizer_details]
 peephole = true
 inliner = true
@@ -194,7 +194,7 @@ cse = true
 constantOptimizer = true
 yul = true
 
-# Model checker settings for formal verification
+# Optional: Model checker settings for formal verification
 [profile.default.model_checker]
 contracts = {}
 engine = "chc"
@@ -218,9 +218,9 @@ bytecode_hash = "ipfs"
 # If false and bytecode_hash is not "none", solc will issue a warning
 cbor_metadata = true
 
-# How to treat revert (and require) reason strings
+# Optional: How to treat revert (and require) reason strings
 # Options: "default", "strip", "debug", "verboseDebug"
-revert_strings = "default"
+# revert_strings = "default"
 
 # Additional output selection for all contracts
 # Examples: "ir", "irOptimized", "devdoc", "userdoc", "storageLayout", "ewasm"
@@ -271,29 +271,29 @@ tx_origin = "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"
 # The initial balance of each deployed test contract
 initial_balance = "0xffffffffffffffffffffffff"
 
-# Only run test functions matching the specified regex pattern
-match_test = "test_.*"
+# Optional: Only run test functions matching the specified regex pattern
+# match_test = "test_.*"
 
-# Only run test functions that do not match the specified regex pattern
-no_match_test = "testFail.*"
+# Optional: Only run test functions that do not match the specified regex pattern
+# no_match_test = "testFail.*"
 
-# Only run tests in contracts matching the specified regex pattern
-match_contract = ".*Test"
+# Optional: Only run tests in contracts matching the specified regex pattern
+# match_contract = ".*Test"
 
-# Only run tests in contracts that do not match the specified regex pattern
-no_match_contract = ".*Invariant.*"
+# Optional: Only run tests in contracts that do not match the specified regex pattern
+# no_match_contract = ".*Invariant.*"
 
-# Only run tests in source files matching the specified glob pattern
-match_path = "test/unit/*"
+# Optional: Only run tests in source files matching the specified glob pattern
+# match_path = "test/unit/*"
 
-# Only run tests in source files that do not match the specified glob pattern
-no_match_path = "test/integration/*"
+# Optional: Only run tests in source files that do not match the specified glob pattern
+# no_match_path = "test/integration/*"
 
-# Only show coverage for files that do not match the specified regex pattern
-no_match_coverage = "test/.*"
+# Optional: Only show coverage for files that do not match the specified regex pattern
+# no_match_coverage = "test/.*"
 
-# Max concurrent threads to use
-threads = 4
+# Optional: Max concurrent threads to use
+# threads = 4
 
 # Whether to show test execution progress
 show_progress = false
@@ -323,22 +323,22 @@ legacy_assertions = false
 # The block.number value during EVM execution
 block_number = 1
 
-# Pins the block number for the state fork
-fork_block_number = 12345678
+# Optional: Pins the block number for the state fork
+# fork_block_number = 12345678
 
-# The chain name or EIP-155 chain ID
-chain = 1
+# Optional: The chain name or EIP-155 chain ID
+# chain = 1
 
 # Block gas limit
 gas_limit = 1073741824
 
-# EIP-170: Contract code size limit in bytes
+# Optional: EIP-170: Contract code size limit in bytes
 # Useful to increase for tests
-code_size_limit = 24576
+# code_size_limit = 24576
 
-# tx.gasprice value during EVM execution
+# Optional: tx.gasprice value during EVM execution
 # If not set, uses remote client's gas price in fork mode
-gas_price = 0
+# gas_price = 0
 
 # The base fee in a block
 block_base_fee_per_gas = 0
@@ -355,8 +355,8 @@ block_difficulty = 0
 # Before merge: block.max_hash, after merge: block.prevrandao
 block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
 
-# The block.gaslimit value during EVM execution
-block_gas_limit = 30000000
+# Optional: The block.gaslimit value during EVM execution
+# block_gas_limit = 30000000
 
 # The memory limit per EVM execution in bytes
 # If exceeded, a MemoryLimitOOG result is thrown
@@ -376,8 +376,8 @@ enable_tx_gas_limit = false
 # RPC CONFIGURATION
 # =============================================================================
 
-# URL of the RPC server that should be used for any RPC calls
-eth_rpc_url = "https://eth-mainnet.alchemyapi.io/v2/YOUR_KEY"
+# Optional: URL of the RPC server that should be used for any RPC calls
+# eth_rpc_url = "https://eth-mainnet.alchemyapi.io/v2/YOUR_KEY"
 
 # Whether to accept invalid certificates for the RPC server
 eth_rpc_accept_invalid_certs = false
@@ -386,18 +386,18 @@ eth_rpc_accept_invalid_certs = false
 # Helps in sandboxed environments where system proxy detection causes crashes
 eth_rpc_no_proxy = false
 
-# JWT secret for RPC authentication
-eth_rpc_jwt = "your-jwt-secret"
+# Optional: JWT secret for RPC authentication
+# eth_rpc_jwt = "your-jwt-secret"
 
-# Timeout in seconds for RPC calls
-eth_rpc_timeout = 30
+# Optional: Timeout in seconds for RPC calls
+# eth_rpc_timeout = 30
 
-# Headers to include in RPC calls
+# Optional: Headers to include in RPC calls
 # Format: ["x-custom-header:value", "x-another-header:another-value"]
-eth_rpc_headers = []
+# eth_rpc_headers = []
 
-# Etherscan API key, or alias for an EtherscanConfig in etherscan table
-etherscan_api_key = "YOUR_API_KEY"
+# Optional: Etherscan API key, or alias for an EtherscanConfig in etherscan table
+# etherscan_api_key = "YOUR_API_KEY"
 
 # RPC storage caching settings
 [profile.default.rpc_storage_caching]
@@ -508,20 +508,20 @@ fail_on_revert = true
 # Encountered during usage of vm.assume cheatcode
 max_test_rejects = 65536
 
-# Optional seed for the fuzzing RNG algorithm
-seed = "0x..."
+# Optional: Seed for the fuzzing RNG algorithm
+# seed = "0x..."
 
 # Number of runs to execute and include in the gas report
 gas_report_samples = 256
 
-# Path where fuzz failures are recorded and replayed
-failure_persist_dir = "cache/fuzz"
+# Optional: Path where fuzz failures are recorded and replayed
+# failure_persist_dir = "cache/fuzz"
 
 # Show console.log in fuzz test
 show_logs = false
 
-# Optional timeout (in seconds) for each property test
-timeout = 60
+# Optional: Timeout (in seconds) for each property test
+# timeout = 60
 
 # --- Fuzz Dictionary Configuration ---
 
@@ -548,9 +548,9 @@ max_fuzz_dictionary_literals = 6553600
 
 # --- Fuzz Corpus Configuration ---
 
-# Path to corpus directory, enables coverage-guided fuzzing mode
+# Optional: Path to corpus directory, enables coverage-guided fuzzing mode
 # If not set, sequences producing new coverage are not persisted and mutated
-corpus_dir = "corpus/fuzz"
+# corpus_dir = "corpus/fuzz"
 
 # Whether corpus uses gzip file compression and decompression
 corpus_gzip = true
@@ -592,23 +592,23 @@ max_assume_rejects = 65536
 # Number of runs to execute and include in the gas report
 gas_report_samples = 256
 
-# Path where invariant failures are recorded and replayed
-failure_persist_dir = "cache/invariant"
+# Optional: Path where invariant failures are recorded and replayed
+# failure_persist_dir = "cache/invariant"
 
 # Whether to collect and display fuzzed selectors metrics
 show_metrics = true
 
-# Optional timeout (in seconds) for each invariant test
-timeout = 300
+# Optional: Timeout (in seconds) for each invariant test
+# timeout = 300
 
 # Display counterexample as solidity calls
 show_solidity = false
 
-# Maximum time (in seconds) between generated transactions
-max_time_delay = 86400
+# Optional: Maximum time (in seconds) between generated transactions
+# max_time_delay = 86400
 
-# Maximum number of blocks elapsed between generated transactions
-max_block_delay = 1000
+# Optional: Maximum number of blocks elapsed between generated transactions
+# max_block_delay = 1000
 
 # Number of calls to execute between invariant assertions
 # 0: Only assert on the last call of each run (fastest, may miss exact breaking call)
@@ -638,8 +638,8 @@ max_fuzz_dictionary_literals = 6553600
 
 # --- Invariant Corpus Configuration ---
 
-# Path to corpus directory, enables coverage-guided fuzzing mode
-corpus_dir = "corpus/invariant"
+# Optional: Path to corpus directory, enables coverage-guided fuzzing mode
+# corpus_dir = "corpus/invariant"
 
 # Whether corpus uses gzip compression
 corpus_gzip = true
