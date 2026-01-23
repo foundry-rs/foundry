@@ -280,6 +280,34 @@ corpus_min_size = 0
 # Whether to collect and display edge coverage metrics
 show_edge_coverage = false
 
+[doc]
+# Doc output path
+out = "docs"
+# The documentation title
+title = ""
+# Path to user provided book.toml
+book = "book.toml"
+# Path to user provided welcome markdown (defaults to README.md)
+# homepage = "README.md"
+# The repository url
+# repository = "https://github.com/..."
+# The path to source code (useful for monorepos)
+# path = "tree/main/packages/contracts"
+# Globs to ignore
+ignore = []
+
+[lint]
+# Whether to run linting during `forge build`
+lint_on_build = true
+# Specifies which lints to run based on severity: "high", "medium", "low", "info", "gas", "code-size"
+severity = ["high", "medium", "low"]
+# Deny specific lints based on their ID
+exclude_lints = []
+# Globs to ignore
+ignore = []
+# Patterns excluded from mixedCase lint checks
+mixed_case_exceptions = ["ERC", "URI"]
+
 [fmt]
 # Maximum line length where the formatter will try to wrap the line.
 # default: 120
