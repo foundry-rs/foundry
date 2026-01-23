@@ -4315,6 +4315,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-serde",
  "alloy-signer",
+ "anvil",
  "clap",
  "dialoguer",
  "dunce",

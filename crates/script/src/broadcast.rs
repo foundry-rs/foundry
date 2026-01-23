@@ -644,4 +644,50 @@ mod tests {
             "Base RPC should support pending and not be cached as unsupported"
         );
     }
+
+    /// Tests that `pending` block tag correctly accounts for mempool transactions.
+    ///
+    /// This is the core issue from #12683: using `latest` ignores pending transactions
+    /// in the mempool, causing nonce collisions when submitting new transactions.
+    #[tokio::test]
+    async fn next_nonce_accounts_for_pending_mempool_transactions() {
+        use alloy_network::TransactionBuilder;
+        use alloy_provider::Provider;
+        use alloy_rpc_types::TransactionRequest;
+
+        // Spawn anvil with no auto-mining so transactions stay pending
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_no_mining(true)).await;
+        let url = handle.http_endpoint();
+        let provider =
+            foundry_common::provider::try_get_http_provider(&url).expect("failed to get provider");
+
+        // Use anvil's default funded account
+        let sender: Address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse().unwrap();
+
+        // Initial nonce should be 0
+        let initial_nonce = next_nonce(sender, &url, None).await.expect("failed to get nonce");
+        assert_eq!(initial_nonce, 0, "initial nonce should be 0");
+
+        // Send a transaction (won't be mined due to no-mining mode)
+        let tx = TransactionRequest::default()
+            .with_from(sender)
+            .with_to("0x0000000000000000000000000000000000000001".parse::<Address>().unwrap())
+            .with_value(alloy_primitives::U256::from(1));
+        let _ = provider.send_transaction(tx.into()).await.expect("failed to send tx");
+
+        // Query with `latest` would return 0 (ignoring mempool) - this is the bug
+        let latest_nonce = provider
+            .get_transaction_count(sender)
+            .block_id(BlockId::latest())
+            .await
+            .expect("failed to get latest nonce");
+        assert_eq!(latest_nonce, 0, "latest should still be 0 (tx not mined)");
+
+        // Query with `pending` returns 1 (accounting for mempool) - this is the fix
+        let pending_nonce = next_nonce(sender, &url, None).await.expect("failed to get nonce");
+        assert_eq!(pending_nonce, 1, "pending should be 1 (accounts for mempool tx)");
+
+        // Stop anvil
+        api.anvil_mine(Some(alloy_primitives::U256::from(1)), None).await.ok();
+    }
 }

@@ -59,3 +59,4 @@ thiserror.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 foundry-test-utils.workspace = true
+anvil.workspace = true
