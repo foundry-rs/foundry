@@ -115,8 +115,10 @@ forgetest_init!(invariant_assume, |prj, cmd| {
 import "forge-std/Test.sol";
 
 contract Handler is Test {
+    uint256 public count;
     function doSomething(uint256 param) public {
         vm.assume(param == 0);
+        count++;
     }
 }
 
@@ -135,13 +137,7 @@ contract InvariantAssume is Test {
     assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to pure
- [FILE]:7:5:
-  |
-7 |     function doSomething(uint256 param) public {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
+Compiler run successful!
 
 Ran 1 test for test/InvariantAssume.t.sol:InvariantAssume
 [PASS] invariant_dummy() ([RUNS])
@@ -392,10 +388,12 @@ forgetest_init!(invariant_excluded_senders, |prj, cmd| {
 import "forge-std/Test.sol";
 
 contract InvariantSenders {
+    uint256 public count;
     function checkSender() external {
         require(msg.sender != 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, "sender cannot be cheatcode address");
         require(msg.sender != 0x000000000000000000636F6e736F6c652e6c6f67, "sender cannot be console address");
         require(msg.sender != 0x4e59b44847b379578588920cA78FbF26c0B4956C, "sender cannot be CREATE2 deployer");
+        count++;
     }
 }
 
@@ -414,13 +412,7 @@ contract InvariantExcludedSendersTest is Test {
     assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
- [FILE]:7:5:
-  |
-7 |     function checkSender() external {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
+Compiler run successful!
 
 Ran 1 test for test/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest
 [PASS] invariant_check_sender() ([RUNS])
@@ -1138,7 +1130,7 @@ contract InvariantRollForkBlockTest is Test {
 
     /// forge-config: default.invariant.runs = 2
     /// forge-config: default.invariant.depth = 4
-    function invariant_fork_handler_block() public {
+    function invariant_fork_handler_block() public view {
         require(block.number < 19812634, "too many blocks mined");
     }
 }
@@ -1152,7 +1144,7 @@ contract InvariantRollForkStateTest is Test {
     }
 
     /// forge-config: default.invariant.runs = 1
-    function invariant_fork_handler_state() public {
+    function invariant_fork_handler_state() public view {
         require(forkHandler.totalSupply() < 3254378807384273078310283461, "wrong supply");
     }
 }
@@ -1160,18 +1152,39 @@ contract InvariantRollForkStateTest is Test {
     );
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
-...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
+[FAIL: too many blocks mined]
+	[SEQUENCE]
+ invariant_fork_handler_block() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
+[FAIL: wrong supply]
+	[SEQUENCE]
+ invariant_fork_handler_state() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
 Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
-...
+	[SEQUENCE]
  invariant_fork_handler_block() ([RUNS])
 
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStateTest
 [FAIL: wrong supply]
-...
+	[SEQUENCE]
  invariant_fork_handler_state() ([RUNS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
@@ -1715,14 +1728,14 @@ Compiler run successful!
 
 Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
 [FAIL: max timestamp]
-	[Sequence] (original: 7, shrunk: 7)
+	[Sequence] (original: 5, shrunk: 5)
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
-		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=218105 roll=17834 calldata=setNumber(uint256) args=[24752675372815722001736610830 [2.475e28]]
-		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=579093 roll=23244 calldata=increment() args=[]
+ invariant_handler() (runs: 0, calls: 0, reverts: 1)
+
 ...
 
 "#]]);
@@ -1860,6 +1873,185 @@ contract InvariantMsgValue is Test {
 	[Sequence] (original: [..], shrunk: 1)
 		vm.prank([..]);
 		ValueTarget([..]).deposit{value: [..]}();
+...
+"#]]);
+});
+
+// Test optimization mode for invariant testing.
+// When an invariant function returns int256, it becomes an optimization target.
+// The fuzzer maximizes the return value instead of checking for failures.
+forgetest!(invariant_optimization_mode, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_ds_test();
+
+    prj.add_test(
+        "InvariantOptimize.t.sol",
+        r#"
+import { DSTest as Test } from "src/test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract OptimizationHandler {
+    int256 public value;
+
+    // Each call adds exactly 10 to value
+    function increment() external {
+        value += 10;
+    }
+}
+
+contract InvariantOptimizeTest is Test {
+    OptimizationHandler handler;
+
+    function setUp() public {
+        handler = new OptimizationHandler();
+    }
+
+    function targetSelectors() public returns (FuzzSelector[] memory) {
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.increment.selector;
+        targets[0] = FuzzSelector(address(handler), selectors);
+        return targets;
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 5
+    /// @notice Optimization mode: returns int256 to maximize.
+    /// With depth=5 and only increment(), max value should be 50.
+    function invariant_optimize_value() public view returns (int256) {
+        return handler.value();
+    }
+}
+"#,
+    );
+
+    // Optimization mode: best value shown first, should reach 50 (5 calls * 10 each)
+    // Shows [Best sequence] with calls in output
+    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] [..]
+[..]calldata=increment()[..]
+[..]calldata=increment()[..]
+[..]calldata=increment()[..]
+[..]calldata=increment()[..]
+[..]calldata=increment()[..]
+ invariant_optimize_value() (best: 50, runs: 1, calls: 5)
+...
+"#]]);
+});
+
+// Test that optimization mode works with negative values (finding max of negative range).
+forgetest!(invariant_optimization_negative_values, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_ds_test();
+
+    prj.add_test(
+        "InvariantOptimizeNegative.t.sol",
+        r#"
+import { DSTest as Test } from "src/test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract NegativeHandler {
+    int256 public value = -100;
+
+    // Each call adds exactly 25 to value
+    function increase() external {
+        value += 25;
+    }
+}
+
+contract InvariantOptimizeNegativeTest is Test {
+    NegativeHandler handler;
+
+    function setUp() public {
+        handler = new NegativeHandler();
+    }
+
+    function targetSelectors() public returns (FuzzSelector[] memory) {
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.increase.selector;
+        targets[0] = FuzzSelector(address(handler), selectors);
+        return targets;
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 4
+    /// Starting at -100, 4 calls of +25 each = -100 + 100 = 0
+    function invariant_optimize_negative() public view returns (int256) {
+        return handler.value();
+    }
+}
+"#,
+    );
+
+    // Optimization should reach 0: starting at -100, 4 calls * +25 = 0
+    // Shows [Best sequence] with calls in output
+    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] [..]
+[..]calldata=increase()[..]
+[..]calldata=increase()[..]
+[..]calldata=increase()[..]
+[..]calldata=increase()[..]
+ invariant_optimize_negative() (best: 0, runs: 1, calls: 4)
+...
+"#]]);
+});
+
+// Test optimization mode with time-dependent logic using warp and fixed seed for reproducibility.
+// This test ensures warp values are correctly accumulated during shrinking.
+forgetest_init!(invariant_optimization_with_warp, |prj, cmd| {
+    prj.add_test(
+        "InvariantOptimizeWarp.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantOptimizeWarpTest is Test {
+    int256 public maxValue;
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    // Simulates time-dependent pricing with warp. Higher timestamp = higher value.
+    function updateValue(uint256 multiplier) public {
+        if (multiplier == 0 || multiplier > 100) revert();
+        // Value depends on block.timestamp which can be warped
+        int256 newValue = int256(block.timestamp * multiplier / 1000);
+        if (newValue > maxValue) {
+            maxValue = newValue;
+        }
+    }
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.depth = 15
+    /// forge-config: default.invariant.max_time_delay = 604800
+    function invariant_optimize_max_value() public view returns (int256) {
+        return maxValue;
+    }
+}
+"#,
+    );
+
+    // Use fixed seed for deterministic output. The optimizer finds sequences that
+    // maximize value through time manipulation (warp). Shrinking reduces to 1 call.
+    cmd.args(["test", "-vvv", "--fuzz-seed", "12345"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] (original: 9, shrunk: 1)
+		sender=0x0000000000000000000000000000000000000637 addr=[test/InvariantOptimizeWarp.t.sol:InvariantOptimizeWarpTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 warp=3249628 calldata=updateValue(uint256) args=[100]
+ invariant_optimize_max_value() (best: 324962, runs: 10, calls: 150)
 ...
 "#]]);
 });
