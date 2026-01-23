@@ -14,6 +14,12 @@ pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::utils::{StateChangeset, get_function};
 
+/// Returns true if the function returns `int256`, indicating optimization mode.
+/// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
+pub fn is_optimization_invariant(func: &Function) -> bool {
+    func.outputs.len() == 1 && func.outputs[0].ty == "int256"
+}
+
 /// Contracts identified as targets during a fuzz run.
 ///
 /// During execution, any newly created contract is added as target and used through the rest of
@@ -263,4 +269,21 @@ pub struct InvariantContract<'a> {
     pub call_after_invariant: bool,
     /// ABI of the test contract.
     pub abi: &'a JsonAbi,
+}
+
+impl<'a> InvariantContract<'a> {
+    /// Creates a new invariant contract.
+    pub fn new(
+        address: Address,
+        invariant_function: &'a Function,
+        call_after_invariant: bool,
+        abi: &'a JsonAbi,
+    ) -> Self {
+        Self { address, invariant_function, call_after_invariant, abi }
+    }
+
+    /// Returns true if this is an optimization mode invariant (returns int256).
+    pub fn is_optimization(&self) -> bool {
+        is_optimization_invariant(self.invariant_function)
+    }
 }

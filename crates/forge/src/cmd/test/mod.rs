@@ -588,8 +588,9 @@ impl TestArgs {
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
         // Avoid using external identifiers for gas report as we decode more traces and this will be
-        // expensive.
-        if !self.gas_report {
+        // expensive. Also skip external identifiers for local tests (no remote chain) to avoid
+        // unnecessary Etherscan API calls that significantly slow down test execution.
+        if !self.gas_report && remote_chain.is_some() {
             identifier = identifier.with_external(&config, remote_chain)?;
         }
 
