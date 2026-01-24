@@ -38,15 +38,18 @@ pub(super) struct CallContext {
 
     /// The size of the callee's head, excluding its arguments.
     pub(super) size: usize,
+
+    /// Whether this chain context added its own indentation box.
+    pub(super) has_indent: bool,
 }
 
 impl CallContext {
     pub(super) fn nested(size: usize) -> Self {
-        Self { kind: CallContextKind::Nested, size }
+        Self { kind: CallContextKind::Nested, size, has_indent: false }
     }
 
-    pub(super) fn chained(size: usize) -> Self {
-        Self { kind: CallContextKind::Chained, size }
+    pub(super) fn chained(size: usize, has_indent: bool) -> Self {
+        Self { kind: CallContextKind::Chained, size, has_indent }
     }
 
     pub(super) fn is_nested(&self) -> bool {
@@ -83,8 +86,10 @@ impl CallStack {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    pub(crate) fn is_chain(&self) -> bool {
-        self.last().is_some_and(|call| call.is_chained())
+    /// Returns true if any chained call in the stack has its own indentation.
+    /// Used to determine if commasep should skip its own indentation (to avoid double indent).
+    pub(crate) fn has_chain_with_indent(&self) -> bool {
+        self.stack.iter().any(|call| call.is_chained() && call.has_indent)
     }
 }
 
