@@ -19,7 +19,6 @@ fn is_repl(args: &[String]) -> bool {
         || !SUBCOMMANDS.iter().any(|subcommand| args.iter().any(|arg| arg == subcommand))
 }
 
-#[allow(dead_code)]
 impl ChiselSession {
     pub fn new(name: &str, flags: &str, init: bool) -> Self {
         let project = foundry_test_utils::TestProject::new(name, PathStyle::Dapptools);
@@ -62,10 +61,6 @@ impl ChiselSession {
         }
 
         session
-    }
-
-    pub fn project(&self) -> &TestProject {
-        &self.project
     }
 
     pub fn is_repl(&self) -> bool {
