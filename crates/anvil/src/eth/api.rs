@@ -3405,14 +3405,8 @@ impl EthApi {
     /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
     fn impersonated_signature(&self, request: &FoundryTypedTx) -> Signature {
         match request {
-            // Only the legacy transaction type requires v to be in {27, 28}, thus
-            // requiring the use of Parity::NonEip155
-            FoundryTypedTx::Legacy(_) => Signature::from_scalars_and_parity(
-                B256::with_last_byte(1),
-                B256::with_last_byte(1),
-                false,
-            ),
-            FoundryTypedTx::Eip2930(_)
+            FoundryTypedTx::Legacy(_)
+            | FoundryTypedTx::Eip2930(_)
             | FoundryTypedTx::Eip1559(_)
             | FoundryTypedTx::Eip7702(_)
             | FoundryTypedTx::Eip4844(_)

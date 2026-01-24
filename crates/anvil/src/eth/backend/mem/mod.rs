@@ -56,7 +56,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
-    map::{HashMap, HashSet},
+    map::{AddressMap, HashMap, HashSet},
 };
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
@@ -3551,7 +3551,7 @@ impl Backend {
         // Get the database at the common block
         let common_state = {
             let return_state_or_throw_err =
-                |db: Option<&StateDb>| -> Result<HashMap<Address, DbAccount>, BlockchainError> {
+                |db: Option<&StateDb>| -> Result<AddressMap<DbAccount>, BlockchainError> {
                     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
                     let db_full =
                         state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
@@ -3569,18 +3569,7 @@ impl Backend {
         };
 
         {
-            // Set state to common state
-            self.db.write().await.clear();
-            for (address, acc) in common_state {
-                for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
-                }
-                self.db.write().await.insert_account(address, acc.info);
-            }
-        }
-
-        {
-            // Unwind the storage back to the common ancestor
+            // Unwind the storage back to the common ancestor first
             self.blockchain
                 .storage
                 .write()
@@ -3596,6 +3585,41 @@ impl Backend {
 
             self.time.reset(env.evm_env.block_env.timestamp.saturating_to());
         }
+
+        {
+            // Collect block hashes before acquiring db lock to avoid holding blockchain storage
+            // lock across await. Only collect the last 256 blocks since that's all BLOCKHASH can
+            // access.
+            let block_hashes: Vec<_> = {
+                let storage = self.blockchain.storage.read();
+                let min_block = common_block.header.number.saturating_sub(256);
+                storage
+                    .hashes
+                    .iter()
+                    .filter(|(num, _)| **num >= min_block)
+                    .map(|(&num, &hash)| (num, hash))
+                    .collect()
+            };
+
+            // Acquire db lock once for the entire restore operation to reduce lock churn.
+            let mut db = self.db.write().await;
+            db.clear();
+
+            // Insert account info before storage to prevent fork-mode RPC fetches after clear.
+            for (address, acc) in common_state {
+                db.insert_account(address, acc.info);
+                for (key, value) in acc.storage {
+                    db.set_storage_at(address, key.into(), value.into())?;
+                }
+            }
+
+            // Restore block hashes from blockchain storage (now unwound, contains only valid
+            // blocks).
+            for (block_num, hash) in block_hashes {
+                db.insert_block_hash(U256::from(block_num), hash);
+            }
+        }
+
         Ok(())
     }
 }
