@@ -1,6 +1,6 @@
 use alloy_consensus::EthereumTypedTransaction;
 use alloy_network::{
-    BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
+    BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder7594, TransactionBuilderError,
 };
 use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
@@ -216,9 +216,12 @@ impl FoundryTransactionRequest {
                 access_list: self.access_list().cloned().unwrap_or_default(),
                 ..Default::default()
             }))
-        } else if self.as_ref().has_eip4844_fields() && self.as_ref().blob_sidecar().is_none() {
-            // if request has eip4844 fields but no blob sidecar, try to build to eip4844 without
-            // sidecar
+        } else if self.as_ref().has_eip4844_fields()
+            && alloy_network::TransactionBuilder4844::blob_sidecar(self.as_ref()).is_none()
+            && self.as_ref().blob_sidecar_7594().is_none()
+        {
+            // if request has eip4844 fields but no blob sidecar (neither eip4844 nor eip7594
+            // format), try to build to eip4844 without sidecar
             self.0
                 .into_inner()
                 .build_4844_without_sidecar()
