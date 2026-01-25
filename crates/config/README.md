@@ -1,13 +1,13 @@
 # Configuration
 
-Foundry's configuration system allows you to configure its tools the way _you_ want while also providing with a
+Foundry's configuration system allows you to configure its tools the way _you_ want while also providing a
 sensible set of defaults.
 
 ## Profiles
 
 Configurations can be arbitrarily namespaced with profiles. Foundry's default config is also named `default`, but you can
 arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
-profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
+profile's name. This results in foundry's tools (forge) preferring the values in the profile with the name that's set
 in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile.
 
 ## foundry.toml
@@ -67,7 +67,7 @@ For a full list of all configuration options, see the [Foundry Book](https://get
 ## Environment Variables
 
 Foundry's tools read all environment variable names prefixed with `FOUNDRY_` using the string after the `_` as the name
-of a configuration value as the value of the parameter as the value itself. But the
+of a configuration value, and the value of the environment variable as the value itself. But the
 corresponding [dapptools](https://github.com/dapphub/dapptools/tree/master/src/dapp#configuration) config vars are also
 supported, this means that `FOUNDRY_SRC` and `DAPP_SRC` are equivalent.
 
