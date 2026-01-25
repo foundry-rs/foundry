@@ -79,4 +79,9 @@ impl InvariantConfig {
     pub fn new(cache_dir: PathBuf) -> Self {
         Self { failure_persist_dir: Some(cache_dir), ..Default::default() }
     }
+
+    /// Returns true if either `max_block_delay` or `max_time_delay` is set.
+    pub fn has_delay(&self) -> bool {
+        self.max_block_delay.is_some() || self.max_time_delay.is_some()
+    }
 }

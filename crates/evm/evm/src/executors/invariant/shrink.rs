@@ -76,6 +76,35 @@ fn apply_warp_roll_to_env(executor: &mut Executor, warp: U256, roll: U256) {
     }
 }
 
+/// Builds the final shrunk sequence from the shrinker state.
+/// If `accumulate_warp_roll` is true, warp/roll from removed calls is accumulated into kept calls.
+fn build_shrunk_sequence(
+    calls: &[BasicTxDetails],
+    shrinker: &CallSequenceShrinker,
+    accumulate_warp_roll: bool,
+) -> Vec<BasicTxDetails> {
+    if !accumulate_warp_roll {
+        return shrinker.current().map(|idx| calls[idx].clone()).collect();
+    }
+
+    let mut result = Vec::new();
+    let mut accumulated_warp = U256::ZERO;
+    let mut accumulated_roll = U256::ZERO;
+
+    for (idx, call) in calls.iter().enumerate() {
+        accumulated_warp += call.warp.unwrap_or(U256::ZERO);
+        accumulated_roll += call.roll.unwrap_or(U256::ZERO);
+
+        if shrinker.included_calls.test(idx) {
+            result.push(apply_warp_roll(call, accumulated_warp, accumulated_roll));
+            accumulated_warp = U256::ZERO;
+            accumulated_roll = U256::ZERO;
+        }
+    }
+
+    result
+}
+
 pub(crate) fn shrink_sequence(
     config: &InvariantConfig,
     invariant_contract: &InvariantContract<'_>,
@@ -97,6 +126,7 @@ pub(crate) fn shrink_sequence(
         return Ok(vec![]);
     }
 
+    let accumulate_warp_roll = config.has_delay();
     let mut call_idx = 0;
     let mut shrinker = CallSequenceShrinker::new(calls.len());
 
@@ -107,7 +137,7 @@ pub(crate) fn shrink_sequence(
 
         shrinker.included_calls.clear(call_idx);
 
-        match check_sequence(
+        let still_fails = check_sequence(
             executor.clone(),
             calls,
             shrinker.current().collect(),
@@ -115,11 +145,14 @@ pub(crate) fn shrink_sequence(
             calldata.clone(),
             config.fail_on_revert,
             invariant_contract.call_after_invariant,
-        ) {
+            accumulate_warp_roll,
+        )?;
+
+        match still_fails {
             // If candidate sequence still fails, shrink until shortest possible.
-            Ok((false, _)) if shrinker.included_calls.count() == 1 => break,
+            (false, _) if shrinker.included_calls.count() == 1 => break,
             // Restore last removed call as it caused sequence to pass invariant.
-            Ok((true, _)) => shrinker.included_calls.set(call_idx),
+            (true, _) => shrinker.included_calls.set(call_idx),
             _ => {}
         }
 
@@ -130,23 +163,8 @@ pub(crate) fn shrink_sequence(
         call_idx = shrinker.next_index(call_idx);
     }
 
-    // Build the final shrunk sequence, accumulating warp/roll from removed calls.
-    let mut result = Vec::new();
-    let mut accumulated_warp = U256::ZERO;
-    let mut accumulated_roll = U256::ZERO;
-
-    for (idx, call) in calls.iter().enumerate() {
-        accumulated_warp += call.warp.unwrap_or(U256::ZERO);
-        accumulated_roll += call.roll.unwrap_or(U256::ZERO);
-
-        if shrinker.included_calls.test(idx) {
-            result.push(apply_warp_roll(call, accumulated_warp, accumulated_roll));
-            accumulated_warp = U256::ZERO;
-            accumulated_roll = U256::ZERO;
-        }
-    }
-
-    Ok(result)
+    // Build final sequence, accumulating warp/roll from removed calls if delays are set.
+    Ok(build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll))
 }
 
 /// Checks if the given call sequence breaks the invariant.
@@ -156,10 +174,46 @@ pub(crate) fn shrink_sequence(
 /// Returns the result of invariant check (and afterInvariant call if needed) and if sequence was
 /// entirely applied.
 ///
-/// This function accumulates warp/roll values from removed calls into the next kept call,
-/// ensuring that block timestamps and numbers advance correctly even when calls are removed
-/// during shrinking.
+/// If `accumulate_warp_roll` is true, warp/roll values from removed calls are accumulated into the
+/// next kept call (same logic as optimization mode).
+#[expect(clippy::too_many_arguments)]
 pub fn check_sequence(
+    executor: Executor,
+    calls: &[BasicTxDetails],
+    sequence: Vec<usize>,
+    test_address: Address,
+    calldata: Bytes,
+    fail_on_revert: bool,
+    call_after_invariant: bool,
+    accumulate_warp_roll: bool,
+) -> eyre::Result<(bool, bool)> {
+    if accumulate_warp_roll {
+        // Use the same logic as optimization mode: accumulate warp/roll from removed calls.
+        check_sequence_with_accumulation(
+            executor,
+            calls,
+            sequence,
+            test_address,
+            calldata,
+            fail_on_revert,
+            call_after_invariant,
+        )
+    } else {
+        // Original logic: execute only the kept calls directly.
+        check_sequence_simple(
+            executor,
+            calls,
+            sequence,
+            test_address,
+            calldata,
+            fail_on_revert,
+            call_after_invariant,
+        )
+    }
+}
+
+/// Simple check sequence without warp/roll accumulation (original behavior).
+fn check_sequence_simple(
     mut executor: Executor,
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
@@ -168,36 +222,56 @@ pub fn check_sequence(
     fail_on_revert: bool,
     call_after_invariant: bool,
 ) -> eyre::Result<(bool, bool)> {
-    // Apply the call sequence, accumulating warp/roll from removed calls.
+    for call_index in sequence {
+        let tx = &calls[call_index];
+        let mut call_result = execute_tx(&mut executor, tx)?;
+        executor.commit(&mut call_result);
+        if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
+            return Ok((false, false));
+        }
+    }
+
+    let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
+    if success && call_after_invariant {
+        (_, success) = call_after_invariant_function(&executor, test_address)?;
+    }
+
+    Ok((success, true))
+}
+
+/// Check sequence with warp/roll accumulation from removed calls (used when delays are set).
+fn check_sequence_with_accumulation(
+    mut executor: Executor,
+    calls: &[BasicTxDetails],
+    sequence: Vec<usize>,
+    test_address: Address,
+    calldata: Bytes,
+    fail_on_revert: bool,
+    call_after_invariant: bool,
+) -> eyre::Result<(bool, bool)> {
     let mut accumulated_warp = U256::ZERO;
     let mut accumulated_roll = U256::ZERO;
     let mut seq_iter = sequence.iter().peekable();
 
     for (idx, tx) in calls.iter().enumerate() {
-        // Accumulate warp/roll from all calls (including removed ones).
         accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
         accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
 
-        // Only execute calls that are in the sequence.
         if seq_iter.peek() == Some(&&idx) {
             seq_iter.next();
 
-            // Apply accumulated warp/roll to this call.
             let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
             let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
-            executor.commit(&mut call_result);
 
-            // Reset accumulators after applying.
+            if !call_result.reverted {
+                executor.commit(&mut call_result);
+            }
+
             accumulated_warp = U256::ZERO;
             accumulated_roll = U256::ZERO;
 
-            // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios
-            // that are replayed with a modified version of test driver (that use new `vm.assume`
-            // cheatcodes).
             if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME
             {
-                // Candidate sequence fails test.
-                // We don't have to apply remaining calls to check sequence.
                 return Ok((false, false));
             }
         }
@@ -206,10 +280,7 @@ pub fn check_sequence(
     // Apply any remaining accumulated warp/roll before calling invariant.
     apply_warp_roll_to_env(&mut executor, accumulated_warp, accumulated_roll);
 
-    // Check the invariant for call sequence.
     let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
-    // Check after invariant result if invariant is success and `afterInvariant` function is
-    // declared.
     if success && call_after_invariant {
         (_, success) = call_after_invariant_function(&executor, test_address)?;
     }
@@ -281,22 +352,7 @@ pub(crate) fn shrink_sequence_value(
     }
 
     // Build the final shrunk sequence, accumulating warp/roll from removed calls.
-    let mut result = Vec::new();
-    let mut accumulated_warp = U256::ZERO;
-    let mut accumulated_roll = U256::ZERO;
-
-    for (idx, call) in calls.iter().enumerate() {
-        accumulated_warp += call.warp.unwrap_or(U256::ZERO);
-        accumulated_roll += call.roll.unwrap_or(U256::ZERO);
-
-        if shrinker.included_calls.test(idx) {
-            result.push(apply_warp_roll(call, accumulated_warp, accumulated_roll));
-            accumulated_warp = U256::ZERO;
-            accumulated_roll = U256::ZERO;
-        }
-    }
-
-    Ok(result)
+    Ok(build_shrunk_sequence(calls, &shrinker, true))
 }
 
 /// Executes a call sequence and returns the optimization value (int256) from the invariant
