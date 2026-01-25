@@ -129,7 +129,7 @@ If you are working in VSCode, we recommend you install the [rust-analyzer](https
 }
 ```
 
-If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.
+If you are working on a larger feature, we encourage you to open up a draft pull request to make sure that other contributors are not duplicating work.
 
 If you would like to test the binaries built from your change, see [foundryup](https://github.com/foundry-rs/foundry/tree/HEAD/foundryup).
 
@@ -157,7 +157,7 @@ That said, if you have a number of commits that are "checkpoints" and don't repr
 
 #### Opening the pull request
 
-From within GitHub, opening a new pull request will present you with a template that should be filled out. Please try your best at filling out the details, but feel free to skip parts if you're not sure what to put.
+From within GitHub, opening a new pull request will present you with a template that should be filled out. Please try your best to fill out the details, but feel free to skip parts if you're not sure what to put.
 
 #### Discuss and update
 
@@ -182,7 +182,7 @@ When reviewing a pull request, the primary goals are for the codebase to improve
 
 Do not overwhelm new contributors.
 
-It is tempting to micro-optimize and make everything about relative performance, perfect grammar, or exact style matches. Do not succumb to that temptation..
+It is tempting to micro-optimize and make everything about relative performance, perfect grammar, or exact style matches. Do not succumb to that temptation.
 
 Focus first on the most significant aspects of the change:
 
@@ -209,7 +209,7 @@ Be aware that _how_ you communicate requests and reviews in your feedback can ha
 
 ##### Abandoned or stale pull requests
 
-If a pull request appears to be abandoned or stalled, it is polite to first check with the contributor to see if they intend to continue the work before checking if they would mind if you took it over (especially if it just has nits left). When doing so, it is courteous to give the original contributor credit for the work they started, either by preserving their name and e-mail address in the commit log, or by using the `Author:` or `Co-authored-by:` metadata tag in the commits.
+If a pull request appears to be abandoned or stalled, it is polite to first check with the contributor to see if they intend to continue the work before asking if they would mind if you took it over (especially if it just has nits left). When doing so, it is courteous to give the original contributor credit for the work they started, either by preserving their name and e-mail address in the commit log, or by using the `Author:` or `Co-authored-by:` metadata tag in the commits.
 
 _Adapted from the [ethers-rs contributing guide](https://github.com/gakonst/ethers-rs/blob/master/CONTRIBUTING.md)_.
 
