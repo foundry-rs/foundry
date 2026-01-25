@@ -177,6 +177,9 @@ pub struct EtherscanConfig {
     /// Etherscan API URL
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Etherscan browser URL (for viewing contracts in browser)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_url: Option<String>,
     /// The etherscan API KEY that's required to make requests
     pub key: EtherscanApiKey,
 }
@@ -192,10 +195,13 @@ impl EtherscanConfig {
         self,
         alias: Option<&str>,
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
-        let Self { chain, mut url, key } = self;
+        let Self { chain, mut url, mut browser_url, key } = self;
 
         if let Some(url) = &mut url {
             *url = interpolate(url)?;
+        }
+        if let Some(browser_url) = &mut browser_url {
+            *browser_url = interpolate(browser_url)?;
         }
 
         let (chain, alias) = match (chain, alias) {
@@ -223,7 +229,9 @@ impl EtherscanConfig {
         match (chain, url) {
             (Some(chain), Some(api_url)) => Ok(ResolvedEtherscanConfig {
                 api_url,
-                browser_url: chain.etherscan_urls().map(|(_, url)| url.to_string()),
+                // Use explicitly configured browser_url, or derive from chain
+                browser_url: browser_url
+                    .or_else(|| chain.etherscan_urls().map(|(_, url)| url.to_string())),
                 key,
                 chain: Some(chain),
             }),
@@ -232,7 +240,7 @@ impl EtherscanConfig {
                 EtherscanConfigError::UnknownChain(msg, chain)
             }),
             (None, Some(api_url)) => {
-                Ok(ResolvedEtherscanConfig { api_url, browser_url: None, key, chain: None })
+                Ok(ResolvedEtherscanConfig { api_url, browser_url, key, chain: None })
             }
             (None, None) => {
                 let msg = alias
@@ -318,11 +326,23 @@ impl ResolvedEtherscanConfig {
         let mut client_builder = foundry_block_explorers::Client::builder()
             .with_client(client)
             .with_api_key(api_key)
+            .with_api_url(api_url.clone())?
             .with_cache(cache, Duration::from_secs(24 * 60 * 60));
-        if let Some(browser_url) = browser_url {
-            client_builder = client_builder.with_url(browser_url)?;
+        // Set browser URL - use explicitly configured one, or fallback to api_url
+        // The block explorers library requires a browser URL to be set
+        let browser_url = browser_url.unwrap_or_else(|| api_url.to_string());
+        client_builder = client_builder.with_url(browser_url)?;
+        // Only call chain() when using the chain's default URL (not a custom URL).
+        // This adds v2 API support and chainid parameters for known chains.
+        // When a custom URL is provided, we skip chain() to respect the exact URL specified.
+        let using_default_url = chain
+            .etherscan_urls()
+            .map(|(default_api, _)| default_api == api_url.as_str().trim_end_matches('/'))
+            .unwrap_or(false);
+        if using_default_url {
+            client_builder = client_builder.chain(chain)?;
         }
-        client_builder.chain(chain)?.build()
+        client_builder.build()
     }
 }
 
@@ -422,6 +442,7 @@ mod tests {
             EtherscanConfig {
                 chain: Some(Mainnet.into()),
                 url: None,
+                browser_url: None,
                 key: EtherscanApiKey::Key("ABCDEFG".to_string()),
             },
         );
@@ -444,13 +465,15 @@ mod tests {
             EtherscanConfig {
                 chain: Some(Mainnet.into()),
                 url: Some("https://api.etherscan.io/api".to_string()),
+                browser_url: None,
                 key: EtherscanApiKey::Key("ABCDEFG".to_string()),
             },
         );
 
         let mut resolved = configs.resolved();
         let config = resolved.remove("mainnet").unwrap().unwrap();
-        let _ = config.into_client().unwrap();
+        let client = config.into_client().unwrap();
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/api");
     }
 
     #[test]
@@ -462,6 +485,7 @@ mod tests {
             EtherscanConfig {
                 chain: Some(Mainnet.into()),
                 url: Some("https://api.etherscan.io/api".to_string()),
+                browser_url: None,
                 key: EtherscanApiKey::Env(format!("${{{env}}}")),
             },
         );
@@ -478,10 +502,7 @@ mod tests {
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.key, "ABCDEFG");
         let client = config.into_client().unwrap();
-        assert_eq!(
-            client.etherscan_api_url().as_str(),
-            "https://api.etherscan.io/v2/api?chainid=1"
-        );
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/api");
 
         unsafe {
             std::env::remove_var(env);
@@ -496,6 +517,7 @@ mod tests {
             EtherscanConfig {
                 chain: None,
                 url: Some("https://api.etherscan.io/api".to_string()),
+                browser_url: None,
                 key: EtherscanApiKey::Key("ABCDEFG".to_string()),
             },
         );
@@ -510,6 +532,7 @@ mod tests {
         let config = EtherscanConfig {
             chain: None,
             url: Some("https://api.etherscan.io/api".to_string()),
+            browser_url: None,
             key: EtherscanApiKey::Key("ABCDEFG".to_string()),
         };
         let resolved = config.clone().resolve(Some("base_sepolia")).unwrap();
@@ -517,5 +540,52 @@ mod tests {
 
         let resolved = config.resolve(Some("base-sepolia")).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
+    }
+
+    #[test]
+    fn can_create_client_for_custom_chain() {
+        let mut configs = EtherscanConfigs::default();
+        let custom_url = "https://custom.api.etherscan.io/api";
+        let custom_browser_url = "https://custom.etherscan.io";
+        configs.insert(
+            "custom_chain".to_string(),
+            EtherscanConfig {
+                chain: Some(Chain::from_id(123456)), // Random chain ID
+                url: Some(custom_url.to_string()),
+                browser_url: Some(custom_browser_url.to_string()),
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("custom_chain").unwrap().unwrap();
+
+        // This should NOT fail
+        let client = config.into_client().unwrap();
+        assert_eq!(client.etherscan_api_url().as_str(), custom_url);
+    }
+
+    #[test]
+    fn can_create_client_for_custom_chain_without_browser_url() {
+        let mut configs = EtherscanConfigs::default();
+        let custom_url = "https://explorer.imuachain.com/api";
+        configs.insert(
+            "imuachain_testnet".to_string(),
+            EtherscanConfig {
+                chain: Some(Chain::from_id(233)), // Custom chain ID
+                url: Some(custom_url.to_string()),
+                browser_url: None, // No browser URL specified
+                key: EtherscanApiKey::Key("test_api_key".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("imuachain_testnet").unwrap().unwrap();
+
+        // Should work even without browser_url - it will use api_url as fallback
+        let client = config.into_client().unwrap();
+        assert_eq!(client.etherscan_api_url().as_str(), custom_url);
+        // Browser URL should fallback to api_url
+        assert_eq!(client.etherscan_url().as_str(), custom_url);
     }
 }

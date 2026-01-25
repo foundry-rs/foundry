@@ -262,7 +262,7 @@ impl CreateArgs {
 
         let context = verify.resolve_context().await?;
 
-        verify.verification_provider()?.preflight_verify_check(verify, context).await?;
+        verify.verification_provider(&config)?.preflight_verify_check(verify, context).await?;
         Ok(())
     }
 

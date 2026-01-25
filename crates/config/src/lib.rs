@@ -62,8 +62,8 @@ pub use endpoints::{
 };
 
 mod etherscan;
-pub use etherscan::EtherscanConfigError;
-use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
+pub use etherscan::{EtherscanConfigError, ResolvedEtherscanConfig};
+use etherscan::{EtherscanConfigs, EtherscanEnvProvider};
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
