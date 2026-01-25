@@ -50,7 +50,7 @@ Guidelines for contributing to `forge lint`:
 
 ### Opening an issue
 
-1. Create a short concise title describing an issue.
+1. Create a short, concise title describing an issue.
    - Bad Title Examples
      ```text
      Forge lint does not work
@@ -64,7 +64,7 @@ Guidelines for contributing to `forge lint`:
 2. Fill in the issue template fields that include foundry version, platform & component info.
 3. Provide the code snippets showing the current & expected behaviors.
 4. If it's a feature request, specify why this feature is needed.
-5. Besides the default label (`T-Bug` for bugs or `T-feature` for features), add `C-forge` and `Cmd-forge-fmt` labels.
+5. Besides the default label (`T-Bug` for bugs or `T-feature` for features), add `C-forge` and `Cmd-forge-lint` labels.
 
 ### Fixing A Bug
 
@@ -75,4 +75,3 @@ Guidelines for contributing to `forge lint`:
 ### Developing a New Lint Rule
 
 Check the [dev docs](../../docs/dev/lintrules.md) for a full implementation guide.
-
