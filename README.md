@@ -83,7 +83,7 @@ foundryup
 
 **Done!**
 
-For additional details see the [installation guide](https://getfoundry.sh/getting-started/installation) in the [Foundry Docs][foundry-docs].
+For additional details, see the [installation guide](https://getfoundry.sh/getting-started/installation) in the [Foundry Docs][foundry-docs].
 
 If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://getfoundry.sh/faq).
 
