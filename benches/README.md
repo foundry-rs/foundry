@@ -112,7 +112,7 @@ You can override these using the `--repos` flag with the format `org/repo[:rev]`
 
 ## Results
 
-Benchmark results are saved to `benches/LATEST.md` (or custom output file specified with `--output-file`). The report includes:
+Benchmark results are saved to `benches/LATEST.md` (or a custom output file specified with `--output-file`). The report includes:
 
 - Summary of versions and repositories tested
 - Performance comparison tables for each benchmark type showing:
