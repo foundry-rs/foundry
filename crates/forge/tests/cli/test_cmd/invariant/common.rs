@@ -1625,12 +1625,12 @@ contract InvariantWarpAndRoll {
     }
 
     function invariant_warp() public view {
-        require(block.number < 200000, "max block");
+        require(block.timestamp < 500000, "max timestamp");
     }
 
     /// forge-config: default.invariant.show_solidity = true
     function invariant_roll() public view {
-        require(block.timestamp < 500000, "max timestamp");
+        require(block.number < 200000, "max block");
     }
 }
 "#,
@@ -1642,7 +1642,7 @@ contract InvariantWarpAndRoll {
 Compiler run successful!
 
 Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
-[FAIL: max block]
+[FAIL: max timestamp]
 	[Sequence] (original: 6, shrunk: 6)
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
@@ -1659,7 +1659,7 @@ Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
 No files changed, compilation skipped
 
 Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
-[FAIL: max timestamp]
+[FAIL: max block]
 	[Sequence] (original: 5, shrunk: 5)
 		vm.warp(block.timestamp + 6280);
 		vm.roll(block.number + 21461);
@@ -1973,4 +1973,66 @@ contract InvariantOptimizeWarpTest is Test {
  invariant_optimize_max_value() (best: 324962, runs: 10, calls: 150)
 ...
 "#]]);
+});
+
+// Test that shrunk sequence preserves warp/roll from removed calls.
+// This is a regression test for https://github.com/foundry-rs/foundry/issues/13214
+forgetest_init!(invariant_shrink_preserves_warp_roll, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.max_block_delay = Some(60480);
+        config.invariant.show_solidity = true;
+    });
+
+    prj.add_test(
+        "InvariantRollShrink.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Roll {
+    uint256 public number;
+
+    function increment() public {
+        require(block.number > 50000, "wrong block");
+        number++;
+    }
+}
+
+contract InvariantRoll is Test {
+    Roll public roll;
+
+    function setUp() public {
+        roll = new Roll();
+    }
+
+    function invariant_roll() public view {
+        require(roll.number() == 0, "max block");
+    }
+}
+"#,
+    );
+
+    // Run the invariant test and capture output
+    let output = cmd
+        .args(["test", "--mt", "invariant_roll", "-vvv"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let output_str = String::from_utf8_lossy(&output);
+
+    // The shrunk sequence should contain a vm.roll that advances block.number past 50000.
+    // Extract the roll value from the output and verify it's >= 50000.
+    // The output format is: vm.roll(block.number + <value>);
+    if let Some(roll_match) = output_str.find("vm.roll(block.number + ") {
+        let start = roll_match + "vm.roll(block.number + ".len();
+        let rest = &output_str[start..];
+        if let Some(end) = rest.find(')') {
+            let roll_value: u64 = rest[..end].parse().unwrap_or(0);
+            assert!(
+                roll_value >= 50000,
+                "Shrunk sequence should have roll >= 50000 to break the invariant, got {roll_value}"
+            );
+        }
+    }
 });

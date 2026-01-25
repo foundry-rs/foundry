@@ -130,7 +130,23 @@ pub(crate) fn shrink_sequence(
         call_idx = shrinker.next_index(call_idx);
     }
 
-    Ok(shrinker.current().map(|idx| &calls[idx]).cloned().collect())
+    // Build the final shrunk sequence, accumulating warp/roll from removed calls.
+    let mut result = Vec::new();
+    let mut accumulated_warp = U256::ZERO;
+    let mut accumulated_roll = U256::ZERO;
+
+    for (idx, call) in calls.iter().enumerate() {
+        accumulated_warp += call.warp.unwrap_or(U256::ZERO);
+        accumulated_roll += call.roll.unwrap_or(U256::ZERO);
+
+        if shrinker.included_calls.test(idx) {
+            result.push(apply_warp_roll(call, accumulated_warp, accumulated_roll));
+            accumulated_warp = U256::ZERO;
+            accumulated_roll = U256::ZERO;
+        }
+    }
+
+    Ok(result)
 }
 
 /// Checks if the given call sequence breaks the invariant.
@@ -139,6 +155,10 @@ pub(crate) fn shrink_sequence(
 /// persisted failures.
 /// Returns the result of invariant check (and afterInvariant call if needed) and if sequence was
 /// entirely applied.
+///
+/// This function accumulates warp/roll values from removed calls into the next kept call,
+/// ensuring that block timestamps and numbers advance correctly even when calls are removed
+/// during shrinking.
 pub fn check_sequence(
     mut executor: Executor,
     calls: &[BasicTxDetails],
@@ -148,20 +168,43 @@ pub fn check_sequence(
     fail_on_revert: bool,
     call_after_invariant: bool,
 ) -> eyre::Result<(bool, bool)> {
-    // Apply the call sequence.
-    for call_index in sequence {
-        let tx = &calls[call_index];
-        let mut call_result = execute_tx(&mut executor, tx)?;
-        executor.commit(&mut call_result);
-        // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
-        // are replayed with a modified version of test driver (that use new `vm.assume`
-        // cheatcodes).
-        if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
-            // Candidate sequence fails test.
-            // We don't have to apply remaining calls to check sequence.
-            return Ok((false, false));
+    // Apply the call sequence, accumulating warp/roll from removed calls.
+    let mut accumulated_warp = U256::ZERO;
+    let mut accumulated_roll = U256::ZERO;
+    let mut seq_iter = sequence.iter().peekable();
+
+    for (idx, tx) in calls.iter().enumerate() {
+        // Accumulate warp/roll from all calls (including removed ones).
+        accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
+        accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
+
+        // Only execute calls that are in the sequence.
+        if seq_iter.peek() == Some(&&idx) {
+            seq_iter.next();
+
+            // Apply accumulated warp/roll to this call.
+            let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
+            let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
+            executor.commit(&mut call_result);
+
+            // Reset accumulators after applying.
+            accumulated_warp = U256::ZERO;
+            accumulated_roll = U256::ZERO;
+
+            // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios
+            // that are replayed with a modified version of test driver (that use new `vm.assume`
+            // cheatcodes).
+            if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME
+            {
+                // Candidate sequence fails test.
+                // We don't have to apply remaining calls to check sequence.
+                return Ok((false, false));
+            }
         }
     }
+
+    // Apply any remaining accumulated warp/roll before calling invariant.
+    apply_warp_roll_to_env(&mut executor, accumulated_warp, accumulated_roll);
 
     // Check the invariant for call sequence.
     let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
