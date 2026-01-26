@@ -8,7 +8,7 @@ use solar::parse::{
     ast::{self, Span},
     interface::BytePos,
 };
-use std::{borrow::Cow, fmt::Debug};
+use std::borrow::Cow;
 
 pub(crate) trait LitExt<'ast> {
     fn is_str_concatenation(&self) -> bool;
@@ -565,7 +565,7 @@ impl<'ast> State<'_, 'ast> {
         self.end();
     }
 
-    pub(super) fn print_block_inner<T: Debug>(
+    pub(super) fn print_block_inner<T>(
         &mut self,
         block: &'ast [T],
         block_format: BlockFormat,
@@ -706,7 +706,7 @@ impl<'ast> State<'_, 'ast> {
         self.block_depth -= 1;
     }
 
-    fn print_single_line_block<T: Debug>(
+    fn print_single_line_block<T>(
         &mut self,
         block: &'ast [T],
         block_format: BlockFormat,
