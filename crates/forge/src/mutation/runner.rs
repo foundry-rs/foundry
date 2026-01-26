@@ -166,6 +166,21 @@ fn copy_project_for_mutation(config: &Config, temp_dir: &Path) -> Result<()> {
         }
     }
 
+    // Symlink common external dependency directories (npm, soldeer)
+    // These are not always included in config.libs but are required for compilation
+    for dep_dir in ["node_modules", "dependencies"] {
+        let dep_path = config.root.join(dep_dir);
+        if dep_path.exists() && dep_path.is_dir() {
+            let target = temp_dir.join(dep_dir);
+            if !target.exists() {
+                // Try symlink first, fall back to copy on failure (Windows without privileges)
+                if symlink_dir(&dep_path, &target).is_err() {
+                    copy_dir_recursive(&dep_path, &target)?;
+                }
+            }
+        }
+    }
+
     // Copy foundry.toml if exists
     let foundry_toml = config.root.join("foundry.toml");
     if foundry_toml.exists() {
