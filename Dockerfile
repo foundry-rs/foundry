@@ -24,9 +24,9 @@ ENV CARGO_INCREMENTAL=0 \
     SCCACHE_DIR=/sccache
 
 # Build dependencies.
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
     cargo chef cook --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
 
 ARG TAG_NAME="dev"
@@ -35,9 +35,9 @@ ARG VERGEN_GIT_SHA="ffffffffffffffffffffffffffffffffffffffff"
 
 # Build the project.
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
     cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
 
 # `dev` profile outputs to the `target/debug` directory.
