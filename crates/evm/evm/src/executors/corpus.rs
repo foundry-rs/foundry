@@ -85,12 +85,12 @@ enum MutationType {
     Repeat,
     /// Interleave calls from two random call sequences.
     Interleave,
-    /// Replace prefix of the original call sequence with new calls.
-    Prefix,
-    /// Replace suffix of the original call sequence with new calls.
-    Suffix,
-    /// ABI mutate random args of selected call in sequence.
-    Abi,
+    /// Generate new calls for a random prefix of the sequence.
+    GenPrefix,
+    /// Generate new calls for a random suffix of the sequence.
+    GenSuffix,
+    /// ABI mutate a random number of calls (1 to all) in the sequence.
+    GenMutate,
 }
 
 /// Holds Corpus information.
@@ -286,9 +286,9 @@ impl WorkerCorpus {
             Just(MutationType::Splice),
             Just(MutationType::Repeat),
             Just(MutationType::Interleave),
-            Just(MutationType::Prefix),
-            Just(MutationType::Suffix),
-            Just(MutationType::Abi),
+            Just(MutationType::GenPrefix),
+            Just(MutationType::GenSuffix),
+            Just(MutationType::GenMutate),
         ]
         .boxed();
 
@@ -531,30 +531,33 @@ impl WorkerCorpus {
                         new_seq.push(tx);
                     }
                 }
-                MutationType::Prefix => {
+                MutationType::GenPrefix => {
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
-                    trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
+                    trace!(target: "corpus", "generate prefix of {}", corpus.uuid);
 
                     self.current_mutated = Some(corpus.uuid);
 
                     new_seq = corpus.tx_seq.clone();
+                    // Generate new calls for a random prefix (0 to all elements).
                     for i in 0..rng.random_range(0..=new_seq.len()) {
                         new_seq[i] = self.new_tx(test_runner)?;
                     }
                 }
-                MutationType::Suffix => {
+                MutationType::GenSuffix => {
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
-                    trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
+                    trace!(target: "corpus", "generate suffix of {}", corpus.uuid);
 
                     self.current_mutated = Some(corpus.uuid);
 
                     new_seq = corpus.tx_seq.clone();
-                    for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
-                    {
-                        new_seq[i] = self.new_tx(test_runner)?;
+                    // Generate new calls for a random suffix (0 to all elements).
+                    let len = new_seq.len();
+                    let start = len - rng.random_range(0..len);
+                    for tx in new_seq.iter_mut().skip(start) {
+                        *tx = self.new_tx(test_runner)?;
                     }
                 }
-                MutationType::Abi => {
+                MutationType::GenMutate => {
                     let targets = targeted_contracts.targets.lock();
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
@@ -563,20 +566,20 @@ impl WorkerCorpus {
 
                     new_seq = corpus.tx_seq.clone();
 
-                    // 30% chance to mutate ALL calls in the sequence.
-                    // This helps break multi-constraint bugs where any call could hit the target.
-                    if rng.random_range(0..10) < 3 {
-                        for tx in &mut new_seq {
-                            if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
-                                && !function.inputs.is_empty()
-                            {
-                                self.abi_mutate(tx, function, test_runner, fuzz_state, senders)?;
-                            }
-                        }
-                    } else {
-                        // Standard: mutate a single random call.
-                        let idx = rng.random_range(0..new_seq.len());
-                        let tx = new_seq.get_mut(idx).unwrap();
+                    let len = new_seq.len();
+                    // Mutate a random number of calls (1 to all), similar to how GenPrefix
+                    // generates a random number of new calls.
+                    let n_to_mutate = rng.random_range(1..=len);
+
+                    // Shuffle indices to select which calls to mutate.
+                    let mut indices: Vec<usize> = (0..len).collect();
+                    for i in (1..len).rev() {
+                        let j = rng.random_range(0..=i);
+                        indices.swap(i, j);
+                    }
+
+                    for i in indices.into_iter().take(n_to_mutate) {
+                        let tx = &mut new_seq[i];
                         if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
                             && !function.inputs.is_empty()
                         {
