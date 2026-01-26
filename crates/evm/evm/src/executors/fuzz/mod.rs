@@ -250,6 +250,7 @@ impl FuzzedExecutor {
             &[BasicTxDetails {
                 warp: None,
                 roll: None,
+                deal: None,
                 sender: self.sender,
                 call_details: CallDetails {
                     target: address,
@@ -417,6 +418,7 @@ impl FuzzedExecutor {
         .prop_map(move |calldata| BasicTxDetails {
             warp: None,
             roll: None,
+            deal: None,
             sender: Default::default(),
             call_details: CallDetails { target: Default::default(), calldata, value: None },
         });
