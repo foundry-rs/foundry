@@ -36,6 +36,8 @@ pub struct MutationConfig {
     pub num_workers: usize,
     /// Whether to show progress display.
     pub show_progress: bool,
+    /// Whether to output JSON (suppress all other output).
+    pub json_output: bool,
 }
 
 impl MutationConfig {
@@ -55,6 +57,8 @@ pub struct MutationRunResult {
     pub summary: MutationsSummary,
     /// Whether the run was cancelled (e.g., Ctrl+C).
     pub cancelled: bool,
+    /// Duration of the mutation testing run in seconds.
+    pub duration_secs: f64,
 }
 
 /// Run mutation testing on the project.
@@ -73,11 +77,12 @@ pub async fn run_mutation_testing(
     mutation_config: MutationConfig,
 ) -> Result<MutationRunResult> {
     let num_workers = mutation_config.effective_workers();
+    let json_output = mutation_config.json_output;
 
     // Determine which paths to mutate
     let mutate_paths = resolve_mutate_paths(&config, output, &mutation_config)?;
 
-    if !mutation_config.show_progress {
+    if !mutation_config.show_progress && !json_output {
         sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
     }
 
@@ -86,7 +91,7 @@ pub async fn run_mutation_testing(
     let start_time = Instant::now();
 
     for path in mutate_paths {
-        if !mutation_config.show_progress {
+        if !mutation_config.show_progress && !json_output {
             sh_println!("Running mutation tests for {}", path.display())?;
         }
 
@@ -102,7 +107,7 @@ pub async fn run_mutation_testing(
 
         // Check for cached results
         if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id) {
-            if !mutation_config.show_progress {
+            if !mutation_config.show_progress && !json_output {
                 sh_println!("  Using cached results for {} mutants", prior.len())?;
             }
             for (mutant, status) in prior {
@@ -129,7 +134,7 @@ pub async fn run_mutation_testing(
         };
 
         if mutants.is_empty() {
-            if !mutation_config.show_progress {
+            if !mutation_config.show_progress && !json_output {
                 sh_println!("  No mutants generated for {}", path.display())?;
             }
             continue;
@@ -145,16 +150,18 @@ pub async fn run_mutation_testing(
             }
         });
 
-        // Create progress display if enabled
-        let progress = if mutation_config.show_progress {
+        // Create progress display if enabled (not in JSON mode)
+        let progress = if mutation_config.show_progress && !json_output {
             let p = MutationProgress::new(mutants.len(), num_workers);
             // Show relative path from project root
             let display_path =
                 path.strip_prefix(&config.root).unwrap_or(&path).display().to_string();
             p.set_current_file(&display_path);
             Some(p)
-        } else {
+        } else if !json_output {
             sh_println!("  Generated {} mutants, testing in parallel...", mutants.len())?;
+            None
+        } else {
             None
         };
 
@@ -168,6 +175,7 @@ pub async fn run_mutation_testing(
             env.clone(),
             num_workers,
             progress.clone(),
+            json_output,
         )?;
 
         // Collect results for caching
@@ -205,9 +213,14 @@ pub async fn run_mutation_testing(
 
     // Report results
     let duration = start_time.elapsed();
-    MutationReporter::new().report(&mutation_summary, duration);
+    let duration_secs = duration.as_secs_f64();
 
-    Ok(MutationRunResult { summary: mutation_summary, cancelled })
+    // Only show human-readable report if not in JSON mode
+    if !json_output {
+        MutationReporter::new().report(&mutation_summary, duration);
+    }
+
+    Ok(MutationRunResult { summary: mutation_summary, cancelled, duration_secs })
 }
 
 /// Resolve which paths to mutate based on configuration.

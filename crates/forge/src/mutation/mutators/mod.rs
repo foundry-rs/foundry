@@ -53,6 +53,18 @@ impl MutationContext<'_> {
             .unwrap_or(1)
     }
 
+    /// Get the column number (1-indexed) for this context's span
+    pub fn column_number(&self) -> usize {
+        self.source
+            .map(|src| {
+                let pos = self.span.lo().0 as usize;
+                let line_start =
+                    src.get(..pos).and_then(|s| s.rfind('\n')).map(|i| i + 1).unwrap_or(0);
+                pos - line_start + 1
+            })
+            .unwrap_or(1)
+    }
+
     /// Get the full source line containing this span
     pub fn source_line(&self) -> String {
         self.source

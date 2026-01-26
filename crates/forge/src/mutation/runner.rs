@@ -58,6 +58,8 @@ pub struct SharedMutationState {
     pub cancelled: AtomicBool,
     /// Optional progress display
     pub progress: Option<MutationProgress>,
+    /// Whether to suppress all output (for JSON mode)
+    pub silent: bool,
 }
 
 impl SharedMutationState {
@@ -68,6 +70,18 @@ impl SharedMutationState {
             total: AtomicUsize::new(0),
             cancelled: AtomicBool::new(false),
             progress: None,
+            silent: false,
+        }
+    }
+
+    pub fn new_silent() -> Self {
+        Self {
+            survived_spans: Mutex::new(SurvivedSpans::new()),
+            completed: AtomicUsize::new(0),
+            total: AtomicUsize::new(0),
+            cancelled: AtomicBool::new(false),
+            progress: None,
+            silent: true,
         }
     }
 
@@ -78,6 +92,7 @@ impl SharedMutationState {
             total: AtomicUsize::new(0),
             cancelled: AtomicBool::new(false),
             progress: Some(progress),
+            silent: false,
         }
     }
 
@@ -238,6 +253,7 @@ pub fn run_mutations_parallel(
         env,
         num_workers,
         None,
+        false,
     )
 }
 
@@ -252,6 +268,7 @@ pub fn run_mutations_parallel_with_progress(
     env: Env,
     num_workers: usize,
     progress: Option<MutationProgress>,
+    silent: bool,
 ) -> Result<Vec<MutantTestResult>> {
     let total = mutants.len();
     if total == 0 {
@@ -260,13 +277,15 @@ pub fn run_mutations_parallel_with_progress(
 
     let shared_state = Arc::new(if let Some(p) = progress {
         SharedMutationState::with_progress(p)
+    } else if silent {
+        SharedMutationState::new_silent()
     } else {
         SharedMutationState::new()
     });
     shared_state.total.store(total, Ordering::SeqCst);
 
-    // Only print if no progress bar
-    if shared_state.progress.is_none() {
+    // Only print if no progress bar and not silent
+    if shared_state.progress.is_none() && !shared_state.silent {
         let _ = sh_println!("Running {} mutants in parallel with {} workers", total, num_workers);
     }
 
@@ -407,7 +426,7 @@ fn test_single_mutant_isolated(
     if shared_state.should_skip_span(mutant.span) {
         if let Some(ref progress) = shared_state.progress {
             progress.complete_mutant(&mutant, &MutationResult::Skipped);
-        } else {
+        } else if !shared_state.silent {
             let completed = shared_state.increment_completed();
             let total = shared_state.total.load(Ordering::SeqCst);
             let _ = sh_println!(
@@ -422,7 +441,7 @@ fn test_single_mutant_isolated(
     // Show progress or log
     if let Some(ref progress) = shared_state.progress {
         progress.start_mutant(&mutant);
-    } else {
+    } else if !shared_state.silent {
         let completed = shared_state.increment_completed();
         let total = shared_state.total.load(Ordering::SeqCst);
         let _ = sh_println!("[{}/{}] Testing mutant: {}", completed, total, mutant);

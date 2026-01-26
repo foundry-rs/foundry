@@ -101,6 +101,13 @@ Each represents a potential bug that your tests would miss.
 ════════════════════════════════════════════════════════════
 
 "#]]);
+
+    // Run mutation testing with --json - verify the output contains valid mutation JSON
+    cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
+...
+{"summary":{"total":7,"killed":4,"survived":1,"invalid":2,"skipped":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+
+"#]]);
 });
 
 forgetest_init!(mutation_testing_with_parallel_workers, |prj, cmd| {

@@ -57,6 +57,7 @@ impl Mutator for RequireMutator {
         let original = context.original_text();
         let source_line = context.source_line();
         let line_number = context.line_number();
+        let column_number = context.column_number();
 
         // Extract condition text from source
         let source = context.source.unwrap_or("");
@@ -87,6 +88,7 @@ impl Mutator for RequireMutator {
             original: original.clone(),
             source_line: source_line.clone(),
             line_number,
+            column_number,
         });
 
         // Mutation 2: require(x) -> require(false)
@@ -99,6 +101,7 @@ impl Mutator for RequireMutator {
             original: original.clone(),
             source_line: source_line.clone(),
             line_number,
+            column_number,
         });
 
         // Mutation 3: require(x) -> require(!x)
@@ -113,6 +116,7 @@ impl Mutator for RequireMutator {
                 original,
                 source_line,
                 line_number,
+                column_number,
             });
         }
 

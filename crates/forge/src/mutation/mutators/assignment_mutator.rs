@@ -20,9 +20,10 @@ impl Mutator for AssignmentMutator {
         let original = context.original_text();
         let source_line = context.source_line();
         let line_number = context.line_number();
+        let column_number = context.column_number();
 
         match assign_var_type {
-            AssignVarTypes::Literal(lit) => match lit {
+            AssignVarTypes::Literal(ref lit) => match lit {
                 OwnedLiteral::Bool(val) => Ok(vec![Mutant {
                     span: replacement_span,
                     mutation: MutationType::Assignment(AssignVarTypes::Literal(
@@ -32,6 +33,7 @@ impl Mutator for AssignmentMutator {
                     original,
                     source_line,
                     line_number,
+                    column_number,
                 }]),
                 OwnedLiteral::Number(val) => Ok(vec![
                     Mutant {
@@ -43,16 +45,18 @@ impl Mutator for AssignmentMutator {
                         original: original.clone(),
                         source_line: source_line.clone(),
                         line_number,
+                        column_number,
                     },
                     Mutant {
                         span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
-                            OwnedLiteral::Number(-val),
+                            OwnedLiteral::Number(-*val),
                         )),
                         path: context.path.clone(),
                         original,
                         source_line,
                         line_number,
+                        column_number,
                     },
                 ]),
                 OwnedLiteral::Str { .. } => Ok(vec![]),
@@ -60,7 +64,7 @@ impl Mutator for AssignmentMutator {
                 OwnedLiteral::Address(_) => Ok(vec![]),
                 OwnedLiteral::Err(_) => Ok(vec![]),
             },
-            AssignVarTypes::Identifier(ident) => Ok(vec![
+            AssignVarTypes::Identifier(ref ident) => Ok(vec![
                 Mutant {
                     span: replacement_span,
                     mutation: MutationType::Assignment(AssignVarTypes::Literal(
@@ -70,6 +74,7 @@ impl Mutator for AssignmentMutator {
                     original: original.clone(),
                     source_line: source_line.clone(),
                     line_number,
+                    column_number,
                 },
                 Mutant {
                     span: replacement_span,
@@ -80,6 +85,7 @@ impl Mutator for AssignmentMutator {
                     original,
                     source_line,
                     line_number,
+                    column_number,
                 },
             ]),
         }

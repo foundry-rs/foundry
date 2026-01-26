@@ -16,6 +16,7 @@ impl Mutator for DeleteExpressionMutator {
             original: ctxt.original_text(),
             source_line: ctxt.source_line(),
             line_number: ctxt.line_number(),
+            column_number: ctxt.column_number(),
         }])
     }
 

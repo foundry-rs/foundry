@@ -449,12 +449,15 @@ impl TestArgs {
                 eyre::bail!("Cannot run mutation testing with failed tests");
             }
 
+            let json_output = shell::is_json();
+
             let mutation_config = MutationConfig {
                 mutate_paths: mutate.clone(),
                 mutate_path_pattern: self.mutate_path.clone(),
                 mutate_contract_pattern: self.mutate_contract.clone(),
                 num_workers: self.mutation_jobs.unwrap_or(0),
                 show_progress: self.show_progress,
+                json_output,
             };
 
             let result = run_mutation_testing(
@@ -468,6 +471,12 @@ impl TestArgs {
 
             if result.cancelled {
                 std::process::exit(130);
+            }
+
+            // Output JSON if requested
+            if json_output {
+                let json_output = result.summary.to_json_output(result.duration_secs);
+                sh_println!("{}", serde_json::to_string(&json_output)?)?;
             }
 
             outcome = TestOutcome::empty(Some(runner.clone()), true);
