@@ -135,16 +135,17 @@ impl CoverageReporter for LcovReporter {
             writeln!(out, "TN:")?;
             writeln!(out, "SF:{}", path.display())?;
 
-            // First pass: collect line hits for DA records.
-            // Track both which lines have been recorded and the max hits per line.
+            // Collect line hits using the same semantics as DA output to ensure BRDA
+            // consistency. We use "first item wins" to match the DA output behavior,
+            // which only outputs the first Line/Statement item per line.
+            // This fixes issues with viaIR compilation where source maps may be inaccurate
+            // and different items on the same line can have different hit counts.
             let mut line_hits: HashMap<u32, u32> = HashMap::default();
             for item in &items {
                 if matches!(item.kind, CoverageItemKind::Line | CoverageItemKind::Statement) {
                     let line = item.loc.lines.start;
-                    line_hits
-                        .entry(line)
-                        .and_modify(|h| *h = (*h).max(item.hits))
-                        .or_insert(item.hits);
+                    // Use first item's hits per line (same as DA output semantics)
+                    line_hits.entry(line).or_insert(item.hits);
                 }
             }
 
