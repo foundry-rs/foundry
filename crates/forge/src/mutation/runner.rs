@@ -230,7 +230,7 @@ fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path) -> Result<()> {
     // Fall back to default "lib" if no config exists.
     let nested_lib_dirs: Vec<PathBuf> =
         if let Ok(config) = Config::load_with_root_and_fallback(lib_src) {
-            config.libs.clone()
+            config.libs
         } else {
             vec![PathBuf::from("lib")]
         };
