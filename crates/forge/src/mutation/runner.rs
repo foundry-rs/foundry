@@ -737,3 +737,219 @@ impl ParallelMutationRunner {
         Ok(summary)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a directory structure for testing
+    fn create_test_dir_structure(base: &Path, structure: &[&str]) {
+        for path in structure {
+            let full_path = base.join(path);
+            if path.ends_with('/') {
+                fs::create_dir_all(&full_path).unwrap();
+            } else {
+                if let Some(parent) = full_path.parent() {
+                    fs::create_dir_all(parent).unwrap();
+                }
+                fs::write(&full_path, format!("// {path}")).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn test_symlink_dir_creates_symlink() {
+        let temp = TempDir::new().unwrap();
+        let src = temp.path().join("source_dir");
+        let dst = temp.path().join("target_link");
+
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("file.txt"), "content").unwrap();
+
+        symlink_dir(&src, &dst).unwrap();
+
+        assert!(dst.exists());
+        assert!(dst.is_symlink());
+        assert!(dst.join("file.txt").exists());
+    }
+
+    #[test]
+    fn test_symlink_nested_libs_single_level() {
+        let temp = TempDir::new().unwrap();
+
+        // Create source lib with nested lib directory
+        let lib_src = temp.path().join("lib_src");
+        create_test_dir_structure(&lib_src, &[
+            "src/Contract.sol",
+            "lib/",
+            "lib/openzeppelin/contracts/token/ERC20.sol",
+            "lib/solmate/src/tokens/ERC20.sol",
+        ]);
+
+        // Create destination (simulating symlinked lib in temp workspace)
+        let lib_dst = temp.path().join("lib_dst");
+        fs::create_dir(&lib_dst).unwrap();
+
+        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+
+        // Verify nested libs are symlinked
+        assert!(lib_dst.join("lib/openzeppelin").exists());
+        assert!(lib_dst.join("lib/solmate").exists());
+        assert!(lib_dst.join("lib/openzeppelin/contracts/token/ERC20.sol").exists());
+        assert!(lib_dst.join("lib/solmate/src/tokens/ERC20.sol").exists());
+    }
+
+    #[test]
+    fn test_symlink_nested_libs_deeply_nested() {
+        let temp = TempDir::new().unwrap();
+
+        // Create deeply nested structure (3 levels)
+        let lib_src = temp.path().join("lib_src");
+        create_test_dir_structure(&lib_src, &[
+            "src/Main.sol",
+            "lib/",
+            "lib/dep-a/src/A.sol",
+            "lib/dep-a/lib/",
+            "lib/dep-a/lib/dep-b/src/B.sol",
+            "lib/dep-a/lib/dep-b/lib/",
+            "lib/dep-a/lib/dep-b/lib/dep-c/src/C.sol",
+        ]);
+
+        let lib_dst = temp.path().join("lib_dst");
+        fs::create_dir(&lib_dst).unwrap();
+
+        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+
+        // All levels should be accessible
+        assert!(lib_dst.join("lib/dep-a").exists());
+        assert!(lib_dst.join("lib/dep-a/lib/dep-b").exists());
+        assert!(lib_dst.join("lib/dep-a/lib/dep-b/lib/dep-c").exists());
+        assert!(lib_dst.join("lib/dep-a/lib/dep-b/lib/dep-c/src/C.sol").exists());
+    }
+
+    #[test]
+    fn test_symlink_nested_libs_no_nested_lib_dir() {
+        let temp = TempDir::new().unwrap();
+
+        // Create lib without nested lib directory
+        let lib_src = temp.path().join("lib_src");
+        create_test_dir_structure(&lib_src, &[
+            "src/Contract.sol",
+            "test/Test.sol",
+        ]);
+
+        let lib_dst = temp.path().join("lib_dst");
+        fs::create_dir(&lib_dst).unwrap();
+
+        // Should not error when no lib/ exists
+        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+
+        // lib_dst/lib should not exist
+        assert!(!lib_dst.join("lib").exists());
+    }
+
+    #[test]
+    fn test_symlink_nested_libs_skips_existing() {
+        let temp = TempDir::new().unwrap();
+
+        let lib_src = temp.path().join("lib_src");
+        create_test_dir_structure(&lib_src, &[
+            "lib/",
+            "lib/existing/src/File.sol",
+        ]);
+
+        let lib_dst = temp.path().join("lib_dst");
+        fs::create_dir_all(lib_dst.join("lib/existing")).unwrap();
+        fs::write(lib_dst.join("lib/existing/marker.txt"), "pre-existing").unwrap();
+
+        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+
+        // Should not overwrite existing directory
+        assert!(lib_dst.join("lib/existing/marker.txt").exists());
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_basic() {
+        let temp = TempDir::new().unwrap();
+
+        let src = temp.path().join("src");
+        create_test_dir_structure(&src, &[
+            "file1.sol",
+            "subdir/file2.sol",
+            "subdir/nested/file3.sol",
+        ]);
+
+        let dst = temp.path().join("dst");
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        assert!(dst.join("file1.sol").exists());
+        assert!(dst.join("subdir/file2.sol").exists());
+        assert!(dst.join("subdir/nested/file3.sol").exists());
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_skips_symlinked_dirs() {
+        let temp = TempDir::new().unwrap();
+
+        let src = temp.path().join("src");
+        let external = temp.path().join("external");
+
+        // Create external directory and symlink to it
+        fs::create_dir_all(&external).unwrap();
+        fs::write(external.join("secret.txt"), "should not be copied").unwrap();
+
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("file.sol"), "content").unwrap();
+
+        // Create symlink inside src pointing to external
+        symlink_dir(&external, &src.join("external_link")).unwrap();
+
+        let dst = temp.path().join("dst");
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        // Regular file should be copied
+        assert!(dst.join("file.sol").exists());
+        // Symlinked directory should be skipped
+        assert!(!dst.join("external_link").exists());
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_nonexistent_src() {
+        let temp = TempDir::new().unwrap();
+
+        let src = temp.path().join("nonexistent");
+        let dst = temp.path().join("dst");
+
+        // Should not error for nonexistent source
+        copy_dir_recursive(&src, &dst).unwrap();
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn test_relative_to_root_basic() {
+        let root = PathBuf::from("/project");
+        let path = PathBuf::from("/project/src/contracts");
+
+        let rel = relative_to_root(&root, &path);
+        assert_eq!(rel, PathBuf::from("src/contracts"));
+    }
+
+    #[test]
+    fn test_relative_to_root_same_path() {
+        let root = PathBuf::from("/project");
+        let path = PathBuf::from("/project");
+
+        let rel = relative_to_root(&root, &path);
+        assert_eq!(rel, PathBuf::from(""));
+    }
+
+    #[test]
+    fn test_relative_to_root_outside_root() {
+        let root = PathBuf::from("/project");
+        let path = PathBuf::from("/other/location");
+
+        // When path is outside root, returns the original path
+        let rel = relative_to_root(&root, &path);
+        assert_eq!(rel, path);
+    }
+}
