@@ -163,6 +163,11 @@ fn copy_project_for_mutation(config: &Config, temp_dir: &Path) -> Result<()> {
                     copy_dir_recursive(lib_path, &target)?;
                 }
             }
+
+            // Recursively symlink nested lib directories within each library.
+            // This handles projects with nested submodules (e.g., lib/euler-earn/lib/*)
+            // that have their own dependencies with context-specific remappings.
+            symlink_nested_libs(lib_path, &target)?;
         }
     }
 
@@ -207,6 +212,54 @@ fn symlink_dir(src: &Path, dst: &Path) -> Result<()> {
     {
         std::os::windows::fs::symlink_dir(src, dst)?;
     }
+    Ok(())
+}
+
+/// Recursively symlink nested lib directories within a library.
+///
+/// Many projects use git submodules that themselves have dependencies in their own
+/// `lib/` directories. When the top-level lib is symlinked, these nested libs are
+/// included via the symlink. However, if remappings reference these nested paths
+/// with context-specific prefixes (e.g., `lib/euler-earn:@openzeppelin=lib/euler-earn/lib/...`),
+/// the mutation workspace needs these paths to exist.
+///
+/// This function walks through each top-level library and symlinks any nested `lib/`
+/// directories to ensure they're accessible in the temp workspace.
+fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path) -> Result<()> {
+    let nested_lib = lib_src.join("lib");
+    if !nested_lib.exists() || !nested_lib.is_dir() {
+        return Ok(());
+    }
+
+    // Read entries in the nested lib directory
+    let entries = match fs::read_dir(&nested_lib) {
+        Ok(e) => e,
+        Err(_) => return Ok(()), // Skip if we can't read
+    };
+
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+
+        let entry_name = entry.file_name();
+        let nested_dst = lib_dst.join("lib").join(&entry_name);
+
+        // Only create if doesn't exist (symlinked parent may already provide it)
+        if !nested_dst.exists() {
+            // Ensure parent exists
+            if let Some(parent) = nested_dst.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            // Symlink the nested library
+            let _ = symlink_dir(&entry_path, &nested_dst);
+        }
+
+        // Recurse into nested libs (handles deeply nested submodules)
+        symlink_nested_libs(&entry_path, &nested_dst)?;
+    }
+
     Ok(())
 }
 
