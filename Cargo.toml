@@ -494,24 +494,24 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "33e82b9777d99ad8ce1ccd8c59817999fa0dfdec" }
-alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "33e82b9777d99ad8ce1ccd8c59817999fa0dfdec" }
+alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "1c8ff5a179e760517016ab4e4d5af1c4b5923594" }
+alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "1c8ff5a179e760517016ab4e4d5af1c4b5923594" }
 
 ## revm
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-bytecode = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-context = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-context-interface = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-database = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-database-interface = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-handler = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-inspector = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-state = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "0dc217a9d2c470c533ef8d7a51396e4fb2b02008" }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "fccc4ac50775f5eac9a766725507dc3d6a47804b" }
+revm = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-bytecode = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-context = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-context-interface = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-database = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-database-interface = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-handler = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-inspector = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-state = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "300efbf3e391e1796f5210cd4506508e385a55d2" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "9464524e7d983c8601ba7af3048cd60575dad6bd" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
