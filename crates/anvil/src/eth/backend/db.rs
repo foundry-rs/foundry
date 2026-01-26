@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockBody, Header};
-use alloy_rpc_types_eth::withdrawal::Withdrawal;
+use alloy_eips::eip4895::Withdrawals;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{AddressMap, HashMap},
@@ -585,7 +585,7 @@ pub struct SerializableBlock {
     pub transactions: Vec<SerializableTransactionType>,
     pub ommers: Vec<Header>,
     #[serde(default)]
-    pub withdrawals: Option<Vec<Withdrawal>>,
+    pub withdrawals: Option<Withdrawals>,
 }
 
 impl From<Block> for SerializableBlock {
@@ -594,7 +594,7 @@ impl From<Block> for SerializableBlock {
             header: block.header,
             transactions: block.body.transactions.into_iter().map(Into::into).collect(),
             ommers: block.body.ommers.into_iter().collect(),
-            withdrawals: block.body.withdrawals.map(Into::into),
+            withdrawals: block.body.withdrawals,
         }
     }
 }
@@ -603,7 +603,7 @@ impl From<SerializableBlock> for Block {
     fn from(block: SerializableBlock) -> Self {
         let transactions = block.transactions.into_iter().map(Into::into).collect();
         let ommers = block.ommers;
-        let body = BlockBody { transactions, ommers, withdrawals: block.withdrawals.map(Into::into) };
+        let body = BlockBody { transactions, ommers, withdrawals: block.withdrawals };
         Self::new(block.header, body)
     }
 }
@@ -725,6 +725,8 @@ mod test {
 
     #[test]
     fn test_block_withdrawals_preserved() {
+        use alloy_eips::eip4895::Withdrawal;
+
         // create a block with withdrawals (like post-Shanghai blocks)
         let withdrawal = Withdrawal {
             index: 42,
@@ -737,7 +739,7 @@ mod test {
         let body = BlockBody {
             transactions: vec![],
             ommers: vec![],
-            withdrawals: Some(vec![withdrawal.clone()].into()),
+            withdrawals: Some(vec![withdrawal].into()),
         };
         let block = Block::new(header, body);
 
