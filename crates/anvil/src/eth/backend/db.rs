@@ -7,6 +7,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockBody, Header};
+use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{AddressMap, HashMap},
@@ -583,6 +584,8 @@ pub struct SerializableBlock {
     pub header: Header,
     pub transactions: Vec<SerializableTransactionType>,
     pub ommers: Vec<Header>,
+    #[serde(default)]
+    pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
 impl From<Block> for SerializableBlock {
@@ -591,6 +594,7 @@ impl From<Block> for SerializableBlock {
             header: block.header,
             transactions: block.body.transactions.into_iter().map(Into::into).collect(),
             ommers: block.body.ommers.into_iter().collect(),
+            withdrawals: block.body.withdrawals,
         }
     }
 }
@@ -599,7 +603,7 @@ impl From<SerializableBlock> for Block {
     fn from(block: SerializableBlock) -> Self {
         let transactions = block.transactions.into_iter().map(Into::into).collect();
         let ommers = block.ommers;
-        let body = BlockBody { transactions, ommers, withdrawals: None };
+        let body = BlockBody { transactions, ommers, withdrawals: block.withdrawals };
         Self::new(block.header, body)
     }
 }
