@@ -78,7 +78,7 @@ flate2.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
-vergen = { workspace = true, features = ["build", "git", "gitcl"] }
+vergen = { workspace = true, features = ["build", "emit_and_set"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

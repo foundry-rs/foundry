@@ -435,6 +435,7 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
                 .or_else(|| {
                     Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
                 }),
+            slot_num: 0,
         })
     }
 }

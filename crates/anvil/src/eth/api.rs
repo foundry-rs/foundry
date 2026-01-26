@@ -69,7 +69,6 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
-        wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
 };
@@ -512,11 +511,6 @@ impl EthApi {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
-            EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
-            EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
-            EthRequest::AnvilSetExecutor(executor_pk) => {
-                self.anvil_set_executor(executor_pk).to_rpc_result()
-            }
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -2939,33 +2933,6 @@ impl EthApi {
     }
 }
 
-// ===== impl Wallet endpoints =====
-impl EthApi {
-    /// Get the capabilities of the wallet.
-    ///
-    /// See also [EIP-5792][eip-5792].
-    ///
-    /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
-    pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
-        node_info!("wallet_getCapabilities");
-        Ok(self.backend.get_capabilities())
-    }
-
-    /// Add an address to the delegation capability of wallet.
-    ///
-    /// This entails that the executor will now be able to sponsor transactions to this address.
-    pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
-        node_info!("anvil_addCapability");
-        self.backend.add_capability(address);
-        Ok(())
-    }
-
-    pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
-        node_info!("anvil_setExecutor");
-        self.backend.set_executor(executor_pk)
-    }
-}
-
 impl EthApi {
     /// Executes the future on a new blocking task.
     async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
@@ -3390,14 +3357,8 @@ impl EthApi {
     /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
     fn impersonated_signature(&self, request: &FoundryTypedTx) -> Signature {
         match request {
-            // Only the legacy transaction type requires v to be in {27, 28}, thus
-            // requiring the use of Parity::NonEip155
-            FoundryTypedTx::Legacy(_) => Signature::from_scalars_and_parity(
-                B256::with_last_byte(1),
-                B256::with_last_byte(1),
-                false,
-            ),
-            FoundryTypedTx::Eip2930(_)
+            FoundryTypedTx::Legacy(_)
+            | FoundryTypedTx::Eip2930(_)
             | FoundryTypedTx::Eip1559(_)
             | FoundryTypedTx::Eip7702(_)
             | FoundryTypedTx::Eip4844(_)
@@ -3582,6 +3543,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::CreateContractSizeLimit
                 | InstructionResult::CreateContractStartingWithEF
                 | InstructionResult::CreateInitCodeSizeLimit
+                | InstructionResult::InvalidImmediateEncoding
                 | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
             },
         }

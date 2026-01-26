@@ -56,3 +56,5 @@ indicatif.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 uuid.workspace = true
+rayon.workspace = true
+tokio.workspace = true
