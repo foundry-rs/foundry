@@ -516,7 +516,7 @@ revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "main" }
-foundry-fork-db = { git = "https://github.com/rakita/foundry-fork-db", branch = "staging-revm" }
+foundry-fork-db = { git = "https://github.com/rakita/foundry-fork-db", branch = "staging" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
