@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockBody, Header};
-use alloy_eips::eip4895::Withdrawal;
+use alloy_rpc_types_eth::withdrawal::Withdrawal;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{AddressMap, HashMap},
@@ -594,7 +594,7 @@ impl From<Block> for SerializableBlock {
             header: block.header,
             transactions: block.body.transactions.into_iter().map(Into::into).collect(),
             ommers: block.body.ommers.into_iter().collect(),
-            withdrawals: block.body.withdrawals,
+            withdrawals: block.body.withdrawals.map(Into::into),
         }
     }
 }
@@ -603,7 +603,7 @@ impl From<SerializableBlock> for Block {
     fn from(block: SerializableBlock) -> Self {
         let transactions = block.transactions.into_iter().map(Into::into).collect();
         let ommers = block.ommers;
-        let body = BlockBody { transactions, ommers, withdrawals: block.withdrawals };
+        let body = BlockBody { transactions, ommers, withdrawals: block.withdrawals.map(Into::into) };
         Self::new(block.header, body)
     }
 }
@@ -721,5 +721,35 @@ mod test {
         "#;
 
         let _block: SerializableBlock = serde_json::from_str(block).unwrap();
+    }
+
+    #[test]
+    fn test_block_withdrawals_preserved() {
+        // create a block with withdrawals (like post-Shanghai blocks)
+        let withdrawal = Withdrawal {
+            index: 42,
+            validator_index: 123,
+            address: Address::repeat_byte(1),
+            amount: 1000,
+        };
+
+        let header = Header::default();
+        let body = BlockBody {
+            transactions: vec![],
+            ommers: vec![],
+            withdrawals: Some(vec![withdrawal.clone()].into()),
+        };
+        let block = Block::new(header, body);
+
+        // convert to SerializableBlock and back
+        let serializable = SerializableBlock::from(block);
+        let restored = Block::from(serializable);
+
+        // withdrawals should be preserved
+        assert!(restored.body.withdrawals.is_some());
+        let withdrawals = restored.body.withdrawals.unwrap();
+        assert_eq!(withdrawals.len(), 1);
+        assert_eq!(withdrawals[0].index, 42);
+        assert_eq!(withdrawals[0].validator_index, 123);
     }
 }
