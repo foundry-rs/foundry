@@ -69,7 +69,6 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
-        wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
 };
@@ -515,11 +514,6 @@ impl EthApi {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
-            EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
-            EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
-            EthRequest::AnvilSetExecutor(executor_pk) => {
-                self.anvil_set_executor(executor_pk).to_rpc_result()
-            }
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -2951,33 +2945,6 @@ impl EthApi {
         }
 
         Ok(content)
-    }
-}
-
-// ===== impl Wallet endpoints =====
-impl EthApi {
-    /// Get the capabilities of the wallet.
-    ///
-    /// See also [EIP-5792][eip-5792].
-    ///
-    /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
-    pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
-        node_info!("wallet_getCapabilities");
-        Ok(self.backend.get_capabilities())
-    }
-
-    /// Add an address to the delegation capability of wallet.
-    ///
-    /// This entails that the executor will now be able to sponsor transactions to this address.
-    pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
-        node_info!("anvil_addCapability");
-        self.backend.add_capability(address);
-        Ok(())
-    }
-
-    pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
-        node_info!("anvil_setExecutor");
-        self.backend.set_executor(executor_pk)
     }
 }
 
