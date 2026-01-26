@@ -226,13 +226,35 @@ fn symlink_dir(src: &Path, dst: &Path) -> Result<()> {
 /// This function walks through each top-level library and symlinks any nested `lib/`
 /// directories to ensure they're accessible in the temp workspace.
 fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path) -> Result<()> {
-    let nested_lib = lib_src.join("lib");
+    // Try to load nested library's config to get its actual lib paths.
+    // Fall back to default "lib" if no config exists.
+    let nested_lib_dirs: Vec<PathBuf> =
+        if let Ok(config) = Config::load_with_root_and_fallback(lib_src) {
+            config.libs.clone()
+        } else {
+            vec![PathBuf::from("lib")]
+        };
+
+    for nested_lib_dir in nested_lib_dirs {
+        let nested_lib = lib_src.join(&nested_lib_dir);
+        if !nested_lib.exists() || !nested_lib.is_dir() {
+            continue;
+        }
+
+        process_nested_lib_dir(&nested_lib, lib_dst, &nested_lib_dir)?;
+    }
+
+    Ok(())
+}
+
+/// Process a single nested lib directory, symlinking its contents.
+fn process_nested_lib_dir(nested_lib: &Path, lib_dst: &Path, lib_rel: &Path) -> Result<()> {
     if !nested_lib.exists() || !nested_lib.is_dir() {
         return Ok(());
     }
 
     // Read entries in the nested lib directory
-    let entries = match fs::read_dir(&nested_lib) {
+    let entries = match fs::read_dir(nested_lib) {
         Ok(e) => e,
         Err(_) => return Ok(()), // Skip if we can't read
     };
@@ -244,7 +266,7 @@ fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path) -> Result<()> {
         }
 
         let entry_name = entry.file_name();
-        let nested_dst = lib_dst.join("lib").join(&entry_name);
+        let nested_dst = lib_dst.join(lib_rel).join(&entry_name);
 
         // Only create if doesn't exist (symlinked parent may already provide it)
         if !nested_dst.exists() {
