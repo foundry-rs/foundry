@@ -779,12 +779,15 @@ mod tests {
 
         // Create source lib with nested lib directory
         let lib_src = temp.path().join("lib_src");
-        create_test_dir_structure(&lib_src, &[
-            "src/Contract.sol",
-            "lib/",
-            "lib/openzeppelin/contracts/token/ERC20.sol",
-            "lib/solmate/src/tokens/ERC20.sol",
-        ]);
+        create_test_dir_structure(
+            &lib_src,
+            &[
+                "src/Contract.sol",
+                "lib/",
+                "lib/openzeppelin/contracts/token/ERC20.sol",
+                "lib/solmate/src/tokens/ERC20.sol",
+            ],
+        );
 
         // Create destination (simulating symlinked lib in temp workspace)
         let lib_dst = temp.path().join("lib_dst");
@@ -805,15 +808,18 @@ mod tests {
 
         // Create deeply nested structure (3 levels)
         let lib_src = temp.path().join("lib_src");
-        create_test_dir_structure(&lib_src, &[
-            "src/Main.sol",
-            "lib/",
-            "lib/dep-a/src/A.sol",
-            "lib/dep-a/lib/",
-            "lib/dep-a/lib/dep-b/src/B.sol",
-            "lib/dep-a/lib/dep-b/lib/",
-            "lib/dep-a/lib/dep-b/lib/dep-c/src/C.sol",
-        ]);
+        create_test_dir_structure(
+            &lib_src,
+            &[
+                "src/Main.sol",
+                "lib/",
+                "lib/dep-a/src/A.sol",
+                "lib/dep-a/lib/",
+                "lib/dep-a/lib/dep-b/src/B.sol",
+                "lib/dep-a/lib/dep-b/lib/",
+                "lib/dep-a/lib/dep-b/lib/dep-c/src/C.sol",
+            ],
+        );
 
         let lib_dst = temp.path().join("lib_dst");
         fs::create_dir(&lib_dst).unwrap();
@@ -833,10 +839,7 @@ mod tests {
 
         // Create lib without nested lib directory
         let lib_src = temp.path().join("lib_src");
-        create_test_dir_structure(&lib_src, &[
-            "src/Contract.sol",
-            "test/Test.sol",
-        ]);
+        create_test_dir_structure(&lib_src, &["src/Contract.sol", "test/Test.sol"]);
 
         let lib_dst = temp.path().join("lib_dst");
         fs::create_dir(&lib_dst).unwrap();
@@ -853,10 +856,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
 
         let lib_src = temp.path().join("lib_src");
-        create_test_dir_structure(&lib_src, &[
-            "lib/",
-            "lib/existing/src/File.sol",
-        ]);
+        create_test_dir_structure(&lib_src, &["lib/", "lib/existing/src/File.sol"]);
 
         let lib_dst = temp.path().join("lib_dst");
         fs::create_dir_all(lib_dst.join("lib/existing")).unwrap();
@@ -873,11 +873,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
 
         let src = temp.path().join("src");
-        create_test_dir_structure(&src, &[
-            "file1.sol",
-            "subdir/file2.sol",
-            "subdir/nested/file3.sol",
-        ]);
+        create_test_dir_structure(
+            &src,
+            &["file1.sol", "subdir/file2.sol", "subdir/nested/file3.sol"],
+        );
 
         let dst = temp.path().join("dst");
         copy_dir_recursive(&src, &dst).unwrap();
