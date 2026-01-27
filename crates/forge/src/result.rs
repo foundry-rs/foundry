@@ -6,7 +6,7 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    Address, Log,
+    Address, I256, Log,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
@@ -444,7 +444,25 @@ pub struct TestResult {
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.status {
-            TestStatus::Success => "[PASS]".green().fmt(f),
+            TestStatus::Success => {
+                // For optimization mode, show the best example sequence in green.
+                if let Some(CounterExample::Sequence(original, sequence)) = &self.counterexample {
+                    let mut s = String::from("[PASS]");
+                    s.push_str(
+                        format!(
+                            "\n\t[Best sequence] (original: {original}, shrunk: {})\n",
+                            sequence.len()
+                        )
+                        .as_str(),
+                    );
+                    for ex in sequence {
+                        writeln!(s, "{ex}").unwrap();
+                    }
+                    s.green().wrap().fmt(f)
+                } else {
+                    "[PASS]".green().fmt(f)
+                }
+            }
             TestStatus::Skipped => {
                 let mut s = String::from("[SKIP");
                 if let Some(reason) = &self.reason {
@@ -633,6 +651,7 @@ impl TestResult {
             reverts: 1,
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
+            optimization_best_value: None,
         };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
@@ -651,6 +670,7 @@ impl TestResult {
             reverts: 1,
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
+            optimization_best_value: None,
         };
         self.status = TestStatus::Failure;
         self.reason = if replayed_entirely {
@@ -669,6 +689,7 @@ impl TestResult {
             reverts: 0,
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
+            optimization_best_value: None,
         };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
@@ -686,6 +707,7 @@ impl TestResult {
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+        optimization_best_value: Option<I256>,
     ) {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
@@ -693,10 +715,13 @@ impl TestResult {
             reverts,
             metrics,
             failed_corpus_replays,
+            optimization_best_value,
         };
-        self.status = match success {
-            true => TestStatus::Success,
-            false => TestStatus::Failure,
+        // For optimization mode (Some value), always succeed. For check mode (None), use success.
+        self.status = if optimization_best_value.is_some() || success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
         };
         self.reason = reason;
         self.counterexample = counterexample;
@@ -769,6 +794,8 @@ pub enum TestKindReport {
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+        /// For optimization mode (int256 return): the best value achieved. None = check mode.
+        optimization_best_value: Option<I256>,
     },
     Table {
         runs: usize,
@@ -793,8 +820,18 @@ impl fmt::Display for TestKindReport {
                     write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
                 }
             }
-            Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
-                if *failed_corpus_replays != 0 {
+            Self::Invariant {
+                runs,
+                calls,
+                reverts,
+                metrics: _,
+                failed_corpus_replays,
+                optimization_best_value,
+            } => {
+                // If optimization_best_value is Some, this is optimization mode.
+                if let Some(best_value) = optimization_best_value {
+                    write!(f, "(best: {best_value}, runs: {runs}, calls: {calls})")
+                } else if *failed_corpus_replays != 0 {
                     write!(
                         f,
                         "(runs: {runs}, calls: {calls}, reverts: {reverts}, failed corpus replays: {failed_corpus_replays})"
@@ -844,6 +881,8 @@ pub enum TestKind {
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+        /// For optimization mode (int256 return): the best value achieved. None = check mode.
+        optimization_best_value: Option<I256>,
     },
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },
@@ -868,15 +907,21 @@ impl TestKind {
                     failed_corpus_replays: *failed_corpus_replays,
                 }
             }
-            Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
-                TestKindReport::Invariant {
-                    runs: *runs,
-                    calls: *calls,
-                    reverts: *reverts,
-                    metrics: HashMap::default(),
-                    failed_corpus_replays: *failed_corpus_replays,
-                }
-            }
+            Self::Invariant {
+                runs,
+                calls,
+                reverts,
+                metrics: _,
+                failed_corpus_replays,
+                optimization_best_value,
+            } => TestKindReport::Invariant {
+                runs: *runs,
+                calls: *calls,
+                reverts: *reverts,
+                metrics: HashMap::default(),
+                failed_corpus_replays: *failed_corpus_replays,
+                optimization_best_value: *optimization_best_value,
+            },
             Self::Table { runs, mean_gas, median_gas } => {
                 TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
