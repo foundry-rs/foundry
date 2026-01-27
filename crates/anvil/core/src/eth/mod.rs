@@ -706,18 +706,6 @@ pub enum EthRequest {
     /// Rollback the chain
     #[serde(rename = "anvil_rollback", with = "sequence")]
     Rollback(Option<u64>),
-
-    /// Wallet
-    #[serde(rename = "wallet_getCapabilities", with = "empty_params")]
-    WalletGetCapabilities(()),
-
-    /// Add an address to the delegation capability of the wallet
-    #[serde(rename = "anvil_addCapability", with = "sequence")]
-    AnvilAddCapability(Address),
-
-    /// Set the executor (sponsor) wallet
-    #[serde(rename = "anvil_setExecutor", with = "sequence")]
-    AnvilSetExecutor(String),
 }
 
 /// Represents ethereum JSON-RPC API
