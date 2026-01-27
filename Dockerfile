@@ -32,6 +32,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
 ARG TAG_NAME="dev"
 ENV TAG_NAME=$TAG_NAME
 ARG VERGEN_GIT_SHA="ffffffffffffffffffffffffffffffffffffffff"
+ENV VERGEN_GIT_SHA=$VERGEN_GIT_SHA
 
 # Build the project.
 COPY . .
