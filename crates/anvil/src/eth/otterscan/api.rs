@@ -375,10 +375,11 @@ impl EthApi {
 
         let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
-        let receipts = join_all(receipt_futs.map(|r| async {
+        // Reuse timestamp from the block we already have
+        let timestamp = block.header.timestamp;
+
+        let receipts = join_all(receipt_futs.map(|r| async move {
             if let Ok(Some(r)) = r.await {
-                let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
                 let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {
