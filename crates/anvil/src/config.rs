@@ -534,7 +534,7 @@ impl NodeConfig {
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
                 get_blob_base_fee_update_fraction(
-                    self.chain_id.unwrap_or(Chain::mainnet().id()),
+                    self.get_chain_id(),
                     self.get_genesis_timestamp(),
                 ),
             )
@@ -543,10 +543,7 @@ impl NodeConfig {
 
     /// Returns the [`BlobParams`] that should be used.
     pub fn get_blob_params(&self) -> BlobParams {
-        get_blob_params(
-            self.chain_id.unwrap_or(Chain::mainnet().id()),
-            self.get_genesis_timestamp(),
-        )
+        get_blob_params(self.get_chain_id(), self.get_genesis_timestamp())
     }
 
     /// Returns the hardfork to use
