@@ -3343,7 +3343,7 @@
     {
       "func": {
         "id": "bound_0",
-        "description": "Returns an uint256 value bounded in given range and different from the current one.",
+        "description": "Returns a uint256 value bounded in a given range and different from the current one.",
         "declaration": "function bound(uint256 current, uint256 min, uint256 max) external view returns (uint256);",
         "visibility": "external",
         "mutability": "view",
@@ -3363,7 +3363,7 @@
     {
       "func": {
         "id": "bound_1",
-        "description": "Returns an int256 value bounded in given range and different from the current one.",
+        "description": "Returns an int256 value bounded in a given range and different from the current one.",
         "declaration": "function bound(int256 current, int256 min, int256 max) external view returns (int256);",
         "visibility": "external",
         "mutability": "view",
