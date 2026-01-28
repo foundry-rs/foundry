@@ -1,11 +1,6 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use std::{
-    collections::BTreeMap,
-    fmt::{self, Debug},
-    path::Path,
-};
-
+use crate::mem::storage::MinedTransaction;
 use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip4895::Withdrawals;
 use alloy_primitives::{
@@ -17,6 +12,7 @@ use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
+use flate2::read::GzDecoder;
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
@@ -36,8 +32,12 @@ use serde::{
     de::{Error as DeError, MapAccess, Visitor},
 };
 use serde_json::Value;
-
-use crate::mem::storage::MinedTransaction;
+use std::io::Read;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    path::Path,
+};
 
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
@@ -512,11 +512,26 @@ impl SerializableState {
     /// Loads the `Genesis` object from the given json file path
     pub fn load(path: impl AsRef<Path>) -> Result<Self, FsPathError> {
         let path = path.as_ref();
-        if path.is_dir() {
-            foundry_common::fs::read_json_file(&path.join("state.json"))
+
+        let buf = if path.is_dir() {
+            foundry_common::fs::read(&path.join("state.json"))
         } else {
-            foundry_common::fs::read_json_file(path)
-        }
+            foundry_common::fs::read(path)
+        }?;
+
+        let orig_buf = buf.as_slice();
+        let mut decoder = GzDecoder::new(orig_buf);
+        let mut decoded_data = Vec::new();
+
+        serde_json::from_slice(if decoder.header().is_some() {
+            decoder
+                .read_to_end(decoded_data.as_mut())
+                .map_err(|source| FsPathError::DecodeGz { source, path: path.into() })?;
+            &decoded_data
+        } else {
+            &buf
+        })
+        .map_err(|source| FsPathError::ReadJson { source, path: path.into() })
     }
 
     /// This is used as the clap `value_parser` implementation
