@@ -16,7 +16,7 @@ use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, HashMap, U256Map},
 };
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
@@ -276,11 +276,7 @@ impl Executor {
     }
 
     /// Set the storage of an account.
-    pub fn set_storage(
-        &mut self,
-        address: Address,
-        storage: HashMap<U256, U256>,
-    ) -> BackendResult<()> {
+    pub fn set_storage(&mut self, address: Address, storage: U256Map<U256>) -> BackendResult<()> {
         self.backend_mut().replace_account_storage(address, storage)?;
         Ok(())
     }

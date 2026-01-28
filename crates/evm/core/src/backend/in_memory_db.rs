@@ -7,7 +7,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     database::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::HashMap as Map,
+    primitives::AddressMap,
     state::{Account, AccountInfo},
 };
 
@@ -73,7 +73,7 @@ impl Database for MemDb {
 }
 
 impl DatabaseCommit for MemDb {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         DatabaseCommit::commit(&mut self.inner, changes)
     }
 }
