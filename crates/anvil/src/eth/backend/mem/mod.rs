@@ -2141,8 +2141,7 @@ impl Backend {
             let from_block =
                 self.convert_block_number(filter.block_option.get_from_block().copied());
             if from_block > best {
-                // requested log range does not exist yet
-                return Ok(vec![]);
+                return Err(BlockchainError::BlockOutOfRange(best, from_block));
             }
 
             self.logs_for_range(&filter, from_block, to_block).await
