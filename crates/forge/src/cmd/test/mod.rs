@@ -428,7 +428,12 @@ impl TestArgs {
             // Serialize profile to JSON.
             let profile_json = serde_json::to_vec(&profile)?;
 
+            // Write profile to file.
+            let profile_path = format!("{contract}.{test_name_trimmed}.speedscope.json");
+            fs::write(&profile_path, &profile_json)?;
+
             sh_println!("Total gas used: {total_gas}")?;
+            sh_println!("Profile saved to {profile_path}")?;
 
             // Serve the profile via local HTTP server and open speedscope.
             // The server runs until Ctrl+C is pressed.
