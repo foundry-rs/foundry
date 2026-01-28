@@ -50,7 +50,7 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
+pub fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
     address[..19].iter().all(|&x| x == 0)
         && matches!(
             address,

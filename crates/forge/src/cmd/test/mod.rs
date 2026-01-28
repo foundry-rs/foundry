@@ -53,6 +53,7 @@ use std::{
 };
 use yansi::Paint;
 
+mod evm_profile_server;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
@@ -423,24 +424,14 @@ impl TestArgs {
             let total_gas = arena.nodes().first().map(|n| n.trace.gas_used).unwrap_or(0);
             let profile = firefox_profile::build(arena, test_name_trimmed, contract);
 
-            // Serialize to JSON and save.
-            let file_name = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
-            let file = std::fs::File::create(&file_name).wrap_err("failed to create profile")?;
-            let writer = std::io::BufWriter::new(file);
-            serde_json::to_writer(writer, &profile).wrap_err("failed to write profile")?;
+            // Serialize profile to JSON.
+            let profile_json = serde_json::to_vec(&profile)?;
 
-            let abs_path = std::fs::canonicalize(&file_name)?;
-            sh_println!("Saved profile to {}", abs_path.display())?;
             sh_println!("Total gas used: {total_gas}")?;
-            sh_println!(
-                "\nOpen https://profiler.firefox.com/ and load the profile file, \
-                 or drag and drop the file onto the page."
-            )?;
 
-            // Try to open Firefox Profiler in browser.
-            if let Err(e) = opener::open("https://profiler.firefox.com/") {
-                sh_err!("Failed to open Firefox Profiler; please open it manually: {e}")?;
-            }
+            // Serve the profile via local HTTP server and open Firefox Profiler.
+            // The server runs until Ctrl+C is pressed.
+            evm_profile_server::serve_and_open(profile_json, test_name_trimmed, contract).await?;
         }
 
         if should_debug {

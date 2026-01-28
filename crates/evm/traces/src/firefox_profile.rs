@@ -6,10 +6,12 @@
 //! Gas is encoded as time: 1 gas = 1 nanosecond (0.000001 ms). This makes the flame graph
 //! widths represent gas consumption, and the timeline shows gas usage over execution.
 
-use alloy_primitives::hex::ToHexExt;
+use crate::decoder::precompiles::is_known_precompile;
+use alloy_primitives::{Address, hex::ToHexExt};
+use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use fxprof_processed_profile::{
-    CategoryHandle, CpuDelta, Frame, FrameFlags, FrameInfo, ProcessHandle, Profile,
-    ReferenceTimestamp, SamplingInterval, ThreadHandle, Timestamp,
+    CategoryColor, CategoryPairHandle, CpuDelta, Frame, FrameFlags, FrameInfo, ProcessHandle,
+    Profile, ReferenceTimestamp, SamplingInterval, ThreadHandle, Timestamp,
 };
 use revm_inspectors::tracing::{
     CallTraceArena,
@@ -34,13 +36,38 @@ pub fn build(arena: &CallTraceArena, test_name: &str, contract_name: &str) -> Pr
     builder.finish()
 }
 
+/// Categories for different types of calls in the EVM profile.
+struct EvmCategories {
+    /// Test contract calls (green).
+    test: CategoryPairHandle,
+    /// VM/cheatcode calls (purple).
+    vm: CategoryPairHandle,
+    /// Console logging calls (blue).
+    console: CategoryPairHandle,
+    /// Precompile calls (orange).
+    precompile: CategoryPairHandle,
+    /// External/library contract calls (yellow).
+    external: CategoryPairHandle,
+    /// Internal function calls (light green).
+    internal: CategoryPairHandle,
+}
+
+/// A frame with its associated category.
+struct StackFrame {
+    name: String,
+    category: CategoryPairHandle,
+}
+
 /// Builder for Firefox Profiler profiles from EVM traces.
 struct EvmProfileBuilder {
     profile: Profile,
     process: ProcessHandle,
     thread: ThreadHandle,
-    /// Current call stack (function names).
-    stack: Vec<String>,
+    categories: EvmCategories,
+    /// Address of the main test contract.
+    test_address: Option<Address>,
+    /// Current call stack (function names with categories).
+    stack: Vec<StackFrame>,
     /// Current cumulative gas (used as pseudo-time in nanoseconds).
     cumulative_gas: u64,
 }
@@ -57,6 +84,16 @@ impl EvmProfileBuilder {
         // Set product name for metadata.
         profile.set_product(&product);
 
+        // Create categories with distinct colors.
+        let categories = EvmCategories {
+            test: profile.add_category("Test", CategoryColor::Green).into(),
+            vm: profile.add_category("VM", CategoryColor::Purple).into(),
+            console: profile.add_category("Console", CategoryColor::Blue).into(),
+            precompile: profile.add_category("Precompile", CategoryColor::Orange).into(),
+            external: profile.add_category("External", CategoryColor::Yellow).into(),
+            internal: profile.add_category("Internal", CategoryColor::LightGreen).into(),
+        };
+
         let process =
             profile.add_process(contract_name, 1, Timestamp::from_millis_since_reference(0.0));
         let thread = profile.add_thread(
@@ -68,7 +105,15 @@ impl EvmProfileBuilder {
         // Name thread after the test function.
         profile.set_thread_name(thread, test_name);
 
-        Self { profile, process, thread, stack: Vec::new(), cumulative_gas: 0 }
+        Self {
+            profile,
+            process,
+            thread,
+            categories,
+            test_address: None,
+            stack: Vec::new(),
+            cumulative_gas: 0,
+        }
     }
 
     fn finish(mut self) -> Profile {
@@ -80,9 +125,33 @@ impl EvmProfileBuilder {
         self.profile
     }
 
+    /// Determine the category for a call based on its address.
+    fn category_for_address(&self, address: Address) -> CategoryPairHandle {
+        if address == CHEATCODE_ADDRESS {
+            self.categories.vm
+        } else if address == HARDHAT_CONSOLE_ADDRESS {
+            self.categories.console
+        } else if is_known_precompile(address, 1) {
+            self.categories.precompile
+        } else if Some(address) == self.test_address {
+            self.categories.test
+        } else {
+            self.categories.external
+        }
+    }
+
     /// Process a call node and all its children.
     fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
+        let address = node.trace.address;
+
+        // Set the test address from the first (root) call.
+        if idx == 0 {
+            self.test_address = Some(address);
+        }
+
+        // Determine category based on address.
+        let category = self.category_for_address(address);
 
         // Build the function name for this call.
         let func_name = if node.trace.kind.is_any_create() {
@@ -114,7 +183,7 @@ impl EvmProfileBuilder {
         };
 
         // Enter this function.
-        self.stack.push(func_name);
+        self.stack.push(StackFrame { name: func_name, category });
 
         // Track internal function step exits.
         let mut step_exits: Vec<usize> = Vec::new();
@@ -128,7 +197,7 @@ impl EvmProfileBuilder {
                 }
                 TraceMemberOrder::Step(step_idx) => {
                     self.exit_previous_steps(&mut step_exits, *step_idx);
-                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits);
+                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits, category);
                 }
                 TraceMemberOrder::Log(_) => {}
             }
@@ -149,6 +218,7 @@ impl EvmProfileBuilder {
         steps: &[CallTraceStep],
         step_idx: usize,
         step_exits: &mut Vec<usize>,
+        _parent_category: CategoryPairHandle,
     ) {
         let step = &steps[step_idx];
 
@@ -157,7 +227,11 @@ impl EvmProfileBuilder {
             && let DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) =
                 decoded_step.as_ref()
         {
-            self.stack.push(decoded_internal_call.func_name.clone());
+            // Internal calls use the internal category but inherit context from parent.
+            self.stack.push(StackFrame {
+                name: decoded_internal_call.func_name.clone(),
+                category: self.categories.internal,
+            });
             step_exits.push(*step_end_idx);
         }
 
@@ -191,11 +265,11 @@ impl EvmProfileBuilder {
         let frames: Vec<_> = self
             .stack
             .iter()
-            .map(|func_name| {
-                let name_handle = self.profile.intern_string(func_name);
+            .map(|frame| {
+                let name_handle = self.profile.intern_string(&frame.name);
                 FrameInfo {
                     frame: Frame::Label(name_handle),
-                    category_pair: CategoryHandle::OTHER.into(),
+                    category_pair: frame.category,
                     flags: FrameFlags::empty(),
                 }
             })
