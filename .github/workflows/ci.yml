@@ -3,6 +3,8 @@ name: CI
 permissions: {}
 
 on:
+  push:
+    branches: [monad, master]
   pull_request:
   merge_group:
 
@@ -24,16 +26,8 @@ jobs:
       profile: default
     secrets: inherit
 
-  docs:
-    uses: ./.github/workflows/docs.yml
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    secrets: inherit
-
   doctest:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -50,7 +44,7 @@ jobs:
       - run: cargo test --workspace --doc
 
   typos:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -61,7 +55,7 @@ jobs:
       - uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06 # v1
 
   clippy:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -81,7 +75,7 @@ jobs:
           RUSTFLAGS: -Dwarnings
 
   rustfmt:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -96,7 +90,7 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -115,7 +109,7 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   crate-checks:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -173,7 +167,6 @@ jobs:
     permissions: {}
     needs:
       - test
-      - docs
       - doctest
       - typos
       - clippy

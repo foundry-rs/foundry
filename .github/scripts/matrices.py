@@ -68,13 +68,13 @@ class Expanded:
 profile = os.environ.get("PROFILE")
 is_pr = os.environ.get("EVENT_NAME") == "pull_request"
 t_linux_x86 = Target(
-    "depot-ubuntu-latest-16", "x86_64-unknown-linux-gnu", "linux-amd64"
+    "ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64"
 )
 t_linux_arm = Target(
-    "depot-ubuntu-latest-arm-16", "aarch64-unknown-linux-gnu", "linux-aarch64"
+    "ubuntu-24.04-arm", "aarch64-unknown-linux-gnu", "linux-aarch64"
 )
-t_macos = Target("depot-macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
-t_windows = Target("depot-windows-latest-16", "x86_64-pc-windows-msvc", "windows-amd64")
+t_macos = Target("macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
+t_windows = Target("windows-latest", "x86_64-pc-windows-msvc", "windows-amd64")
 targets = [t_linux_x86] if is_pr else [t_linux_x86, t_linux_arm, t_macos, t_windows]
 
 config = [
