@@ -3368,7 +3368,9 @@ impl EthApi {
                 false,
             ),
             // TODO(onbjerg): we should impl support for Tempo transactions
-            FoundryTypedTx::Tempo(_) => todo!(),
+            FoundryTypedTx::Tempo(_) => {
+                panic!("Tempo transactions are not supported for impersonated signatures")
+            }
         }
     }
 
@@ -3440,7 +3442,7 @@ impl EthApi {
             FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             // TODO(onbjerg): we should impl support for Tempo transactions
-            FoundryTxEnvelope::Tempo(_) => todo!(),
+            FoundryTxEnvelope::Tempo(_) => Err(BlockchainError::UnknownTransactionType),
         }
     }
 }
