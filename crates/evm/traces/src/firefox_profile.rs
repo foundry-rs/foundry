@@ -2,6 +2,9 @@
 //!
 //! This module converts EVM call traces into the Firefox Profiler's processed profile format
 //! using the `fxprof-processed-profile` crate from the samply project.
+//!
+//! Gas is encoded as time: 1 gas = 1 nanosecond (0.000001 ms). This makes the flame graph
+//! widths represent gas consumption, and the timeline shows gas usage over execution.
 
 use alloy_primitives::hex::ToHexExt;
 use fxprof_processed_profile::{
@@ -12,11 +15,22 @@ use revm_inspectors::tracing::{
     CallTraceArena,
     types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
+use std::time::SystemTime;
+
+/// Gas to milliseconds conversion factor.
+/// 1 gas = 1 nanosecond = 0.000001 milliseconds.
+const GAS_TO_MS: f64 = 0.000_001;
 
 /// Builds a Firefox Profiler compatible profile from a call trace arena.
-pub fn build(arena: &CallTraceArena, title: &str) -> Profile {
-    let mut builder = EvmProfileBuilder::new(title);
-    builder.process_call_node(arena.nodes(), 0);
+///
+/// - `arena`: The call trace arena containing the execution trace.
+/// - `test_name`: Name of the test function (used as thread name).
+/// - `contract_name`: Name of the contract being tested.
+pub fn build(arena: &CallTraceArena, test_name: &str, contract_name: &str) -> Profile {
+    let mut builder = EvmProfileBuilder::new(test_name, contract_name);
+    if !arena.nodes().is_empty() {
+        builder.process_call_node(arena.nodes(), 0);
+    }
     builder.finish()
 }
 
@@ -27,33 +41,40 @@ struct EvmProfileBuilder {
     thread: ThreadHandle,
     /// Current call stack (function names).
     stack: Vec<String>,
-    /// Current sample index (used as pseudo-timestamp).
-    sample_idx: u64,
+    /// Current cumulative gas (used as pseudo-time in nanoseconds).
+    cumulative_gas: u64,
 }
 
 impl EvmProfileBuilder {
-    fn new(title: &str) -> Self {
+    fn new(test_name: &str, contract_name: &str) -> Self {
+        let product = format!("Foundry EVM Profile: {contract_name}::{test_name}");
         let mut profile = Profile::new(
-            title,
-            ReferenceTimestamp::from_millis_since_unix_epoch(0.0),
-            SamplingInterval::from_millis(1),
+            &product,
+            ReferenceTimestamp::from(SystemTime::now()),
+            SamplingInterval::from_nanos(1), // 1 sample per nanosecond (= 1 gas)
         );
 
-        let process = profile.add_process("EVM", 1, Timestamp::from_millis_since_reference(0.0));
+        // Set product name for metadata.
+        profile.set_product(&product);
+
+        let process =
+            profile.add_process(contract_name, 1, Timestamp::from_millis_since_reference(0.0));
         let thread = profile.add_thread(
             process,
             1,
             Timestamp::from_millis_since_reference(0.0),
             true, // is_main
         );
-        profile.set_thread_name(thread, "EVM Execution");
+        // Name thread after the test function.
+        profile.set_thread_name(thread, test_name);
 
-        Self { profile, process, thread, stack: Vec::new(), sample_idx: 0 }
+        Self { profile, process, thread, stack: Vec::new(), cumulative_gas: 0 }
     }
 
     fn finish(mut self) -> Profile {
-        // Set the thread end time
-        let end_time = Timestamp::from_millis_since_reference(self.sample_idx as f64);
+        // Set the end time based on total gas consumed.
+        let end_time_ms = self.cumulative_gas as f64 * GAS_TO_MS;
+        let end_time = Timestamp::from_millis_since_reference(end_time_ms);
         self.profile.set_thread_end_time(self.thread, end_time);
         self.profile.set_process_end_time(self.process, end_time);
         self.profile
@@ -63,7 +84,7 @@ impl EvmProfileBuilder {
     fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
 
-        // Build the function name for this call
+        // Build the function name for this call.
         let func_name = if node.trace.kind.is_any_create() {
             let contract_name = node
                 .trace
@@ -92,13 +113,13 @@ impl EvmProfileBuilder {
             }
         };
 
-        // Enter this function
+        // Enter this function.
         self.stack.push(func_name);
 
-        // Track internal function step exits
+        // Track internal function step exits.
         let mut step_exits: Vec<usize> = Vec::new();
 
-        // Process children in order
+        // Process children in order.
         for order in &node.ordering {
             match order {
                 TraceMemberOrder::Call(child_idx) => {
@@ -113,12 +134,12 @@ impl EvmProfileBuilder {
             }
         }
 
-        // Exit pending internal function calls
+        // Exit pending internal function calls.
         for _ in 0..step_exits.len() {
             self.stack.pop();
         }
 
-        // Exit this call
+        // Exit this call.
         self.stack.pop();
     }
 
@@ -131,7 +152,7 @@ impl EvmProfileBuilder {
     ) {
         let step = &steps[step_idx];
 
-        // Handle internal function calls
+        // Handle internal function calls.
         if let Some(decoded_step) = &step.decoded
             && let DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) =
                 decoded_step.as_ref()
@@ -140,7 +161,7 @@ impl EvmProfileBuilder {
             step_exits.push(*step_end_idx);
         }
 
-        // Add a sample for this opcode step
+        // Add a sample for this opcode step.
         self.add_sample(step);
     }
 
@@ -155,11 +176,18 @@ impl EvmProfileBuilder {
     }
 
     /// Add a sample for a single opcode step.
+    ///
+    /// Gas is encoded as time: 1 gas = 1 nanosecond.
+    /// The sample timestamp is the cumulative gas at the start of this step.
+    /// The sample "duration" (time until next sample) represents the gas cost.
     fn add_sample(&mut self, step: &CallTraceStep) {
-        let timestamp = Timestamp::from_millis_since_reference(self.sample_idx as f64);
         let gas_cost = step.gas_cost;
 
-        // Build the stack frames from the current call stack (functions only, no opcodes).
+        // Timestamp = cumulative gas in milliseconds (1 gas = 1 ns = 0.000001 ms).
+        let timestamp_ms = self.cumulative_gas as f64 * GAS_TO_MS;
+        let timestamp = Timestamp::from_millis_since_reference(timestamp_ms);
+
+        // Build the stack frames from the current call stack.
         let frames: Vec<_> = self
             .stack
             .iter()
@@ -176,16 +204,11 @@ impl EvmProfileBuilder {
         // Build the stack handle from outermost to innermost.
         let stack = self.profile.intern_stack_frames(self.thread, frames.into_iter());
 
-        // Add the sample with weight = gas_cost.
-        self.profile.add_sample(
-            self.thread,
-            timestamp,
-            stack,
-            CpuDelta::ZERO,
-            gas_cost.try_into().unwrap_or(1),
-        );
+        // Add the sample. Weight = 1 since we're encoding gas as time.
+        self.profile.add_sample(self.thread, timestamp, stack, CpuDelta::ZERO, 1);
 
-        self.sample_idx += 1;
+        // Advance cumulative gas.
+        self.cumulative_gas = self.cumulative_gas.saturating_add(gas_cost);
     }
 }
 
@@ -196,10 +219,11 @@ mod tests {
     #[test]
     fn test_empty_profile() {
         let arena = CallTraceArena::default();
-        let profile = build(&arena, "test");
+        let profile = build(&arena, "testExample", "TestContract");
         let json = serde_json::to_string(&profile).unwrap();
         // Profile should be valid JSON with meta and threads.
         assert!(json.contains("\"meta\""));
         assert!(json.contains("\"threads\""));
+        assert!(json.contains("Foundry EVM Profile"));
     }
 }

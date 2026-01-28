@@ -417,10 +417,11 @@ impl TestArgs {
             decode_trace_arena(arena, decoder).await;
 
             // Build Firefox Profiler profile.
+            // Gas is encoded as time: 1 gas = 1 nanosecond.
             let contract = suite_name.split(':').next_back().unwrap();
             let test_name_trimmed = test_name.trim_end_matches("()");
-            let title = format!("EVM Profile: {contract}::{test_name_trimmed}");
-            let profile = firefox_profile::build(arena, &title);
+            let total_gas = arena.nodes().first().map(|n| n.trace.gas_used).unwrap_or(0);
+            let profile = firefox_profile::build(arena, test_name_trimmed, contract);
 
             // Serialize to JSON and save.
             let file_name = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
@@ -430,6 +431,7 @@ impl TestArgs {
 
             let abs_path = std::fs::canonicalize(&file_name)?;
             sh_println!("Saved profile to {}", abs_path.display())?;
+            sh_println!("Total gas used: {total_gas}")?;
             sh_println!(
                 "\nOpen https://profiler.firefox.com/ and load the profile file, \
                  or drag and drop the file onto the page."
