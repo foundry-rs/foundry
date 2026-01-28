@@ -267,7 +267,9 @@ pub fn load_contracts<'a>(
     let decoder = CallTraceDecoder::new();
     let mut contracts = ContractsByAddress::new();
     for trace in traces {
-        for address in decoder.identify_addresses(trace, &mut local_identifier) {
+        let addresses =
+            foundry_common::block_on(decoder.identify_addresses(trace, &mut local_identifier));
+        for address in addresses {
             if let (Some(contract), Some(abi)) = (address.contract, address.abi) {
                 contracts.insert(address.address, (contract, abi.into_owned()));
             }

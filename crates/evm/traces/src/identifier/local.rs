@@ -143,8 +143,9 @@ impl<'a> LocalTraceIdentifier<'a> {
     }
 }
 
+#[async_trait::async_trait]
 impl TraceIdentifier for LocalTraceIdentifier<'_> {
-    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+    async fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
         if nodes.is_empty() {
             return Vec::new();
         }
