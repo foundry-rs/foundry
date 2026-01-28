@@ -1,8 +1,8 @@
 //! Speedscope profile generation for EVM execution traces.
 //!
 //! This module converts EVM call traces into the speedscope evented profile format.
-//! Gas is encoded as time: 1 gas = 1 nanosecond. This makes flame graph widths
-//! represent gas consumption, and the timeline shows gas usage over execution.
+//! Gas is used directly as the value unit (unit: "none"), so flame graph widths
+//! represent gas consumption and the timeline shows gas usage over execution.
 
 use crate::{
     decoder::precompiles::is_known_precompile,
@@ -60,7 +60,7 @@ pub struct SpeedscopeProfileBuilder<'a> {
     /// Cache of frame names to frame indices.
     frame_cache: HashMap<String, usize>,
 
-    /// Current cumulative gas (used as timestamp in nanoseconds).
+    /// Current cumulative gas (used as timestamp).
     cumulative_gas: u64,
 
     /// Current contract label (for prefixing internal function names).
@@ -75,7 +75,7 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
     pub fn new(test_name: &str, contract_name: &str) -> Self {
         let name = format!("{contract_name}::{test_name}");
         let file = SpeedscopeFile::new(name.clone());
-        let profile = EventedProfile::new(name, ValueUnit::Nanoseconds);
+        let profile = EventedProfile::new(name, ValueUnit::None);
 
         Self {
             file,

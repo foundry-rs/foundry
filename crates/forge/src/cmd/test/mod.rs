@@ -419,7 +419,7 @@ impl TestArgs {
             decode_trace_arena(arena, decoder).await;
 
             // Build speedscope profile.
-            // Gas is encoded as time: 1 gas = 1 nanosecond.
+            // Gas is used directly as the value (unit: "none").
             let contract = suite_name.split(':').next_back().unwrap();
             let test_name_trimmed = test_name.trim_end_matches("()");
             let total_gas = arena.nodes().first().map(|n| n.trace.gas_used).unwrap_or(0);
