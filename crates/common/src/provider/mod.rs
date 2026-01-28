@@ -76,7 +76,6 @@ pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> 
 /// Helper type to construct a `RetryProvider`
 ///
 /// This builder is generic over the network type `N`, defaulting to `AnyNetwork`.
-/// Use the [`network`](Self::network) method to change the network type.
 #[derive(Debug)]
 pub struct ProviderBuilder<N: Network = AnyNetwork> {
     // Note: this is a result, so we can easily chain builder calls
