@@ -291,10 +291,7 @@ impl RuntimeTransport {
     }
 
     /// Convert this transport into a boxed trait object.
-    pub fn boxed(self) -> BoxTransport
-    where
-        Self: Sized + Clone + Send + Sync + 'static,
-    {
+    pub fn boxed(self) -> BoxTransport {
         BoxTransport::new(self)
     }
 }
