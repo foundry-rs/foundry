@@ -101,29 +101,18 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
 
 /// Returns a [RetryProvider] instantiated using [Config]'s RPC settings.
 pub fn get_provider(config: &Config) -> Result<RetryProvider> {
-    get_provider_builder(config, false)?.build()
-}
-
-/// Returns a [RetryProvider] with curl mode option.
-///
-/// When `curl_mode` is true, the provider will print equivalent curl commands
-/// to stdout instead of executing RPC requests.
-pub fn get_provider_with_curl(config: &Config, curl_mode: bool) -> Result<RetryProvider> {
-    get_provider_builder(config, curl_mode)?.build()
+    get_provider_builder(config)?.build()
 }
 
 /// Returns a [ProviderBuilder] instantiated using [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-///
-/// When `curl_mode` is true, the provider will print equivalent curl commands
-/// to stdout instead of executing RPC requests.
-pub fn get_provider_builder(config: &Config, curl_mode: bool) -> Result<ProviderBuilder> {
+pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let mut builder = ProviderBuilder::new(url.as_ref());
 
     builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
-    builder = builder.curl_mode(curl_mode);
+    builder = builder.curl_mode(config.eth_rpc_curl);
 
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);

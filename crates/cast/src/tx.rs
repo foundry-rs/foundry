@@ -707,17 +707,13 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 }
 
 /// Creates a provider with wallet for signing transactions locally.
-///
-/// If `curl_mode` is true, the provider will print equivalent curl commands to stdout
-/// instead of executing RPC requests.
-pub(crate) async fn signing_provider_with_curl(
+pub(crate) async fn get_provider_with_wallet(
     tx_opts: &SendTxOpts,
-    curl_mode: bool,
 ) -> eyre::Result<RetryProviderWithSigner> {
     let config = tx_opts.eth.load_config()?;
     let signer = tx_opts.eth.wallet.signer().await?;
     let wallet = alloy_network::EthereumWallet::from(signer);
-    let provider = get_provider_builder(&config, curl_mode)?.build_with_wallet(wallet)?;
+    let provider = get_provider_builder(&config)?.build_with_wallet(wallet)?;
     if let Some(interval) = tx_opts.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }
