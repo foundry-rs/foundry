@@ -24,6 +24,7 @@ use std::{fs, path::Path, str::FromStr};
 #[macro_use]
 extern crate foundry_test_utils;
 
+mod batch_tests;
 mod erc20;
 mod selectors;
 
