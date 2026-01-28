@@ -336,9 +336,6 @@ impl<N: Network> ProviderBuilder<N> {
 
 impl<N: Network> ProviderBuilder<N> {
     /// Constructs the `RetryProvider` with a wallet.
-    ///
-    /// This method is only available for `ProviderBuilder<AnyNetwork>` since
-    /// [`EthereumWallet`] is designed for Ethereum-compatible networks.
     pub fn build_with_wallet<W: NetworkWallet<N> + Clone>(
         self,
         wallet: W,
