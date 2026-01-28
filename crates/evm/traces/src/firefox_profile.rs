@@ -10,8 +10,8 @@ use crate::decoder::precompiles::is_known_precompile;
 use alloy_primitives::{Address, hex::ToHexExt};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use fxprof_processed_profile::{
-    CategoryColor, CategoryPairHandle, CpuDelta, Frame, FrameFlags, FrameInfo, ProcessHandle,
-    Profile, ReferenceTimestamp, SamplingInterval, ThreadHandle, Timestamp,
+    CategoryColor, CategoryPairHandle, CounterHandle, CpuDelta, Frame, FrameFlags, FrameInfo,
+    ProcessHandle, Profile, ReferenceTimestamp, SamplingInterval, ThreadHandle, Timestamp,
 };
 use revm_inspectors::tracing::{
     CallTraceArena,
@@ -70,6 +70,12 @@ struct EvmProfileBuilder {
     stack: Vec<StackFrame>,
     /// Current cumulative gas (used as pseudo-time in nanoseconds).
     cumulative_gas: u64,
+    /// Current contract label (for prefixing internal function names).
+    current_contract_label: Option<String>,
+    /// Memory usage counter handle.
+    memory_counter: CounterHandle,
+    /// Previous memory size (for computing deltas).
+    prev_memory_size: u64,
 }
 
 impl EvmProfileBuilder {
@@ -105,6 +111,10 @@ impl EvmProfileBuilder {
         // Name thread after the test function.
         profile.set_thread_name(thread, test_name);
 
+        // Create memory usage counter.
+        let memory_counter =
+            profile.add_counter(process, "Memory", "Memory", "EVM memory usage in bytes");
+
         Self {
             profile,
             process,
@@ -113,6 +123,9 @@ impl EvmProfileBuilder {
             test_address: None,
             stack: Vec::new(),
             cumulative_gas: 0,
+            current_contract_label: None,
+            memory_counter,
+            prev_memory_size: 0,
         }
     }
 
@@ -153,14 +166,18 @@ impl EvmProfileBuilder {
         // Determine category based on address.
         let category = self.category_for_address(address);
 
+        // Extract contract label from decoded trace.
+        let contract_label = node.trace.decoded.as_ref().and_then(|dc| dc.label.clone());
+
+        // Save previous context to restore after processing this call.
+        let prev_contract_label = self.current_contract_label.take();
+
+        // Set current context for internal function name resolution.
+        self.current_contract_label = contract_label.clone();
+
         // Build the function name for this call.
         let func_name = if node.trace.kind.is_any_create() {
-            let contract_name = node
-                .trace
-                .decoded
-                .as_ref()
-                .and_then(|dc| dc.label.as_deref())
-                .unwrap_or("Contract");
+            let contract_name = contract_label.as_deref().unwrap_or("Contract");
             format!("new {contract_name}")
         } else {
             let selector = node
@@ -175,8 +192,8 @@ impl EvmProfileBuilder {
                 .map(|dc| &dc.signature)
                 .unwrap_or(&selector);
 
-            if let Some(label) = node.trace.decoded.as_ref().and_then(|dc| dc.label.as_ref()) {
-                format!("{label}.{signature}")
+            if let Some(label) = &contract_label {
+                format!("{label}::{signature}")
             } else {
                 signature.clone()
             }
@@ -210,6 +227,9 @@ impl EvmProfileBuilder {
 
         // Exit this call.
         self.stack.pop();
+
+        // Restore previous context.
+        self.current_contract_label = prev_contract_label;
     }
 
     /// Process a single step, handling internal function calls.
@@ -228,10 +248,13 @@ impl EvmProfileBuilder {
                 decoded_step.as_ref()
         {
             // Internal calls use the internal category but inherit context from parent.
-            self.stack.push(StackFrame {
-                name: decoded_internal_call.func_name.clone(),
-                category: self.categories.internal,
-            });
+            // Prefix with contract name if available.
+            let func_name = if let Some(label) = &self.current_contract_label {
+                format!("{label}::{}", decoded_internal_call.func_name)
+            } else {
+                decoded_internal_call.func_name.clone()
+            };
+            self.stack.push(StackFrame { name: func_name, category: self.categories.internal });
             step_exits.push(*step_end_idx);
         }
 
@@ -280,6 +303,19 @@ impl EvmProfileBuilder {
 
         // Add the sample. Weight = 1 since we're encoding gas as time.
         self.profile.add_sample(self.thread, timestamp, stack, CpuDelta::ZERO, 1);
+
+        // Add memory counter sample if memory data is available.
+        if let Some(memory) = &step.memory {
+            let memory_size = memory.len() as u64;
+            let memory_delta = memory_size as i64 - self.prev_memory_size as i64;
+            self.profile.add_counter_sample(
+                self.memory_counter,
+                timestamp,
+                memory_delta as f64,
+                if memory_delta != 0 { 1 } else { 0 },
+            );
+            self.prev_memory_size = memory_size;
+        }
 
         // Advance cumulative gas.
         self.cumulative_gas = self.cumulative_gas.saturating_add(gas_cost);

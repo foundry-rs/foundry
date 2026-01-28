@@ -631,7 +631,8 @@ impl TestArgs {
                 || self.gas_report
                 || self.debug
                 || self.flamegraph
-                || self.flamechart;
+                || self.flamechart
+                || self.evm_profile;
 
             // Print suite header.
             if !silent {
