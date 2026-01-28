@@ -296,6 +296,36 @@ impl Executor {
         Ok(())
     }
 
+    /// Apply prestate trace data to the executor's backend.
+    ///
+    /// This is used to set up the EVM state based on the prestate trace from
+    /// `debug_traceTransaction`, which provides all accounts and storage slots
+    /// that will be accessed during transaction execution.
+    pub fn apply_prestate_trace(
+        &mut self,
+        prestate: std::collections::BTreeMap<Address, alloy_rpc_types::trace::geth::AccountState>,
+    ) -> eyre::Result<()> {
+        let backend = self.backend_mut();
+        for (address, account_state) in prestate {
+            let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
+            let info = revm::state::AccountInfo {
+                nonce: account_state.nonce.unwrap_or_default(),
+                balance: account_state.balance.unwrap_or_default(),
+                code_hash: keccak256(code.original_byte_slice()),
+                code: Some(code),
+                account_id: Default::default(),
+            };
+            backend.insert_account_info(address, info);
+
+            for (slot, value) in account_state.storage {
+                let slot = U256::from_be_bytes(slot.0);
+                let value = U256::from_be_bytes(value.0);
+                backend.insert_account_storage(address, slot, value)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
