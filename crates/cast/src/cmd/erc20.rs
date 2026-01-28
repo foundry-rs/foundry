@@ -21,6 +21,7 @@ use foundry_cli::{
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
 use foundry_primitives::FoundryTransactionRequest;
+use foundry_wallets::WalletSigner;
 
 sol! {
     #[sol(rpc)]
@@ -109,9 +110,42 @@ async fn send_erc20_tx<P: Provider<AnyNetwork>>(
     send_tx: &SendTxOpts,
     timeout: u64,
 ) -> eyre::Result<()> {
+    // Check if this is a Tempo transaction
+    let is_tempo = tx.other.contains_key("feeToken") || tx.other.contains_key("nonceKey");
+
+    // Tempo transactions with browser wallets are not supported
+    if is_tempo && send_tx.eth.wallet.browser {
+        return Err(eyre::eyre!("Tempo transactions are not supported with browser wallets."));
+    }
+
+    // Browser wallets work differently as they sign and send the transaction in one step.
+    if send_tx.eth.wallet.browser {
+        let signer = send_tx.eth.wallet.signer().await?;
+        if let WalletSigner::Browser(ref browser_signer) = signer {
+            let tx_hash = browser_signer.send_transaction_via_browser(tx.inner).await?;
+
+            if send_tx.cast_async {
+                sh_println!("{tx_hash:#x}")?;
+            } else {
+                let receipt = CastTxSender::new(&provider)
+                    .receipt(
+                        format!("{tx_hash:#x}"),
+                        None,
+                        send_tx.confirmations,
+                        Some(timeout),
+                        false,
+                    )
+                    .await?;
+                sh_println!("{receipt}")?;
+            }
+
+            return Ok(());
+        }
+    }
+
     // Same as in SendTxArgs::run(), Tempo transactions need to be signed locally and sent as raw
     // transactions
-    if tx.other.contains_key("feeToken") || tx.other.contains_key("nonceKey") {
+    if is_tempo {
         let signer = send_tx.eth.wallet.signer().await?;
         let mut ftx = FoundryTransactionRequest::new(tx);
         if ftx.chain_id().is_none() {
