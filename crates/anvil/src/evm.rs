@@ -317,8 +317,9 @@ mod tests {
     fn build_monad_evm_with_extra_precompiles_default_spec() {
         let (env, mut evm) = create_monad_evm(SpecId::default(), MonadSpecId::default());
 
-        // Check that the Prague precompile IS NOT present when using the London spec.
-        assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        // Check that the Prague precompile IS present when using the default spec.
+        // MonadEight is built on Prague, which includes BLS12-381 precompiles (0x0b-0x11).
+        assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -327,7 +328,7 @@ mod tests {
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
-            EitherEvm::Monad(monad_evm) => monad_evm.transact(env.tx.base.clone()).unwrap(),
+            EitherEvm::Monad(monad_evm) => monad_evm.transact(env.tx.base).unwrap(),
             _ => unreachable!(),
         };
 

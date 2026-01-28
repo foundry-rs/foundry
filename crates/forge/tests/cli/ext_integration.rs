@@ -64,7 +64,11 @@ fn sablier_v2_core() {
 // <https://github.com/Vectorized/solady>
 #[test]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "cbcfe0009477aa329574f17e8db0a05703bb8bdd").run();
+    ExtTester::new("Vectorized", "solady", "cbcfe0009477aa329574f17e8db0a05703bb8bdd")
+        // Skip testPermit2OnDAI — reverts with Permit2Failed() due to Monad gas repricing
+        // causing the low-level call gas stipend to be insufficient.
+        .args(["--nmt", "testPermit2OnDAI"])
+        .run();
 }
 
 // <https://github.com/pcaversaccio/snekmate>

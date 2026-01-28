@@ -72,7 +72,7 @@ contract Dummy {
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
-    cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -80,32 +80,32 @@ Compiler run successful!
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +=================================================================================================+
-| LargeContract | 62               | 50,125            | 24,514             | -973                |
+| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
 "#]]);
 
-    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_failure().stdout_eq(
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
         str![[r#"
 {
   "LargeContract": {
     "runtime_size": 62,
     "init_size": 50125,
-    "runtime_margin": 24514,
-    "init_margin": -973
+    "runtime_margin": 131010,
+    "init_margin": 212019
   }
 }
 "#]]
         .is_json(),
     );
 
-    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
-| LargeContract | 62               | 50,125            | 24,514             | -973                |
+| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
 
 
 "#]]);
@@ -119,7 +119,7 @@ No files changed, compilation skipped
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +=================================================================================================+
-| LargeContract | 62               | 50,125            | 24,514             | -973                |
+| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -135,8 +135,8 @@ No files changed, compilation skipped
   "LargeContract": {
     "runtime_size": 62,
     "init_size": 50125,
-    "runtime_margin": 24514,
-    "init_margin": -973
+    "runtime_margin": 131010,
+    "init_margin": 212019
   }
 }
 "#]]
@@ -151,7 +151,7 @@ No files changed, compilation skipped
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
-| LargeContract | 62               | 50,125            | 24,514             | -973                |
+| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
 
 
 "#]]);
@@ -181,7 +181,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ╭----------+------------------+-------------------+--------------------+---------------------╮
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +============================================================================================+
-| Counter  | 481              | 509               | 24,095             | 48,643              |
+| Counter  | 481              | 509               | 130,591            | 261,635             |
 ╰----------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -193,8 +193,8 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
   "Counter": {
     "runtime_size": 481,
     "init_size": 509,
-    "runtime_margin": 24095,
-    "init_margin": 48643
+    "runtime_margin": 130591,
+    "init_margin": 261635
   }
 }
 "#]]
@@ -206,7 +206,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |----------|------------------|-------------------|--------------------|---------------------|
-| Counter  | 481              | 509               | 24,095             | 48,643              |
+| Counter  | 481              | 509               | 130,591            | 261,635             |
 
 
 "#]]);
@@ -253,13 +253,13 @@ contract Counter {
 ╭-----------------------------+------------------+-------------------+--------------------+---------------------╮
 | Contract                    | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +===============================================================================================================+
-| Counter (src/Counter.sol)   | 481              | 509               | 24,095             | 48,643              |
+| Counter (src/Counter.sol)   | 481              | 509               | 130,591            | 261,635             |
 |-----------------------------+------------------+-------------------+--------------------+---------------------|
-| Counter (src/a/Counter.sol) | 344              | 372               | 24,232             | 48,780              |
+| Counter (src/a/Counter.sol) | 344              | 372               | 130,728            | 261,772             |
 |-----------------------------+------------------+-------------------+--------------------+---------------------|
-| Counter (src/b/Counter.sol) | 291              | 319               | 24,285             | 48,833              |
+| Counter (src/b/Counter.sol) | 291              | 319               | 130,781            | 261,825             |
 |-----------------------------+------------------+-------------------+--------------------+---------------------|
-| Foo                         | 62               | 88                | 24,514             | 49,064              |
+| Foo                         | 62               | 88                | 131,010            | 262,056             |
 ╰-----------------------------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -270,10 +270,10 @@ contract Counter {
 
 | Contract                    | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |-----------------------------|------------------|-------------------|--------------------|---------------------|
-| Counter (src/Counter.sol)   | 481              | 509               | 24,095             | 48,643              |
-| Counter (src/a/Counter.sol) | 344              | 372               | 24,232             | 48,780              |
-| Counter (src/b/Counter.sol) | 291              | 319               | 24,285             | 48,833              |
-| Foo                         | 62               | 88                | 24,514             | 49,064              |
+| Counter (src/Counter.sol)   | 481              | 509               | 130,591            | 261,635             |
+| Counter (src/a/Counter.sol) | 344              | 372               | 130,728            | 261,772             |
+| Counter (src/b/Counter.sol) | 291              | 319               | 130,781            | 261,825             |
+| Foo                         | 62               | 88                | 131,010            | 262,056             |
 
 
 "#]]);
@@ -317,30 +317,30 @@ contract Counter {
     cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
         str![[r#"
 {
-   "Counter (src/Counter.sol)":{
-      "runtime_size":481,
-      "init_size":509,
-      "runtime_margin":24095,
-      "init_margin":48643
-   },
-   "Counter (src/a/Counter.sol)":{
-      "runtime_size":344,
-      "init_size":372,
-      "runtime_margin":24232,
-      "init_margin":48780
-   },
-   "Counter (src/b/Counter.sol)":{
-      "runtime_size":291,
-      "init_size":319,
-      "runtime_margin":24285,
-      "init_margin":48833
-   },
-   "Foo":{
-      "runtime_size":62,
-      "init_size":88,
-      "runtime_margin":24514,
-      "init_margin":49064
-   }
+  "Counter (src/Counter.sol)": {
+    "runtime_size": 481,
+    "init_size": 509,
+    "runtime_margin": 130591,
+    "init_margin": 261635
+  },
+  "Counter (src/a/Counter.sol)": {
+    "runtime_size": 344,
+    "init_size": 372,
+    "runtime_margin": 130728,
+    "init_margin": 261772
+  },
+  "Counter (src/b/Counter.sol)": {
+    "runtime_size": 291,
+    "init_size": 319,
+    "runtime_margin": 130781,
+    "init_margin": 261825
+  },
+  "Foo": {
+    "runtime_size": 62,
+    "init_size": 88,
+    "runtime_margin": 131010,
+    "init_margin": 262056
+  }
 }
 "#]]
         .is_json(),

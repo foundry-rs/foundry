@@ -1,7 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
-use alloy_consensus::Account;
+use alloy_consensus::TrieAccount;
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse};
 use alloy_primitives::{
@@ -297,7 +297,7 @@ impl ClientFork {
         &self,
         address: Address,
         blocknumber: u64,
-    ) -> Result<Account, TransportError> {
+    ) -> Result<TrieAccount, TransportError> {
         trace!(target: "backend::fork", "get_account={:?}", address);
         self.provider().get_account(address).block_id(blocknumber.into()).await
     }

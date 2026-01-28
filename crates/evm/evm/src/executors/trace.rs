@@ -23,7 +23,7 @@ impl TracingExecutor {
     pub fn new(
         env: Env,
         fork: CreateFork,
-        version: Option<EvmVersion>,
+        _version: Option<EvmVersion>,
         trace_mode: TraceMode,
         networks: NetworkConfigs,
         create2_deployer: Address,

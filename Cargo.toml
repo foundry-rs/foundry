@@ -289,8 +289,8 @@ op-alloy-rpc-types = "0.23.1"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.25.2"
-alloy-op-evm = "0.25.2"
+alloy-evm = "0.26.3"
+alloy-op-evm = "0.26.3"
 alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
 
 # revm

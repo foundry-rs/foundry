@@ -748,7 +748,7 @@ contract P256Verifier {
     cmd.arg("test").with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Issue8383.t.sol:Issue8383Test
-[PASS] testP256VerifyOutOfBounds() (gas: 3139)
+[PASS] testP256VerifyOutOfBounds() (gas: 10639)
 ...
 "#]]);
 });

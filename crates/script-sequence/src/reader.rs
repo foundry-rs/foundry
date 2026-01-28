@@ -125,7 +125,7 @@ impl BroadcastReader {
             .collect::<Vec<_>>();
 
         // Sort by descending timestamp
-        seqs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        seqs.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
         seqs
     }
@@ -163,7 +163,7 @@ impl BroadcastReader {
         }
 
         // Sort by descending block number
-        targets.sort_by(|a, b| b.1.block_number.cmp(&a.1.block_number));
+        targets.sort_by_key(|b| std::cmp::Reverse(b.1.block_number));
 
         targets
     }

@@ -3,6 +3,8 @@
 [profile.default]
 retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
 slow-timeout = { period = "30s", terminate-after = 3 }
+# Skip verify_bytecode tests — they require Etherscan API access to Ethereum mainnet contracts.
+default-filter = "not test(/verify_bytecode/)"
 
 [[profile.default.overrides]]
 filter = "test(/ext_integration/)"

@@ -45,7 +45,7 @@ use monad_revm::MonadContext;
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, Inspector,
-    context::{Block as RevmBlock, Cfg, CfgEnv, TxEnv},
+    context::{Block as RevmBlock, Cfg, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,

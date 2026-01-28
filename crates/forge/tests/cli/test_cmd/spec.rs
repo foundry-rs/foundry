@@ -1,6 +1,10 @@
 use foundry_test_utils::rpc;
 
-// Test evm version switch during tests / scripts.
+// Test evm version behavior during tests / scripts.
+// Monad starts with MONAD_EIGHT spec which is Prague-compatible, so setEvmVersion
+// to older versions has no effect — all Prague features (including CREATE2) remain available.
+// Future Monad specs will only be newer than Prague, never older.
+// Original upstream refs:
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
 forgetest_init!(test_set_evm_version, |prj, cmd| {
@@ -27,17 +31,15 @@ contract TestEvmVersion is Test {
         evm.setEvmVersion("istanbul");
         evm.getEvmVersion();
 
-        // revert with NotActivated for istanbul
-        vm.expectRevert();
+        // On Monad (MONAD_EIGHT / Prague-compatible), CREATE2 is always available
+        // even after setEvmVersion to older versions.
         compute();
 
         evm.setEvmVersion("shanghai");
         evm.getEvmVersion();
         compute();
 
-        // switch to Paris, expect revert with NotActivated
         evm.setEvmVersion("paris");
-        vm.expectRevert();
         compute();
     }
 
@@ -49,45 +51,18 @@ contract TestEvmVersion is Test {
     );
 
     cmd.args(["test", "--mc", "TestEvmVersion", "-vvvv"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/TestEvmVersion.t.sol:TestEvmVersion
 [PASS] test_evm_version() ([GAS])
-Traces:
-  [..] TestEvmVersion::test_evm_version()
-    ├─ [0] VM::createSelectFork("<rpc url>")
-    │   └─ ← [Return] 0
-    ├─ [0] VM::setEvmVersion("istanbul")
-    │   └─ ← [Return]
-    ├─ [0] VM::getEvmVersion() [staticcall]
-    │   └─ ← [Return] "istanbul"
-    ├─ [0] VM::expectRevert(custom error 0xf4844814)
-    │   └─ ← [Return]
-    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
-    │   └─ ← [NotActivated] EvmError: NotActivated
-    ├─ [0] VM::setEvmVersion("shanghai")
-    │   └─ ← [Return]
-    ├─ [0] VM::getEvmVersion() [staticcall]
-    │   └─ ← [Return] "shanghai"
-    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
-    │   └─ ← [Return] 0x0f40d7B7669e3a6683EaB25358318fd42a9F2342
-    ├─ [0] VM::setEvmVersion("paris")
-    │   └─ ← [Return]
-    ├─ [0] VM::expectRevert(custom error 0xf4844814)
-    │   └─ ← [Return]
-    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
-    │   └─ ← [NotActivated] EvmError: NotActivated
-    └─ ← [Stop]
-
+...
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 
-    // Test evm version set in `setUp` is accounted in test.
+    // Test evm version set in `setUp` — on Monad, setEvmVersion("istanbul") has no effect,
+    // so CREATE2 remains available and the test succeeds.
     prj.add_test(
         "TestSetupEvmVersion.t.sol",
         &r#"
@@ -111,7 +86,7 @@ contract TestSetupEvmVersion is Test {
 
     function test_evm_version_in_setup() public {
         vm.createSelectFork("<rpc>");
-        // revert with NotActivated for istanbul
+        // On Monad, CREATE2 is always available (MONAD_EIGHT is Prague-compatible).
         ICreate2Deployer(0x35Da41c476fA5c6De066f20556069096A1F39364).computeAddress(bytes32(0), bytes32(0));
     }
 }
@@ -119,23 +94,19 @@ contract TestSetupEvmVersion is Test {
     );
     cmd.forge_fuse()
         .args(["test", "--mc", "TestSetupEvmVersion", "-vvvv"])
-        .assert_failure()
+        .assert_success()
         .stdout_eq(str![[r#"
 ...
-[FAIL: EvmError: NotActivated] test_evm_version_in_setup() ([GAS])
-Traces:
-  [..] TestSetupEvmVersion::setUp()
-    ├─ [0] VM::setEvmVersion("istanbul")
-    │   └─ ← [Return]
-    └─ ← [Stop]
-
-  [..] TestSetupEvmVersion::test_evm_version_in_setup()
-    └─ ← [NotActivated] EvmError: NotActivated
+[PASS] test_evm_version_in_setup() ([GAS])
 ...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 
-    // Test evm version set in constructor is accounted in test.
+    // Test evm version set in constructor — on Monad, setEvmVersion("istanbul") has no effect,
+    // so CREATE2 remains available and the test succeeds.
     prj.add_test(
         "TestConstructorEvmVersion.t.sol",
         &r#"
@@ -159,7 +130,7 @@ contract TestConstructorEvmVersion is Test {
 
     function test_evm_version_in_constructor() public {
         vm.createSelectFork("<rpc>");
-        // revert with NotActivated for istanbul
+        // On Monad, CREATE2 is always available (MONAD_EIGHT is Prague-compatible).
         ICreate2Deployer(0x35Da41c476fA5c6De066f20556069096A1F39364).computeAddress(bytes32(0), bytes32(0));
     }
 }
@@ -167,14 +138,14 @@ contract TestConstructorEvmVersion is Test {
     );
     cmd.forge_fuse()
         .args(["test", "--mc", "TestConstructorEvmVersion", "-vvvv"])
-        .assert_failure()
+        .assert_success()
         .stdout_eq(str![[r#"
 ...
-[FAIL: EvmError: NotActivated] test_evm_version_in_constructor() ([GAS])
-Traces:
-  [..] TestConstructorEvmVersion::test_evm_version_in_constructor()
-    └─ ← [NotActivated] EvmError: NotActivated
+[PASS] test_evm_version_in_constructor() ([GAS])
 ...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });

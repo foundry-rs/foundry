@@ -328,6 +328,8 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     assert_eq!(function_config.test_isolated_function, contract_config.test_isolated_contract);
 });
 
+// Monad starts with MONAD_EIGHT spec which is Prague-compatible, so inline evm_version
+// overrides are ignored. blobbasefee is always available regardless of inline config annotations.
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.add_test(
         "inline.sol",
@@ -349,7 +351,7 @@ forgetest_init!(config_inline_evm_version, |prj, cmd| {
 
             /// forge-config: default.evm_version = "shanghai"
             function test_old() public {
-                vm.expectRevert();
+                // On Monad, blobbasefee is always available (MONAD_EIGHT is Prague-compatible).
                 dummy.getBlobBaseFee();
             }
 
@@ -367,7 +369,7 @@ forgetest_init!(config_inline_evm_version, |prj, cmd| {
             }
 
             function test_old() public {
-                vm.expectRevert();
+                // On Monad, blobbasefee is always available (MONAD_EIGHT is Prague-compatible).
                 dummy.getBlobBaseFee();
             }
 

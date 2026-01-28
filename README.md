@@ -12,7 +12,7 @@ Monad is a Layer-1 blockchain delivering high performance, true decentralization
 
 `Monad Foundry` is a custom fork of Foundry that integrates Monad features directly into the familiar Foundry developer workflow. To read more about Monad EVM differences vs Ethereum mainnet, check out [Monad docs](https://docs.monad.xyz/developer-essentials/differences).
 
-Get strated here to use Monad's features in Foundry.
+Get started here to use Monad's features in Foundry.
 
 ## Roadmap
 

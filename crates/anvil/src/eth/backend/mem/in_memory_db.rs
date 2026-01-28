@@ -7,10 +7,7 @@ use crate::{
     },
     mem::state::state_root,
 };
-use alloy_primitives::{
-    Address, B256, U256,
-    map::{AddressMap, HashMap},
-};
+use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::backend::{BlockchainDb, DatabaseResult, StateSnapshot};
 use revm::{
