@@ -4,6 +4,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
+    mutation::{MutationConfig, run_mutation_testing},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -22,12 +23,9 @@ use foundry_cli::{
 };
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
-    ProjectCompileOutput,
+    Language, ProjectCompileOutput,
     artifacts::output_selection::OutputSelection,
-    compilers::{
-        Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
-    },
+    compilers::multi::{MultiCompiler, MultiCompilerLanguage},
     utils::source_files_iter,
 };
 use foundry_config::{
@@ -203,6 +201,24 @@ pub struct TestArgs {
 
     #[command(flatten)]
     pub watch: WatchArgs,
+
+    /// Enable mutation testing.
+    /// If passed with file paths, only those files will be tested.
+    #[arg(long, num_args(0..), value_name = "PATH")]
+    pub mutate: Option<Vec<PathBuf>>,
+
+    /// Specify which files to mutate with glob pattern matching.
+    #[arg(long, value_name = "PATTERN", requires = "mutate")]
+    pub mutate_path: Option<GlobMatcher>,
+
+    /// Only run tests in contracts matching the specified regex pattern.
+    #[arg(long, value_name = "REGEX", requires = "mutate")]
+    pub mutate_contract: Option<regex::Regex>,
+
+    /// Number of parallel workers for mutation testing.
+    /// Defaults to the number of CPU cores.
+    #[arg(long, value_name = "JOBS", requires = "mutate")]
+    pub mutation_jobs: Option<usize>,
 }
 
 impl TestArgs {
@@ -260,6 +276,14 @@ impl TestArgs {
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+
+        let should_mutate = self.mutate.is_some();
+
+        // Force dyn test linking for mutation testing
+        if should_mutate {
+            config.dynamic_test_linking = true;
+            config.cache = true;
+        }
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -343,10 +367,11 @@ impl TestArgs {
             .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
-            .build::<MultiCompiler>(output, env, evm_opts)?;
+            .build::<MultiCompiler>(output, env.clone(), evm_opts.clone())?;
 
         let libraries = runner.libraries.clone();
-        let mut outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
+        let mut outcome =
+            self.run_tests_inner(runner.clone(), config.clone(), verbosity, filter, output).await?;
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -415,6 +440,46 @@ impl TestArgs {
             } else {
                 debugger.try_run_tui()?;
             }
+        }
+
+        // All tests have been run once before reaching this point
+        if let Some(mutate) = &self.mutate {
+            // Check outcome here, stop if any test failed
+            if outcome.failed() > 0 {
+                eyre::bail!("Cannot run mutation testing with failed tests");
+            }
+
+            let json_output = shell::is_json();
+
+            let mutation_config = MutationConfig {
+                mutate_paths: mutate.clone(),
+                mutate_path_pattern: self.mutate_path.clone(),
+                mutate_contract_pattern: self.mutate_contract.clone(),
+                num_workers: self.mutation_jobs.unwrap_or(0),
+                show_progress: self.show_progress,
+                json_output,
+            };
+
+            let result = run_mutation_testing(
+                config.clone(),
+                output,
+                evm_opts.clone(),
+                env.clone(),
+                mutation_config,
+            )
+            .await?;
+
+            if result.cancelled {
+                std::process::exit(130);
+            }
+
+            // Output JSON if requested
+            if json_output {
+                let json_output = result.summary.to_json_output(result.duration_secs);
+                sh_println!("{}", serde_json::to_string(&json_output)?)?;
+            }
+
+            outcome = TestOutcome::empty(Some(runner.clone()), true);
         }
 
         Ok(outcome)
