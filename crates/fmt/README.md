@@ -130,6 +130,7 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `namespace_import_style` | `prefer_plain` | Style for namespace imports. Options: `prefer_plain` (`import "foo" as foo;`), `prefer_glob` (`import * as foo from "foo";`), `preserve`. |
 | `pow_no_space` | `false` | Suppress spaces around the power operator (`**`). |
 | `single_line_imports` | `false` | Keep single imports on a single line, even if they exceed the line length limit. |
+| `format_conditions` | `inline` | Style for formatting conditional expressions in control flow statements. Options: `inline`, `multi`. |
 
 > Check [`FormatterConfig`](../config/src/fmt.rs) for a more detailed explanation.
 
