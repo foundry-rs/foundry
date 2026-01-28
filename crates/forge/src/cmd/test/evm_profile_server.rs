@@ -1,9 +1,9 @@
-//! Local HTTP server for serving EVM profiles to Firefox Profiler.
+//! Local HTTP server for serving EVM profiles to speedscope.
 //!
-//! Firefox Profiler (profiler.firefox.com) can load profiles from a URL via its `/from-url/`
-//! endpoint. This module implements a temporary local HTTP server that:
+//! Speedscope (speedscope.app) can load profiles from a URL via its `#profileURL=` hash parameter.
+//! This module implements a temporary local HTTP server that:
 //! 1. Serves the profile JSON at `/{token}/profile.json`
-//! 2. Sets CORS headers to allow profiler.firefox.com to fetch it
+//! 2. Sets CORS headers to allow speedscope.app to fetch it
 //! 3. Constructs the proper URL and opens it in the browser
 
 use axum::{
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
-/// Serves a Firefox Profiler profile on a local HTTP server and opens it in the browser.
+/// Serves a speedscope profile on a local HTTP server and opens it in the browser.
 ///
 /// Takes the already-serialized profile JSON bytes.
 /// The server runs until Ctrl+C is pressed.
@@ -48,10 +48,16 @@ pub async fn serve_and_open(
 
     let profile_url = format!("http://127.0.0.1:{port}/{token}/profile.json");
     let encoded_profile_url = percent_encode(&profile_url);
-    let profiler_url = format!("https://profiler.firefox.com/from-url/{encoded_profile_url}/");
+    let title = format!("{contract_name}::{test_name}");
+    let encoded_title = percent_encode(&title);
+
+    // Speedscope uses hash parameters: #profileURL=<url>&title=<title>
+    let profiler_url = format!(
+        "https://www.speedscope.app/#profileURL={encoded_profile_url}&title={encoded_title}"
+    );
 
     sh_println!("Profile server running at http://127.0.0.1:{port}")?;
-    sh_println!("Opening Firefox Profiler for {contract_name}::{test_name}...")?;
+    sh_println!("Opening speedscope for {contract_name}::{test_name}...")?;
 
     if let Err(e) = opener::open(&profiler_url) {
         sh_err!("Failed to open browser: {e}")?;
@@ -81,7 +87,7 @@ fn generate_token() -> String {
     format!("{nanos:016x}{random_part:016x}")
 }
 
-/// Percent-encode a URL for embedding in Firefox Profiler's `/from-url/` path.
+/// Percent-encode a URL for embedding in speedscope's hash parameter.
 fn percent_encode(url: &str) -> String {
     let mut result = String::with_capacity(url.len() * 3);
     for byte in url.bytes() {

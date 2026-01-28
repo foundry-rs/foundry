@@ -8,8 +8,9 @@ use crate::{
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
-        decode_trace_arena, firefox_profile, folded_stack_trace,
+        decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
+        speedscope_profile,
     },
 };
 use alloy_primitives::U256;
@@ -417,19 +418,19 @@ impl TestArgs {
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
             decode_trace_arena(arena, decoder).await;
 
-            // Build Firefox Profiler profile.
+            // Build speedscope profile.
             // Gas is encoded as time: 1 gas = 1 nanosecond.
             let contract = suite_name.split(':').next_back().unwrap();
             let test_name_trimmed = test_name.trim_end_matches("()");
             let total_gas = arena.nodes().first().map(|n| n.trace.gas_used).unwrap_or(0);
-            let profile = firefox_profile::build(arena, test_name_trimmed, contract);
+            let profile = speedscope_profile::build(arena, test_name_trimmed, contract);
 
             // Serialize profile to JSON.
             let profile_json = serde_json::to_vec(&profile)?;
 
             sh_println!("Total gas used: {total_gas}")?;
 
-            // Serve the profile via local HTTP server and open Firefox Profiler.
+            // Serve the profile via local HTTP server and open speedscope.
             // The server runs until Ctrl+C is pressed.
             evm_profile_server::serve_and_open(profile_json, test_name_trimmed, contract).await?;
         }
