@@ -47,6 +47,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 yansi.workspace = true
+fxprof-processed-profile = "0.8"
 
 [dev-dependencies]
 tempfile.workspace = true

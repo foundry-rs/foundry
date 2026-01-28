@@ -8,7 +8,7 @@ use crate::{
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
-        decode_trace_arena, folded_stack_trace,
+        decode_trace_arena, firefox_profile, folded_stack_trace,
         identifier::SignaturesIdentifier,
     },
 };
@@ -81,7 +81,7 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
@@ -97,6 +97,14 @@ pub struct TestArgs {
     /// called (execution order) and how much gas it consumes at each point in the timeline.
     #[arg(long, conflicts_with = "flamegraph")]
     flamechart: bool,
+
+    /// Generate a Firefox Profiler profile for a single test.
+    ///
+    /// Creates a profile in the Firefox Profiler format where each EVM opcode step is a sample
+    /// with weight equal to gas cost. Opens the profile in Firefox Profiler and prints the URL.
+    /// Implies `--decode-internal`.
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart"])]
+    evm_profile: bool,
 
     /// Identify internal functions in traces.
     ///
@@ -307,17 +315,22 @@ impl TestArgs {
         // Create test options from general project settings and compiler output.
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
+        let should_profile = self.evm_profile;
 
         // Determine print verbosity and executor verbosity.
         let verbosity = evm_opts.verbosity;
-        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
+        if (self.gas_report && evm_opts.verbosity < 3)
+            || self.flamegraph
+            || self.flamechart
+            || self.evm_profile
+        {
             evm_opts.verbosity = 3;
         }
 
         let env = evm_opts.evm_env().await?;
 
-        // Enable internal tracing for more informative flamegraph.
-        if should_draw && !self.decode_internal {
+        // Enable internal tracing for more informative flamegraph/profile.
+        if (should_draw || should_profile) && !self.decode_internal {
             self.decode_internal = true;
         }
 
@@ -386,6 +399,45 @@ impl TestArgs {
             // Open SVG in default program.
             if let Err(e) = opener::open(&file_name) {
                 sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
+            }
+        }
+
+        if should_profile {
+            let (suite_name, test_name, mut test_result) =
+                outcome.remove_first().ok_or_eyre("no tests were executed")?;
+
+            let (_, arena) = test_result
+                .traces
+                .iter_mut()
+                .find(|(kind, _)| *kind == TraceKind::Execution)
+                .unwrap();
+
+            // Decode traces.
+            let decoder = outcome.last_run_decoder.as_ref().unwrap();
+            decode_trace_arena(arena, decoder).await;
+
+            // Build Firefox Profiler profile.
+            let contract = suite_name.split(':').next_back().unwrap();
+            let test_name_trimmed = test_name.trim_end_matches("()");
+            let title = format!("EVM Profile: {contract}::{test_name_trimmed}");
+            let profile = firefox_profile::build(arena, &title);
+
+            // Serialize to JSON and save.
+            let file_name = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
+            let file = std::fs::File::create(&file_name).wrap_err("failed to create profile")?;
+            let writer = std::io::BufWriter::new(file);
+            serde_json::to_writer(writer, &profile).wrap_err("failed to write profile")?;
+
+            let abs_path = std::fs::canonicalize(&file_name)?;
+            sh_println!("Saved profile to {}", abs_path.display())?;
+            sh_println!(
+                "\nOpen https://profiler.firefox.com/ and load the profile file, \
+                 or drag and drop the file onto the page."
+            )?;
+
+            // Try to open Firefox Profiler in browser.
+            if let Err(e) = opener::open("https://profiler.firefox.com/") {
+                sh_err!("Failed to open Firefox Profiler; please open it manually: {e}")?;
             }
         }
 
@@ -465,11 +517,15 @@ impl TestArgs {
             return Ok(TestOutcome::empty(Some(runner), false));
         }
 
-        if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
+        if num_filtered != 1
+            && (self.debug || self.flamegraph || self.flamechart || self.evm_profile)
+        {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {
                 "generate a flamechart"
+            } else if self.evm_profile {
+                "generate an EVM profile"
             } else {
                 "run the debugger"
             };

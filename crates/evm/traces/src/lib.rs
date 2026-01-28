@@ -52,6 +52,8 @@ pub use debug::DebugTraceIdentifier;
 
 pub mod folded_stack_trace;
 
+pub mod firefox_profile;
+
 pub mod backtrace;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
