@@ -102,6 +102,7 @@ forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &transfer_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -129,6 +130,7 @@ forgetest_async!(erc20_approval_allowance, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &approve_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -264,13 +266,13 @@ forgetest_async!(erc20_burn_success, |prj, cmd| {
     assert_eq!(total_supply, initial_supply - burn_amount);
 });
 
-// tests that `transfer` command works with gas options
-forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
+// tests that transfer with --yes flag skips confirmation prompt
+forgetest_async!(erc20_transfer_with_yes_flag, |prj, cmd| {
     let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
 
-    let transfer_amount = U256::from(100_000_000_000_000_000_000u128); // 100 tokens
+    let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
 
-    // Transfer with explicit gas limit and gas price
+    // Transfer with --yes flag should succeed without prompting
     cmd.cast_fuse()
         .args([
             "erc20",
@@ -278,6 +280,60 @@ forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &transfer_amount.to_string(),
+            "--yes",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    // Verify the transfer actually happened
+    let addr2_balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
+    assert_eq!(addr2_balance, transfer_amount);
+});
+
+// tests that approve with --yes flag skips confirmation prompt
+forgetest_async!(erc20_approve_with_yes_flag, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    let approve_amount = U256::from(75_000_000_000_000_000_000u128); // 75 tokens
+
+    // Approve with --yes flag should succeed without prompting
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "approve",
+            &token,
+            anvil_const::ADDR2,
+            &approve_amount.to_string(),
+            "--yes",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    // Verify the approval actually happened
+    let allowance = get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc);
+    assert_eq!(allowance, approve_amount);
+});
+
+// tests that `transfer` command works with gas options
+forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
+
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            &token,
+            anvil_const::ADDR2,
+            &transfer_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -308,6 +364,7 @@ forgetest_async!(erc20_transfer_insufficient_gas, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &transfer_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -335,6 +392,7 @@ forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &transfer_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -350,6 +408,7 @@ forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
             &token,
             anvil_const::ADDR2,
             &transfer_amount.to_string(),
+            "--yes",
             "--rpc-url",
             &rpc,
             "--private-key",
