@@ -107,9 +107,11 @@ main() {
     exit 0
   fi
 
-  # If Tempo network is set, use the Tempo fork of Foundry
+  # If a network is set, use the corresponding fork of Foundry
   if [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
     FOUNDRYUP_REPO="tempoxyz/tempo-foundry"
+  elif [[ "$FOUNDRYUP_NETWORK" == "monad" ]]; then
+    FOUNDRYUP_REPO="category-labs/foundry"
   else
   # Default to Foundry repo
     FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
@@ -373,6 +375,66 @@ main() {
     use
 
     say "done!"
+  # Install from Monad's fork of Foundry if --network monad is set
+  elif [[ "$FOUNDRYUP_NETWORK" == "monad" ]]; then
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
+    FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+
+    # Normalize versions (handle versions without v prefix)
+    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
+      FOUNDRYUP_VERSION="nightly"
+    elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
+      FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
+      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+    fi
+
+    say "installing monad-foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
+
+    # Detect platform and architecture.
+    detect_platform_arch
+
+    # Compute the URL of the release tarball in the Monad Foundry repository.
+    RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
+    BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
+    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
+
+    ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
+
+    # Download and extract the binaries archive
+    say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
+    if [ "$PLATFORM" = "win32" ]; then
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.zip"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      rm -f "$tmp"
+    else
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.tar.gz"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      # Make sure it's a valid tar archive.
+      ensure tar tf "$tmp" 1> /dev/null
+      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
+      rm -f "$tmp"
+    fi
+
+    # Optionally download the manuals
+    if check_cmd tar; then
+      say "downloading manpages"
+      mkdir -p "$FOUNDRY_MAN_DIR"
+      if ! download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"; then
+        warn "skipping manpage download: unavailable or invalid archive"
+      fi
+    else
+      say 'skipping manpage download: missing "tar"'
+    fi
+
+    # Use newly installed version.
+    FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
+    use
+
+    say "done!"
   # Install by cloning the repo with the provided branch/tag
   else
     need_cmd cargo
@@ -461,7 +523,7 @@ OPTIONS:
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
     -f, --force     Skip SHA verification for downloaded binaries (INSECURE - use with caution)
-    -n, --network   Install binaries for a specific network (e.g., tempo)
+    -n, --network   Install binaries for a specific network (e.g. tempo, monad)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, darwin and alpine)
 EOF
