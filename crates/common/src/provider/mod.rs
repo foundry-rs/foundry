@@ -8,7 +8,7 @@ use crate::{
     provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
 use alloy_chains::NamedChain;
-use alloy_network::{Network, NetworkWallet, TransactionBuilder4844};
+use alloy_network::{Network, NetworkWallet};
 use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
     fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
@@ -344,7 +344,6 @@ impl<N: Network> ProviderBuilder<N> {
         wallet: W,
     ) -> Result<RetryProviderWithSigner<N, W>>
     where
-        N::TransactionRequest: TransactionBuilder4844,
         N: RecommendedFillers,
     {
         let Self {
