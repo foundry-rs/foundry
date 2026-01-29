@@ -405,3 +405,22 @@ contract WETHHook is BaseTokenWrapperHook {
         weth = WETH(payable(_weth));
     }
 }
+
+// https://github.com/foundry-rs/foundry/issues/12529
+library TransferMessageLib {
+    struct TransferMessage { bytes32 sender; address receiver; address token; uint256 amount; }
+    function pack(TransferMessage memory m) internal pure returns (bytes memory) { return ""; }
+}
+
+contract ChainedStructCall {
+    using TransferMessageLib for TransferMessageLib.TransferMessage;
+    bytes32 someBytes32Value;
+    address someAddressValue;
+    uint256 someUint256Value;
+
+    function test_chainedStructIndentation() public {
+        bytes memory payload = TransferMessageLib.TransferMessage({
+                sender: someBytes32Value, receiver: someAddressValue, token: someAddressValue, amount: someUint256Value
+            }).pack();
+    }
+}
