@@ -103,6 +103,29 @@ async fn can_send_eip4844_transaction_eth_send_transaction() {
     let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
 }
 
+// <https://github.com/foundry-rs/foundry/issues/13217>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_eip4844_transaction_with_eip7594_sidecar_format() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = ProviderBuilder::new().connect(handle.http_endpoint().as_str()).await.unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
+    let sidecar = sidecar.build_7594().unwrap();
+
+    let mut tx = TransactionRequest::default().with_from(alice).with_to(bob);
+    alloy_network::TransactionBuilder7594::set_blob_sidecar_7594(&mut tx, sidecar);
+
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let receipt = pending_tx.get_receipt().await.unwrap();
+    let tx_hash = receipt.transaction_hash;
+
+    let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_multiple_blobs_in_one_tx() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
