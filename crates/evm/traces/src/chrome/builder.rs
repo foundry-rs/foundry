@@ -175,7 +175,22 @@ impl<'a> ChromeTraceBuilder<'a> {
 
                     self.process_step(&node.trace.steps, *step_idx, &mut step_exits, next_is_call);
                 }
-                TraceMemberOrder::Log(_) => {}
+                TraceMemberOrder::Log(log_idx) => {
+                    // Emit log as instant event.
+                    if let Some(log) = node.logs.get(*log_idx) {
+                        let log_name = log
+                            .decoded
+                            .as_ref()
+                            .and_then(|d| d.name.as_ref())
+                            .map(|s| s.as_str())
+                            .unwrap_or("log");
+                        self.file.add_event(TraceEvent::instant(
+                            log_name.to_string(),
+                            "log",
+                            self.cumulative_gas,
+                        ));
+                    }
+                }
             }
         }
 

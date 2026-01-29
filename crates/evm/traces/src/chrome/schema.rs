@@ -21,12 +21,17 @@ use std::borrow::Cow;
 pub struct TraceFile<'a> {
     /// List of trace events.
     pub trace_events: Vec<TraceEvent<'a>>,
+
+    /// Display time unit. We use "ns" to minimize unit display in the UI,
+    /// but the values are actually gas units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_time_unit: Option<&'static str>,
 }
 
 impl<'a> TraceFile<'a> {
     /// Creates a new empty trace file.
     pub fn new() -> Self {
-        Self { trace_events: Vec::new() }
+        Self { trace_events: Vec::new(), display_time_unit: Some("ns") }
     }
 
     /// Adds an event to the trace.
@@ -101,6 +106,19 @@ impl<'a> TraceEvent<'a> {
             tid: 0,
         }
     }
+
+    /// Creates an instant event (point-in-time marker) for logs.
+    pub fn instant(name: impl Into<Cow<'a, str>>, cat: impl Into<Cow<'a, str>>, ts: u64) -> Self {
+        Self {
+            name: name.into(),
+            cat: cat.into(),
+            ph: Phase::Instant,
+            ts,
+            dur: None,
+            pid: 1,
+            tid: 1,
+        }
+    }
 }
 
 /// Event phase types.
@@ -111,6 +129,10 @@ pub enum Phase {
     /// Complete event (duration). Has both timestamp and duration.
     #[serde(rename = "X")]
     Complete,
+
+    /// Instant event (point in time). Used for logs and markers.
+    #[serde(rename = "i")]
+    Instant,
 
     /// Metadata event. Used for process/thread naming.
     #[serde(rename = "M")]
