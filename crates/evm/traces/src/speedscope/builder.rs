@@ -97,13 +97,11 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
     /// Gets or creates a frame index for the given name and category.
     fn get_or_create_frame(&mut self, name: &str, category: FrameCategory) -> usize {
         let full_name = format!("{}{}", category.prefix(), name);
-        if let Some(&idx) = self.frame_cache.get(&full_name) {
-            return idx;
-        }
-
-        let idx = self.file.add_frame(Frame::new(Cow::Owned(full_name.clone())));
-        self.frame_cache.insert(full_name, idx);
-        idx
+        let file = &mut self.file;
+        *self
+            .frame_cache
+            .entry(full_name.clone())
+            .or_insert_with(|| file.add_frame(Frame::new(Cow::Owned(full_name))))
     }
 
     /// Determines the category for a call based on its address.
