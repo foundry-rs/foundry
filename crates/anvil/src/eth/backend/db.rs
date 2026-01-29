@@ -514,7 +514,7 @@ impl SerializableState {
         let path = path.as_ref();
 
         let buf = if path.is_dir() {
-            foundry_common::fs::read(&path.join("state.json"))
+            foundry_common::fs::read(path.join("state.json"))
         } else {
             foundry_common::fs::read(path)
         }?;
