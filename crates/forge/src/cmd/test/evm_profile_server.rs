@@ -16,7 +16,6 @@ use axum::{
 };
 use eyre::Result;
 use foundry_common::{sh_err, sh_println};
-use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -31,7 +30,7 @@ pub async fn serve_and_open(
 ) -> Result<()> {
     let token = generate_token();
 
-    let state = ServerState { profile_json: Arc::new(profile_json) };
+    let state = ServerState { profile_json: Bytes::from(profile_json) };
 
     let app = Router::new()
         .route(&format!("/{token}/profile.json"), get(serve_profile))
@@ -108,14 +107,10 @@ fn percent_encode(url: &str) -> String {
 
 #[derive(Clone)]
 struct ServerState {
-    profile_json: Arc<Vec<u8>>,
+    profile_json: Bytes,
 }
 
 async fn serve_profile(State(state): State<ServerState>) -> Response {
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
-        Bytes::from(state.profile_json.as_ref().clone()),
-    )
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], state.profile_json)
         .into_response()
 }
