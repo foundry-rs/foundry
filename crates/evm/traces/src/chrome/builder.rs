@@ -1,10 +1,9 @@
-//! Speedscope profile generation for EVM execution traces.
+//! Chrome trace profile generation for EVM execution traces.
 //!
-//! This module converts EVM call traces into the speedscope evented profile format.
-//! Gas is used directly as the value unit (unit: "none"), so flame graph widths
-//! represent gas consumption and the timeline shows gas usage over execution.
+//! This module converts EVM call traces into the Chrome Trace Event Format.
+//! Gas is used as the time unit, so flame graph widths represent gas consumption.
 
-use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
+use super::schema::{TraceEvent, TraceFile};
 use crate::decoder::precompiles::is_known_precompile;
 use alloy_primitives::{Address, hex::ToHexExt};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
@@ -12,10 +11,8 @@ use revm_inspectors::tracing::{
     CallTraceArena,
     types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
-use std::{borrow::Cow, collections::HashMap};
 
-/// Frame category for coloring in speedscope.
-/// Encoded in the frame name as a prefix for visual distinction.
+/// Frame category for coloring in Chrome trace viewer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FrameCategory {
     /// Test contract calls.
@@ -33,75 +30,64 @@ enum FrameCategory {
 }
 
 impl FrameCategory {
-    /// Returns a color emoji prefix for visual distinction in speedscope.
-    /// Speedscope doesn't have native category coloring, so we use unicode symbols.
-    fn prefix(self) -> &'static str {
+    /// Returns the category string for Chrome trace.
+    fn as_str(self) -> &'static str {
         match self {
-            Self::Test => "🟢 ",       // Green
-            Self::Vm => "🟣 ",         // Purple
-            Self::Console => "🔵 ",    // Blue
-            Self::Precompile => "🟠 ", // Orange
-            Self::External => "🟡 ",   // Yellow
-            Self::Internal => "⚪ ",   // Light/white for internal
+            Self::Test => "test",
+            Self::Vm => "vm",
+            Self::Console => "console",
+            Self::Precompile => "precompile",
+            Self::External => "external",
+            Self::Internal => "internal",
         }
     }
 }
 
-/// Builder for speedscope profiles from EVM traces.
-pub struct SpeedscopeProfileBuilder<'a> {
-    file: SpeedscopeFile<'a>,
-    profile: EventedProfile<'a>,
+/// An open frame being tracked.
+struct OpenFrame {
+    name: String,
+    category: FrameCategory,
+    start_gas: u64,
+}
+
+/// Builder for Chrome trace profiles from EVM traces.
+pub struct ChromeTraceBuilder<'a> {
+    file: TraceFile<'a>,
 
     /// Address of the main test contract.
     test_address: Option<Address>,
 
-    /// Cache of frame names to frame indices.
-    frame_cache: HashMap<String, usize>,
-
     /// Current cumulative gas (used as timestamp).
     cumulative_gas: u64,
 
-    /// Stack of (frame_index, open_gas) for tracking closes.
-    open_frames: Vec<(usize, u64)>,
+    /// Stack of open frames.
+    open_frames: Vec<OpenFrame>,
 }
 
-impl<'a> SpeedscopeProfileBuilder<'a> {
+impl<'a> ChromeTraceBuilder<'a> {
     /// Creates a new builder for the given test.
-    pub fn new(test_name: &str, contract_name: &str) -> Self {
-        let name = format!("{contract_name}::{test_name}");
-        let file = SpeedscopeFile::new(name.clone());
-        let profile = EventedProfile::new(name, ValueUnit::None);
-
+    pub fn new(_test_name: &str, _contract_name: &str) -> Self {
         Self {
-            file,
-            profile,
+            file: TraceFile::new(),
             test_address: None,
-            frame_cache: HashMap::new(),
             cumulative_gas: 0,
             open_frames: Vec::new(),
         }
     }
 
-    /// Builds the final speedscope file.
-    pub fn finish(mut self) -> SpeedscopeFile<'a> {
+    /// Builds the final Chrome trace file.
+    pub fn finish(mut self) -> TraceFile<'a> {
         // Close any remaining open frames at the final timestamp.
-        while let Some((frame_idx, _)) = self.open_frames.pop() {
-            self.profile.close_frame(frame_idx, self.cumulative_gas);
+        while let Some(frame) = self.open_frames.pop() {
+            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
+            self.file.add_event(TraceEvent::complete(
+                frame.name,
+                frame.category.as_str(),
+                frame.start_gas,
+                dur,
+            ));
         }
-
-        self.profile.set_end_value(self.cumulative_gas);
-        self.file.add_profile(Profile::Evented(self.profile));
         self.file
-    }
-
-    /// Gets or creates a frame index for the given name and category.
-    fn get_or_create_frame(&mut self, name: &str, category: FrameCategory) -> usize {
-        let full_name = format!("{}{}", category.prefix(), name);
-        let file = &mut self.file;
-        *self
-            .frame_cache
-            .entry(full_name.clone())
-            .or_insert_with(|| file.add_frame(Frame::new(Cow::Owned(full_name))))
     }
 
     /// Determines the category for a call based on its address.
@@ -162,18 +148,17 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
             }
         };
 
-        // Open this function frame.
-        let frame_idx = self.get_or_create_frame(&func_name, category);
-        self.profile.open_frame(frame_idx, self.cumulative_gas);
-        self.open_frames.push((frame_idx, self.cumulative_gas));
+        // Push this frame onto the stack.
+        self.open_frames.push(OpenFrame {
+            name: func_name,
+            category,
+            start_gas: self.cumulative_gas,
+        });
 
         // Track internal function step exits.
-        let mut step_exits: Vec<(usize, usize)> = Vec::new(); // (end_step_idx, frame_idx)
+        let mut step_exits: Vec<(usize, OpenFrame)> = Vec::new();
 
         // Process children in order.
-        // We need to look ahead to see if a Step is followed by a Call - if so, the step is a
-        // CALL opcode whose gas_cost includes the subcall's gas, which we'll account for
-        // separately.
         let ordering = &node.ordering;
         for (i, order) in ordering.iter().enumerate() {
             match order {
@@ -184,8 +169,7 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
                 TraceMemberOrder::Step(step_idx) => {
                     self.exit_previous_steps(&mut step_exits, *step_idx);
 
-                    // Check if next item is a Call - if so, this step is a CALL opcode
-                    // and its gas_cost includes the subcall's gas.
+                    // Check if next item is a Call.
                     let next_is_call =
                         matches!(ordering.get(i + 1), Some(TraceMemberOrder::Call(_)));
 
@@ -196,27 +180,34 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
         }
 
         // Exit pending internal function calls.
-        for (_, frame_idx) in step_exits.drain(..).rev() {
-            self.profile.close_frame(frame_idx, self.cumulative_gas);
+        for (_, frame) in step_exits.drain(..).rev() {
+            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
+            self.file.add_event(TraceEvent::complete(
+                frame.name,
+                frame.category.as_str(),
+                frame.start_gas,
+                dur,
+            ));
         }
 
         // Close this call frame.
-        if let Some((frame_idx, _)) = self.open_frames.pop() {
-            self.profile.close_frame(frame_idx, self.cumulative_gas);
+        if let Some(frame) = self.open_frames.pop() {
+            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
+            self.file.add_event(TraceEvent::complete(
+                frame.name,
+                frame.category.as_str(),
+                frame.start_gas,
+                dur,
+            ));
         }
     }
 
     /// Processes a single step, handling internal function calls.
-    ///
-    /// `is_call_opcode` indicates this step is followed by a Call in the ordering,
-    /// meaning it's a CALL/DELEGATECALL/etc opcode whose gas_cost includes the
-    /// subcall's gas consumption. We skip adding that gas since the subcall will
-    /// account for it.
     fn process_step(
         &mut self,
         steps: &[CallTraceStep],
         step_idx: usize,
-        step_exits: &mut Vec<(usize, usize)>, // (end_step_idx, frame_idx)
+        step_exits: &mut Vec<(usize, OpenFrame)>,
         is_call_opcode: bool,
     ) {
         let step = &steps[step_idx];
@@ -226,28 +217,32 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
             && let DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) =
                 decoded_step.as_ref()
         {
-            // func_name is already in format "Contract::function" from the debug trace identifier.
-            let frame_idx =
-                self.get_or_create_frame(&decoded_internal_call.func_name, FrameCategory::Internal);
-            self.profile.open_frame(frame_idx, self.cumulative_gas);
-            step_exits.push((*step_end_idx, frame_idx));
+            step_exits.push((
+                *step_end_idx,
+                OpenFrame {
+                    name: decoded_internal_call.func_name.clone(),
+                    category: FrameCategory::Internal,
+                    start_gas: self.cumulative_gas,
+                },
+            ));
         }
 
         // Advance cumulative gas for this step, unless it's a CALL opcode.
-        // CALL opcodes have gas_cost that includes the subcall's gas, which we
-        // account for separately when processing the child call node.
         if !is_call_opcode {
             self.cumulative_gas = self.cumulative_gas.saturating_add(step.gas_cost);
         }
     }
 
     /// Exit all previous internal calls that should end before step_idx.
-    fn exit_previous_steps(&mut self, step_exits: &mut Vec<(usize, usize)>, step_idx: usize) {
-        // Collect frames to close (in reverse order for proper nesting).
+    fn exit_previous_steps(&mut self, step_exits: &mut Vec<(usize, OpenFrame)>, step_idx: usize) {
         let mut to_close = Vec::new();
-        step_exits.retain(|&(end_idx, frame_idx)| {
-            if end_idx <= step_idx {
-                to_close.push(frame_idx);
+        step_exits.retain(|(end_idx, frame)| {
+            if *end_idx <= step_idx {
+                to_close.push(OpenFrame {
+                    name: frame.name.clone(),
+                    category: frame.category,
+                    start_gas: frame.start_gas,
+                });
                 false
             } else {
                 true
@@ -255,23 +250,25 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
         });
 
         // Close frames in reverse order (LIFO).
-        for frame_idx in to_close.into_iter().rev() {
-            self.profile.close_frame(frame_idx, self.cumulative_gas);
+        for frame in to_close.into_iter().rev() {
+            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
+            self.file.add_event(TraceEvent::complete(
+                frame.name,
+                frame.category.as_str(),
+                frame.start_gas,
+                dur,
+            ));
         }
     }
 }
 
-/// Builds a speedscope profile from a call trace arena.
+/// Builds a Chrome trace profile from a call trace arena.
 ///
 /// - `arena`: The call trace arena containing the execution trace.
-/// - `test_name`: Name of the test function (used as profile name).
+/// - `test_name`: Name of the test function.
 /// - `contract_name`: Name of the contract being tested.
-pub fn build<'a>(
-    arena: &CallTraceArena,
-    test_name: &str,
-    contract_name: &str,
-) -> SpeedscopeFile<'a> {
-    let mut builder = SpeedscopeProfileBuilder::new(test_name, contract_name);
+pub fn build<'a>(arena: &CallTraceArena, test_name: &str, contract_name: &str) -> TraceFile<'a> {
+    let mut builder = ChromeTraceBuilder::new(test_name, contract_name);
     if !arena.nodes().is_empty() {
         builder.process_call_node(arena.nodes(), 0);
     }
@@ -288,11 +285,6 @@ mod tests {
         let profile = build(&arena, "testExample", "TestContract");
         let json = serde_json::to_string(&profile).unwrap();
 
-        // Profile should be valid JSON with speedscope schema.
-        assert!(
-            json.contains("\"$schema\":\"https://www.speedscope.app/file-format-schema.json\"")
-        );
-        assert!(json.contains("\"name\":\"TestContract::testExample\""));
-        assert!(json.contains("\"exporter\":\"foundry\""));
+        assert!(json.contains("\"traceEvents\""));
     }
 }

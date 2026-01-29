@@ -1,11 +1,15 @@
-//! Local HTTP server for serving EVM profiles to speedscope.
+//! Local HTTP server for serving EVM profiles to browser-based viewers.
 //!
-//! Speedscope (speedscope.app) can load profiles from a URL via its `#profileURL=` hash parameter.
+//! Supports multiple profile formats:
+//! - Speedscope (speedscope.app): Uses `#profileURL=` hash parameter
+//! - Chrome/Perfetto (ui.perfetto.dev): Uses `url=` query parameter
+//!
 //! This module implements a temporary local HTTP server that:
 //! 1. Serves the profile JSON at `/{token}/profile.json`
-//! 2. Sets CORS headers to allow speedscope.app to fetch it
+//! 2. Sets CORS headers to allow the viewer to fetch it
 //! 3. Constructs the proper URL and opens it in the browser
 
+use super::EvmProfileFormat;
 use axum::{
     Router,
     body::Bytes,
@@ -19,7 +23,7 @@ use foundry_common::{sh_err, sh_println};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
-/// Serves a speedscope profile on a local HTTP server and opens it in the browser.
+/// Serves a profile on a local HTTP server and opens it in the browser.
 ///
 /// Takes the already-serialized profile JSON bytes.
 /// The server runs until Ctrl+C is pressed.
@@ -27,6 +31,7 @@ pub async fn serve_and_open(
     profile_json: Vec<u8>,
     test_name: &str,
     contract_name: &str,
+    format: EvmProfileFormat,
 ) -> Result<()> {
     let token = generate_token();
 
@@ -46,21 +51,32 @@ pub async fn serve_and_open(
     let port = listener.local_addr()?.port();
 
     let profile_url = format!("http://127.0.0.1:{port}/{token}/profile.json");
-    let encoded_profile_url = percent_encode(&profile_url);
     let title = format!("{contract_name}::{test_name}");
-    let encoded_title = percent_encode(&title);
 
-    // Speedscope uses hash parameters: #profileURL=<url>&title=<title>
-    let profiler_url = format!(
-        "https://www.speedscope.app/#profileURL={encoded_profile_url}&title={encoded_title}"
-    );
+    // Build viewer URL based on format.
+    let (viewer_name, viewer_url) = match format {
+        EvmProfileFormat::Speedscope => {
+            let encoded_url = percent_encode(&profile_url);
+            let encoded_title = percent_encode(&title);
+            (
+                "speedscope",
+                format!(
+                    "https://www.speedscope.app/#profileURL={encoded_url}&title={encoded_title}"
+                ),
+            )
+        }
+        EvmProfileFormat::Chrome => {
+            let encoded_url = percent_encode(&profile_url);
+            ("Perfetto", format!("https://ui.perfetto.dev/#!/?url={encoded_url}"))
+        }
+    };
 
     sh_println!("Profile server running at http://127.0.0.1:{port}")?;
-    sh_println!("Opening speedscope for {contract_name}::{test_name}...")?;
+    sh_println!("Opening {viewer_name} for {title}...")?;
 
-    if let Err(e) = opener::open(&profiler_url) {
+    if let Err(e) = opener::open(&viewer_url) {
         sh_err!("Failed to open browser: {e}")?;
-        sh_println!("Please open this URL manually:\n{profiler_url}")?;
+        sh_println!("Please open this URL manually:\n{viewer_url}")?;
     }
 
     sh_println!("\nPress Ctrl+C to stop the server.")?;
@@ -86,7 +102,7 @@ fn generate_token() -> String {
     format!("{nanos:016x}{random_part:016x}")
 }
 
-/// Percent-encode a URL for embedding in speedscope's hash parameter.
+/// Percent-encode a URL for embedding in viewer URL parameters.
 fn percent_encode(url: &str) -> String {
     let mut result = String::with_capacity(url.len() * 3);
     for byte in url.bytes() {
