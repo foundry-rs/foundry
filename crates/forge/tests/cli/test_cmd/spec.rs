@@ -1,5 +1,50 @@
 use foundry_test_utils::rpc;
 
+// Test that configured evm_version is preserved when selecting forks.
+// <https://github.com/foundry-rs/foundry/issues/13040>
+forgetest_init!(test_evm_version_preserved_on_fork_select, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    prj.add_test(
+        "TestEvmVersionPreserved.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract TestEvmVersionPreserved is Test {
+    /// forge-config: default.evm_version = "cancun"
+    function test_evm_version_preserved_after_fork() public {
+        // Before fork, should be cancun
+        assertEq(vm.getEvmVersion(), "cancun", "evm version should be cancun before fork");
+
+        // Create and select a fork (use block 1 to avoid needing recent block)
+        vm.createSelectFork("<rpc>", 1);
+
+        // After fork selection, should still be cancun (not default prague)
+        // This is the core bug fix from issue #13040
+        assertEq(vm.getEvmVersion(), "cancun", "evm version should remain cancun after fork");
+    }
+}
+   "#
+        .replace("<rpc>", &endpoint),
+    );
+
+    cmd.args(["test", "--mc", "TestEvmVersionPreserved", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TestEvmVersionPreserved.t.sol:TestEvmVersionPreserved
+[PASS] test_evm_version_preserved_after_fork() ([GAS])
+...
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+});
+
 // Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
