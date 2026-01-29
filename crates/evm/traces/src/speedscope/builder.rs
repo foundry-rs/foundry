@@ -75,9 +75,9 @@ fn folded_to_speedscope<'a>(
 
         // Open new frames that are in this stack but not yet open.
         for name in stack.iter().skip(common_len) {
-            let frame_idx = *frame_cache.entry(name.to_string()).or_insert_with(|| {
-                file.add_frame(Frame::new(Cow::Owned(name.to_string())))
-            });
+            let frame_idx = *frame_cache
+                .entry(name.to_string())
+                .or_insert_with(|| file.add_frame(Frame::new(Cow::Owned(name.to_string()))));
             profile.open_frame(frame_idx, cumulative_gas);
             open_stack.push(frame_idx);
         }
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn test_folded_to_speedscope() {
         let folded = vec![
-            "top 200".to_string(),       // top consumes 200 (after child subtraction)
+            "top 200".to_string(),         // top consumes 200 (after child subtraction)
             "top;child_a 100".to_string(), // child_a consumes 100
             "top;child_b 150".to_string(), // child_b consumes 150
         ];
