@@ -39,6 +39,8 @@ struct PendingInternalCall {
     step_end_idx: usize,
     /// Frame index in the speedscope file.
     frame_idx: usize,
+    /// Gas position where this internal call opened.
+    opened_at: u64,
     /// Gas consumed by this internal call.
     gas_used: u64,
 }
@@ -169,12 +171,14 @@ impl<'a> SpeedscopeBuilder<'a> {
 
             // Open the internal call frame at current position.
             let frame_idx = self.get_or_create_frame(decoded_internal_call.func_name.clone());
-            self.profile.open_frame(frame_idx, self.current_gas);
+            let opened_at = self.current_gas;
+            self.profile.open_frame(frame_idx, opened_at);
 
             // Track for later closing.
             pending_calls.push(PendingInternalCall {
                 step_end_idx: *step_end_idx,
                 frame_idx,
+                opened_at,
                 gas_used,
             });
         }
@@ -195,9 +199,12 @@ impl<'a> SpeedscopeBuilder<'a> {
         while let Some(call) = pending_calls.last() {
             if close_all || call.step_end_idx < before_step_idx {
                 let call = pending_calls.pop().unwrap();
-                // Advance gas and close the frame.
-                self.current_gas += call.gas_used;
-                self.profile.close_frame(call.frame_idx, self.current_gas);
+                // Close the frame at opened_at + gas_used.
+                let close_at = call.opened_at + call.gas_used;
+                self.profile.close_frame(call.frame_idx, close_at);
+                // Update current_gas to track position for subsequent calls.
+                // This ensures external calls open at the right position.
+                self.current_gas = self.current_gas.max(close_at);
             } else {
                 break;
             }

@@ -111,7 +111,8 @@ pub struct TestArgs {
     /// Generate an execution profile for a single test.
     ///
     /// Creates a profile where each EVM call is recorded with gas consumption.
-    /// Opens the profile in speedscope.app. Implies `--decode-internal`.
+    /// Opens the profile in speedscope.app unless `--no-open` is passed.
+    /// Implies `--decode-internal`.
     #[arg(
         long,
         value_name = "FORMAT",
@@ -121,6 +122,12 @@ pub struct TestArgs {
         conflicts_with_all = ["flamegraph", "flamechart"]
     )]
     evm_profile: Option<EvmProfileFormat>,
+
+    /// Don't open the profile in the browser (for `--evm-profile`).
+    ///
+    /// The profile is still saved to disk and the server is started.
+    #[arg(long, requires = "evm_profile")]
+    no_open: bool,
 
     /// Identify internal functions in traces.
     ///
@@ -445,8 +452,14 @@ impl TestArgs {
 
             sh_println!("Profile saved to {profile_path}")?;
 
-            // Serve the profile via local HTTP server and open in browser.
-            evm_profile_server::serve_and_open(profile_json, test_name_trimmed, contract).await?;
+            // Serve the profile via local HTTP server and optionally open in browser.
+            evm_profile_server::serve_and_open(
+                profile_json,
+                test_name_trimmed,
+                contract,
+                self.no_open,
+            )
+            .await?;
         }
 
         if should_debug {
