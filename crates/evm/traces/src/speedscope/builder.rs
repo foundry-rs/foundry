@@ -11,15 +11,12 @@ use std::{borrow::Cow, collections::HashMap};
 /// Builds a speedscope profile from a call trace arena.
 ///
 /// Uses the same trace processing as --flamechart for consistent gas values.
-/// Entries are reversed so children appear before parent's self-time (time-ordered).
 pub fn build<'a>(
     arena: &CallTraceArena,
     test_name: &str,
     contract_name: &str,
 ) -> SpeedscopeFile<'a> {
-    let mut entries = folded_stack_trace::build_entries(arena);
-    // Reverse to match --flamechart: children appear on the left, parent's self-time on the right.
-    entries.reverse();
+    let entries = folded_stack_trace::build_entries(arena);
     entries_to_speedscope(&entries, test_name, contract_name)
 }
 
