@@ -1,7 +1,7 @@
 //! Chrome trace profile generation for EVM execution traces.
 //!
 //! This module converts EVM call traces into the Chrome Trace Event Format.
-//! Gas is used as the time unit, so flame graph widths represent gas consumption.
+//! Gas consumption is used as the time unit, so flame graph widths represent gas usage.
 
 use super::schema::{TraceEvent, TraceFile};
 use crate::decoder::precompiles::is_known_precompile;
@@ -43,13 +43,6 @@ impl FrameCategory {
     }
 }
 
-/// An open frame being tracked.
-struct OpenFrame {
-    name: String,
-    category: FrameCategory,
-    start_gas: u64,
-}
-
 /// Builder for Chrome trace profiles from EVM traces.
 pub struct ChromeTraceBuilder<'a> {
     file: TraceFile<'a>,
@@ -57,36 +50,18 @@ pub struct ChromeTraceBuilder<'a> {
     /// Address of the main test contract.
     test_address: Option<Address>,
 
-    /// Current cumulative gas (used as timestamp).
+    /// Current cumulative gas (used as timestamp for event ordering).
     cumulative_gas: u64,
-
-    /// Stack of open frames.
-    open_frames: Vec<OpenFrame>,
 }
 
 impl<'a> ChromeTraceBuilder<'a> {
     /// Creates a new builder for the given test.
     pub fn new(_test_name: &str, _contract_name: &str) -> Self {
-        Self {
-            file: TraceFile::new(),
-            test_address: None,
-            cumulative_gas: 0,
-            open_frames: Vec::new(),
-        }
+        Self { file: TraceFile::new(), test_address: None, cumulative_gas: 0 }
     }
 
     /// Builds the final Chrome trace file.
-    pub fn finish(mut self) -> TraceFile<'a> {
-        // Close any remaining open frames at the final timestamp.
-        while let Some(frame) = self.open_frames.pop() {
-            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
-            self.file.add_event(TraceEvent::complete(
-                frame.name,
-                frame.category.as_str(),
-                frame.start_gas,
-                dur,
-            ));
-        }
+    pub fn finish(self) -> TraceFile<'a> {
         self.file
     }
 
@@ -148,19 +123,15 @@ impl<'a> ChromeTraceBuilder<'a> {
             }
         };
 
-        // Push this frame onto the stack.
-        self.open_frames.push(OpenFrame {
-            name: func_name,
-            category,
-            start_gas: self.cumulative_gas,
-        });
+        let start_gas = self.cumulative_gas;
 
         // Track internal function step exits.
-        let mut step_exits: Vec<(usize, OpenFrame)> = Vec::new();
+        let mut step_exits: Vec<(usize, String, FrameCategory, u64, u64)> = Vec::new();
+        // (end_step_idx, name, category, start_gas, gas_used)
 
         // Process children in order.
         let ordering = &node.ordering;
-        for (i, order) in ordering.iter().enumerate() {
+        for order in ordering {
             match order {
                 TraceMemberOrder::Call(child_idx) => {
                     let child_node_idx = node.children[*child_idx];
@@ -168,12 +139,7 @@ impl<'a> ChromeTraceBuilder<'a> {
                 }
                 TraceMemberOrder::Step(step_idx) => {
                     self.exit_previous_steps(&mut step_exits, *step_idx);
-
-                    // Check if next item is a Call.
-                    let next_is_call =
-                        matches!(ordering.get(i + 1), Some(TraceMemberOrder::Call(_)));
-
-                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits, next_is_call);
+                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits);
                 }
                 TraceMemberOrder::Log(log_idx) => {
                     // Emit log as instant event.
@@ -195,26 +161,18 @@ impl<'a> ChromeTraceBuilder<'a> {
         }
 
         // Exit pending internal function calls.
-        for (_, frame) in step_exits.drain(..).rev() {
-            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
-            self.file.add_event(TraceEvent::complete(
-                frame.name,
-                frame.category.as_str(),
-                frame.start_gas,
-                dur,
-            ));
+        for (_, name, cat, ts, dur) in step_exits.drain(..).rev() {
+            self.file.add_event(TraceEvent::complete(name, cat.as_str(), ts, dur));
         }
 
-        // Close this call frame.
-        if let Some(frame) = self.open_frames.pop() {
-            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
-            self.file.add_event(TraceEvent::complete(
-                frame.name,
-                frame.category.as_str(),
-                frame.start_gas,
-                dur,
-            ));
-        }
+        // Advance gas by this call's gas_used and emit the complete event.
+        self.cumulative_gas += node.trace.gas_used;
+        self.file.add_event(TraceEvent::complete(
+            func_name,
+            category.as_str(),
+            start_gas,
+            node.trace.gas_used,
+        ));
     }
 
     /// Processes a single step, handling internal function calls.
@@ -222,8 +180,7 @@ impl<'a> ChromeTraceBuilder<'a> {
         &mut self,
         steps: &[CallTraceStep],
         step_idx: usize,
-        step_exits: &mut Vec<(usize, OpenFrame)>,
-        is_call_opcode: bool,
+        step_exits: &mut Vec<(usize, String, FrameCategory, u64, u64)>,
     ) {
         let step = &steps[step_idx];
 
@@ -232,32 +189,34 @@ impl<'a> ChromeTraceBuilder<'a> {
             && let DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) =
                 decoded_step.as_ref()
         {
+            // Calculate gas used by this internal call.
+            let gas_used = steps[*step_end_idx].gas_used.saturating_sub(step.gas_used);
+
+            let start_gas = self.cumulative_gas;
             step_exits.push((
                 *step_end_idx,
-                OpenFrame {
-                    name: decoded_internal_call.func_name.clone(),
-                    category: FrameCategory::Internal,
-                    start_gas: self.cumulative_gas,
-                },
+                decoded_internal_call.func_name.clone(),
+                FrameCategory::Internal,
+                start_gas,
+                gas_used,
             ));
-        }
 
-        // Advance cumulative gas for this step, unless it's a CALL opcode.
-        if !is_call_opcode {
-            self.cumulative_gas = self.cumulative_gas.saturating_add(step.gas_cost);
+            // Advance cumulative gas by the internal call's gas.
+            self.cumulative_gas += gas_used;
         }
     }
 
     /// Exit all previous internal calls that should end before step_idx.
-    fn exit_previous_steps(&mut self, step_exits: &mut Vec<(usize, OpenFrame)>, step_idx: usize) {
+    fn exit_previous_steps(
+        &mut self,
+        step_exits: &mut Vec<(usize, String, FrameCategory, u64, u64)>,
+        step_idx: usize,
+    ) {
+        // Collect frames to close (in reverse order for proper nesting).
         let mut to_close = Vec::new();
-        step_exits.retain(|(end_idx, frame)| {
+        step_exits.retain(|(end_idx, name, cat, ts, dur)| {
             if *end_idx <= step_idx {
-                to_close.push(OpenFrame {
-                    name: frame.name.clone(),
-                    category: frame.category,
-                    start_gas: frame.start_gas,
-                });
+                to_close.push((name.clone(), *cat, *ts, *dur));
                 false
             } else {
                 true
@@ -265,14 +224,8 @@ impl<'a> ChromeTraceBuilder<'a> {
         });
 
         // Close frames in reverse order (LIFO).
-        for frame in to_close.into_iter().rev() {
-            let dur = self.cumulative_gas.saturating_sub(frame.start_gas);
-            self.file.add_event(TraceEvent::complete(
-                frame.name,
-                frame.category.as_str(),
-                frame.start_gas,
-                dur,
-            ));
+        for (name, cat, ts, dur) in to_close.into_iter().rev() {
+            self.file.add_event(TraceEvent::complete(name, cat.as_str(), ts, dur));
         }
     }
 }

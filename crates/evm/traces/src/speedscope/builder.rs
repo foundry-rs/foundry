@@ -1,8 +1,7 @@
 //! Speedscope profile generation for EVM execution traces.
 //!
 //! This module converts EVM call traces into the speedscope evented profile format.
-//! Gas is used directly as the value unit (unit: "none"), so flame graph widths
-//! represent gas consumption and the timeline shows gas usage over execution.
+//! Gas consumption is used as the value unit, so flame graph widths represent gas usage.
 
 use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
 use crate::decoder::precompiles::is_known_precompile;
@@ -58,11 +57,8 @@ pub struct SpeedscopeProfileBuilder<'a> {
     /// Cache of frame names to frame indices.
     frame_cache: HashMap<String, usize>,
 
-    /// Current cumulative gas (used as timestamp).
+    /// Current cumulative gas (used as timestamp for event ordering).
     cumulative_gas: u64,
-
-    /// Stack of (frame_index, open_gas) for tracking closes.
-    open_frames: Vec<(usize, u64)>,
 }
 
 impl<'a> SpeedscopeProfileBuilder<'a> {
@@ -78,17 +74,11 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
             test_address: None,
             frame_cache: HashMap::new(),
             cumulative_gas: 0,
-            open_frames: Vec::new(),
         }
     }
 
     /// Builds the final speedscope file.
     pub fn finish(mut self) -> SpeedscopeFile<'a> {
-        // Close any remaining open frames at the final timestamp.
-        while let Some((frame_idx, _)) = self.open_frames.pop() {
-            self.profile.close_frame(frame_idx, self.cumulative_gas);
-        }
-
         self.profile.set_end_value(self.cumulative_gas);
         self.file.add_profile(Profile::Evented(self.profile));
         self.file
@@ -164,18 +154,15 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
 
         // Open this function frame.
         let frame_idx = self.get_or_create_frame(&func_name, category);
-        self.profile.open_frame(frame_idx, self.cumulative_gas);
-        self.open_frames.push((frame_idx, self.cumulative_gas));
+        let open_gas = self.cumulative_gas;
+        self.profile.open_frame(frame_idx, open_gas);
 
         // Track internal function step exits.
-        let mut step_exits: Vec<(usize, usize)> = Vec::new(); // (end_step_idx, frame_idx)
+        let mut step_exits: Vec<(usize, usize, u64)> = Vec::new(); // (end_step_idx, frame_idx, open_gas)
 
         // Process children in order.
-        // We need to look ahead to see if a Step is followed by a Call - if so, the step is a
-        // CALL opcode whose gas_cost includes the subcall's gas, which we'll account for
-        // separately.
         let ordering = &node.ordering;
-        for (i, order) in ordering.iter().enumerate() {
+        for order in ordering {
             match order {
                 TraceMemberOrder::Call(child_idx) => {
                     let child_node_idx = node.children[*child_idx];
@@ -183,41 +170,28 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
                 }
                 TraceMemberOrder::Step(step_idx) => {
                     self.exit_previous_steps(&mut step_exits, *step_idx);
-
-                    // Check if next item is a Call - if so, this step is a CALL opcode
-                    // and its gas_cost includes the subcall's gas.
-                    let next_is_call =
-                        matches!(ordering.get(i + 1), Some(TraceMemberOrder::Call(_)));
-
-                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits, next_is_call);
+                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits);
                 }
                 TraceMemberOrder::Log(_) => {}
             }
         }
 
         // Exit pending internal function calls.
-        for (_, frame_idx) in step_exits.drain(..).rev() {
+        for (_, frame_idx, _) in step_exits.drain(..).rev() {
             self.profile.close_frame(frame_idx, self.cumulative_gas);
         }
 
-        // Close this call frame.
-        if let Some((frame_idx, _)) = self.open_frames.pop() {
-            self.profile.close_frame(frame_idx, self.cumulative_gas);
-        }
+        // Advance gas by this call's gas_used and close the frame.
+        self.cumulative_gas += node.trace.gas_used;
+        self.profile.close_frame(frame_idx, self.cumulative_gas);
     }
 
     /// Processes a single step, handling internal function calls.
-    ///
-    /// `is_call_opcode` indicates this step is followed by a Call in the ordering,
-    /// meaning it's a CALL/DELEGATECALL/etc opcode whose gas_cost includes the
-    /// subcall's gas consumption. We skip adding that gas since the subcall will
-    /// account for it.
     fn process_step(
         &mut self,
         steps: &[CallTraceStep],
         step_idx: usize,
-        step_exits: &mut Vec<(usize, usize)>, // (end_step_idx, frame_idx)
-        is_call_opcode: bool,
+        step_exits: &mut Vec<(usize, usize, u64)>, // (end_step_idx, frame_idx, open_gas)
     ) {
         let step = &steps[step_idx];
 
@@ -226,26 +200,29 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
             && let DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) =
                 decoded_step.as_ref()
         {
-            // func_name is already in format "Contract::function" from the debug trace identifier.
+            // Calculate gas used by this internal call.
+            let gas_used = steps[*step_end_idx].gas_used.saturating_sub(step.gas_used);
+
             let frame_idx =
                 self.get_or_create_frame(&decoded_internal_call.func_name, FrameCategory::Internal);
-            self.profile.open_frame(frame_idx, self.cumulative_gas);
-            step_exits.push((*step_end_idx, frame_idx));
-        }
+            let open_gas = self.cumulative_gas;
+            self.profile.open_frame(frame_idx, open_gas);
+            step_exits.push((*step_end_idx, frame_idx, open_gas));
 
-        // Advance cumulative gas for this step, unless it's a CALL opcode.
-        // CALL opcodes have gas_cost that includes the subcall's gas, which we
-        // account for separately when processing the child call node.
-        if !is_call_opcode {
-            self.cumulative_gas = self.cumulative_gas.saturating_add(step.gas_cost);
+            // Advance cumulative gas by the internal call's gas.
+            self.cumulative_gas += gas_used;
         }
     }
 
     /// Exit all previous internal calls that should end before step_idx.
-    fn exit_previous_steps(&mut self, step_exits: &mut Vec<(usize, usize)>, step_idx: usize) {
+    fn exit_previous_steps(
+        &mut self,
+        step_exits: &mut Vec<(usize, usize, u64)>,
+        step_idx: usize,
+    ) {
         // Collect frames to close (in reverse order for proper nesting).
         let mut to_close = Vec::new();
-        step_exits.retain(|&(end_idx, frame_idx)| {
+        step_exits.retain(|&(end_idx, frame_idx, _)| {
             if end_idx <= step_idx {
                 to_close.push(frame_idx);
                 false
