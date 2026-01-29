@@ -62,6 +62,12 @@ pub struct ChromeTraceBuilder<'a> {
 
     /// Stack of open frames.
     open_frames: Vec<OpenFrame>,
+
+    /// Whether to emit counter events for gas tracking.
+    emit_gas_counter: bool,
+
+    /// Last gas value emitted (to avoid duplicate counter events).
+    last_counter_gas: u64,
 }
 
 impl<'a> ChromeTraceBuilder<'a> {
@@ -72,6 +78,16 @@ impl<'a> ChromeTraceBuilder<'a> {
             test_address: None,
             cumulative_gas: 0,
             open_frames: Vec::new(),
+            emit_gas_counter: true,
+            last_counter_gas: 0,
+        }
+    }
+
+    /// Emits a counter event for current gas if changed.
+    fn emit_gas_counter(&mut self) {
+        if self.emit_gas_counter && self.cumulative_gas != self.last_counter_gas {
+            self.file.add_event(TraceEvent::counter("Gas", self.cumulative_gas, self.cumulative_gas));
+            self.last_counter_gas = self.cumulative_gas;
         }
     }
 
@@ -245,6 +261,7 @@ impl<'a> ChromeTraceBuilder<'a> {
         // Advance cumulative gas for this step, unless it's a CALL opcode.
         if !is_call_opcode {
             self.cumulative_gas = self.cumulative_gas.saturating_add(step.gas_cost);
+            self.emit_gas_counter();
         }
     }
 

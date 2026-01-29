@@ -8,6 +8,7 @@
 //! - Chrome's built-in trace viewer (`chrome://tracing`)
 
 use serde::{Deserialize, Serialize};
+
 use std::{borrow::Cow, collections::BTreeMap};
 
 /// Root container for a Chrome trace file.
