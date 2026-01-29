@@ -4,10 +4,8 @@
 //! Gas is used directly as the value unit (unit: "none"), so flame graph widths
 //! represent gas consumption and the timeline shows gas usage over execution.
 
-use crate::{
-    decoder::precompiles::is_known_precompile,
-    speedscope::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit},
-};
+use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
+use crate::decoder::precompiles::is_known_precompile;
 use alloy_primitives::{Address, hex::ToHexExt};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use revm_inspectors::tracing::{

@@ -53,7 +53,6 @@ pub use debug::DebugTraceIdentifier;
 pub mod folded_stack_trace;
 
 pub mod speedscope;
-pub mod speedscope_profile;
 
 pub mod backtrace;
 

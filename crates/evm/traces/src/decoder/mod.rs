@@ -27,7 +27,7 @@ use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 
-pub mod precompiles;
+pub(crate) mod precompiles;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]

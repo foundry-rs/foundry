@@ -10,7 +10,7 @@ use crate::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
-        speedscope_profile,
+        speedscope,
     },
 };
 use alloy_primitives::U256;
@@ -423,7 +423,7 @@ impl TestArgs {
             let contract = suite_name.split(':').next_back().unwrap();
             let test_name_trimmed = test_name.trim_end_matches("()");
             let total_gas = arena.nodes().first().map(|n| n.trace.gas_used).unwrap_or(0);
-            let profile = speedscope_profile::build(arena, test_name_trimmed, contract);
+            let profile = speedscope::builder::build(arena, test_name_trimmed, contract);
 
             // Serialize profile to JSON.
             let profile_json = serde_json::to_vec(&profile)?;
