@@ -429,7 +429,7 @@ impl TestArgs {
             let profile_json = serde_json::to_vec(&profile)?;
 
             // Write profile to file.
-            let profile_path = format!("{contract}.{test_name_trimmed}.speedscope.json");
+            let profile_path = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
             fs::write(&profile_path, &profile_json)?;
 
             sh_println!("Total gas used: {total_gas}")?;
