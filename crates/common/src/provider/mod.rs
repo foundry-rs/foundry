@@ -17,6 +17,7 @@ use alloy_provider::{
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{layers::RetryBackoffLayer, utils::guess_local_url};
 use eyre::{Result, WrapErr};
+use foundry_config::Config;
 use reqwest::Url;
 use std::{
     marker::PhantomData,
@@ -152,6 +153,34 @@ impl<N: Network> ProviderBuilder<N> {
             curl_mode: false,
             _network: PhantomData,
         }
+    }
+
+    /// Constructs a [ProviderBuilder] instantiated using [Config] values.
+    ///
+    /// Defaults to `http://localhost:8545` and `Mainnet`.
+    pub fn from_config(config: &Config) -> Result<Self> {
+        let url = config.get_rpc_url_or_localhost_http()?;
+        let mut builder = Self::new(url.as_ref());
+
+        builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
+
+        if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
+            builder = builder.chain(chain);
+        }
+
+        if let Some(jwt) = config.get_rpc_jwt_secret()? {
+            builder = builder.jwt(jwt.as_ref());
+        }
+
+        if let Some(rpc_timeout) = config.eth_rpc_timeout {
+            builder = builder.timeout(Duration::from_secs(rpc_timeout));
+        }
+
+        if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
+            builder = builder.headers(rpc_headers);
+        }
+
+        Ok(builder)
     }
 
     /// Enables a request timeout.
