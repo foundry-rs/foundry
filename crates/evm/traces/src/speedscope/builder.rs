@@ -144,18 +144,24 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
                 .selector()
                 .map(|selector| selector.encode_hex_with_prefix())
                 .unwrap_or_else(|| "fallback".to_string());
-            let signature = node
+            // Extract just the function name from the signature (before the '(').
+            let func_name = node
                 .trace
                 .decoded
                 .as_ref()
                 .and_then(|dc| dc.call_data.as_ref())
-                .map(|dc| &dc.signature)
+                .map(|dc| {
+                    dc.signature
+                        .split_once('(')
+                        .map(|(name, _)| name)
+                        .unwrap_or(&dc.signature)
+                })
                 .unwrap_or(&selector);
 
             if let Some(label) = &contract_label {
-                format!("{label}::{signature}")
+                format!("{label}::{func_name}()")
             } else {
-                signature.clone()
+                format!("{func_name}()")
             }
         };
 
