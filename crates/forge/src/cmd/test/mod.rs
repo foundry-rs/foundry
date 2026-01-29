@@ -458,7 +458,6 @@ impl TestArgs {
             let profile_path = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
             fs::write(&profile_path, &profile_json)?;
 
-            sh_println!("Total gas used: {total_gas}")?;
             sh_println!("Profile saved to {profile_path}")?;
 
             // Serve the profile via local HTTP server and open in browser.
