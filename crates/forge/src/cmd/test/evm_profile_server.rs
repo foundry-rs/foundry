@@ -2,7 +2,7 @@
 //!
 //! Supports multiple profile formats:
 //! - Speedscope (speedscope.app): Uses `#profileURL=` hash parameter
-//! - Chrome/Perfetto (ui.perfetto.dev): Uses `url=` query parameter
+//! - Chrome/Perfetto (ui.perfetto.dev): Uses `url=` query parameter (requires port 9001)
 //!
 //! This module implements a temporary local HTTP server that:
 //! 1. Serves the profile JSON at `/{token}/profile.json`
@@ -47,7 +47,14 @@ pub async fn serve_and_open(
         )
         .with_state(state);
 
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    // Perfetto requires port 9001 due to Content Security Policy.
+    // Speedscope works with any port.
+    let bind_addr = match format {
+        EvmProfileFormat::Chrome => "127.0.0.1:9001",
+        EvmProfileFormat::Speedscope => "127.0.0.1:0",
+    };
+
+    let listener = TcpListener::bind(bind_addr).await?;
     let port = listener.local_addr()?.port();
 
     let profile_url = format!("http://127.0.0.1:{port}/{token}/profile.json");
@@ -72,11 +79,10 @@ pub async fn serve_and_open(
     };
 
     sh_println!("Profile server running at http://127.0.0.1:{port}")?;
-    sh_println!("Opening {viewer_name} for {title}...")?;
+    sh_println!("Opening {viewer_name}: {viewer_url}")?;
 
     if let Err(e) = opener::open(&viewer_url) {
         sh_err!("Failed to open browser: {e}")?;
-        sh_println!("Please open this URL manually:\n{viewer_url}")?;
     }
 
     sh_println!("\nPress Ctrl+C to stop the server.")?;
