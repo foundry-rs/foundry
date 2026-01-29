@@ -63,9 +63,6 @@ pub struct SpeedscopeProfileBuilder<'a> {
     /// Current cumulative gas (used as timestamp).
     cumulative_gas: u64,
 
-    /// Current contract label (for prefixing internal function names).
-    current_contract_label: Option<String>,
-
     /// Stack of (frame_index, open_gas) for tracking closes.
     open_frames: Vec<(usize, u64)>,
 }
@@ -83,7 +80,6 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
             test_address: None,
             frame_cache: HashMap::new(),
             cumulative_gas: 0,
-            current_contract_label: None,
             open_frames: Vec::new(),
         }
     }
@@ -143,12 +139,6 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
         // Extract contract label from decoded trace.
         let contract_label = node.trace.decoded.as_ref().and_then(|dc| dc.label.clone());
 
-        // Save previous context to restore after processing this call.
-        let prev_contract_label = self.current_contract_label.take();
-
-        // Set current context for internal function name resolution.
-        self.current_contract_label = contract_label.clone();
-
         // Build the function name for this call.
         let func_name = if node.trace.kind.is_any_create() {
             let contract_name = contract_label.as_deref().unwrap_or("Contract");
@@ -182,7 +172,11 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
         let mut step_exits: Vec<(usize, usize)> = Vec::new(); // (end_step_idx, frame_idx)
 
         // Process children in order.
-        for order in &node.ordering {
+        // We need to look ahead to see if a Step is followed by a Call - if so, the step is a
+        // CALL opcode whose gas_cost includes the subcall's gas, which we'll account for
+        // separately.
+        let ordering = &node.ordering;
+        for (i, order) in ordering.iter().enumerate() {
             match order {
                 TraceMemberOrder::Call(child_idx) => {
                     let child_node_idx = node.children[*child_idx];
@@ -190,7 +184,13 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
                 }
                 TraceMemberOrder::Step(step_idx) => {
                     self.exit_previous_steps(&mut step_exits, *step_idx);
-                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits);
+
+                    // Check if next item is a Call - if so, this step is a CALL opcode
+                    // and its gas_cost includes the subcall's gas.
+                    let next_is_call =
+                        matches!(ordering.get(i + 1), Some(TraceMemberOrder::Call(_)));
+
+                    self.process_step(&node.trace.steps, *step_idx, &mut step_exits, next_is_call);
                 }
                 TraceMemberOrder::Log(_) => {}
             }
@@ -205,17 +205,20 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
         if let Some((frame_idx, _)) = self.open_frames.pop() {
             self.profile.close_frame(frame_idx, self.cumulative_gas);
         }
-
-        // Restore previous context.
-        self.current_contract_label = prev_contract_label;
     }
 
     /// Processes a single step, handling internal function calls.
+    ///
+    /// `is_call_opcode` indicates this step is followed by a Call in the ordering,
+    /// meaning it's a CALL/DELEGATECALL/etc opcode whose gas_cost includes the
+    /// subcall's gas consumption. We skip adding that gas since the subcall will
+    /// account for it.
     fn process_step(
         &mut self,
         steps: &[CallTraceStep],
         step_idx: usize,
         step_exits: &mut Vec<(usize, usize)>, // (end_step_idx, frame_idx)
+        is_call_opcode: bool,
     ) {
         let step = &steps[step_idx];
 
@@ -224,20 +227,19 @@ impl<'a> SpeedscopeProfileBuilder<'a> {
             && let DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) =
                 decoded_step.as_ref()
         {
-            // Prefix with contract name if available.
-            let func_name = if let Some(label) = &self.current_contract_label {
-                format!("{label}::{}", decoded_internal_call.func_name)
-            } else {
-                decoded_internal_call.func_name.clone()
-            };
-
-            let frame_idx = self.get_or_create_frame(&func_name, FrameCategory::Internal);
+            // func_name is already in format "Contract::function" from the debug trace identifier.
+            let frame_idx =
+                self.get_or_create_frame(&decoded_internal_call.func_name, FrameCategory::Internal);
             self.profile.open_frame(frame_idx, self.cumulative_gas);
             step_exits.push((*step_end_idx, frame_idx));
         }
 
-        // Advance cumulative gas for this step.
-        self.cumulative_gas = self.cumulative_gas.saturating_add(step.gas_cost);
+        // Advance cumulative gas for this step, unless it's a CALL opcode.
+        // CALL opcodes have gas_cost that includes the subcall's gas, which we
+        // account for separately when processing the child call node.
+        if !is_call_opcode {
+            self.cumulative_gas = self.cumulative_gas.saturating_add(step.gas_cost);
+        }
     }
 
     /// Exit all previous internal calls that should end before step_idx.
