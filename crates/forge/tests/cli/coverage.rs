@@ -2244,6 +2244,90 @@ contract CounterTest is DSTest {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/11548>
+// Test BRDA hit values follow LCOV spec: "-" when line never executed, "0" when line hit but
+// branch not taken. This ensures `genhtml` consistency.
+forgetest!(brda_lcov_consistency, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setPositive(uint256 newNumber) public {
+        if (newNumber > 0) {
+            number = newNumber;
+        } else {
+            number = 1;
+        }
+    }
+
+    function neverCalled(uint256 x) public {
+        if (x > 100) {
+            number = x;
+        } else {
+            number = 100;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_only_positive_branch() public {
+        Counter counter = new Counter();
+        counter.setPositive(42);
+        counter.setPositive(100);
+    }
+}
+    "#,
+    );
+
+    // Verify BRDA values:
+    // - BRDA:8,0,0,2 - if branch taken 2 times
+    // - BRDA:8,0,1,0 - else branch NOT taken but line was hit (outputs "0", not "-")
+    // - BRDA:16,1,0,- - if branch NOT taken AND line never executed (outputs "-")
+    // - BRDA:16,1,1,- - else branch NOT taken AND line never executed (outputs "-")
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,2
+FN:7,Counter.setPositive
+FNDA:2,Counter.setPositive
+DA:8,2
+BRDA:8,0,0,2
+BRDA:8,0,1,0
+DA:9,2
+DA:11,0
+DA:15,0
+FN:15,Counter.neverCalled
+FNDA:0,Counter.neverCalled
+DA:16,0
+BRDA:16,1,0,-
+BRDA:16,1,1,-
+DA:17,0
+DA:19,0
+FNF:2
+FNH:1
+LF:8
+LH:3
+BRF:4
+BRH:1
+end_of_record
+
+"#]],
+    );
+});
+
 // Test that coverage files are written even when tests fail.
 forgetest!(coverage_with_failing_tests, |prj, cmd| {
     prj.insert_ds_test();

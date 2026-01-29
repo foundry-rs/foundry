@@ -66,7 +66,7 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@03ef6f57d573ca4522fb02950f326083373b85bf # v2
+      - uses: taiki-e/install-action@710817a1645ef40daad5bcde7431ceccf6cc3528 # v2
         with:
           tool: nextest
 
@@ -78,7 +78,7 @@ jobs:
           node-version: 24
       - name: Install Bun
         if: contains(matrix.name, 'external')
-        uses: oven-sh/setup-bun@b7a1c7ccf290d58743029c4f6903da283811b979 # v2
+        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2
         with:
           bun-version: latest
       - name: Setup Python

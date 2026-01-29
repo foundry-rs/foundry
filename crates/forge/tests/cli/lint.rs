@@ -1,5 +1,5 @@
 use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
-use foundry_config::{DenyLevel, LintSeverity, LinterConfig};
+use foundry_config::{DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode};
 
 mod geiger;
 
@@ -128,12 +128,12 @@ forgetest!(can_use_config, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-  [FILE]:16:9
-   |
-16 |         (1 / 2) * 3;
-   |         ^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   [FILE]:16:9
+   │
+16 │         (1 / 2) * 3;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
 
 "#]]);
@@ -155,12 +155,12 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
- [FILE]:9:14
-  |
-9 |     function functionMIXEDCaseInfo() public {}
-  |              ^^^^^^^^^^^^^^^^^^^^^ help: consider using: `functionMixedCaseInfo`
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+  [FILE]:9:14
+  │
+9 │     function functionMIXEDCaseInfo() public {}
+  │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -211,12 +211,12 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
- [FILE]:9:14
-  |
-9 |     function functionMIXEDCaseInfo() public {}
-  |              ^^^^^^^^^^^^^^^^^^^^^ help: consider using: `functionMixedCaseInfo`
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+  [FILE]:9:14
+  │
+9 │     function functionMIXEDCaseInfo() public {}
+  │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -238,12 +238,12 @@ forgetest!(can_override_config_path, |prj, cmd| {
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-  [FILE]:16:9
-   |
-16 |         (1 / 2) * 3;
-   |         ^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   [FILE]:16:9
+   │
+16 │         (1 / 2) * 3;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
 
 "#]]);
@@ -266,12 +266,12 @@ forgetest!(can_override_config_lint, |prj, cmd| {
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
         r#"
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
-  [FILE]:13:26
-   |
-13 |         uint256 result = 8 >> localValue;
-   |                          ^^^^^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   [FILE]:13:26
+   │
+13 │         uint256 result = 8 >> localValue;
+   │                          ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
 
 "#
@@ -295,12 +295,12 @@ forgetest!(build_runs_linter_by_default, |prj, cmd| {
     // Run forge build and expect linting output before compilation
     cmd.arg("build").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-  [FILE]:16:9
-   |
-16 |         (1 / 2) * 3;
-   |         ^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   [FILE]:16:9
+   │
+16 │         (1 / 2) * 3;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
 
 "#]]).stdout_eq(str![[r#"
@@ -456,12 +456,12 @@ forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
 note[unused-import]: unused imports should be removed
- [FILE]:8:10
-  |
-8 | import { _PascalCaseInfo } from "./ContractWithLints.sol";
-  |          ^^^^^^^^^^^^^^^
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+  [FILE]:8:10
+  │
+8 │ import { _PascalCaseInfo } from "./ContractWithLints.sol";
+  │          ━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
 
 
 "#]]);
@@ -488,12 +488,12 @@ note[mixed-case-variable]: mutable variables should use mixedCase
     let args = ["build", "src/CounterBWithLints.sol"];
     cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:20
-  |
-6 |     uint256 public CounterB_Fail_Lint;
-  |                    ^^^^^^^^^^^^^^^^^^ help: consider using: `counterBFailLint`
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  [FILE]:6:20
+  │
+6 │     uint256 public CounterB_Fail_Lint;
+  │                    ━━━━━━━━━━━━━━━━━━ help: consider using: `counterBFailLint`
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
 "#]]);
@@ -654,7 +654,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
         "rendered": null
     }
     ],
-    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\n  --> src/UnwrappedModifierTest.sol:8:13\n   |\n 8 | /             modifier onlyOwner() {\n 9 | |                 require(isOwner[msg.sender], \"Not owner\");\n10 | |                 require(msg.sender != address(0), \"Zero address\");\n11 | |                 _;\n12 | |             }\n   | |_____________^\n   |\nhelp: wrap modifier logic to reduce code size\n   |\n 8 ~             modifier onlyOwner() {\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   |\n   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n"
+    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
 );
@@ -786,6 +786,51 @@ fn ensure_no_privileged_lint_id() {
         assert_ne!(lint.id(), "all", "lint-id 'all' is reserved. Please use a different id");
     }
 }
+
+// <https://github.com/foundry-rs/foundry/issues/13107>
+forgetest!(dependency_warnings_do_not_affect_lint_exit_code, |prj, cmd| {
+    // Library with code that triggers a solc warning (unused local variable)
+    const LIB_WITH_WARNING: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library LibWithWarning {
+    function foo() internal pure returns (uint256) {
+        uint256 unusedVar = 42;
+        return 1;
+    }
+}
+"#;
+
+    // Clean contract that imports the library but has no lint issues
+    const CLEAN_CONTRACT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import { LibWithWarning } from "../lib/LibWithWarning.sol";
+
+contract CleanContract {
+    function bar() public pure returns (uint256) {
+        return LibWithWarning.foo();
+    }
+}
+"#;
+
+    prj.add_lib("LibWithWarning", LIB_WITH_WARNING);
+    prj.add_source("CleanContract", CLEAN_CONTRACT);
+
+    // Ignore the solc warning so compilation succeeds, but it still gets counted in diagnostics
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![SolidityErrorCode::UnusedLocalVariable];
+    });
+
+    // Clear cache to force recompilation during lint
+    prj.clear_cache();
+
+    // Lint with deny = notes via CLI flag.
+    // Should succeed because the linter only counts lint diagnostics, not build-phase warnings.
+    cmd.args(["lint", "-D", "notes"]).assert_success();
+});
 
 forgetest!(skips_linting_for_old_solidity_versions, |prj, cmd| {
     const OLD_CONTRACT: &str = r#"
