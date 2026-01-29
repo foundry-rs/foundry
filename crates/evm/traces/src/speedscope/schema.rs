@@ -6,9 +6,6 @@
 //! The format supports two profile types:
 //! - **Evented**: Open/close frame events with timestamps (like function calls)
 //! - **Sampled**: Periodic stack samples with weights
-//!
-//! For EVM traces, we use the evented format where each function call/return
-//! is an event, and gas consumption is encoded as time.
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

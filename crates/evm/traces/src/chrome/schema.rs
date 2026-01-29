@@ -6,9 +6,6 @@
 //! The format is supported by:
 //! - [Perfetto](https://ui.perfetto.dev)
 //! - Chrome's built-in trace viewer (`chrome://tracing`)
-//!
-//! For EVM traces, we use complete events (`ph: "X"`) where gas consumption
-//! is encoded as the duration.
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -22,8 +19,7 @@ pub struct TraceFile<'a> {
     /// List of trace events.
     pub trace_events: Vec<TraceEvent<'a>>,
 
-    /// Display time unit. We use "ns" to minimize unit display in the UI,
-    /// but the values are actually gas units.
+    /// Display time unit (e.g., "ns", "ms").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_time_unit: Option<&'static str>,
 }
@@ -61,10 +57,10 @@ pub struct TraceEvent<'a> {
     /// Event phase type.
     pub ph: Phase,
 
-    /// Timestamp (start of event). For EVM traces, this is cumulative gas at entry.
+    /// Timestamp (start of event).
     pub ts: u64,
 
-    /// Duration (for complete events). For EVM traces, this is gas consumed.
+    /// Duration (for complete events).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dur: Option<u64>,
 
