@@ -19,9 +19,7 @@ contract RpcUrlTest is Test {
     // can set env and return correct url
     function testCanSetAndGetURLAndAllUrls() public {
         // this will fail because alias is not set
-        vm._expectCheatcodeRevert(
-            "environment variable `RPC_ENV_ALIAS` not found"
-        );
+        vm._expectCheatcodeRevert("environment variable `RPC_ENV_ALIAS` not found");
         string[2][] memory _urls = vm.rpcUrls();
 
         string memory url = vm.rpcUrl("mainnet");
