@@ -17,47 +17,7 @@ pub fn build<'a>(
     contract_name: &str,
 ) -> SpeedscopeFile<'a> {
     let entries = folded_stack_trace::build_entries(arena);
-    // Reorder so children come before parent's self-time (time-ordered: self-time on the right).
-    let entries = reorder_children_first(entries);
     entries_to_speedscope(&entries, test_name, contract_name)
-}
-
-/// Reorders entries so each parent's self-time comes after all its children.
-///
-/// Original order: [parent, child_a, child_b]
-/// Reordered:      [child_a, child_b, parent]
-fn reorder_children_first(entries: Vec<TraceEntry>) -> Vec<TraceEntry> {
-    if entries.is_empty() {
-        return entries;
-    }
-
-    let mut result = Vec::with_capacity(entries.len());
-    let mut pending_parents: Vec<TraceEntry> = Vec::new();
-
-    for entry in entries {
-        let depth = entry.names.len();
-
-        // Close out any pending parents that are at same or greater depth.
-        // They have no more children, so emit them now.
-        while let Some(parent) = pending_parents.last() {
-            if parent.names.len() >= depth {
-                result.push(pending_parents.pop().unwrap());
-            } else {
-                break;
-            }
-        }
-
-        // Check if this entry has children (next entries with greater depth).
-        // For now, defer it as a pending parent - we'll emit it after its children.
-        pending_parents.push(entry);
-    }
-
-    // Emit remaining pending parents (innermost first).
-    while let Some(parent) = pending_parents.pop() {
-        result.push(parent);
-    }
-
-    result
 }
 
 /// Converts trace entries to speedscope format.
@@ -151,43 +111,5 @@ mod tests {
 
         // Total gas should be 200 + 100 + 150 = 450
         assert!(json.contains("\"endValue\": 450"));
-    }
-
-    #[test]
-    fn test_reorder_children_first() {
-        // Original: parent, child_a, child_b
-        let entries = vec![
-            TraceEntry { names: vec!["top".into()], gas: 200 },
-            TraceEntry { names: vec!["top".into(), "child_a".into()], gas: 100 },
-            TraceEntry { names: vec!["top".into(), "child_b".into()], gas: 150 },
-        ];
-
-        let reordered = reorder_children_first(entries);
-
-        // Reordered: child_a, child_b, parent
-        assert_eq!(reordered.len(), 3);
-        assert_eq!(reordered[0].names, vec!["top", "child_a"]);
-        assert_eq!(reordered[1].names, vec!["top", "child_b"]);
-        assert_eq!(reordered[2].names, vec!["top"]);
-    }
-
-    #[test]
-    fn test_reorder_nested() {
-        // Original: top, child_a, grandchild, child_b
-        let entries = vec![
-            TraceEntry { names: vec!["top".into()], gas: 100 },
-            TraceEntry { names: vec!["top".into(), "child_a".into()], gas: 50 },
-            TraceEntry { names: vec!["top".into(), "child_a".into(), "grandchild".into()], gas: 25 },
-            TraceEntry { names: vec!["top".into(), "child_b".into()], gas: 75 },
-        ];
-
-        let reordered = reorder_children_first(entries);
-
-        // Reordered: grandchild, child_a, child_b, top
-        assert_eq!(reordered.len(), 4);
-        assert_eq!(reordered[0].names, vec!["top", "child_a", "grandchild"]);
-        assert_eq!(reordered[1].names, vec!["top", "child_a"]);
-        assert_eq!(reordered[2].names, vec!["top", "child_b"]);
-        assert_eq!(reordered[3].names, vec!["top"]);
     }
 }
