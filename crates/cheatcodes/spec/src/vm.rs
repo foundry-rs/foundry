@@ -955,6 +955,12 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getRecordedLogsJson() external view returns (string memory logsJson);
 
+    // -------- Coverage --------
+
+    /// Record a hit for coverage.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function coverageHit(uint256 sourceId, uint256 itemId) external;
+
     // -------- Gas Metering --------
 
     // It's recommend to use the `noGasMetering` modifier included with forge-std, instead of

@@ -570,6 +570,50 @@ impl SourceAnalysis {
     pub fn get(&self, item_id: u32) -> Option<&CoverageItem> {
         self.all_items.get(item_id as usize)
     }
+
+    /// Creates a new source analysis from a collection of coverage items.
+    pub fn from_items(all_items: Vec<CoverageItem>) -> Self {
+        let mut items_by_source: HashMap<usize, Vec<CoverageItem>> = HashMap::default();
+        for item in all_items {
+            items_by_source.entry(item.loc.source_id).or_default().push(item);
+        }
+
+        let mut sorted_sources: Vec<_> = items_by_source.into_iter().collect();
+        sorted_sources.sort_by_key(|(id, _)| *id);
+
+        let mut final_items = Vec::new();
+        let mut map = Vec::new();
+
+        for (source_id, mut items) in sorted_sources {
+            // Determine unique lines before adding Line items to avoid shifting IDs.
+            let mut all_lines: Vec<u32> = items.iter().map(|item| item.loc.lines.start).collect();
+            all_lines.sort_unstable();
+            all_lines.dedup();
+
+            let mut lines = Vec::new();
+            for &line in &all_lines {
+                if let Some(reference_item) = items.iter().find(|item| item.loc.lines.start == line)
+                {
+                    lines.push(CoverageItem {
+                        kind: CoverageItemKind::Line,
+                        loc: reference_item.loc.clone(),
+                        hits: 0,
+                    });
+                }
+            }
+
+            // Append lines at the end to ensure they don't interfere with injected IDs.
+            if map.len() <= source_id {
+                map.resize(source_id + 1, (u32::MAX, 0));
+            }
+
+            map[source_id] = (final_items.len() as u32, (items.len() + lines.len()) as u32);
+            final_items.append(&mut items);
+            final_items.append(&mut lines);
+        }
+
+        Self { all_items: final_items, map }
+    }
 }
 
 /// A list of versioned sources and their ASTs.

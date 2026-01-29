@@ -302,6 +302,8 @@ pub struct TestRunnerConfig {
 
     /// Whether to collect line coverage info
     pub line_coverage: bool,
+    /// Whether to collect source coverage info
+    pub source_coverage: bool,
     /// Whether to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -350,6 +352,7 @@ impl TestRunnerConfig {
         }
         inspector.tracing(self.trace_mode());
         inspector.collect_line_coverage(self.line_coverage);
+        inspector.collect_source_coverage(self.source_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.networks(self.networks);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
@@ -380,6 +383,7 @@ impl TestRunnerConfig {
                     .cheatcodes(cheats_config)
                     .trace_mode(self.trace_mode())
                     .line_coverage(self.line_coverage)
+                    .source_coverage(self.source_coverage)
                     .enable_isolation(self.isolation)
                     .networks(self.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
@@ -417,6 +421,8 @@ pub struct MultiContractRunnerBuilder {
     pub config: Arc<Config>,
     /// Whether or not to collect line coverage info
     pub line_coverage: bool,
+    /// Whether or not to collect source coverage info
+    pub source_coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -438,6 +444,7 @@ impl MultiContractRunnerBuilder {
             evm_spec: Default::default(),
             fork: Default::default(),
             line_coverage: Default::default(),
+            source_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
@@ -468,6 +475,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
+        self
+    }
+
+    pub fn set_source_coverage(mut self, enable: bool) -> Self {
+        self.source_coverage = enable;
         self
     }
 
@@ -604,6 +616,7 @@ impl MultiContractRunnerBuilder {
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
+                source_coverage: self.source_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
