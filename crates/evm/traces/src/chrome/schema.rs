@@ -8,7 +8,7 @@
 //! - Chrome's built-in trace viewer (`chrome://tracing`)
 
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::BTreeMap};
 
 /// Root container for a Chrome trace file.
 ///
@@ -64,6 +64,10 @@ pub struct TraceEvent<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dur: Option<u64>,
 
+    /// Event arguments (key-value pairs). Used for counter values and metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<BTreeMap<Cow<'a, str>, serde_json::Value>>,
+
     /// Process ID. We use 1 for all events.
     pub pid: u32,
 
@@ -85,6 +89,7 @@ impl<'a> TraceEvent<'a> {
             ph: Phase::Complete,
             ts,
             dur: Some(dur),
+            args: None,
             pid: 1,
             tid: 1,
         }
@@ -98,6 +103,7 @@ impl<'a> TraceEvent<'a> {
             ph: Phase::Metadata,
             ts: 0,
             dur: None,
+            args: None,
             pid: 1,
             tid: 0,
         }
@@ -111,6 +117,24 @@ impl<'a> TraceEvent<'a> {
             ph: Phase::Instant,
             ts,
             dur: None,
+            args: None,
+            pid: 1,
+            tid: 1,
+        }
+    }
+
+    /// Creates a counter event to record a numeric value at a point in time.
+    pub fn counter(name: impl Into<Cow<'a, str>>, ts: u64, value: u64) -> Self {
+        let name = name.into();
+        let mut args = BTreeMap::new();
+        args.insert(name.clone(), serde_json::Value::Number(value.into()));
+        Self {
+            name,
+            cat: Cow::Borrowed("counter"),
+            ph: Phase::Counter,
+            ts,
+            dur: None,
+            args: Some(args),
             pid: 1,
             tid: 1,
         }
@@ -129,6 +153,10 @@ pub enum Phase {
     /// Instant event (point in time). Used for logs and markers.
     #[serde(rename = "i")]
     Instant,
+
+    /// Counter event. Records numeric values over time.
+    #[serde(rename = "C")]
+    Counter,
 
     /// Metadata event. Used for process/thread naming.
     #[serde(rename = "M")]
@@ -161,5 +189,16 @@ mod tests {
         assert!(json.contains("\"ph\":\"X\""));
         assert!(json.contains("\"ts\":1000"));
         assert!(json.contains("\"dur\":500"));
+    }
+
+    #[test]
+    fn test_counter_event() {
+        let event = TraceEvent::counter("Gas Used", 1000, 21000);
+        let json = serde_json::to_string(&event).unwrap();
+
+        assert!(json.contains("\"name\":\"Gas Used\""));
+        assert!(json.contains("\"ph\":\"C\""));
+        assert!(json.contains("\"ts\":1000"));
+        assert!(json.contains("\"args\":{\"Gas Used\":21000}"));
     }
 }
