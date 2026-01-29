@@ -6,7 +6,7 @@ use crate::{
     multi_runner::matches_artifact,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind, chrome,
+        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
@@ -71,8 +71,6 @@ pub enum EvmProfileFormat {
     /// Speedscope format, opens in speedscope.app.
     #[default]
     Speedscope,
-    /// Chrome Trace Event format, opens in Perfetto (ui.perfetto.dev).
-    Chrome,
 }
 
 /// CLI arguments for `forge test`.
@@ -113,11 +111,7 @@ pub struct TestArgs {
     /// Generate an execution profile for a single test.
     ///
     /// Creates a profile where each EVM call is recorded with gas consumption.
-    /// Opens the profile in a browser-based viewer. Implies `--decode-internal`.
-    ///
-    /// Supported formats:
-    /// - `speedscope` (default): Opens in speedscope.app
-    /// - `chrome`: Opens in Perfetto (ui.perfetto.dev)
+    /// Opens the profile in speedscope.app. Implies `--decode-internal`.
     #[arg(
         long,
         value_name = "FORMAT",
@@ -424,7 +418,7 @@ impl TestArgs {
             }
         }
 
-        if let Some(format) = profile_format {
+        if profile_format.is_some() {
             let (suite_name, test_name, mut test_result) =
                 outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
@@ -438,21 +432,12 @@ impl TestArgs {
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
             decode_trace_arena(arena, decoder).await;
 
-            // Build profile based on selected format.
+            // Build profile.
             let contract = suite_name.split(':').next_back().unwrap();
             let test_name_trimmed = test_name.trim_end_matches("()");
-            let total_gas = arena.nodes().first().map(|n| n.trace.gas_used).unwrap_or(0);
 
-            let profile_json = match format {
-                EvmProfileFormat::Speedscope => {
-                    let profile = speedscope::builder::build(arena, test_name_trimmed, contract);
-                    serde_json::to_vec(&profile)?
-                }
-                EvmProfileFormat::Chrome => {
-                    let profile = chrome::builder::build(arena, test_name_trimmed, contract);
-                    serde_json::to_vec(&profile)?
-                }
-            };
+            let profile = speedscope::builder::build(arena, test_name_trimmed, contract);
+            let profile_json = serde_json::to_vec(&profile)?;
 
             // Write profile to file.
             let profile_path = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
@@ -461,8 +446,7 @@ impl TestArgs {
             sh_println!("Profile saved to {profile_path}")?;
 
             // Serve the profile via local HTTP server and open in browser.
-            evm_profile_server::serve_and_open(profile_json, test_name_trimmed, contract, format)
-                .await?;
+            evm_profile_server::serve_and_open(profile_json, test_name_trimmed, contract).await?;
         }
 
         if should_debug {

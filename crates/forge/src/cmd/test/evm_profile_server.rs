@@ -1,15 +1,9 @@
-//! Local HTTP server for serving EVM profiles to browser-based viewers.
-//!
-//! Supports multiple profile formats:
-//! - Speedscope (speedscope.app): Uses `#profileURL=` hash parameter
-//! - Chrome/Perfetto (ui.perfetto.dev): Uses `url=` query parameter (requires port 9001)
+//! Local HTTP server for serving EVM profiles to speedscope.app.
 //!
 //! This module implements a temporary local HTTP server that:
 //! 1. Serves the profile JSON at `/{token}/profile.json`
 //! 2. Sets CORS headers to allow the viewer to fetch it
 //! 3. Constructs the proper URL and opens it in the browser
-
-use super::EvmProfileFormat;
 use axum::{
     Router,
     body::Bytes,
@@ -31,7 +25,6 @@ pub async fn serve_and_open(
     profile_json: Vec<u8>,
     test_name: &str,
     contract_name: &str,
-    format: EvmProfileFormat,
 ) -> Result<()> {
     let token = generate_token();
 
@@ -47,12 +40,7 @@ pub async fn serve_and_open(
         )
         .with_state(state);
 
-    // Perfetto requires port 9001 due to Content Security Policy.
-    // Speedscope works with any port.
-    let bind_addr = match format {
-        EvmProfileFormat::Chrome => "127.0.0.1:9001",
-        EvmProfileFormat::Speedscope => "127.0.0.1:0",
-    };
+    let bind_addr = "127.0.0.1:0";
 
     let listener = TcpListener::bind(bind_addr).await?;
     let port = listener.local_addr()?.port();
@@ -60,26 +48,13 @@ pub async fn serve_and_open(
     let profile_url = format!("http://127.0.0.1:{port}/{token}/profile.json");
     let title = format!("{contract_name}::{test_name}");
 
-    // Build viewer URL based on format.
-    let (viewer_name, viewer_url) = match format {
-        EvmProfileFormat::Speedscope => {
-            let encoded_url = percent_encode(&profile_url);
-            let encoded_title = percent_encode(&title);
-            (
-                "speedscope",
-                format!(
-                    "https://www.speedscope.app/#profileURL={encoded_url}&title={encoded_title}"
-                ),
-            )
-        }
-        EvmProfileFormat::Chrome => {
-            let encoded_url = percent_encode(&profile_url);
-            ("Perfetto", format!("https://ui.perfetto.dev/#!/?url={encoded_url}"))
-        }
-    };
+    let encoded_url = percent_encode(&profile_url);
+    let encoded_title = percent_encode(&title);
+    let viewer_url =
+        format!("https://www.speedscope.app/#profileURL={encoded_url}&title={encoded_title}");
 
     sh_println!("Profile server running at http://127.0.0.1:{port}")?;
-    sh_println!("Opening {viewer_name}: {viewer_url}")?;
+    sh_println!("Opening speedscope: {viewer_url}")?;
 
     if let Err(e) = opener::open(&viewer_url) {
         sh_err!("Failed to open browser: {e}")?;
