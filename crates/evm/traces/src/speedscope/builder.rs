@@ -1,35 +1,28 @@
 //! Speedscope profile generation for EVM execution traces.
 //!
-//! This module converts folded stack traces into the speedscope evented profile format.
+//! This module converts folded stack trace entries into the speedscope evented profile format.
 //! Gas consumption is used as the value unit, so flame graph widths represent gas usage.
 
 use super::schema::{EventedProfile, Frame, Profile, SpeedscopeFile, ValueUnit};
-use crate::folded_stack_trace;
+use crate::folded_stack_trace::{self, TraceEntry};
 use revm_inspectors::tracing::CallTraceArena;
 use std::{borrow::Cow, collections::HashMap};
 
 /// Builds a speedscope profile from a call trace arena.
 ///
-/// This converts the trace to folded stack format first (same as --flamechart),
-/// then translates to speedscope's evented profile format.
+/// Uses the same trace processing as --flamechart for consistent gas values.
 pub fn build<'a>(
     arena: &CallTraceArena,
     test_name: &str,
     contract_name: &str,
 ) -> SpeedscopeFile<'a> {
-    // Build folded stack trace (same as --flamechart uses).
-    let folded = folded_stack_trace::build(arena);
-
-    // Convert folded stack trace to speedscope format.
-    folded_to_speedscope(&folded, test_name, contract_name)
+    let entries = folded_stack_trace::build_entries(arena);
+    entries_to_speedscope(&entries, test_name, contract_name)
 }
 
-/// Converts a folded stack trace to speedscope format.
-///
-/// Folded format: "func1;func2;func3 123" where 123 is gas consumed by func3 only.
-/// Speedscope evented format: open/close events with cumulative timestamps.
-fn folded_to_speedscope<'a>(
-    folded: &[String],
+/// Converts trace entries to speedscope format.
+fn entries_to_speedscope<'a>(
+    entries: &[TraceEntry],
     test_name: &str,
     contract_name: &str,
 ) -> SpeedscopeFile<'a> {
@@ -38,7 +31,7 @@ fn folded_to_speedscope<'a>(
     let mut profile = EventedProfile::new(name, ValueUnit::None);
 
     // Frame cache: name -> frame index.
-    let mut frame_cache: HashMap<String, usize> = HashMap::new();
+    let mut frame_cache: HashMap<&str, usize> = HashMap::new();
 
     // Current cumulative gas (used as timestamp).
     let mut cumulative_gas: u64 = 0;
@@ -46,24 +39,16 @@ fn folded_to_speedscope<'a>(
     // Current open stack (frame indices).
     let mut open_stack: Vec<usize> = Vec::new();
 
-    for line in folded {
-        // Parse line: "func1;func2;func3 123"
-        let Some((stack_part, gas_str)) = line.rsplit_once(' ') else {
-            continue;
-        };
-        let Ok(gas) = gas_str.parse::<u64>() else {
-            continue;
-        };
-
-        // Parse the stack into function names.
-        let stack: Vec<&str> = stack_part.split(';').collect();
+    for entry in entries {
+        let stack = &entry.names;
+        let gas = entry.gas.max(0) as u64;
 
         // Find common prefix length with current open stack.
         let common_len = open_stack
             .iter()
             .zip(stack.iter())
             .take_while(|(open_idx, name)| {
-                frame_cache.get(<&str>::clone(name)).is_some_and(|idx| idx == *open_idx)
+                frame_cache.get(name.as_str()).is_some_and(|idx| idx == *open_idx)
             })
             .count();
 
@@ -75,9 +60,9 @@ fn folded_to_speedscope<'a>(
 
         // Open new frames that are in this stack but not yet open.
         for name in stack.iter().skip(common_len) {
-            let frame_idx = *frame_cache
-                .entry(name.to_string())
-                .or_insert_with(|| file.add_frame(Frame::new(Cow::Owned(name.to_string()))));
+            let frame_idx = *frame_cache.entry(name.as_str()).or_insert_with(|| {
+                file.add_frame(Frame::new(Cow::Owned(name.clone())))
+            });
             profile.open_frame(frame_idx, cumulative_gas);
             open_stack.push(frame_idx);
         }
@@ -114,14 +99,14 @@ mod tests {
     }
 
     #[test]
-    fn test_folded_to_speedscope() {
-        let folded = vec![
-            "top 200".to_string(),         // top consumes 200 (after child subtraction)
-            "top;child_a 100".to_string(), // child_a consumes 100
-            "top;child_b 150".to_string(), // child_b consumes 150
+    fn test_entries_to_speedscope() {
+        let entries = vec![
+            TraceEntry { names: vec!["top".into()], gas: 200 },
+            TraceEntry { names: vec!["top".into(), "child_a".into()], gas: 100 },
+            TraceEntry { names: vec!["top".into(), "child_b".into()], gas: 150 },
         ];
 
-        let file = folded_to_speedscope(&folded, "test", "Test");
+        let file = entries_to_speedscope(&entries, "test", "Test");
         let json = serde_json::to_string_pretty(&file).unwrap();
 
         // Total gas should be 200 + 100 + 150 = 450

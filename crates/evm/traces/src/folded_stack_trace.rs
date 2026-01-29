@@ -7,8 +7,19 @@ use revm_inspectors::tracing::{
 /// Builds a folded stack trace from a call trace arena.
 pub fn build(arena: &CallTraceArena) -> Vec<String> {
     let mut fst = EvmFoldedStackTraceBuilder::default();
-    fst.process_call_node(arena.nodes(), 0);
+    if !arena.nodes().is_empty() {
+        fst.process_call_node(arena.nodes(), 0);
+    }
     fst.build()
+}
+
+/// Builds trace entries from a call trace arena.
+pub fn build_entries(arena: &CallTraceArena) -> Vec<TraceEntry> {
+    let mut fst = EvmFoldedStackTraceBuilder::default();
+    if !arena.nodes().is_empty() {
+        fst.process_call_node(arena.nodes(), 0);
+    }
+    fst.into_entries()
 }
 
 /// Wrapper for building a folded stack trace using EVM call trace node.
@@ -19,9 +30,14 @@ pub struct EvmFoldedStackTraceBuilder {
 }
 
 impl EvmFoldedStackTraceBuilder {
-    /// Returns the folded stack trace.
+    /// Returns the folded stack trace as formatted strings.
     pub fn build(self) -> Vec<String> {
         self.fst.build()
+    }
+
+    /// Returns the trace entries with gas values adjusted.
+    pub fn into_entries(self) -> Vec<TraceEntry> {
+        self.fst.into_entries()
     }
 
     /// Creates an entry for a EVM CALL in the folded stack trace. This method recursively processes
@@ -154,12 +170,13 @@ pub struct FoldedStackTraceBuilder {
     exits: usize,
 }
 
-#[derive(Debug, Default)]
-struct TraceEntry {
+/// A single entry in a folded stack trace.
+#[derive(Debug, Default, Clone)]
+pub struct TraceEntry {
     /// Names of all functions in the call stack of this trace.
-    names: Vec<String>,
+    pub names: Vec<String>,
     /// Gas consumed by this function, allowed to be negative due to refunds.
-    gas: i64,
+    pub gas: i64,
 }
 
 impl FoldedStackTraceBuilder {
@@ -181,20 +198,22 @@ impl FoldedStackTraceBuilder {
         self.exits += 1;
     }
 
-    /// Returns folded stack trace.
+    /// Returns folded stack trace as formatted strings.
     pub fn build(mut self) -> Vec<String> {
         self.subtract_children();
-        self.build_without_subtraction()
+        self.traces.iter().map(|e| format!("{} {}", e.names.join(";"), e.gas)).collect()
     }
 
-    /// Internal method to build the folded stack trace without subtracting gas consumed by
-    /// the children function calls.
-    fn build_without_subtraction(&mut self) -> Vec<String> {
-        let mut lines = Vec::new();
-        for TraceEntry { names, gas } in &self.traces {
-            lines.push(format!("{} {}", names.join(";"), gas));
-        }
-        lines
+    /// Returns the trace entries with gas values adjusted (children subtracted from parents).
+    pub fn into_entries(mut self) -> Vec<TraceEntry> {
+        self.subtract_children();
+        self.traces
+    }
+
+    /// Returns folded stack trace without subtracting children gas (for testing).
+    #[cfg(test)]
+    fn build_without_subtraction(&self) -> Vec<String> {
+        self.traces.iter().map(|e| format!("{} {}", e.names.join(";"), e.gas)).collect()
     }
 
     /// Subtracts gas consumed by the children function calls from the parent function calls.
