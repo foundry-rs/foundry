@@ -6,7 +6,7 @@
 use super::schema::{TraceEvent, TraceFile};
 use crate::folded_stack_trace;
 use revm_inspectors::tracing::CallTraceArena;
-use std::collections::HashMap;
+
 
 /// Builds a Chrome trace profile from a call trace arena.
 ///
@@ -39,8 +39,7 @@ fn folded_to_chrome<'a>(folded: &[String], _test_name: &str) -> TraceFile<'a> {
     // Current open stack.
     let mut open_stack: Vec<OpenFrame> = Vec::new();
 
-    // Track which names we've seen to assign categories.
-    let mut name_cache: HashMap<String, &'static str> = HashMap::new();
+
 
     for line in folded {
         // Parse line: "func1;func2;func3 123"
@@ -65,7 +64,7 @@ fn folded_to_chrome<'a>(folded: &[String], _test_name: &str) -> TraceFile<'a> {
         while open_stack.len() > common_len {
             let frame = open_stack.pop().unwrap();
             let dur = cumulative_gas.saturating_sub(frame.start_gas);
-            let cat = category_for_name(&frame.name, &mut name_cache);
+            let cat = category_for_name(&frame.name);
             file.add_event(TraceEvent::complete(frame.name, cat, frame.start_gas, dur));
         }
 
@@ -81,7 +80,7 @@ fn folded_to_chrome<'a>(folded: &[String], _test_name: &str) -> TraceFile<'a> {
     // Close any remaining open frames.
     while let Some(frame) = open_stack.pop() {
         let dur = cumulative_gas.saturating_sub(frame.start_gas);
-        let cat = category_for_name(&frame.name, &mut name_cache);
+        let cat = category_for_name(&frame.name);
         file.add_event(TraceEvent::complete(frame.name, cat, frame.start_gas, dur));
     }
 
@@ -89,10 +88,7 @@ fn folded_to_chrome<'a>(folded: &[String], _test_name: &str) -> TraceFile<'a> {
 }
 
 /// Determines category for a frame name (for coloring in Chrome trace viewer).
-fn category_for_name<'a>(
-    name: &str,
-    _cache: &mut HashMap<String, &'static str>,
-) -> &'static str {
+fn category_for_name(name: &str) -> &'static str {
     if name.starts_with("VM::") || name.starts_with("Vm::") {
         "vm"
     } else if name.contains("console") {

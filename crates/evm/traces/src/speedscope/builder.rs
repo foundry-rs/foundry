@@ -63,7 +63,7 @@ fn folded_to_speedscope<'a>(
             .iter()
             .zip(stack.iter())
             .take_while(|(open_idx, name)| {
-                frame_cache.get(&name.to_string()).is_some_and(|idx| idx == *open_idx)
+                frame_cache.get(<&str>::clone(name)).is_some_and(|idx| idx == *open_idx)
             })
             .count();
 
