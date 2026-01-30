@@ -267,9 +267,7 @@ impl EtherscanVerificationProvider {
             || (verifier_type.is_sourcify() && etherscan_key.is_some());
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
-        let etherscan_api_url = verifier_url.or(None).map(str::to_owned);
-
-        let api_url = etherscan_api_url.as_deref();
+        let api_url = verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
         let base_url = etherscan_config
             .as_ref()
             .and_then(|c| c.browser_url.as_deref())
