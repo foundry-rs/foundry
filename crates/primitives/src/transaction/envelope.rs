@@ -180,7 +180,8 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                     return Ok(Self::Deposit(Sealed::new(deposit_tx)));
                 };
 
-                Err(ConversionError::Custom("UnknownTxType".to_string()))
+                let tx_type = tx.ty();
+                Err(ConversionError::Custom(format!("Unknown transaction type: 0x{tx_type:02X}")))
             }
         }
     }

@@ -2236,7 +2236,7 @@ impl SimpleCast {
             eyre::bail!("invalid function signature");
         };
 
-        let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let num_threads = rayon::current_num_threads();
         let found = AtomicBool::new(false);
 
         let result: Option<(u32, String, String)> =
@@ -2336,7 +2336,7 @@ fn explorer_client(
     api_url: Option<String>,
     explorer_url: Option<String>,
 ) -> Result<Client> {
-    let mut builder = Client::builder().chain(chain)?;
+    let mut builder = Client::builder();
 
     let deduced = chain.etherscan_urls();
 

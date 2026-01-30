@@ -24,7 +24,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
   # Keep in sync with `release.yml`.
-  RUST_PROFILE: maxperf
+  RUST_PROFILE: dist
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
 
 jobs:
@@ -65,15 +65,24 @@ jobs:
       - name: Finalize Docker Metadata
         id: docker_tagging
         run: |
+          TAG="${{ inputs.tag_name }}"
+          REGISTRY="${{ env.REGISTRY }}"
+          IMAGE="${{ env.IMAGE_NAME }}"
+
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             printf "cron trigger, assigning nightly tag\n"
-            printf "docker_tags=%s/%s:nightly,%s/%s:nightly-%s\n" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            printf "docker_tags=%s/%s:nightly,%s/%s:nightly-%s\n" "$REGISTRY" "$IMAGE" "$REGISTRY" "$IMAGE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ "${GITHUB_REF##*/}" == "master" ]]; then
             printf "manual trigger from master/main branch, assigning latest tag\n"
-            printf "docker_tags=%s/%s:%s,%s/%s:latest\n" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "${GITHUB_REF##*/}" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
+            printf "docker_tags=%s/%s:%s,%s/%s:latest\n" "$REGISTRY" "$IMAGE" "${GITHUB_REF##*/}" "$REGISTRY" "$IMAGE" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="v${BASH_REMATCH[1]}"
+            MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+            printf "version tag release, assigning %s, %s, and %s tags\n" "$TAG" "$MINOR" "$MAJOR"
+            printf "docker_tags=%s/%s:%s,%s/%s:%s,%s/%s:%s\n" "$REGISTRY" "$IMAGE" "$TAG" "$REGISTRY" "$IMAGE" "$MINOR" "$REGISTRY" "$IMAGE" "$MAJOR" >> "$GITHUB_OUTPUT"
           else
             printf "Neither scheduled nor manual release from main branch. Just tagging as branch name\n"
-            printf "docker_tags=%s/%s:%s\n" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+            printf "docker_tags=%s/%s:%s\n" "$REGISTRY" "$IMAGE" "${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
           fi
 
       # Log docker metadata to explicitly know what is being pushed

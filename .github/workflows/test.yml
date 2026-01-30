@@ -19,6 +19,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
+  RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
   matrices:
@@ -65,7 +66,7 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@763e3324d4fd026c9bd284c504378585777a87d5 # v2
+      - uses: taiki-e/install-action@710817a1645ef40daad5bcde7431ceccf6cc3528 # v2
         with:
           tool: nextest
 
@@ -77,7 +78,7 @@ jobs:
           node-version: 24
       - name: Install Bun
         if: contains(matrix.name, 'external')
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2
         with:
           bun-version: latest
       - name: Setup Python
@@ -101,7 +102,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-foundry-${{ matrix.name }}-
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
       - name: Setup Git config
         run: |
           git config --global user.name "GitHub Actions Bot"
@@ -114,4 +115,5 @@ jobs:
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
+          ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
         run: cargo nextest run ${{ matrix.flags }}

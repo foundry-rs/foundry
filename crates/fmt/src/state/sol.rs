@@ -205,16 +205,32 @@ impl<'ast> State<'_, 'ast> {
     fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
-        match items {
-            ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
+
+        use ast::ImportItems;
+        use config::NamespaceImportStyle as NIStyle;
+
+        match (items, self.config.namespace_import_style) {
+            (ImportItems::Plain(None), _) => {
                 self.print_ast_str_lit(path);
-                if let Some(ident) = items.source_alias() {
-                    self.word(" as ");
-                    self.print_ident(&ident);
-                }
             }
 
-            ast::ImportItems::Aliases(aliases) => {
+            (ImportItems::Plain(Some(source_alias)), NIStyle::Preserve | NIStyle::PreferPlain)
+            | (ImportItems::Glob(source_alias), NIStyle::PreferPlain) => {
+                self.print_ast_str_lit(path);
+                self.word(" as ");
+                self.print_ident(source_alias);
+            }
+
+            (ImportItems::Glob(source_alias), NIStyle::Preserve | NIStyle::PreferGlob)
+            | (ImportItems::Plain(Some(source_alias)), NIStyle::PreferGlob) => {
+                self.word("*");
+                self.word(" as ");
+                self.print_ident(source_alias);
+                self.word(" from ");
+                self.print_ast_str_lit(path);
+            }
+
+            (ImportItems::Aliases(aliases), _) => {
                 // Check if we should keep single imports on one line
                 let use_single_line = self.config.single_line_imports && aliases.len() == 1;
 
@@ -795,12 +811,8 @@ impl<'ast> State<'_, 'ast> {
             fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
         let force_break = overflows && fits_alone_no_cmnts;
 
-        // Set up precall size tracking
         if lhs_size <= space_left {
             self.neverbreak();
-            self.call_stack.add_precall(lhs_size + 1);
-        } else {
-            self.call_stack.add_precall(space_left + self.config.tab_width);
         }
 
         // Handle comments before the RHS expression
@@ -932,7 +944,6 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.var_init = cache;
-        self.call_stack.reset_precall();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>, is_var_def: bool) {
@@ -1340,6 +1351,11 @@ impl<'ast> State<'_, 'ast> {
                         match member_expr.kind {
                             ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
                             ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            // Don't add break when accessing a field after a call with named args.
+                            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
+                            // on the same line as the closing `})`.
+                            // See: https://github.com/foundry-rs/foundry/issues/12399
+                            _ if is_call_with_named_args(&member_expr.kind) => (),
                             _ => s.zerobreak(),
                         }
                         s.word(".");
@@ -1672,11 +1688,6 @@ impl<'ast> State<'_, 'ast> {
             let callee_size = get_callee_head_size(child_expr) + member_or_args.member_size();
             let expr_size = self.estimate_size(child_expr.span);
 
-            // Start a new chain if needed
-            if is_call_chain(&child_expr.kind, false) {
-                self.call_stack.push(CallContext::chained(callee_size));
-            }
-
             let callee_fits_line = self.space_left() > callee_size + 1;
             let total_fits_line = self.space_left() > expr_size + member_or_args.size() + 2;
             let no_cmnt_or_mixed =
@@ -1688,13 +1699,20 @@ impl<'ast> State<'_, 'ast> {
                 extra_box = true;
             }
 
-            if !is_call_chain(&child_expr.kind, true)
-                && (no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                && callee_fits_line
-                && (member_depth(0, child_expr) < 2
-                    // calls with cmnts between the args always break
-                    || (total_fits_line && !member_or_args.has_comments()))
-            {
+            // Determine if this chain will add its own indentation
+            let chain_has_indent = is_call_chain(&child_expr.kind, true)
+                || !(no_cmnt_or_mixed
+                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                || !callee_fits_line
+                || (member_depth(0, child_expr) >= 2
+                    && (!total_fits_line || member_or_args.has_comments()));
+
+            // Start a new chain if needed
+            if is_call_chain(&child_expr.kind, false) {
+                self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
+            }
+
+            if !chain_has_indent {
                 self.skip_index_break = true;
                 self.cbox(0);
             } else {
@@ -1801,7 +1819,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.is_chain())
+                    .without_ind(self.call_stack.has_chain_with_indent())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -1954,12 +1972,6 @@ impl<'ast> State<'_, 'ast> {
         );
         self.end();
         self.word(" =");
-
-        // '(' + var + ', ' + var + ')' + ' ='
-        let vars_size = vars.iter().fold(0, |acc, var| {
-            acc + var.as_ref().unspan().map_or(0, |v| self.estimate_size(v.span)) + 2
-        }) + 2;
-        self.call_stack.add_precall(vars_size);
 
         if self.estimate_size(init_expr.span) + self.config.tab_width
             <= std::cmp::max(space_left, self.space_left())
@@ -2882,6 +2894,18 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
 
 fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
+}
+
+/// Returns true if this is a call with named arguments (struct-style syntax).
+/// Used to determine if `.field` after such a call should avoid breaking.
+/// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
+/// E.g., `someFunc(a, b).field` → false (positional args)
+fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+    if let ast::ExprKind::Call(_, args) = expr_kind {
+        matches!(args.kind, ast::CallArgsKind::Named(_))
+    } else {
+        false
+    }
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {

@@ -25,8 +25,8 @@ interface ImportMetaEnv {
   readonly VERSION_NAME: string
   // release.yml#jobs:release:strategy:matrix:include:-|platform
   readonly PLATFORM_NAME: 'linux' | 'darwin' | 'win32'
-  // `debug` / `release` / `maxperf` # <- always `maxperf`
-  readonly PROFILE: 'debug' | 'release' | 'maxperf'
+  // `debug` / `release` / `maxperf` / `dist`
+  readonly PROFILE: 'debug' | 'release' | 'maxperf' | 'dist'
 
   // Used for local testing/development only
   readonly REGISTRY_URL: string

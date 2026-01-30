@@ -30,6 +30,14 @@ pub struct RpcOpts {
     #[arg(short = 'k', long = "insecure", default_value = "false")]
     pub accept_invalid_certs: bool,
 
+    /// Disable automatic proxy detection.
+    ///
+    /// Use this in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox) where
+    /// system proxy detection causes crashes. When enabled, HTTP_PROXY/HTTPS_PROXY environment
+    /// variables and system proxy settings will be ignored.
+    #[arg(long = "no-proxy", alias = "disable-proxy", default_value = "false")]
+    pub no_proxy: bool,
+
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
     /// This shares the transaction privately with all registered builders.
@@ -61,6 +69,10 @@ pub struct RpcOpts {
     /// Specify custom headers for RPC requests.
     #[arg(long, alias = "headers", env = "ETH_RPC_HEADERS", value_delimiter(','))]
     pub rpc_headers: Option<Vec<String>>,
+
+    /// Print the equivalent curl command instead of making the RPC request.
+    #[arg(long)]
+    pub curl: bool,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -113,6 +125,9 @@ impl RpcOpts {
         }
         if self.accept_invalid_certs {
             dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
+        }
+        if self.no_proxy {
+            dict.insert("eth_rpc_no_proxy".into(), true.into());
         }
         dict
     }

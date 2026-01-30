@@ -29,11 +29,10 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
 };
-use alloy_consensus::{Account, Blob, Transaction, TxEip4844Variant, transaction::Recovered};
+use alloy_consensus::{Blob, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
-    eip4844::BlobTransactionSidecar,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -70,7 +69,6 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
-        wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
 };
@@ -288,9 +286,6 @@ impl EthApi {
             }
             EthRequest::GetBlobByTransactionHash(hash) => {
                 self.anvil_get_blob_by_tx_hash(hash).to_rpc_result()
-            }
-            EthRequest::GetBlobSidecarsByBlockId(block_id) => {
-                self.anvil_get_blob_sidecars_by_block_id(block_id).to_rpc_result()
             }
             EthRequest::GetGenesisTime(()) => self.anvil_get_genesis_time().to_rpc_result(),
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
@@ -516,11 +511,6 @@ impl EthApi {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
-            EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
-            EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
-            EthRequest::AnvilSetExecutor(executor_pk) => {
-                self.anvil_set_executor(executor_pk).to_rpc_result()
-            }
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -751,7 +741,7 @@ impl EthApi {
         &self,
         address: Address,
         block_number: Option<BlockId>,
-    ) -> Result<Account> {
+    ) -> Result<TrieAccount> {
         node_info!("eth_getAccount");
         let block_request = self.block_request(block_number).await?;
 
@@ -1415,15 +1405,6 @@ impl EthApi {
     ) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByBlockId");
         Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
-    }
-
-    /// Handler for RPC call: `anvil_getBlobSidecarsByBlockId`
-    pub fn anvil_get_blob_sidecars_by_block_id(
-        &self,
-        block_id: BlockId,
-    ) -> Result<Option<BlobTransactionSidecar>> {
-        node_info!("anvil_getBlobSidecarsByBlockId");
-        Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
     }
 
     /// Returns the genesis time for the Beacon chain
@@ -2794,15 +2775,6 @@ impl EthApi {
         Ok(blocks)
     }
 
-    /// Sets the reported block number
-    ///
-    /// Handler for ETH RPC call: `anvil_setBlock`
-    pub fn anvil_set_block(&self, block_number: u64) -> Result<()> {
-        node_info!("anvil_setBlock");
-        self.backend.set_block_number(block_number);
-        Ok(())
-    }
-
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
@@ -2958,33 +2930,6 @@ impl EthApi {
         }
 
         Ok(content)
-    }
-}
-
-// ===== impl Wallet endpoints =====
-impl EthApi {
-    /// Get the capabilities of the wallet.
-    ///
-    /// See also [EIP-5792][eip-5792].
-    ///
-    /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
-    pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
-        node_info!("wallet_getCapabilities");
-        Ok(self.backend.get_capabilities())
-    }
-
-    /// Add an address to the delegation capability of wallet.
-    ///
-    /// This entails that the executor will now be able to sponsor transactions to this address.
-    pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
-        node_info!("anvil_addCapability");
-        self.backend.add_capability(address);
-        Ok(())
-    }
-
-    pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
-        node_info!("anvil_setExecutor");
-        self.backend.set_executor(executor_pk)
     }
 }
 
@@ -3376,11 +3321,10 @@ impl EthApi {
                     .max_fee_per_gas()
                     .is_none()
                     .then(|| request.set_max_fee_per_gas(self.gas_price()));
-                // TODO: use suggested tip instead of 0
                 request
                     .max_priority_fee_per_gas()
                     .is_none()
-                    .then(|| request.set_max_priority_fee_per_gas(Default::default()));
+                    .then(|| request.set_max_priority_fee_per_gas(MIN_SUGGESTED_PRIORITY_FEE));
             }
             if tx_type == FoundryTxType::Eip4844 {
                 request.as_ref().max_fee_per_blob_gas().is_none().then(|| {
@@ -3413,14 +3357,8 @@ impl EthApi {
     /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
     fn impersonated_signature(&self, request: &FoundryTypedTx) -> Signature {
         match request {
-            // Only the legacy transaction type requires v to be in {27, 28}, thus
-            // requiring the use of Parity::NonEip155
-            FoundryTypedTx::Legacy(_) => Signature::from_scalars_and_parity(
-                B256::with_last_byte(1),
-                B256::with_last_byte(1),
-                false,
-            ),
-            FoundryTypedTx::Eip2930(_)
+            FoundryTypedTx::Legacy(_)
+            | FoundryTypedTx::Eip2930(_)
             | FoundryTypedTx::Eip1559(_)
             | FoundryTypedTx::Eip7702(_)
             | FoundryTypedTx::Eip4844(_)
