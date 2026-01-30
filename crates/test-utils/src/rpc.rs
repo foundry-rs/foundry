@@ -66,7 +66,6 @@ shuffled_list!(
     vec![
         //
         "ethereum.reth.rs/ws",
-        // "ethereum.reth.rs/ws",
     ],
 );
 
