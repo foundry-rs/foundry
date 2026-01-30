@@ -316,6 +316,11 @@ impl TestArgs {
 
         let env = evm_opts.evm_env().await?;
 
+        // Enable internal tracing for more informative flamegraph.
+        if should_draw && !self.decode_internal {
+            self.decode_internal = true;
+        }
+
         // Choose the internal function tracing mode, if --decode-internal is provided.
         let decode_internal = if self.decode_internal {
             // If more than one function matched, we enable simple tracing.
