@@ -316,11 +316,6 @@ impl TestArgs {
 
         let env = evm_opts.evm_env().await?;
 
-        // Enable internal tracing for more informative flamegraph.
-        if should_draw && !self.decode_internal {
-            self.decode_internal = true;
-        }
-
         // Choose the internal function tracing mode, if --decode-internal is provided.
         let decode_internal = if self.decode_internal {
             // If more than one function matched, we enable simple tracing.
@@ -361,7 +356,7 @@ impl TestArgs {
             // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
             decode_trace_arena(arena, decoder).await;
-            let mut fst = folded_stack_trace::build(arena);
+            let mut fst = folded_stack_trace::build(arena, self.evm.isolate);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
             let contract = suite_name.split(':').next_back().unwrap();
