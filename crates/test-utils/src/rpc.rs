@@ -52,7 +52,6 @@ shuffled_list!(
     vec![
         //
         "ethereum.reth.rs/rpc",
-        // "ethereum.reth.rs/rpc",
     ],
 );
 shuffled_list!(
