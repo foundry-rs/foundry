@@ -91,18 +91,18 @@ If you're experiencing any issues while installing, check out [Getting Help](#ge
 
 Forge is quite fast at both compiling (leveraging `solc` with [foundry-compilers]) and testing.
 
-See the benchmarks below. Older benchmarks against [DappTools][dapptools] can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
+See the benchmarks below. For historical context, older benchmarks against [DappTools][dapptools] can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
 
 ### Testing Benchmarks
 
-| Project                                       | Type                 | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup        |
-| --------------------------------------------- | -------------------- | ------------------------ | ------------------------ | --------- | -------------- |
-| [vectorized/solady][solady]                   | Unit / Fuzz          | 0.9s                     | 2.3s                     | -         | 2.6x           |
-| [morpho-org/morpho-blue][morpho-blue]         | Invariant            | 0.7s                     | 1m43s                    | -         | 147.1x         |
-| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cold)   | 6.1s                     | 6.3s                     | -         | 1.04x          |
-| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cached) | 0.6s                     | 0.9s                     | -         | 1.50x          |
-| [transmissions11/solmate][solmate]            | Unit / Fuzz          | 2.7s                     | 2.8s                     | 6m34s     | 1.03x / 140.0x |
-| [reflexer-labs/geb][geb]                      | Unit / Fuzz          | 0.2s                     | 0.4s                     | 23s       | 2.0x / 57.5x   |
+| Project                                       | Type                 | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | Hardhat | Speedup        |
+| --------------------------------------------- | -------------------- | ------------------------ | ------------------------ | ------- | -------------- |
+| [vectorized/solady][solady]                   | Unit / Fuzz          | 0.9s                     | 2.3s                     | -       | 2.6x           |
+| [morpho-org/morpho-blue][morpho-blue]         | Invariant            | 0.7s                     | 1m43s                    | -       | 147.1x         |
+| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cold)   | 6.1s                     | 6.3s                     | -       | 1.04x          |
+| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cached)  | 0.6s                     | 0.9s                     | -       | 1.50x          |
+| [transmissions11/solmate][solmate]            | Unit / Fuzz          | 2.7s                     | 2.8s                     | -       | 1.03x          |
+| [reflexer-labs/geb][geb]                      | Unit / Fuzz          | 0.2s                     | 0.4s                     | -       | 2.0x           |
 
 _In the above benchmarks, compilation was always skipped_
 
