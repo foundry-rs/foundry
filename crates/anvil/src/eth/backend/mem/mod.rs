@@ -3648,7 +3648,7 @@ impl TransactionValidator for Backend {
                     //    sufficient funds `tx.value <= existing account value + deposited value`
                     if value > account.balance + U256::from(deposit_tx.mint) {
                         warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
-                        return Err(InvalidTransactionError::InsufficientFunds);
+                        return Err(InvalidTransactionError::InsufficientFundsForPoolValidation);
                     }
                 }
                 _ => {
@@ -3656,11 +3656,11 @@ impl TransactionValidator for Backend {
                     let req_funds =
                         max_cost.checked_add(value.saturating_to()).ok_or_else(|| {
                             warn!(target: "backend", "[{:?}] cost too high", tx.hash());
-                            InvalidTransactionError::InsufficientFunds
+                            InvalidTransactionError::InsufficientFundsForPoolValidation
                         })?;
                     if account.balance < U256::from(req_funds) {
                         warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
-                        return Err(InvalidTransactionError::InsufficientFunds);
+                        return Err(InvalidTransactionError::InsufficientFundsForPoolValidation);
                     }
                 }
             }

@@ -250,6 +250,12 @@ pub enum InvalidTransactionError {
     /// Represents the inability to cover max cost + value (account balance too low).
     #[error("Insufficient funds for gas * price + value")]
     InsufficientFunds,
+    /// Thrown when transaction pool validation fails due to insufficient balance.
+    /// This check can be disabled with --disable-pool-balance-checks flag.
+    #[error(
+        "Insufficient funds for gas * price + value. Hint: Use --disable-pool-balance-checks to skip pool balance validation for testing"
+    )]
+    InsufficientFundsForPoolValidation,
     /// Thrown when calculating gas usage
     #[error("gas uint64 overflow")]
     GasUintOverflow,
