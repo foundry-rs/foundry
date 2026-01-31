@@ -8,6 +8,9 @@
 pub mod access_list;
 pub mod artifact;
 pub mod b2e_payload;
+pub mod batch_mktx;
+pub mod batch_send;
+pub mod batch_sign;
 pub mod bind;
 pub mod call;
 pub mod constructor_args;
