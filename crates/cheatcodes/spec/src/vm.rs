@@ -284,7 +284,7 @@ interface Vm {
         uint64 newNonce;
     }
 
-    /// The result of the `stopDebugTraceRecording` call
+    /// The result of the `stopAndReturnDebugTraceRecording` call
     struct DebugStep {
         /// The stack before executing the step of the run.
         /// stack\[0\] represents the top of the stack.
@@ -347,7 +347,7 @@ interface Vm {
         address implementation;
     }
 
-    /// Represents a "potential" revert reason from a single subsequent call when using `vm.assumeNoReverts`.
+    /// Represents a "potential" revert reason from a single subsequent call when using `vm.assumeNoRevert`.
     /// Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced
     /// as normal.
     struct PotentialRevert {
@@ -436,7 +436,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);
 
-    /// Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session
+    /// Returns an array of `StorageAccess` from current `vm.startStateDiffRecording` session
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
 
