@@ -539,7 +539,8 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
     let provider = fork.evm_opts.fork_provider_with_url(&fork.url)?;
 
     // Initialise the fork environment.
-    let (env, block) = fork.evm_opts.fork_evm_env_with_provider(&fork.url, &provider).await?;
+    let (mut env, block) = fork.evm_opts.fork_evm_env_with_provider(&fork.url, &provider).await?;
+    env.evm_env.cfg_env.spec = *fork.env.evm_env.spec_id();
     fork.env = env;
     let meta = BlockchainDbMeta::new(fork.env.evm_env.block_env.clone(), fork.url.clone());
 
