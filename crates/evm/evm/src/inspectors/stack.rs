@@ -675,6 +675,11 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
+        // Set isolation context flag on cheatcodes so environment cheatcodes know to use overrides.
+        if let Some(cheats) = self.cheatcodes.as_mut() {
+            cheats.in_isolation_context = true;
+        }
+
         let res = self.with_inspector(|inspector| {
             let (db, journal, env) = ecx.as_db_env_and_journal();
             let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
@@ -715,6 +720,11 @@ impl InspectorStackRefMut<'_> {
 
         self.in_inner_context = false;
         self.inner_context_data = None;
+
+        // Reset isolation context flag on cheatcodes.
+        if let Some(cheats) = self.cheatcodes.as_mut() {
+            cheats.in_isolation_context = false;
+        }
 
         let mut gas = Gas::new(gas_limit);
 
