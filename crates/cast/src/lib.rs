@@ -911,20 +911,23 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             return self.provider.get_logs(filter).await.map_err(Into::into);
         };
 
-        if from >= to {
+        if from > to {
             return Ok(vec![]);
         }
 
         // Create chunk ranges using iterator
-        let chunk_ranges: Vec<(u64, u64)> = (from..to)
+        let chunk_ranges: Vec<(u64, u64)> = (from..=to)
             .step_by(chunk_size as usize)
-            .map(|chunk_start| (chunk_start, (chunk_start + chunk_size).min(to)))
+            .map(|chunk_start| {
+                let chunk_end = chunk_start.saturating_add(chunk_size.saturating_sub(1)).min(to);
+                (chunk_start, chunk_end)
+            })
             .collect();
 
         // Process chunks with controlled concurrency using buffered stream
         let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
             .map(|(start_block, chunk_end)| {
-                let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end - 1);
+                let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end);
                 let provider = self.provider.clone();
 
                 async move {
@@ -934,7 +937,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                         Err(_) => {
                             // Simple fallback: try individual blocks in this chunk
                             let mut fallback_logs = Vec::new();
-                            for single_block in start_block..chunk_end {
+                            for single_block in start_block..=chunk_end {
                                 let single_filter = chunk_filter
                                     .clone()
                                     .from_block(single_block)
