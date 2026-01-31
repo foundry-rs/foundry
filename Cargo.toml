@@ -297,7 +297,7 @@ alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "mai
 revm = { version = "34.0.0", default-features = false }
 revm-inspectors = { version = "0.33.2", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
-monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main" }
+monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main", features = ["alloy-evm"] }
 
 ## cli
 anstream = "0.6"
@@ -463,3 +463,4 @@ solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/sola
 solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
 solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
 solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+

@@ -27,7 +27,7 @@ Monad Foundry is under active development! Expect a lot of new features to appea
 - [x] Blob transaction rejection (EIP-4844 not supported)
 - [ ] Reserve balance for delegated EOAs
 - [ ] EIP-7702 restrictions (CREATE/CREATE2 banned for delegated EOAs)
-- [ ] Monad staking precompiles
+- [x] Monad precompiles: [see below section for more details](#monad-precompiles)
 
 ### Forge
 
@@ -35,7 +35,7 @@ Forge commands (`forge test`, `forge script`, `forge debug`) always execute usin
 
 - [x] `forge test` aexecutes with Monad EVM
 - [x] `forge script` executes with Monad EVM
-- [ ] Monad staking precompiles
+- [x] Monad precompiles: [see below section for more details](#monad-precompiles)
 
 ### Cast
 
@@ -44,6 +44,14 @@ Forge commands (`forge test`, `forge script`, `forge debug`) always execute usin
 ### Chisel
 
 - [x] Executes with Monad EVM specs & config
+
+## Monad Precompiles
+
+### Staking
+
+The following view functions are supported: `getEpoch`, `getProposerValId`, `getValidator`, `getDelegator`, `getWithdrawalRequest`, `getConsensusValidatorSet`, `getSnapshotValidatorSet`, `getExecutionValidatorSet`.
+
+Note: `getDelegator` reads raw storage without calling `pull_delegator_up_to_date()`, the returned value will be correct on a new initiated fork state, but on a local anvil pending delegations may not be reflected.
 
 ## Installation
 

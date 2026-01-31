@@ -24,3 +24,6 @@ _
 .vite
 .wrangler
 *.zip
+
+# internal notes
+.notes

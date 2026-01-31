@@ -12,7 +12,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadCfgEnv, MonadContext, MonadEvm as InnerMonadEvm, MonadSpecId,
-    instructions::MonadInstructions, precompiles::MonadPrecompiles,
+    instructions::MonadInstructions,
+    precompiles::{MonadPrecompiles, extend_monad_precompiles},
 };
 use revm::{
     Context, Journal,
@@ -85,7 +86,11 @@ pub fn new_evm_with_existing_context<'a>(
 
 /// Get the Monad precompiles for the given spec.
 fn get_precompiles(spec: MonadSpecId) -> PrecompilesMap {
-    PrecompilesMap::from_static(MonadPrecompiles::new_with_spec(spec).precompiles())
+    let mut precompiles =
+        PrecompilesMap::from_static(MonadPrecompiles::new_with_spec(spec).precompiles());
+    // Add staking precompile via dynamic lookup
+    extend_monad_precompiles(&mut precompiles);
+    precompiles
 }
 
 /// Get the call inputs for the CREATE2 factory.
