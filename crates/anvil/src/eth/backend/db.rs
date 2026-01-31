@@ -10,7 +10,7 @@ use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip4895::Withdrawals;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
-    map::{AddressMap, HashMap},
+    map::{AddressHashMap, AddressMap},
 };
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
@@ -248,8 +248,8 @@ impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheD
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db_accounts = std::mem::take(&mut self.cache.accounts);
-        let mut accounts = HashMap::default();
-        let mut account_storage = HashMap::default();
+        let mut accounts = AddressHashMap::default();
+        let mut account_storage = AddressHashMap::default();
 
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
@@ -262,8 +262,8 @@ impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheD
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        let mut accounts = HashMap::default();
-        let mut account_storage = HashMap::default();
+        let mut accounts = AddressHashMap::default();
+        let mut account_storage = AddressHashMap::default();
 
         for (addr, acc) in &self.cache.accounts {
             account_storage.insert(*addr, acc.storage.clone());
@@ -436,6 +436,7 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
                 .or_else(|| {
                     Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
                 }),
+            slot_num: 0,
         })
     }
 }

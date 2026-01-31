@@ -2,7 +2,7 @@ use crate::{
     Env,
     executors::{Executor, ExecutorBuilder},
 };
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::U256Map};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
@@ -53,7 +53,7 @@ impl TracingExecutor {
                     executor.set_code(address, bytecode)?;
                 }
                 if let Some(state) = overrides.state {
-                    let state: HashMap<U256, U256> = state
+                    let state: U256Map<U256> = state
                         .into_iter()
                         .map(|(slot, value)| (slot.into(), value.into()))
                         .collect();
