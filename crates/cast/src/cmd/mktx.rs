@@ -132,7 +132,7 @@ impl MakeTxArgs {
             // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
             // unlocked accounts.
             let (tx, _) = tx_builder.build(config.sender).await?;
-            let signed_tx = provider.sign_transaction(tx.into_inner()).await?;
+            let signed_tx = provider.sign_transaction(tx.into_inner().into()).await?;
 
             sh_println!("{signed_tx}")?;
             return Ok(());

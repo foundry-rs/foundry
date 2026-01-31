@@ -172,7 +172,7 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
-                tx.into_inner(),
+                tx.into_inner().into(),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -195,9 +195,8 @@ impl SendTxArgs {
                 && let WalletSigner::Browser(ref browser_signer) = signer
             {
                 let (tx_request, _) = builder.build(from).await?;
-                let tx_hash = browser_signer
-                    .send_transaction_via_browser(tx_request.into_inner().inner)
-                    .await?;
+                let tx_hash =
+                    browser_signer.send_transaction_via_browser(tx_request.into_inner()).await?;
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;
@@ -275,7 +274,7 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
-                tx_request.into_inner(),
+                tx_request.into_inner().into(),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
