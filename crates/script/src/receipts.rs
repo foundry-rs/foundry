@@ -2,7 +2,7 @@ use alloy_chains::{Chain, NamedChain};
 use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
-use eyre::{Result, eyre};
+use eyre::Result;
 use forge_script_sequence::ScriptSequence;
 use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
@@ -74,9 +74,7 @@ pub async fn check_tx_status(
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
                     Ok(_) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
-                            Err(RetryError::Continue(eyre!(
-                                "tx is still known to the node, waiting for receipt"
-                            )))
+                            Err(RetryError::Retry(PendingReceiptError { tx_hash: hash }.into()))
                         }
                         _ => Err(RetryError::Retry(e.into())),
                     },
