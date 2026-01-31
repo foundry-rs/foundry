@@ -15,6 +15,8 @@ use std::{
 
 pub use foundry_evm::coverage::*;
 
+pub mod instrument;
+
 /// A coverage reporter.
 pub trait CoverageReporter {
     /// Returns a debug string for the reporter.
@@ -157,7 +159,7 @@ impl CoverageReporter for LcovReporter {
                 let hits = item.hits;
                 match item.kind {
                     CoverageItemKind::Function { ref name } => {
-                        let name = format!("{}.{name}", item.loc.contract_name);
+                        let name = format!("{}.{}", item.loc.contract_name, name);
                         if self.version >= Version::new(2, 2, 0) {
                             // v2.2 changed the FN format.
                             writeln!(out, "FNL:{fn_index},{line},{end_line}")?;
@@ -230,7 +232,7 @@ impl CoverageReporter for DebugReporter {
             let src = fs::read_to_string(path)?;
             sh_println!("{}:", path.display())?;
             for item in items {
-                sh_println!("- {}", item.fmt_with_source(Some(&src)))?;
+                sh_println!(" - {}", item.fmt_with_source(Some(&src)))?;
             }
             sh_println!()?;
         }
@@ -240,7 +242,7 @@ impl CoverageReporter for DebugReporter {
                 continue;
             }
 
-            sh_println!("Anchors for {contract_id}:")?;
+            sh_println!("Anchors for {}:", contract_id)?;
             let anchors = cta
                 .iter()
                 .map(|anchor| (false, anchor))
@@ -308,7 +310,7 @@ impl CoverageReporter for BytecodeReporter {
                     report.source_paths.get(&(contract_id.version.clone(), i as usize))
                 });
 
-                let code = format!("{code:?}");
+                let code = format!(" {:?}", code);
                 let start = source_element.offset() as usize;
                 let end = (source_element.offset() + source_element.length()) as usize;
 
