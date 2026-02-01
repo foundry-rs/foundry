@@ -343,7 +343,7 @@ alloy-op-evm = "0.26.3"
 
 # revm
 revm = { version = "34.0.0", default-features = false }
-revm-inspectors = { version = "0.34.0", features = ["serde"] }
+revm-inspectors = { version = "0.34.2", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
 
 ## cli
