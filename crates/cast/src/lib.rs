@@ -906,6 +906,11 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     where
         P: Clone + Unpin,
     {
+
+        if chunk_size == 0 {
+            return Err(eyre::eyre!("chunk_size must be greater than 0"));
+        }
+
         let (from_block, to_block) = Self::extract_block_range(filter);
         let (Some(from), Some(to)) = (from_block, to_block) else {
             return self.provider.get_logs(filter).await.map_err(Into::into);
