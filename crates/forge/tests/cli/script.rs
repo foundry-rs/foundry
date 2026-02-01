@@ -2,14 +2,14 @@
 
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_hardforks::EthereumHardfork;
-use alloy_primitives::{address, hex, Address, Bytes};
-use anvil::{spawn, NodeConfig};
+use alloy_primitives::{Address, Bytes, address, hex};
+use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
+    ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
-    ScriptOutcome, ScriptTester,
 };
 use regex::Regex;
 use serde_json::Value;
@@ -2233,11 +2233,12 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 "#]]);
 
-    assert!(!api
-        .get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        !api.get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 });
 
 forgetest_init!(can_get_script_wallets, |prj, cmd| {
