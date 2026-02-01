@@ -5,20 +5,26 @@ use revm_inspectors::tracing::{
 };
 
 /// Builds a folded stack trace from a call trace arena.
-pub fn build(arena: &CallTraceArena) -> Vec<String> {
-    let mut fst = EvmFoldedStackTraceBuilder::default();
+pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
+    let mut fst = EvmFoldedStackTraceBuilder::new(isolate);
     fst.process_call_node(arena.nodes(), 0);
     fst.build()
 }
 
 /// Wrapper for building a folded stack trace using EVM call trace node.
-#[derive(Default)]
 pub struct EvmFoldedStackTraceBuilder {
+    /// Trace produced in isolate mode, meaning refund needs to be reversed at the depth=1
+    /// frame for consistent gas values.
+    isolate: bool,
     /// Raw folded stack trace builder.
     fst: FoldedStackTraceBuilder,
 }
 
 impl EvmFoldedStackTraceBuilder {
+    pub fn new(isolate: bool) -> Self {
+        Self { isolate, fst: FoldedStackTraceBuilder::default() }
+    }
+
     /// Returns the folded stack trace.
     pub fn build(self) -> Vec<String> {
         self.fst.build()
@@ -57,7 +63,13 @@ impl EvmFoldedStackTraceBuilder {
             }
         };
 
-        self.fst.enter(func_name, node.trace.gas_used as i64);
+        let mut gas_used = node.trace.gas_used;
+        let max_refund_adjust_depth = if self.isolate { 1 } else { 0 };
+        if node.trace.depth <= max_refund_adjust_depth {
+            gas_used += node.trace.gas_refund_counter;
+        }
+
+        self.fst.enter(func_name, gas_used);
 
         // Track internal function step exits to do in this call context.
         let mut step_exits = vec![];
@@ -99,8 +111,8 @@ impl EvmFoldedStackTraceBuilder {
         if let Some(decoded_step) = &step.decoded {
             match decoded_step.as_ref() {
                 DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) => {
-                    let gas_used = steps[*step_end_idx].gas_used.saturating_sub(step.gas_used);
-                    self.fst.enter(decoded_internal_call.func_name.clone(), gas_used as i64);
+                    let gas_used = step.gas_remaining - steps[*step_end_idx].gas_remaining;
+                    self.fst.enter(decoded_internal_call.func_name.clone(), gas_used);
                     step_exits.push(*step_end_idx);
                 }
                 DecodedTraceStep::Line(_) => {}
@@ -158,13 +170,13 @@ pub struct FoldedStackTraceBuilder {
 struct TraceEntry {
     /// Names of all functions in the call stack of this trace.
     names: Vec<String>,
-    /// Gas consumed by this function, allowed to be negative due to refunds.
-    gas: i64,
+    /// Gas consumed by this function, not including refunds.
+    gas: u64,
 }
 
 impl FoldedStackTraceBuilder {
     /// Enter execution of a function call that consumes `gas`.
-    pub fn enter(&mut self, label: String, gas: i64) {
+    pub fn enter(&mut self, label: String, gas: u64) {
         let mut names = self.traces.last().map(|entry| entry.names.clone()).unwrap_or_default();
 
         while self.exits > 0 {
@@ -189,7 +201,7 @@ impl FoldedStackTraceBuilder {
 
     /// Internal method to build the folded stack trace without subtracting gas consumed by
     /// the children function calls.
-    fn build_without_subtraction(&mut self) -> Vec<String> {
+    pub fn build_without_subtraction(&mut self) -> Vec<String> {
         let mut lines = Vec::new();
         for TraceEntry { names, gas } in &self.traces {
             lines.push(format!("{} {}", names.join(";"), gas));
