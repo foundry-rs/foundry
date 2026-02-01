@@ -6,14 +6,12 @@ use revm_inspectors::tracing::{
 
 /// Builds a folded stack trace from a call trace arena.
 pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
-    let mut fst = EvmFoldedStackTraceBuilder::default();
-    fst.isolate = isolate;
+    let mut fst = EvmFoldedStackTraceBuilder::new(isolate);
     fst.process_call_node(arena.nodes(), 0);
     fst.build()
 }
 
 /// Wrapper for building a folded stack trace using EVM call trace node.
-#[derive(Default)]
 pub struct EvmFoldedStackTraceBuilder {
     /// Trace produced in isolate mode, meaning refund needs to be reversed at the depth=1
     /// frame for consistent gas values.
@@ -23,6 +21,10 @@ pub struct EvmFoldedStackTraceBuilder {
 }
 
 impl EvmFoldedStackTraceBuilder {
+    pub fn new(isolate: bool) -> Self {
+        Self { isolate, fst: FoldedStackTraceBuilder::default() }
+    }
+
     /// Returns the folded stack trace.
     pub fn build(self) -> Vec<String> {
         self.fst.build()
