@@ -38,6 +38,7 @@ pub fn replay_run(
     let mut counterexample_sequence = vec![];
 
     // Replay each call from the sequence, collect logs, traces and coverage.
+    // The warp/roll values in inputs have already been properly accumulated by shrinking.
     for tx in inputs {
         let mut call_result = execute_tx(&mut executor, tx)?;
         logs.extend(call_result.logs.clone());
