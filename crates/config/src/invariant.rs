@@ -41,6 +41,8 @@ pub struct InvariantConfig {
     pub max_time_delay: Option<u32>,
     /// Maximum number of blocks elapsed between generated txs.
     pub max_block_delay: Option<u32>,
+    /// Maximum amount (in wei) to deal to sender before each tx for payable functions.
+    pub max_deal: Option<u64>,
     /// Number of calls to execute between invariant assertions.
     ///
     /// - `0`: Only assert on the last call of each run (fastest, but may miss exact breaking call)
@@ -69,6 +71,7 @@ impl Default for InvariantConfig {
             show_solidity: false,
             max_time_delay: None,
             max_block_delay: None,
+            max_deal: None,
             check_interval: 1,
         }
     }
