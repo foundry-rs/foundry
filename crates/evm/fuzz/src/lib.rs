@@ -307,19 +307,10 @@ impl FuzzTestResult {
 /// Data of a single fuzz test case
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct FuzzCase {
-    /// The calldata used for this fuzz test
-    pub calldata: Bytes,
     /// Consumed gas
     pub gas: u64,
     /// The initial gas stipend for the transaction
     pub stipend: u64,
-}
-
-impl FuzzCase {
-    /// Removes the calldata from the fuzz case to save memory.
-    pub fn prune_calldata(&mut self) {
-        self.calldata = Bytes::new();
-    }
 }
 
 /// Container type for all successful test cases
@@ -389,13 +380,6 @@ impl FuzzedCases {
     /// Returns the lowest amount of gas spent on a fuzz case
     pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
-    }
-
-    /// Prunes calldata from all fuzz cases.
-    pub fn prune_calldata(&mut self) {
-        for case in &mut self.cases {
-            case.prune_calldata();
-        }
     }
 }
 

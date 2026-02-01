@@ -241,15 +241,6 @@ impl InvariantTest {
         }
         self.test_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
 
-        // Prune older cases if we have too many.
-        // We keep a rolling window of full traces for the last 4096 runs to aid debugging,
-        // but prune older ones to avoid unbounded memory usage.
-        const MAX_KEPT_CALLDATA: usize = 4096;
-        if self.test_data.fuzz_cases.len() > MAX_KEPT_CALLDATA {
-            let prune_index = self.test_data.fuzz_cases.len() - MAX_KEPT_CALLDATA - 1;
-            self.test_data.fuzz_cases[prune_index].prune_calldata();
-        }
-
         // Revert state to not persist values between runs.
         self.fuzz_state.revert();
     }
@@ -461,11 +452,9 @@ impl<'a> InvariantExecutor<'a> {
                     {
                         warn!(target: "forge::test", "{error}");
                     }
-                    current_run.fuzz_runs.push(FuzzCase {
-                        calldata: tx.call_details.calldata.clone(),
-                        gas: call_result.gas_used,
-                        stipend: call_result.stipend,
-                    });
+                    current_run
+                        .fuzz_runs
+                        .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
 
                     // Determine if test can continue or should exit.
                     let result = can_continue(
