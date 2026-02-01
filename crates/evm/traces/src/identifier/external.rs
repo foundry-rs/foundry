@@ -184,11 +184,15 @@ impl TraceIdentifier for ExternalIdentifier {
                     match self.contracts.entry(address) {
                         Entry::Occupied(mut occupied_entry) => {
                             // Override if:
-                            // - new is from Etherscan and old is not
+                            // - new is from Etherscan and old is not, and we actually got metadata
                             // - new is Some and old is None, meaning verified only in one source
-                            if !matches!(occupied_entry.get().0, FetcherKind::Etherscan)
-                                || value.1.is_none()
-                            {
+                            let old = occupied_entry.get();
+                            let should_override =
+                                (matches!(value.0, FetcherKind::Etherscan)
+                                    && !matches!(old.0, FetcherKind::Etherscan)
+                                    && value.1.is_some())
+                                    || (old.1.is_none() && value.1.is_some());
+                            if should_override {
                                 occupied_entry.insert(value);
                             }
                         }
