@@ -21,6 +21,7 @@ use alloy_rpc_types::{
 };
 use futures::future::join_all;
 use itertools::Itertools;
+use std::collections::HashMap;
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
@@ -416,20 +417,48 @@ impl EthApi {
             .collect::<Result<Vec<_>>>()?;
 
         let receipt_futs = hashes.iter().map(|hash| self.transaction_receipt(*hash));
+        let receipt_results = join_all(receipt_futs).await;
 
-        let receipts = join_all(receipt_futs.map(|r| async {
-            if let Ok(Some(r)) = r.await {
-                let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
-                let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
-                Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
+        let mut raw_receipts = Vec::with_capacity(receipt_results.len());
+        let mut block_numbers = Vec::with_capacity(receipt_results.len());
+        for result in receipt_results {
+            if let Ok(Some(receipt)) = result {
+                let block_number =
+                    receipt.block_number().ok_or(BlockchainError::BlockNotFound)?;
+                raw_receipts.push(receipt);
+                block_numbers.push(block_number);
             } else {
-                Err(BlockchainError::BlockNotFound)
+                return Err(BlockchainError::BlockNotFound);
             }
-        }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
+        }
+
+        block_numbers.sort_unstable();
+        block_numbers.dedup();
+
+        let mut timestamps = HashMap::with_capacity(block_numbers.len());
+        let timestamp_futs = block_numbers.iter().map(|&number| async move {
+            let block = self.block_by_number(number.into()).await?;
+            let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+            Ok::<_, BlockchainError>((number, timestamp))
+        });
+
+        for result in join_all(timestamp_futs).await {
+            let (number, timestamp) = result?;
+            timestamps.insert(number, timestamp);
+        }
+
+        let receipts = raw_receipts
+            .into_iter()
+            .map(|receipt| {
+                let block_number =
+                    receipt.block_number().ok_or(BlockchainError::BlockNotFound)?;
+                let timestamp = *timestamps
+                    .get(&block_number)
+                    .ok_or(BlockchainError::BlockNotFound)?;
+                let receipt = receipt.as_ref().inner.clone().map_inner(OtsReceipt::from);
+                Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(TransactionsWithReceipts { txs, receipts, first_page, last_page })
     }
