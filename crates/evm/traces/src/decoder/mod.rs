@@ -235,14 +235,18 @@ impl CallTraceDecoder {
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    pub fn identify(&mut self, arena: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        self.collect_identified_addresses(self.identify_addresses(arena, identifier));
+    pub async fn identify(
+        &mut self,
+        arena: &CallTraceArena,
+        identifier: &mut impl TraceIdentifier,
+    ) {
+        self.collect_identified_addresses(self.identify_addresses(arena, identifier).await);
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    pub fn identify_addresses<'a>(
+    pub async fn identify_addresses<'a>(
         &self,
         arena: &CallTraceArena,
         identifier: &'a mut impl TraceIdentifier,
@@ -251,7 +255,7 @@ impl CallTraceDecoder {
             let address = &node.trace.address;
             !self.labels.contains_key(address) || !self.contracts.contains_key(address)
         });
-        identifier.identify_addresses(&nodes.collect::<Vec<_>>())
+        identifier.identify_addresses(&nodes.collect::<Vec<_>>()).await
     }
 
     /// Adds a single event to the decoder.

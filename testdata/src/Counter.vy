@@ -1,11 +1,10 @@
-from . import ICounter
-implements: ICounter
+# pragma version ~=0.4.3
 
 number: public(uint256)
 
 @external
-def set_number(new_number: uint256):
-    self.number = new_number
+def setNumber(newNumber: uint256):
+    self.number = newNumber
 
 @external
 def increment():
