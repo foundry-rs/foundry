@@ -47,7 +47,7 @@ impl GenesisConfig {
             for (addr, mut acc) in genesis.alloc.clone() {
                 let storage = std::mem::take(&mut acc.storage);
                 // insert all accounts
-                db.insert_account(addr, self.genesis_to_account_info(&acc));
+                db.insert_account(addr, self.genesis_to_account_info(acc));
                 // insert all storage values
                 for (k, v) in &storage.unwrap_or_default() {
                     db.set_storage_at(addr, *k, *v)?;
@@ -58,8 +58,8 @@ impl GenesisConfig {
     }
 
     /// Converts a [`GenesisAccount`] to an [`AccountInfo`]
-    fn genesis_to_account_info(&self, acc: &GenesisAccount) -> AccountInfo {
-        let GenesisAccount { code, balance, nonce, .. } = acc.clone();
+    fn genesis_to_account_info(&self, acc: GenesisAccount) -> AccountInfo {
+        let GenesisAccount { code, balance, nonce, .. } = acc;
         let code = code.map(Bytecode::new_raw);
         AccountInfo {
             balance,
