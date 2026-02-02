@@ -286,7 +286,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_test",
             version,
-            "forge test",
+            "forge test --gas-limit 100000000",
             runs,
             Some("forge build"),
             None,
@@ -345,7 +345,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_fuzz_test",
             version,
-            r#"forge test --match-test "test[^(]*\([^)]+\)""#,
+            r#"forge test --gas-limit 100000000 --match-test "test[^(]*\([^)]+\)""#,
             runs,
             Some("forge build"),
             None,
@@ -386,7 +386,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_isolate_test",
             version,
-            "forge test --isolate",
+            "forge test --gas-limit 100000000 --isolate",
             runs,
             Some("forge build"),
             None,
