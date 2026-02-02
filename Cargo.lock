@@ -4545,6 +4545,7 @@ dependencies = [
  "dunce",
  "eyre",
  "foundry-block-explorers",
+ "foundry-cli-markdown",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",

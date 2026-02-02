@@ -256,6 +256,7 @@ forge-script-sequence = { path = "crates/script-sequence" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
+foundry-cli-markdown = { path = "crates/cli-markdown" }
 foundry-common = { path = "crates/common" }
 foundry-common-fmt = { path = "crates/common/fmt" }
 foundry-config = { path = "crates/config" }
