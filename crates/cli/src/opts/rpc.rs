@@ -73,6 +73,10 @@ pub struct RpcOpts {
     /// Print the equivalent curl command instead of making the RPC request.
     #[arg(long)]
     pub curl: bool,
+
+    /// Enable Flashblocks by querying the receipt with zero confirmations when the transaction is sent.
+    #[arg(long)]
+    pub flashblocks: bool,
 }
 
 impl_figment_convert_cast!(RpcOpts);
