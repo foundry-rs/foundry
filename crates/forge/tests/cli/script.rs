@@ -3144,7 +3144,7 @@ contract CounterScript is Script {
 Compiler run successful!
 Traces:
   [..] → new CounterScript@[..]
-    └─ ← [Return] 2200 bytes of code
+    └─ ← [Return] 2162 bytes of code
 
   [..] CounterScript::setUp()
     └─ ← [Stop]
