@@ -361,7 +361,7 @@ impl TestArgs {
             // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
             decode_trace_arena(arena, decoder).await;
-            let mut fst = folded_stack_trace::build(arena);
+            let mut fst = folded_stack_trace::build(arena, self.evm.isolate);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
             let contract = suite_name.split(':').next_back().unwrap();
