@@ -26,6 +26,7 @@ members = [
     "crates/primitives/",
     "crates/script-sequence/",
     "crates/test-utils/",
+    "crates/cli-markdown/",
 ]
 resolver = "2"
 
