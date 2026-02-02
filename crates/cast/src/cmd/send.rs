@@ -124,7 +124,13 @@ impl SendTxArgs {
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
+        } else if send_tx.eth.rpc.flashblocks {
+            // Use fast polling for flashblocks since receipts are available quickly
+            provider.client().set_poll_interval(Duration::from_millis(10))
         }
+
+        // When flashblocks is enabled set confirmations to 0
+        let tx_confirmations = if send_tx.eth.rpc.flashblocks { 0 } else { send_tx.confirmations };
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
@@ -175,7 +181,7 @@ impl SendTxArgs {
                 tx.into_inner(),
                 send_tx.cast_async,
                 send_tx.sync,
-                send_tx.confirmations,
+                tx_confirmations,
                 timeout,
             )
             .await
@@ -206,7 +212,7 @@ impl SendTxArgs {
                         .receipt(
                             format!("{tx_hash:#x}"),
                             None,
-                            send_tx.confirmations,
+                            tx_confirmations,
                             Some(timeout),
                             false,
                         )
@@ -244,7 +250,7 @@ impl SendTxArgs {
                         .receipt(
                             format!("{tx_hash:#x}"),
                             None,
-                            send_tx.confirmations,
+                            tx_confirmations,
                             Some(timeout),
                             false,
                         )
@@ -255,7 +261,7 @@ impl SendTxArgs {
                         .receipt(
                             format!("{tx_hash:#x}"),
                             None,
-                            send_tx.confirmations,
+                            tx_confirmations,
                             Some(timeout),
                             false,
                         )
@@ -278,7 +284,7 @@ impl SendTxArgs {
                 tx_request.into_inner(),
                 send_tx.cast_async,
                 send_tx.sync,
-                send_tx.confirmations,
+                tx_confirmations,
                 timeout,
             )
             .await
