@@ -29,8 +29,11 @@ impl<T> RingBuffer<T> {
         index
     }
 
+    /// Clears the buffer and resets the logical offset.
+    /// The offset must be reset to keep logical indices consistent after clearing.
     pub(crate) fn clear(&mut self) {
         self.data.clear();
+        self.offset = 0;
     }
 
     pub(crate) fn index_range(&self) -> Range<usize> {
