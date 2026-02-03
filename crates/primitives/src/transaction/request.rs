@@ -216,9 +216,12 @@ impl FoundryTransactionRequest {
                 access_list: self.access_list().cloned().unwrap_or_default(),
                 ..Default::default()
             }))
-        } else if self.as_ref().has_eip4844_fields() && self.as_ref().blob_sidecar().is_none() {
-            // if request has eip4844 fields but no blob sidecar, try to build to eip4844 without
-            // sidecar
+        } else if self.as_ref().has_eip4844_fields()
+            && self.blob_sidecar().is_none()
+            && alloy_network::TransactionBuilder7594::blob_sidecar_7594(self.as_ref()).is_none()
+        {
+            // if request has eip4844 fields but no blob sidecar (neither eip4844 nor eip7594
+            // format), try to build to eip4844 without sidecar
             self.0
                 .into_inner()
                 .build_4844_without_sidecar()
