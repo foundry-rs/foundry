@@ -1,7 +1,9 @@
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
-use foundry_common::{ErrorExt, fmt::ConsoleFmt};
-use foundry_evm_core::{InspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS};
+use foundry_common::{ErrorExt, fmt::ConsoleFmt, sh_println};
+use foundry_evm_core::{
+    InspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_log,
+};
 use revm::{
     Inspector,
     context::ContextTr,
@@ -14,13 +16,27 @@ use revm::{
 /// An inspector that collects logs during execution.
 ///
 /// The inspector collects logs from the `LOG` opcodes as well as Hardhat-style `console.sol` logs.
-#[derive(Clone, Debug, Default)]
-pub struct LogCollector {
+#[derive(Clone, Debug)]
+pub enum LogCollector {
     /// The collected logs. Includes both `LOG` opcodes and Hardhat-style `console.sol` logs.
-    pub logs: Vec<Log>,
+    Capture { logs: Vec<Log> },
+    /// Print logs directly to stdout.
+    LiveLogs,
 }
 
 impl LogCollector {
+    /// Creates a new instance of `LogCollector`.
+    pub fn new(capture: bool) -> Self {
+        if capture { Self::Capture { logs: Vec::new() } } else { Self::LiveLogs }
+    }
+
+    pub fn into_captured_logs(self) -> Option<Vec<Log>> {
+        match self {
+            LogCollector::Capture { logs } => Some(logs),
+            LogCollector::LiveLogs => None,
+        }
+    }
+
     #[cold]
     fn do_hardhat_log<CTX>(&mut self, context: &mut CTX, inputs: &CallInputs) -> Option<CallOutcome>
     where
@@ -41,8 +57,31 @@ impl LogCollector {
 
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
         let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
-        self.logs.push(hh_to_ds(&decoded));
+        self.push_msg(&decoded.fmt(Default::default()));
         Ok(())
+    }
+
+    fn push_raw_log(&mut self, log: Log) {
+        match self {
+            Self::Capture { logs } => logs.push(log),
+            Self::LiveLogs => {
+                if let Some(msg) = decode_console_log(&log) {
+                    sh_println!("{msg}").expect("fail printing to stdout");
+                } else {
+                    // This case should not happen if the users call through forge-std.
+                    // We print the log data for the user nontheless.
+                    sh_println!("console.log({:?}, {})", log.data.topics(), log.data.data)
+                        .expect("fail printing to stdout");
+                }
+            }
+        }
+    }
+
+    fn push_msg(&mut self, msg: &str) {
+        match self {
+            Self::Capture { logs } => logs.push(new_console_log(&msg)),
+            Self::LiveLogs => sh_println!("{msg}").expect("fail printing to stdout"),
+        }
     }
 }
 
@@ -51,7 +90,7 @@ where
     CTX: ContextTr,
 {
     fn log(&mut self, _context: &mut CTX, log: Log) {
-        self.logs.push(log);
+        self.push_raw_log(log);
     }
 
     fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
@@ -64,15 +103,8 @@ where
 
 impl InspectorExt for LogCollector {
     fn console_log(&mut self, msg: &str) {
-        self.logs.push(new_console_log(msg));
+        self.push_msg(msg);
     }
-}
-
-/// Converts a Hardhat `console.log` call to a DSTest `log(string)` event.
-fn hh_to_ds(call: &console::hh::ConsoleCalls) -> Log {
-    // Convert the parameters of the call to their string representation using `ConsoleFmt`.
-    let msg = call.fmt(Default::default());
-    new_console_log(&msg)
 }
 
 /// Creates a `console.log(string)` event.
