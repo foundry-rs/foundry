@@ -208,6 +208,15 @@ pub struct Config {
     pub remappings: Vec<RelativeRemapping>,
     /// Whether to autodetect remappings.
     pub auto_detect_remappings: bool,
+    /// Scope of remappings resolution.
+    ///
+    /// When set to `Global`, only project-level remappings are used and dependency
+    /// remappings (from nested foundry.toml or remappings.txt) are ignored.
+    /// This is useful for Soldeer and similar package managers where dependencies
+    /// ship their own remappings that conflict with the project's structure.
+    ///
+    /// Defaults to `Default` which preserves current behavior.
+    pub remappings_scope: RemappingsScope,
     /// Library addresses to link.
     pub libraries: Vec<String>,
     /// Whether to enable the build cache.
@@ -586,6 +595,32 @@ pub enum DenyLevel {
     Notes,
 }
 
+/// Determines how remappings are resolved across the project and its dependencies.
+///
+/// By default, Foundry uses the "closest" remappings.txt to each file, so dependencies'
+/// remappings can override or conflict with project remappings. With `Global`, only
+/// project-level remappings are used, making them truly global and ignoring any
+/// remappings.txt files inside dependencies.
+///
+/// This is particularly useful for Soldeer and similar package managers where dependencies
+/// may ship their own remappings.txt files that reference paths like `node_modules/` which
+/// don't exist in the project's structure.
+///
+/// See <https://github.com/foundry-rs/foundry/issues/12420>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RemappingsScope {
+    /// Use the default behavior: remappings are collected from the project root,
+    /// foundry.toml, remappings.txt, environment variables, and auto-detected from
+    /// library directories (including nested foundry.toml files in dependencies).
+    #[default]
+    Default,
+    /// Only use project-level remappings. Remappings from dependency directories
+    /// (e.g., remappings.txt or foundry.toml inside lib folders) are ignored.
+    /// Project remappings become truly global and override any dependency remappings.
+    Global,
+}
+
 // Custom deserialization to make `DenyLevel` parsing case-insensitive and backwards compatible with
 // booleans.
 impl<'de> Deserialize<'de> for DenyLevel {
@@ -910,6 +945,9 @@ impl Config {
                 auto_detect_remappings: figment
                     .extract_inner::<bool>("auto_detect_remappings")
                     .unwrap_or(true),
+                remappings_scope: figment
+                    .extract_inner::<RemappingsScope>("remappings_scope")
+                    .unwrap_or_default(),
                 lib_paths: figment
                     .extract_inner::<Vec<PathBuf>>("libs")
                     .map(Cow::Owned)
@@ -2600,6 +2638,7 @@ impl Default for Config {
             verbosity: 0,
             remappings: vec![],
             auto_detect_remappings: true,
+            remappings_scope: RemappingsScope::Default,
             libraries: vec![],
             ignored_error_codes: vec![
                 SolidityErrorCode::SpdxLicenseNotProvided,
@@ -3142,6 +3181,51 @@ mod tests {
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
                     Remapping::from_str("other/=lib/other/").unwrap(),
                 ],
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_remappings_scope_global_ignores_dependency_remappings() {
+        // When remappings_scope = "global", only project-level remappings are used.
+        // Dependency foundry.toml remappings (e.g. node_modules paths) must be ignored.
+        // See https://github.com/foundry-rs/foundry/issues/12420
+        figment::Jail::expect_with(|jail| {
+            let lib_path = jail.directory().join("lib/nested-dep");
+            std::fs::create_dir_all(&lib_path).unwrap();
+            jail.create_file(
+                "lib/nested-dep/foundry.toml",
+                r#"
+                [profile.default]
+                remappings = ["nested-pkg/=node_modules/nested-pkg/"]
+                "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                remappings_scope = "global"
+                remappings = ["nested-pkg/=lib/nested-dep/"]
+                auto_detect_remappings = true
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.remappings_scope, RemappingsScope::Global);
+
+            let remappings: Vec<_> = config.get_all_remappings().collect();
+            // Project remapping must be present
+            assert!(
+                remappings.iter().any(|r| r.path.contains("lib/nested-dep")),
+                "project remapping should be present"
+            );
+            // Dependency remapping (node_modules) must NOT be present
+            assert!(
+                !remappings.iter().any(|r| r.path.contains("node_modules")),
+                "dependency remapping (node_modules) should be ignored when remappings_scope = global"
             );
 
             Ok(())

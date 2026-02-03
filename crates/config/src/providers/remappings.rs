@@ -1,4 +1,6 @@
-use crate::{Config, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline};
+use crate::{
+    Config, RemappingsScope, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline,
+};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map},
@@ -129,6 +131,11 @@ impl Remappings {
 pub struct RemappingsProvider<'a> {
     /// Whether to auto detect remappings from the `lib_paths`
     pub auto_detect_remappings: bool,
+    /// The scope of remappings resolution.
+    ///
+    /// When set to `Global`, only project-level remappings are used and dependency
+    /// remappings (from nested foundry.toml or remappings.txt) are ignored.
+    pub remappings_scope: RemappingsScope,
     /// The lib/dependency directories to scan for remappings
     pub lib_paths: Cow<'a, Vec<PathBuf>>,
     /// the root path used to turn an absolute `Remapping`, as we're getting it from
@@ -208,9 +215,21 @@ impl RemappingsProvider<'_> {
         // TODO: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
+            // When remappings_scope is Global, skip nested foundry.toml remappings.
+            // This prevents dependency-level remappings from overriding project remappings.
+            // See https://github.com/foundry-rs/foundry/issues/12420
+            let is_global_scope = matches!(self.remappings_scope, RemappingsScope::Global);
+
             let (nested_foundry_remappings, auto_detected_remappings) = rayon::join(
-                || self.find_nested_foundry_remappings(),
-                || self.auto_detect_remappings(),
+                || {
+                    if is_global_scope {
+                        trace!(target: "forge", "skipping nested foundry.toml remappings (remappings_scope = Global)");
+                        Vec::new()
+                    } else {
+                        self.find_nested_foundry_remappings().collect()
+                    }
+                },
+                || self.auto_detect_remappings().collect::<Vec<_>>(),
             );
 
             let mut lib_remappings = BTreeMap::new();
