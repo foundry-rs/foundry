@@ -1,0 +1,20 @@
+[package]
+name = "foundry-cli-markdown"
+description = "Generate Markdown documentation for clap CLIs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["env"] }
+
+[dev-dependencies]
+clap = { version = "4", features = ["derive"] }
+pretty_assertions = "1"
