@@ -416,7 +416,7 @@ similar-asserts = "1.7"
 soldeer-commands = "=0.10.0"
 soldeer-core = { version = "=0.10.0", features = ["serde"] }
 strum = "0.27"
-tempfile = "3.23"
+tempfile = "3.24"
 tokio = "1"
 toml = "0.9"
 toml_edit = "0.24"
@@ -436,7 +436,7 @@ jiff = { version = "0.2", default-features = false, features = [
     "perf-inline",
 ] }
 heck = "0.5"
-uuid = "1.19.0"
+uuid = "1.20.0"
 flate2 = "1.1"
 ethereum_ssz = "0.10"
 
