@@ -288,60 +288,60 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 ] }
 
 ## alloy
-alloy-consensus = { version = "1.4", default-features = false }
-alloy-contract = { version = "1.4", default-features = false }
-alloy-eips = { version = "1.4", default-features = false }
-alloy-eip5792 = { version = "1.4", default-features = false }
-alloy-ens = { version = "1.4", default-features = false }
-alloy-genesis = { version = "1.4", default-features = false }
-alloy-json-rpc = { version = "1.4", default-features = false }
-alloy-network = { version = "1.4", default-features = false }
-alloy-provider = { version = "1.4", default-features = false }
-alloy-pubsub = { version = "1.4", default-features = false }
-alloy-rpc-client = { version = "1.4", default-features = false }
-alloy-rpc-types = { version = "1.4", default-features = true }
-alloy-rpc-types-beacon = { version = "1.4", default-features = true }
-alloy-rpc-types-eth = { version = "1.4", default-features = false }
-alloy-serde = { version = "1.4", default-features = false }
-alloy-signer = { version = "1.4", default-features = false }
-alloy-signer-aws = { version = "1.4", default-features = false }
-alloy-signer-gcp = { version = "1.4", default-features = false }
-alloy-signer-ledger = { version = "1.4", default-features = false }
-alloy-signer-local = { version = "1.4", default-features = false }
-alloy-signer-trezor = { version = "1.4", default-features = false }
-alloy-signer-turnkey = { version = "1.4", default-features = false }
-alloy-transport = { version = "1.4", default-features = false }
-alloy-transport-http = { version = "1.4", default-features = false }
-alloy-transport-ipc = { version = "1.4", default-features = false }
-alloy-transport-ws = { version = "1.4", default-features = false }
+alloy-consensus = { version = "1.6", default-features = false }
+alloy-contract = { version = "1.6", default-features = false }
+alloy-eips = { version = "1.6", default-features = false }
+alloy-eip5792 = { version = "1.6", default-features = false }
+alloy-ens = { version = "1.6", default-features = false }
+alloy-genesis = { version = "1.6", default-features = false }
+alloy-json-rpc = { version = "1.6", default-features = false }
+alloy-network = { version = "1.6", default-features = false }
+alloy-provider = { version = "1.6", default-features = false }
+alloy-pubsub = { version = "1.6", default-features = false }
+alloy-rpc-client = { version = "1.6", default-features = false }
+alloy-rpc-types = { version = "1.6", default-features = true }
+alloy-rpc-types-beacon = { version = "1.6", default-features = true }
+alloy-rpc-types-eth = { version = "1.6", default-features = false }
+alloy-serde = { version = "1.6", default-features = false }
+alloy-signer = { version = "1.6", default-features = false }
+alloy-signer-aws = { version = "1.6", default-features = false }
+alloy-signer-gcp = { version = "1.6", default-features = false }
+alloy-signer-ledger = { version = "1.6", default-features = false }
+alloy-signer-local = { version = "1.6", default-features = false }
+alloy-signer-trezor = { version = "1.6", default-features = false }
+alloy-signer-turnkey = { version = "1.6", default-features = false }
+alloy-transport = { version = "1.6", default-features = false }
+alloy-transport-http = { version = "1.6", default-features = false }
+alloy-transport-ipc = { version = "1.6", default-features = false }
+alloy-transport-ws = { version = "1.6", default-features = false }
 alloy-hardforks = { version = "0.4.7", default-features = false }
 alloy-op-hardforks = { version = "0.4.7", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "1.5.2"
-alloy-json-abi = "1.5.2"
-alloy-primitives = { version = "1.5.2", features = [
+alloy-dyn-abi = "1.5"
+alloy-json-abi = "1.5"
+alloy-primitives = { version = "1.5", features = [
     "getrandom",
     "rand",
     "map-fxhash",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "1.5.2"
-alloy-sol-macro-input = "1.5.2"
-alloy-sol-types = "1.5.2"
+alloy-sol-macro-expander = "1.5"
+alloy-sol-macro-input = "1.5"
+alloy-sol-types = "1.5"
 
 alloy-chains = "0.2"
 alloy-rlp = "0.3"
 alloy-trie = "0.9"
 
 ## op-alloy
-op-alloy-consensus = "0.23.1"
-op-alloy-rpc-types = "0.23.1"
-op-alloy-flz = "0.13.1"
+op-alloy-consensus = "0.23"
+op-alloy-rpc-types = "0.23"
+op-alloy-flz = "0.13"
 
 ## alloy-evm
-alloy-evm = "0.26.3"
-alloy-op-evm = "0.26.3"
+alloy-evm = "0.27"
+alloy-op-evm = "0.27"
 
 # revm
 revm = { version = "34.0.0", default-features = false }
@@ -404,9 +404,9 @@ rand = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
 rayon = "1"
 regex = { version = "1", default-features = false }
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
-    "rustls-tls-native-roots",
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls",
+    "rustls-native-certs",
 ] }
 rustls = "0.23"
 semver = "1"
@@ -441,7 +441,9 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", tag = "v1.0.0", default-features = false, features = ["serde"] }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", tag = "v1.0.0", default-features = false, features = [
+    "serde",
+] }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
