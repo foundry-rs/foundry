@@ -51,6 +51,17 @@ pub struct GlobalArgs {
 }
 
 impl GlobalArgs {
+    /// Check if `--markdown-help` was passed and print CLI reference as Markdown, then exit.
+    ///
+    /// This must be called **before** parsing arguments, since commands with required
+    /// subcommands would fail parsing before the flag is checked.
+    pub fn check_markdown_help<C: clap::CommandFactory>() {
+        if std::env::args().any(|arg| arg == "--markdown-help") {
+            foundry_cli_markdown::print_help_markdown::<C>();
+            std::process::exit(0);
+        }
+    }
+
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
         // Set the global shell.
