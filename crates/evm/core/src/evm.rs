@@ -8,12 +8,12 @@ use crate::{
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{Evm, EvmEnv, precompiles::PrecompilesMap};
+use alloy_monad_evm::extend_monad_precompiles;
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadCfgEnv, MonadContext, MonadEvm as InnerMonadEvm, MonadSpecId,
-    instructions::MonadInstructions,
-    precompiles::{MonadPrecompiles, extend_monad_precompiles},
+    instructions::MonadInstructions, precompiles::MonadPrecompiles,
 };
 use revm::{
     Context, Journal,

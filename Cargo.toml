@@ -297,7 +297,7 @@ alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "mai
 revm = { version = "34.0.0", default-features = false }
 revm-inspectors = { version = "0.33.2", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
-monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main", features = ["alloy-evm"] }
+monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main" }
 
 ## cli
 anstream = "0.6"
