@@ -43,6 +43,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
+use rand::Rng;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -303,6 +304,12 @@ impl TestArgs {
             config.fuzz.gas_report_samples = 0;
             config.invariant.gas_report_samples = 0;
         }
+
+        // Generate a random fuzz seed if none provided, for reproducibility.
+        config.fuzz.seed = config
+            .fuzz
+            .seed
+            .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
 
         // Create test options from general project settings and compiler output.
         let should_debug = self.debug;
