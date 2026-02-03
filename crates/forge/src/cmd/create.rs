@@ -589,7 +589,9 @@ impl CreateArgs {
         }
 
         // Send transaction via browser wallet
-        let tx_hash = browser_signer.send_transaction_via_browser(deployer.tx.into_inner()).await
+        let tx_hash = browser_signer
+            .send_transaction_via_browser(deployer.tx.into_inner())
+            .await
             .map_err(|e| eyre::eyre!("Failed to send transaction via browser: {}", e))?;
 
         // Wait for receipt
@@ -598,8 +600,8 @@ impl CreateArgs {
             .await?
             .ok_or_else(|| eyre::eyre!("Transaction receipt not found"))?;
 
-        let address = receipt.contract_address
-            .ok_or_else(|| eyre::eyre!("Contract not deployed"))?;
+        let address =
+            receipt.contract_address.ok_or_else(|| eyre::eyre!("Contract not deployed"))?;
 
         if shell::is_json() {
             let output = json!({
