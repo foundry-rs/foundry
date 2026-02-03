@@ -32,6 +32,7 @@ use foundry_config::{
     },
     merge_impl_figment_convert,
 };
+use foundry_wallets::{WalletSigner, wallet_browser::signer::BrowserSigner};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
 
@@ -186,21 +187,44 @@ impl CreateArgs {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
-            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                .wallet(EthereumWallet::new(signer))
-                .connect_provider(provider);
-            self.deploy(
-                abi,
-                bin,
-                params,
-                provider,
-                chain_id,
-                deployer,
-                config.transaction_timeout,
-                id,
-                dry_run,
-            )
-            .await
+
+            // Check if it's a browser wallet
+            match signer {
+                WalletSigner::Browser(browser_signer) => {
+                    // Handle browser wallet separately
+                    self.deploy_with_browser(
+                        abi,
+                        bin,
+                        params,
+                        provider,
+                        chain_id,
+                        deployer,
+                        config.transaction_timeout,
+                        id,
+                        dry_run,
+                        browser_signer,
+                    )
+                    .await
+                }
+                _ => {
+                    // Use regular wallet flow
+                    let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+                        .wallet(EthereumWallet::new(signer))
+                        .connect_provider(provider);
+                    self.deploy(
+                        abi,
+                        bin,
+                        params,
+                        provider,
+                        chain_id,
+                        deployer,
+                        config.transaction_timeout,
+                        id,
+                        dry_run,
+                    )
+                    .await
+                }
+            }
         }
     }
 
@@ -441,6 +465,193 @@ impl CreateArgs {
             compilation_profile: Some(id.profile.to_string()),
             language: None,
             creation_transaction_hash: Some(receipt.transaction_hash),
+        };
+        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
+        verify.run().await
+    }
+
+    /// Deploys the contract using browser wallet
+    #[expect(clippy::too_many_arguments)]
+    async fn deploy_with_browser<P: Provider<AnyNetwork>>(
+        self,
+        abi: JsonAbi,
+        bin: BytecodeObject,
+        args: Vec<DynSolValue>,
+        provider: P,
+        chain: u64,
+        deployer_address: Address,
+        timeout: u64,
+        id: ArtifactId,
+        dry_run: bool,
+        browser_signer: BrowserSigner,
+    ) -> Result<()> {
+        let bin = bin.into_bytes().unwrap_or_default();
+        if bin.is_empty() {
+            eyre::bail!("no bytecode found in bin object for {}", self.contract.name)
+        }
+
+        let provider = Arc::new(provider);
+        let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone(), timeout);
+
+        let is_args_empty = args.is_empty();
+        let mut deployer =
+            factory.deploy_tokens(args.clone()).context("failed to deploy contract").map_err(|e| {
+                if is_args_empty {
+                    e.wrap_err("no arguments provided for contract constructor; consider --constructor-args or --constructor-args-path")
+                } else {
+                    e
+                }
+            })?;
+        let is_legacy = self.tx.legacy || Chain::from(chain).is_legacy();
+
+        deployer.tx.set_from(deployer_address);
+        deployer.tx.set_chain_id(chain);
+        if deployer.tx.to.is_none() {
+            deployer.tx.set_create();
+        }
+        deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
+            Ok(nonce.to())
+        } else {
+            provider.get_transaction_count(deployer_address).await
+        }?);
+
+        if let Some(value) = self.tx.value {
+            deployer.tx.set_value(value);
+        }
+
+        deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
+            Ok(gas_limit.to())
+        } else {
+            provider.estimate_gas(deployer.tx.clone()).await
+        }?);
+
+        if is_legacy {
+            let gas_price = if let Some(gas_price) = self.tx.gas_price {
+                gas_price.to()
+            } else {
+                provider.get_gas_price().await?
+            };
+            deployer.tx.set_gas_price(gas_price);
+        } else {
+            let estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+            let priority_fee = if let Some(priority_fee) = self.tx.priority_gas_price {
+                priority_fee.to()
+            } else {
+                estimate.max_priority_fee_per_gas
+            };
+            let max_fee = if let Some(max_fee) = self.tx.gas_price {
+                max_fee.to()
+            } else {
+                estimate.max_fee_per_gas
+            };
+
+            deployer.tx.set_max_fee_per_gas(max_fee);
+            deployer.tx.set_max_priority_fee_per_gas(priority_fee);
+        }
+
+        let mut constructor_args = None;
+        if self.verify {
+            if !args.is_empty() {
+                let encoded_args = abi
+                    .constructor()
+                    .ok_or_else(|| eyre::eyre!("could not find constructor"))?
+                    .abi_encode_input(&args)?;
+                constructor_args = Some(hex::encode(encoded_args));
+            }
+
+            self.verify_preflight_check(constructor_args.clone(), chain, &id).await?;
+        }
+
+        if dry_run {
+            if !shell::is_json() {
+                sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
+
+                sh_println!("Contract: {}", self.contract.name)?;
+                sh_println!(
+                    "Transaction: {}",
+                    serde_json::to_string_pretty(&deployer.tx.clone())?
+                )?;
+                sh_println!("ABI: {}\n", serde_json::to_string_pretty(&abi)?)?;
+
+                sh_warn!(
+                    "To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more."
+                )?;
+            } else {
+                let output = json!({
+                    "contract": self.contract.name,
+                    "transaction": &deployer.tx,
+                    "abi":&abi
+                });
+                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+            }
+
+            return Ok(());
+        }
+
+        // Send transaction via browser wallet
+        let tx_hash = browser_signer.send_transaction_via_browser(deployer.tx.into_inner()).await
+            .map_err(|e| eyre::eyre!("Failed to send transaction via browser: {}", e))?;
+
+        // Wait for receipt
+        let receipt = provider
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("Transaction receipt not found"))?;
+
+        let address = receipt.contract_address
+            .ok_or_else(|| eyre::eyre!("Contract not deployed"))?;
+
+        if shell::is_json() {
+            let output = json!({
+                "deployer": deployer_address.to_string(),
+                "deployedTo": address.to_string(),
+                "transactionHash": tx_hash
+            });
+            sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+        } else {
+            sh_println!("Deployer: {deployer_address}")?;
+            sh_println!("Deployed to: {address}")?;
+            sh_println!("Transaction hash: {tx_hash:?}")?;
+        };
+
+        if !self.verify {
+            return Ok(());
+        }
+
+        sh_println!("Starting contract verification...")?;
+
+        let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
+            if optimizer { Some(self.build.compiler.optimizer_runs.unwrap_or(200)) } else { None }
+        } else {
+            self.build.compiler.optimizer_runs
+        };
+
+        let verify = VerifyArgs {
+            address,
+            contract: Some(self.contract),
+            compiler_version: Some(id.version.to_string()),
+            constructor_args,
+            constructor_args_path: None,
+            no_auto_detect: false,
+            use_solc: None,
+            num_of_optimizations,
+            etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
+            rpc: Default::default(),
+            flatten: false,
+            force: false,
+            skip_is_verified_check: true,
+            watch: true,
+            retry: self.retry,
+            libraries: self.build.libraries.clone(),
+            root: None,
+            verifier: self.verifier,
+            via_ir: self.build.via_ir,
+            evm_version: self.build.compiler.evm_version,
+            show_standard_json_input: self.show_standard_json_input,
+            guess_constructor_args: false,
+            compilation_profile: Some(id.profile.to_string()),
+            language: None,
+            creation_transaction_hash: Some(tx_hash),
         };
         sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await
