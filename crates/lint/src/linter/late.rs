@@ -4,7 +4,7 @@ use std::ops::ControlFlow;
 use super::LintContext;
 
 /// Trait for lints that operate on the HIR (High-level Intermediate Representation).
-/// Its methods mirror `hir::visit::Visit`, with the addition of `LintCotext`.
+/// Its methods mirror `hir::visit::Visit`, with the addition of `LintContext`.
 pub trait LateLintPass<'hir>: Send + Sync {
     fn check_nested_source(
         &mut self,
