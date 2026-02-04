@@ -7,8 +7,6 @@ yanked = "warn"
 ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
     "RUSTSEC-2024-0436",
-    # https://rustsec.org/advisories/RUSTSEC-2025-0141 bincode is unmaintained
-    "RUSTSEC-2025-0141",
 ]
 
 # This section is considered when running `cargo deny check bans`.
