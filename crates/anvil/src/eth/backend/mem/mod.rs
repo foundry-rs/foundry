@@ -2424,7 +2424,7 @@ impl Backend {
             None => None,
         };
         let block_number = self.convert_block_number(block_number);
-        let current_number: u64 = self.env.read().evm_env.block_env.number.saturating_to();
+        let current_number = self.best_number();
 
         // Reject requests for future blocks that don't exist yet
         if block_number > current_number {
