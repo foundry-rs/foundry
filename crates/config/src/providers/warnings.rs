@@ -24,6 +24,11 @@ const COMPILATION_RESTRICTIONS_KEYS: &[&str] = &[
 const SETTINGS_OVERRIDES_KEYS: &[&str] =
     &["name", "via_ir", "evm_version", "optimizer", "optimizer_runs", "bytecode_hash"];
 
+/// Allowed keys for VyperConfig.
+/// These are defined explicitly because VyperConfig uses Option fields with skip_serializing_if,
+/// which results in an empty dict when serializing defaults.
+const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
+
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
 
@@ -182,15 +187,13 @@ impl<P: Provider> WarningsProvider<P> {
                 continue;
             };
 
-            // Get allowed keys for this section from the default config
-            let Some(default_section_value) = default_dict.get(*section_name) else {
-                continue;
-            };
-            let Some(default_section_dict) = default_section_value.as_dict() else {
-                continue;
-            };
+            // Get allowed keys for this section
+            let allowed_keys = self.get_nested_section_allowed_keys(section_name, default_dict);
 
-            let allowed_keys: BTreeSet<String> = default_section_dict.keys().cloned().collect();
+            // Skip validation if we don't know the allowed keys for this section
+            if allowed_keys.is_empty() {
+                continue;
+            }
 
             for key in section_dict.keys() {
                 let is_not_allowed =
@@ -247,15 +250,16 @@ impl<P: Provider> WarningsProvider<P> {
                 continue;
             };
 
-            // Get allowed keys from the default config for this nested section
-            let Some(default_value) = default_dict.get(key) else {
-                continue;
-            };
-            let Some(default_nested_dict) = default_value.as_dict() else {
-                continue;
-            };
+            // Get allowed keys from the default config for this nested section,
+            // falling back to hardcoded keys for sections with Option fields that
+            // serialize to empty dicts.
+            let allowed_keys: BTreeSet<String> = self
+                .get_nested_section_allowed_keys(key, default_dict);
 
-            let allowed_keys: BTreeSet<String> = default_nested_dict.keys().cloned().collect();
+            // Skip validation if we don't know the allowed keys for this section
+            if allowed_keys.is_empty() {
+                continue;
+            }
 
             for nested_key in nested_dict.keys() {
                 let is_not_allowed = !allowed_keys.contains(nested_key)
@@ -280,6 +284,33 @@ impl<P: Provider> WarningsProvider<P> {
             "additional_compiler_profiles" => {
                 SETTINGS_OVERRIDES_KEYS.iter().map(|s| s.to_string()).collect()
             }
+            _ => BTreeSet::new(),
+        }
+    }
+
+    /// Returns the allowed keys for nested sections.
+    ///
+    /// First tries to get keys from the default config. If the default config has an empty
+    /// dict (which happens for sections like `vyper` that use Option fields with
+    /// `skip_serializing_if`), falls back to hardcoded keys.
+    fn get_nested_section_allowed_keys(
+        &self,
+        section_name: &str,
+        default_dict: &Dict,
+    ) -> BTreeSet<String> {
+        // Try to get keys from default config first
+        if let Some(default_value) = default_dict.get(section_name) {
+            if let Some(default_nested_dict) = default_value.as_dict() {
+                let keys: BTreeSet<String> = default_nested_dict.keys().cloned().collect();
+                if !keys.is_empty() {
+                    return keys;
+                }
+            }
+        }
+
+        // Fall back to hardcoded keys for sections with Option fields
+        match section_name {
+            "vyper" => VYPER_KEYS.iter().map(|s| s.to_string()).collect(),
             _ => BTreeSet::new(),
         }
     }
