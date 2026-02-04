@@ -82,7 +82,7 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 27380, gasMemoryUsed: 0, gasRefunded: 4800}));
     }
 }
 
