@@ -91,4 +91,3 @@ pub fn install() {
         debug!("failed to install eyre error hook: {e}");
     }
 }
-
