@@ -424,3 +424,14 @@ contract ChainedStructCall {
             }).pack();
     }
 }
+
+// https://github.com/foundry-rs/foundry/issues/13315
+contract EmptyWithComment {
+    // comment only, no body items
+
+}
+
+contract EmptyWithBlankLine {
+    // comment followed by blank line
+
+}
