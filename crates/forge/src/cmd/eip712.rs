@@ -84,7 +84,7 @@ impl Eip712Args {
         if compiler.sess().dcx.has_errors().is_err() {
             eyre::bail!("{diags}");
         } else {
-            let _ = sh_print!("{diags}");
+            let _ = sh_eprint!("{diags}");
         }
 
         Ok(())
