@@ -14,7 +14,6 @@ use crate::{
     },
     mem::{self, in_memory_db::MemDb},
 };
-use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -1300,6 +1299,23 @@ latest block number: {latest_block}"
             ..Default::default()
         };
 
+        // Determine chain_id early so we can use it consistently
+        let chain_id = if let Some(chain_id) = self.chain_id {
+            chain_id
+        } else {
+            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
+                fork_chain_id.to()
+            } else {
+                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+            };
+
+            // need to update the dev signers and env with the chain id
+            self.set_chain_id(Some(chain_id));
+            env.evm_env.cfg_env.chain_id = chain_id;
+            env.tx.base.chain_id = chain_id.into();
+            chain_id
+        };
+
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
             if let Some(base_fee) = block.header.base_fee_per_gas {
@@ -1320,12 +1336,7 @@ latest block number: {latest_block}"
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
                 // derive the blobparams that are active at this timestamp
-                let blob_params = get_blob_params(
-                    fork_chain_id
-                        .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
-                        .saturating_to(),
-                    block.header.timestamp,
-                );
+                let blob_params = get_blob_params(chain_id, block.header.timestamp);
 
                 env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                     blob_excess_gas,
@@ -1353,21 +1364,6 @@ latest block number: {latest_block}"
 
         let block_hash = block.header.hash;
 
-        let chain_id = if let Some(chain_id) = self.chain_id {
-            chain_id
-        } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
-
-            // need to update the dev signers and env with the chain id
-            self.set_chain_id(Some(chain_id));
-            env.evm_env.cfg_env.chain_id = chain_id;
-            env.tx.base.chain_id = chain_id.into();
-            chain_id
-        };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
         apply_chain_and_block_specific_env_changes::<AnyNetwork>(

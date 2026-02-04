@@ -13,6 +13,8 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
+
     let args = Forge::parse();
     args.global.init()?;
 

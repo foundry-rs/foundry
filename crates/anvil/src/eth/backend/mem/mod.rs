@@ -3082,7 +3082,8 @@ impl Backend {
             blob_gas_used,
         };
 
-        let inner = FoundryTxReceipt::new(receipt);
+        // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
+        let inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp);
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
