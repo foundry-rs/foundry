@@ -6,9 +6,7 @@ on:
   push:
     tags:
       - "stable"
-      - "rc"
-      - "rc-*"
-      - "v*.*.*"
+      - "v*.*.*-monad.*"
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
