@@ -136,7 +136,7 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set the log collector, and wether to print the logs directly to stdout.
+    /// Set the log collector, and whether to print the logs directly to stdout.
     #[inline]
     pub fn logs(mut self, live_logs: bool) -> Self {
         let capture = !live_logs;

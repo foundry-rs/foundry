@@ -69,7 +69,7 @@ impl LogCollector {
                     sh_println!("{msg}").expect("fail printing to stdout");
                 } else {
                     // This case should not happen if the users call through forge-std.
-                    // We print the log data for the user nontheless.
+                    // We print the log data for the user nonetheless.
                     sh_println!("console.log({:?}, {})", log.data.topics(), log.data.data)
                         .expect("fail printing to stdout");
                 }
