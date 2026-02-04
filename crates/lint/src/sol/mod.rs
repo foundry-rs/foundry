@@ -238,6 +238,10 @@ impl<'a> Linter for SolidityLinter<'a> {
     ) -> eyre::Result<()> {
         convert_solar_errors(compiler.dcx())?;
 
+        // Cache diagnostic count before linting to isolate from the build phase.
+        let warn_count_before = compiler.dcx().warn_count();
+        let note_count_before = compiler.dcx().note_count();
+
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
 
         let sm = compiler.sess().clone_source_map();
@@ -299,9 +303,11 @@ impl<'a> Linter for SolidityLinter<'a> {
             sess.reconfigure();
         }
 
-        // Handle diagnostics and fail if necessary.
+        let lint_warn_count = compiler.dcx().warn_count().saturating_sub(warn_count_before);
+        let lint_note_count = compiler.dcx().note_count().saturating_sub(note_count_before);
+
         const MSG: &str = "aborting due to ";
-        match (deny, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
+        match (deny, lint_warn_count, lint_note_count) {
             // Deny warnings.
             (DenyLevel::Warnings, w, n) if w > 0 => {
                 if n > 0 {

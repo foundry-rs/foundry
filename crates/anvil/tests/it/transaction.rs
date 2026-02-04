@@ -3,8 +3,7 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_consensus::Transaction;
-use alloy_hardforks::EthereumHardfork;
-use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
@@ -16,6 +15,7 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
 use eyre::Ok;
+use foundry_evm::hardfork::EthereumHardfork;
 use futures::{FutureExt, StreamExt, future::join_all};
 use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::{str::FromStr, time::Duration};
@@ -180,17 +180,16 @@ async fn can_replace_transaction() {
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(BlockTransactions::Hashes(vec![higher_tx_hash]), block.transactions);
 
-    // FIXME: Unable to get receipt despite hotfix in https://github.com/alloy-rs/alloy/pull/614
+    // verify the higher priced transaction was included
+    let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
+    assert_eq!(higher_priced_receipt.transaction_hash, higher_tx_hash);
 
-    // lower priced transaction was replaced
-    // let _lower_priced_receipt = lower_priced_pending_tx.get_receipt().await.unwrap();
-    // let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
-
-    // assert_eq!(1, block.transactions.len());
-    // assert_eq!(
-    //     BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
-    //     block.transactions
-    // );
+    // verify only one transaction was included in the block (lower priced was replaced)
+    assert_eq!(1, block.transactions.len());
+    assert_eq!(
+        BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
+        block.transactions
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -898,6 +897,42 @@ async fn test_tx_receipt() {
     // `to` field is none if it's a contract creation transaction: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
     assert!(tx.to.is_none());
     assert!(tx.contract_address.is_some());
+}
+
+// <https://github.com/foundry-rs/foundry/issues/12837>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reverted_contract_creation_has_contract_address() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+
+    // Init code that immediately reverts: PUSH1 0x00 PUSH1 0x00 REVERT (0x60006000fd)
+    let reverting_init_code = hex!("60006000fd");
+
+    let tx = TransactionRequest::default()
+        .from(wallet.address())
+        .with_input(reverting_init_code.to_vec());
+
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    // Transaction should have reverted
+    assert!(!receipt.status());
+
+    // `to` field should be none (contract creation)
+    assert!(receipt.to.is_none());
+
+    // `contractAddress` should still be set even though the transaction reverted
+    // This matches geth's behavior: https://github.com/ethereum/go-ethereum/issues/27937
+    assert!(
+        receipt.contract_address.is_some(),
+        "contractAddress should be set for reverted contract creation"
+    );
+
+    // Verify the computed address is correct (sender.create(nonce))
+    let expected_addr = wallet.address().create(0);
+    assert_eq!(receipt.contract_address, Some(expected_addr));
 }
 
 #[tokio::test(flavor = "multi_thread")]

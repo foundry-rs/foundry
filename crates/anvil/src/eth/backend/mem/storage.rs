@@ -25,13 +25,13 @@ use alloy_rpc_types::{
 };
 use anvil_core::eth::{
     block::{Block, create_block},
-    transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_primitives::FoundryReceiptEnvelope;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -426,6 +426,13 @@ impl BlockchainStorage {
             let block_number = block.header.number;
             self.blocks.insert(block_hash, block);
             self.hashes.insert(block_number, block_hash);
+
+            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
+            // block tag lookups return the correct hash.
+            // See: https://github.com/foundry-rs/foundry/issues/12645
+            if block_number == 0 {
+                self.genesis_hash = block_hash;
+            }
         }
     }
 
@@ -565,7 +572,7 @@ impl MinedTransaction {
 #[derive(Clone, Debug)]
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
-    pub inner: ReceiptResponse,
+    pub inner: FoundryTxReceipt,
     /// Output data for the transaction
     pub out: Option<Bytes>,
 }

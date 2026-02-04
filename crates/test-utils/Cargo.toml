@@ -15,10 +15,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util"] }
 foundry-config.workspace = true
 
+alloy-chains.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 
@@ -32,7 +34,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand.workspace = true
 snapbox.workspace = true
 tempfile.workspace = true
-ui_test = "0.30.2"
+ui_test = "0.30.4"
 reqwest.workspace = true
 svm.workspace = true
 
@@ -42,4 +44,3 @@ idna_adapter.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
-foundry-block-explorers.workspace = true

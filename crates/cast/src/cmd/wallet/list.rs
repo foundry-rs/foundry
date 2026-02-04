@@ -78,6 +78,10 @@ impl ListArgs {
             .turnkey(self.turnkey || self.all)
             .interactives(0)
             .interactive(false)
+            .browser(false)
+            .browser_port(Default::default())
+            .browser_disable_open(Default::default())
+            .browser_development(Default::default())
             .build()
             .expect("build multi wallet");
 
@@ -131,7 +135,10 @@ impl ListArgs {
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
             {
-                sh_println!("{name} (Local)")?;
+                // Extract address from keystore filename format: UTC--{timestamp}--{address}
+                if let Some(address) = name.split("--").last() {
+                    sh_println!("0x{} (Local)", address)?;
+                }
             }
         }
 

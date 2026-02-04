@@ -1,10 +1,9 @@
 use crate::{
-    AccountGenerator, CHAIN_ID, EthereumHardfork, NodeConfig,
+    AccountGenerator, CHAIN_ID, NodeConfig,
     config::{DEFAULT_MNEMONIC, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
-use alloy_op_hardforks::OpHardfork;
 use alloy_primitives::{B256, U256, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
@@ -12,6 +11,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
+use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
@@ -194,7 +194,11 @@ pub struct NodeArgs {
     #[command(flatten)]
     pub server_config: ServerConfig,
 
-    /// Path to the cache directory where states are stored.
+    /// Path to the cache directory where persisted states are stored (see
+    /// `--max-persisted-states`).
+    ///
+    /// Note: This does not affect the fork RPC cache location (`storage.json`), which is stored in
+    /// `~/.foundry/cache/rpc/<chain>/<block>/`.
     #[arg(long, value_name = "PATH")]
     pub cache_path: Option<PathBuf>,
 }
@@ -230,6 +234,7 @@ impl NodeArgs {
         Ok(NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
+            .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
@@ -539,6 +544,10 @@ pub struct AnvilEvmArgs {
         conflicts_with = "gas_limit"
     )]
     pub disable_block_gas_limit: bool,
+
+    /// Enable the transaction gas limit check as imposed by EIP-7825 (Osaka hardfork).
+    #[arg(long, visible_alias = "tx-gas-limit", help_heading = "Environment config")]
+    pub enable_tx_gas_limit: bool,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. To
     /// disable entirely, use `--disable-code-size-limit`. By default, it is 0x6000 (~25kb).
@@ -889,6 +898,16 @@ mod tests {
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
         assert!(args.is_err());
+    }
+
+    #[test]
+    fn can_parse_enable_tx_gas_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--enable-tx-gas-limit"]);
+        assert!(args.evm.enable_tx_gas_limit);
+
+        // Also test the alias
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--tx-gas-limit"]);
+        assert!(args.evm.enable_tx_gas_limit);
     }
 
     #[test]

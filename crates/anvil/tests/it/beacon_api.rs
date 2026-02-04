@@ -1,6 +1,5 @@
 use crate::utils::http_provider;
 use alloy_consensus::{Blob, SidecarBuilder, SimpleCoder, Transaction};
-use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{B256, FixedBytes, U256, b256};
 use alloy_provider::Provider;
@@ -8,6 +7,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_rpc_types_beacon::{genesis::GenesisResponse, sidecar::GetBlobsResponse};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
 use ssz::Decode;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -66,8 +66,7 @@ async fn test_beacon_api_get_blobs() {
             .with_blob_sidecar(sidecar)
             .value(U256::from(100));
 
-        let mut tx = WithOtherFields::new(tx);
-        tx.populate_blob_hashes();
+        let tx = WithOtherFields::new(tx);
 
         let pending = provider.send_transaction(tx).await.unwrap();
         pending_txs.push(pending);

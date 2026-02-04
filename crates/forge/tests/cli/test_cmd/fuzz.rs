@@ -88,7 +88,7 @@ forgetest_init!(test_fuzz_timeout, |prj, cmd| {
 import {Test} from "forge-std/Test.sol";
 
 contract FuzzTimeoutTest is Test {
-    /// forge-config: default.fuzz.max-test-rejects = 50000
+    /// forge-config: default.fuzz.max-test-rejects = 0
     /// forge-config: default.fuzz.timeout = 1
     function test_fuzz_bound(uint256 a) public pure {
         vm.assume(a == 0);
@@ -97,7 +97,7 @@ contract FuzzTimeoutTest is Test {
    "#,
     );
 
-    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-j2"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -186,7 +186,7 @@ contract Counter {
     );
 
     // Tests should fail as revert happens in cheatcode (assert) and test (require) contract.
-    cmd.assert_failure().stdout_eq(str![[r#"
+    cmd.args(["-j1"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -248,7 +248,7 @@ contract CounterTest is Test {
    "#,
     );
     // Tests should fail and record counterexample with value 200.
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest
@@ -324,7 +324,7 @@ contract CounterTest is Test {
    "#,
     );
     // Test should fail with replayed counterexample 200 (0 runs).
-    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/Counter.t.sol:CounterTest
@@ -383,6 +383,8 @@ Encountered 1 failing test in test/Fuzz.t.sol:FuzzTest
 Encountered a total of 1 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -525,7 +527,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         assert.stdout_eq(expected.clone());
     };
 
-    cmd.arg("test");
+    cmd.args(["test", "-j1"]);
 
     // Run several times, asserting that the failure persists and is the same.
     for _ in 0..3 {
@@ -775,12 +777,12 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
     );
 
     // Helper to create expected output for a test failure
-    let expected_fail = |test_name: &str, type_sig: &str, value: &str, runs: u32| -> String {
+    let expected_fail = |test_name: &str, type_sig: &str, value: &str| -> String {
         format!(
             r#"No files changed, compilation skipped
 
 Ran 1 test for test/MagicFuzz.t.sol:MagicTest
-[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[{value}]] {test_name}({type_sig}) (runs: {runs}, [AVG_GAS])
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[{value}]] {test_name}({type_sig}) (runs: [..], [AVG_GAS])
 [..]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
@@ -797,39 +799,72 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     let mut test_literal = |seed: u32,
                             test_name: &'static str,
                             type_sig: &'static str,
-                            expected_value: &'static str,
-                            expected_runs: u32| {
+                            expected_value: &'static str| {
         // the fuzzer is UNABLE to find a breaking input (fast) when NOT seeding from the AST
         prj.update_config(|config| {
             config.fuzz.runs = 100;
             config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
             config.fuzz.seed = Some(U256::from(seed));
         });
-        cmd.forge_fuse().args(["test", "--match-test", test_name]).assert_success();
+        cmd.forge_fuse().args(["test", "--match-test", test_name, "-j1"]).assert_success();
 
         // the fuzzer is ABLE to find a breaking input when seeding from the AST
         prj.update_config(|config| {
             config.fuzz.dictionary.max_fuzz_dictionary_literals = 10_000;
         });
 
-        let expected_output = expected_fail(test_name, type_sig, expected_value, expected_runs);
+        let expected_output = expected_fail(test_name, type_sig, expected_value);
         cmd.forge_fuse()
-            .args(["test", "--match-test", test_name])
+            .args(["test", "--match-test", test_name, "-j1"])
             .assert_failure()
             .stdout_eq(expected_output);
     };
 
-    test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F", 28);
-    test_literal(200, "testFuzz_Number", "uint64", "1122334455 [1.122e9]", 5);
-    test_literal(300, "testFuzz_Integer", "int32", "-777", 0);
+    test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    test_literal(200, "testFuzz_Number", "uint64", "1122334455 [1.122e9]");
+    test_literal(300, "testFuzz_Integer", "int32", "-777");
     test_literal(
         400,
         "testFuzz_Word",
         "bytes32",
         "0x6162636431323334000000000000000000000000000000000000000000000000", /* bytes32("abcd1234") */
-        7,
     );
-    test_literal(500, "testFuzz_BytesFromHex", "bytes", "0xdeadbeef", 5);
-    test_literal(600, "testFuzz_String", "string", "\"xyzzy\"", 35);
-    test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79", 19); // abi.encodePacked("xyzzy")
+    test_literal(500, "testFuzz_BytesFromHex", "bytes", "0xdeadbeef");
+    test_literal(600, "testFuzz_String", "string", "\"xyzzy\"");
+    test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79"); // abi.encodePacked("xyzzy")
+});
+
+// Tests that `vm.randomUint()` produces different values across fuzz runs.
+// Regression test for https://github.com/foundry-rs/foundry/issues/12817
+//
+// The issue was that `vm.randomUint()` would produce the same sequence of values
+// in every fuzz run because the RNG was seeded identically for each run.
+// This test verifies that with many fuzz runs and a small range, we eventually
+// hit value 0, which proves the RNG varies across runs.
+forgetest_init!(test_fuzz_random_uint_varies_across_runs, |prj, cmd| {
+    prj.add_test(
+        "RandomFuzzTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RandomFuzzTest is Test {
+    function testFuzz_randomUint_shouldFail(uint256) public {
+        uint256 rand = vm.randomUint(0, 4);
+        assertTrue(rand != 0, "hit value 0");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--fuzz-seed", "1", "--mt", "testFuzz_randomUint_shouldFail"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/RandomFuzzTest.t.sol:RandomFuzzTest
+[FAIL: hit value 0; counterexample: [..]] testFuzz_randomUint_shouldFail(uint256) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
 });

@@ -395,15 +395,6 @@ impl ContractsByArtifact {
         Ok(contracts.first().copied())
     }
 
-    /// Finds abi for contract which has the same contract name or identifier as `id`.
-    pub fn find_abi_by_name_or_identifier(&self, id: &str) -> Option<JsonAbi> {
-        self.iter()
-            .find(|(artifact, _)| {
-                artifact.name.split(".").next().unwrap() == id || artifact.identifier() == id
-            })
-            .map(|(_, contract)| contract.abi.clone())
-    }
-
     /// Finds abi by name or source path
     ///
     /// Returns the abi and the contract name.

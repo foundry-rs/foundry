@@ -43,6 +43,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
+use rand::Rng;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -304,6 +305,12 @@ impl TestArgs {
             config.invariant.gas_report_samples = 0;
         }
 
+        // Generate a random fuzz seed if none provided, for reproducibility.
+        config.fuzz.seed = config
+            .fuzz
+            .seed
+            .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
+
         // Create test options from general project settings and compiler output.
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
@@ -361,7 +368,7 @@ impl TestArgs {
             // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
             decode_trace_arena(arena, decoder).await;
-            let mut fst = folded_stack_trace::build(arena);
+            let mut fst = folded_stack_trace::build(arena, self.evm.isolate);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
             let contract = suite_name.split(':').next_back().unwrap();
@@ -429,6 +436,7 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
+        let fuzz_seed = config.fuzz.seed;
         if self.list {
             return list(runner, filter);
         }
@@ -504,13 +512,13 @@ impl TestArgs {
                 }
             });
             sh_println!("{}", serde_json::to_string(&results)?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure));
+            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure));
+            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
         }
 
         let remote_chain =
@@ -532,8 +540,9 @@ impl TestArgs {
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
         // Avoid using external identifiers for gas report as we decode more traces and this will be
-        // expensive.
-        if !self.gas_report {
+        // expensive. Also skip external identifiers for local tests (no remote chain) to avoid
+        // unnecessary Etherscan API calls that significantly slow down test execution.
+        if !self.gas_report && remote_chain.is_some() {
             identifier = identifier.with_external(&config, remote_chain)?;
         }
 
@@ -566,6 +575,7 @@ impl TestArgs {
         let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
 
         let mut outcome = TestOutcome::empty(None, self.allow_failure);
+        outcome.fuzz_seed = fuzz_seed;
 
         let mut any_test_failed = false;
         let mut backtrace_builder = None;

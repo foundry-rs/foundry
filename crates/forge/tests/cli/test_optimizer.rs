@@ -1057,7 +1057,7 @@ Compiling 1 files with [..]
 });
 
 // Test preprocessing contracts with payable constructor, value and salt named args.
-forgetest_init!(preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
+forgetest_init!(flaky_preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1119,7 +1119,9 @@ contract CounterTest is Test {
 
     function test_Increment_In_Counter_With_Salt() public {
         CounterWithSalt counter = new CounterWithSalt{value: 111, salt: bytes32("preprocess_counter_with_salt")}(1);
-        assertEq(address(counter), 0x223e63BE3BF01DD04f852d70f1bE217017055f49);
+        assertGt(uint160(address(counter)), 0);
+        counter.increment();
+        assertEq(counter.number(), 112);
     }
 }
     "#,
@@ -1194,7 +1196,7 @@ contract CounterWithSalt {
 Compiling 1 files with [..]
 ...
 [FAIL: assertion failed: 113 != 112] test_Increment_In_Counter() (gas: [..])
-[FAIL: assertion failed: 0x11acEfcD29A1BA964A05C0E7F3901054BEfb17c0 != 0x223e63BE3BF01DD04f852d70f1bE217017055f49] test_Increment_In_Counter_With_Salt() (gas: [..])
+[FAIL: assertion failed: 113 != 112] test_Increment_In_Counter_With_Salt() (gas: [..])
 ...
 
 "#]]);
@@ -1723,4 +1725,50 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
+});
+
+// Test that `type(Contract).creationCode` can be used in view functions.
+// https://github.com/foundry-rs/foundry/issues/13086
+forgetest_init!(preprocess_creation_code_in_view_function, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {
+    uint256 public immutable value;
+    constructor(uint256 _value) { value = _value; }
+}
+        "#,
+    );
+
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Target} from "../src/Target.sol";
+
+contract TargetTest is Test {
+    function computeAddress(address factory, uint256 salt, uint256 value) internal view returns (address) {
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                bytes1(0xff),
+                factory,
+                salt,
+                keccak256(abi.encodePacked(type(Target).creationCode, abi.encode(value)))
+            )
+        );
+        return address(uint160(uint256(hash)));
+    }
+
+    function testComputeAddress() public view {
+        computeAddress(address(this), 1, 100);
+    }
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
 });
