@@ -16,10 +16,12 @@ workspace = true
 alloy-consensus.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
+alloy-provider.workspace = true
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["trace"] }
 alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true
+alloy-signer.workspace = true
 alloy-evm = { workspace = true, features = ["op"] }
 op-alloy-consensus = { workspace = true, features = ["serde", "alloy-compat"] }
 op-alloy-rpc-types.workspace = true

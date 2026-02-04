@@ -14,6 +14,8 @@ use yansi::Paint;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
+
     let args = Chisel::parse();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))

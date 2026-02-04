@@ -319,10 +319,17 @@ impl ResolvedEtherscanConfig {
             .with_client(client)
             .with_api_key(api_key)
             .with_cache(cache, Duration::from_secs(24 * 60 * 60));
-        if let Some(browser_url) = browser_url {
+        if let Some(ref browser_url) = browser_url {
             client_builder = client_builder.with_url(browser_url)?;
         }
-        client_builder.chain(chain)?.build()
+
+        // Use the provided URL (either custom from foundry.toml or chain's default from resolve())
+        client_builder = client_builder.with_api_url(api_url.clone())?;
+        // Fallback: Use api_url as browser URL if browser_url is not set
+        if browser_url.is_none() {
+            client_builder = client_builder.with_url(api_url)?;
+        }
+        client_builder.build()
     }
 }
 
@@ -478,10 +485,8 @@ mod tests {
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.key, "ABCDEFG");
         let client = config.into_client().unwrap();
-        assert_eq!(
-            client.etherscan_api_url().as_str(),
-            "https://api.etherscan.io/v2/api?chainid=1"
-        );
+        // Custom URL should be used even when chain has a default URL
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/api");
 
         unsafe {
             std::env::remove_var(env);
@@ -517,5 +522,51 @@ mod tests {
 
         let resolved = config.resolve(Some("base-sepolia")).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
+    }
+
+    #[test]
+    fn can_create_client_with_custom_url_for_chain_without_default_url() {
+        // Chains without default Etherscan URLs (e.g., Dev, AnvilHardhat networks)
+        // should work if a custom URL is provided in foundry.toml.
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "dev".to_string(),
+            EtherscanConfig {
+                chain: Some(Chain::dev()),
+                url: Some("https://custom.api.url/verify/etherscan".to_string()),
+                key: EtherscanApiKey::Key("test_key".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("dev").unwrap().unwrap();
+        let result = config.into_client();
+        assert!(
+            result.is_ok(),
+            "Should succeed with custom URL even for chains without default Etherscan URLs"
+        );
+    }
+
+    #[test]
+    fn fails_without_custom_url_for_chain_without_default_url() {
+        // Chains without default Etherscan URLs (e.g., Dev, AnvilHardhat networks)
+        // should fail if no custom URL is provided in foundry.toml.
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "dev".to_string(),
+            EtherscanConfig {
+                chain: Some(Chain::dev()),
+                url: None,
+                key: EtherscanApiKey::Key("test_key".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("dev").unwrap();
+
+        assert!(
+            config.is_err(),
+            "Should fail: chains without default Etherscan URLs require custom URL"
+        );
     }
 }

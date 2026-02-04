@@ -1,4 +1,4 @@
-use alloy_consensus::EthereumTypedTransaction;
+use alloy_consensus::{BlobTransactionSidecar, EthereumTypedTransaction};
 use alloy_network::{
     BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
 };
@@ -216,9 +216,12 @@ impl FoundryTransactionRequest {
                 access_list: self.access_list().cloned().unwrap_or_default(),
                 ..Default::default()
             }))
-        } else if self.as_ref().has_eip4844_fields() && self.as_ref().blob_sidecar().is_none() {
-            // if request has eip4844 fields but no blob sidecar, try to build to eip4844 without
-            // sidecar
+        } else if self.as_ref().has_eip4844_fields()
+            && self.blob_sidecar().is_none()
+            && alloy_network::TransactionBuilder7594::blob_sidecar_7594(self.as_ref()).is_none()
+        {
+            // if request has eip4844 fields but no blob sidecar (neither eip4844 nor eip7594
+            // format), try to build to eip4844 without sidecar
             self.0
                 .into_inner()
                 .build_4844_without_sidecar()
@@ -488,6 +491,24 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         wallet: &W,
     ) -> Result<FoundryTxEnvelope, TransactionBuilderError<FoundryNetwork>> {
         Ok(wallet.sign_request(self).await?)
+    }
+}
+
+impl TransactionBuilder4844 for FoundryTransactionRequest {
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        self.as_ref().max_fee_per_blob_gas()
+    }
+
+    fn set_max_fee_per_blob_gas(&mut self, max_fee_per_blob_gas: u128) {
+        self.as_mut().set_max_fee_per_blob_gas(max_fee_per_blob_gas);
+    }
+
+    fn blob_sidecar(&self) -> Option<&BlobTransactionSidecar> {
+        self.as_ref().blob_sidecar()
+    }
+
+    fn set_blob_sidecar(&mut self, sidecar: BlobTransactionSidecar) {
+        self.as_mut().set_blob_sidecar(sidecar);
     }
 }
 
