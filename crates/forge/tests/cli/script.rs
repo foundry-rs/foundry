@@ -2559,13 +2559,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice             
+gasPrice
 input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                0
-to                   
+to
 type                 0
 value                0
 
@@ -2574,11 +2574,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice             
+gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -3421,4 +3421,73 @@ forgetest_async!(can_execute_script_with_createx_and_via_ir, |prj, cmd| {
             "--broadcast",
         ])
         .assert_success();
+});
+
+forgetest_async!(script_can_run_with_live_logs_flag, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract Foo is Script {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function run() pure public {
+        console.log("Run");
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["script", "script/Foo.s.sol", "--live-logs"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Run
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
+
+forgetest_async!(script_can_run_with_live_logs_config, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.live_logs = true;
+    });
+
+    prj.add_script(
+        "Foo.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract Foo is Script {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function run() pure public {
+        console.log("Run");
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse().args(["script", "script/Foo.s.sol"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Run
+Script ran successfully.
+[GAS]
+
+"#]]);
 });
