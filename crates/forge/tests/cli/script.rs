@@ -3436,7 +3436,7 @@ contract Foo is Script {
     }
 
     function run() pure public {
-        console.log("Run");
+        console.log("Run %d", uint256(1));
     }
 }
     "#,
@@ -3450,7 +3450,7 @@ contract Foo is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Setup
-Run
+Run 1
 Script ran successfully.
 [GAS]
 
@@ -3474,7 +3474,7 @@ contract Foo is Script {
     }
 
     function run() pure public {
-        console.log("Run");
+        console.log("Run %d", uint256(1));
     }
 }
     "#,
@@ -3485,7 +3485,7 @@ contract Foo is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Setup
-Run
+Run 1
 Script ran successfully.
 [GAS]
 
