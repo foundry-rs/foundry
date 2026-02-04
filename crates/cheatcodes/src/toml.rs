@@ -210,8 +210,7 @@ impl Cheatcode for writeToml_1Call {
         let toml_data = fs::locked_read_to_string(&data_path)?;
 
         // Convert to JSON and update the object
-        let mut json_data: JsonValue =
-            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
+        let mut json_data: JsonValue = toml_to_json_value(parse_toml_str(&toml_data)?);
         upsert_json_value(&mut json_data, value, valueKey)?;
 
         // Serialize back to TOML and write the updated content back to the file
