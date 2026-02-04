@@ -265,8 +265,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.26.3"
-source = "git+https://github.com/haythemsellami/evm?branch=main#1d843d69a888026121e2c7ffdcf0e3ca61080020"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b99ba7b74a87176f31ee1cd26768f7155b0eeff61ed925f59b13085ffe5f891"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -339,8 +340,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-monad-evm"
-version = "0.26.3"
-source = "git+https://github.com/haythemsellami/evm?branch=main#1d843d69a888026121e2c7ffdcf0e3ca61080020"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa8088f34548e81497537bf35ac6a524f33769c2a6e02c978aea50f3dec7a25a"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -389,8 +391,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-op-evm"
-version = "0.26.3"
-source = "git+https://github.com/haythemsellami/evm?branch=main#1d843d69a888026121e2c7ffdcf0e3ca61080020"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "646a01ebc9778ee08bcc33cfa6714efc548f94e53de1aff6b34d9da55a2e5d41"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6767,7 +6770,8 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.1.0"
-source = "git+https://github.com/category-labs/monad-revm?branch=main#5f7d3b854a98d98c7c2bc2fd22d48d6c2f279154"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1dc0273ca267946fb161d5eed8251655ff1a45cf444a2440dd9835e608af556"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
@@ -7908,7 +7912,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -7921,7 +7925,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -9584,7 +9588,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9596,7 +9600,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9619,7 +9623,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.10.0",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9928,7 +9932,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
