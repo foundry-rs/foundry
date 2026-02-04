@@ -5,7 +5,9 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, CellAlignment, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+};
 use foundry_common::{TestFunctionExt, calc, shell};
 use foundry_evm::traces::CallKind;
 
@@ -213,8 +215,8 @@ impl GasReport {
             Cell::new("Deployment Size").fg(Color::Cyan),
         ]);
         table.add_row(vec![
-            Cell::new(contract.gas.to_string()),
-            Cell::new(contract.size.to_string()),
+            Cell::new(contract.gas.to_string()).set_alignment(CellAlignment::Right),
+            Cell::new(contract.size.to_string()).set_alignment(CellAlignment::Right),
         ]);
 
         // Add a blank row to separate deployment info from function info.
@@ -237,11 +239,19 @@ impl GasReport {
 
                 table.add_row(vec![
                     Cell::new(display_name),
-                    Cell::new(gas_info.min.to_string()).fg(Color::Green),
-                    Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
-                    Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
-                    Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                    Cell::new(gas_info.calls.to_string()),
+                    Cell::new(gas_info.min.to_string())
+                        .fg(Color::Green)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.mean.to_string())
+                        .fg(Color::Yellow)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.median.to_string())
+                        .fg(Color::Yellow)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.max.to_string())
+                        .fg(Color::Red)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.calls.to_string()).set_alignment(CellAlignment::Right),
                 ]);
             })
         });
