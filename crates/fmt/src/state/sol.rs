@@ -1351,6 +1351,11 @@ impl<'ast> State<'_, 'ast> {
                         match member_expr.kind {
                             ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
                             ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            // Don't add break when accessing a field after a call with named args.
+                            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
+                            // on the same line as the closing `})`.
+                            // See: https://github.com/foundry-rs/foundry/issues/12399
+                            _ if is_call_with_named_args(&member_expr.kind) => (),
                             _ => s.zerobreak(),
                         }
                         s.word(".");
@@ -1706,11 +1711,6 @@ impl<'ast> State<'_, 'ast> {
             let callee_size = get_callee_head_size(child_expr) + member_or_args.member_size();
             let expr_size = self.estimate_size(child_expr.span);
 
-            // Start a new chain if needed
-            if is_call_chain(&child_expr.kind, false) {
-                self.call_stack.push(CallContext::chained(callee_size));
-            }
-
             let callee_fits_line = self.space_left() > callee_size + 1;
             let total_fits_line = self.space_left() > expr_size + member_or_args.size() + 2;
             let no_cmnt_or_mixed =
@@ -1722,13 +1722,20 @@ impl<'ast> State<'_, 'ast> {
                 extra_box = true;
             }
 
-            if !is_call_chain(&child_expr.kind, true)
-                && (no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                && callee_fits_line
-                && (member_depth(0, child_expr) < 2
-                    // calls with cmnts between the args always break
-                    || (total_fits_line && !member_or_args.has_comments()))
-            {
+            // Determine if this chain will add its own indentation
+            let chain_has_indent = is_call_chain(&child_expr.kind, true)
+                || !(no_cmnt_or_mixed
+                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                || !callee_fits_line
+                || (member_depth(0, child_expr) >= 2
+                    && (!total_fits_line || member_or_args.has_comments()));
+
+            // Start a new chain if needed
+            if is_call_chain(&child_expr.kind, false) {
+                self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
+            }
+
+            if !chain_has_indent {
                 self.skip_index_break = true;
                 self.cbox(0);
             } else {
@@ -1835,7 +1842,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.is_chain())
+                    .without_ind(self.call_stack.has_chain_with_indent())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -2954,6 +2961,18 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
 
 fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
+}
+
+/// Returns true if this is a call with named arguments (struct-style syntax).
+/// Used to determine if `.field` after such a call should avoid breaking.
+/// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
+/// E.g., `someFunc(a, b).field` → false (positional args)
+fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+    if let ast::ExprKind::Call(_, args) = expr_kind {
+        matches!(args.kind, ast::CallArgsKind::Named(_))
+    } else {
+        false
+    }
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {

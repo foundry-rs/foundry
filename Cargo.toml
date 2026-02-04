@@ -26,6 +26,7 @@ members = [
     "crates/primitives/",
     "crates/script-sequence/",
     "crates/test-utils/",
+    "crates/cli-markdown/",
 ]
 resolver = "2"
 
@@ -255,6 +256,7 @@ forge-script-sequence = { path = "crates/script-sequence" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
+foundry-cli-markdown = { path = "crates/cli-markdown" }
 foundry-common = { path = "crates/common" }
 foundry-common-fmt = { path = "crates/common/fmt" }
 foundry-config = { path = "crates/config" }
@@ -274,7 +276,7 @@ foundry-primitives = { path = "crates/primitives" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.22.0", default-features = false }
-foundry-compilers = { version = "0.19.13", default-features = false, features = [
+foundry-compilers = { version = "0.19.14", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
@@ -343,7 +345,7 @@ alloy-op-evm = "0.26.3"
 
 # revm
 revm = { version = "34.0.0", default-features = false }
-revm-inspectors = { version = "0.34.0", features = ["serde"] }
+revm-inspectors = { version = "0.34.2", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
 
 ## cli
@@ -423,11 +425,10 @@ tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
-vergen = { version = "9", default-features = false, features = [
+vergen = { package = "vergen-gitcl", version = "10.0.0-beta.5", default-features = false, features = [
     "build",
     "cargo",
 ] }
-vergen-git2 = "9"
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = { version = "0.2", default-features = false, features = [

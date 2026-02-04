@@ -38,7 +38,6 @@ use alloy_consensus::{
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
-use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
     BlockNumHash, Encodable2718, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
     eip7910::SystemContract,
@@ -51,11 +50,10 @@ use alloy_evm::{
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
-    EthereumWallet, ReceiptResponse, TransactionBuilder, UnknownTxEnvelope,
-    UnknownTypedTransaction,
+    ReceiptResponse, TransactionBuilder, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
+    Address, B256, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap},
 };
 use alloy_rpc_types::{
@@ -78,12 +76,10 @@ use alloy_rpc_types::{
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_signer::Signature;
-use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
-    wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
@@ -152,15 +148,6 @@ impl DatabaseRef for dyn crate::eth::backend::db::Db {}
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: u128 = 53000;
-// Executor
-pub const EXECUTOR: Address = address!("0x6634F723546eCc92277e8a2F93d4f248bf1189ea");
-pub const EXECUTOR_PK: &str = "0x502d47e1421cb9abef497096728e69f07543232b93ef24de4998e18b5fd9ba0f";
-// Experimental ERC20
-pub const EXP_ERC20_CONTRACT: Address = address!("0x238c8CD93ee9F8c7Edf395548eF60c0d2e46665E");
-// Runtime code of the experimental ERC20 contract
-pub const EXP_ERC20_RUNTIME_CODE: &[u8] = &hex!(
-    "60806040526004361015610010575b005b5f3560e01c806306fdde03146106f7578063095ea7b31461068c57806318160ddd1461066757806323b872dd146105a15780632bb7c5951461050e578063313ce567146104f35780633644e5151461045557806340c10f191461043057806370a08231146103fe5780637ecebe00146103cc57806395d89b4114610366578063a9059cbb146102ea578063ad0c8fdd146102ad578063d505accf146100fb5763dd62ed3e0361000e57346100f75760403660031901126100f7576100d261075c565b6100da610772565b602052637f5e9f20600c525f5260206034600c2054604051908152f35b5f80fd5b346100f75760e03660031901126100f75761011461075c565b61011c610772565b6084359160643560443560ff851685036100f757610138610788565b60208101906e04578706572696d656e74455243323608c1b8252519020908242116102a0576040519360018060a01b03169460018060a01b03169565383775081901600e52855f5260c06020600c20958654957f8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f8252602082019586528660408301967fc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc688528b6060850198468a528c608087019330855260a08820602e527f6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9885252528688525260a082015220604e526042602c205f5260ff1660205260a43560405260c43560605260208060805f60015afa93853d5103610293577f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b92594602094019055856303faf4f960a51b176040526034602c2055a3005b63ddafbaef5f526004601cfd5b631a15a3cc5f526004601cfd5b5f3660031901126100f7576103e834023481046103e814341517156102d65761000e90336107ac565b634e487b7160e01b5f52601160045260245ffd5b346100f75760403660031901126100f75761030361075c565b602435906387a211a2600c52335f526020600c2080548084116103595783900390555f526020600c20818154019055602052600c5160601c335f51602061080d5f395f51905f52602080a3602060405160018152f35b63f4d678b85f526004601cfd5b346100f7575f3660031901126100f757604051604081019080821067ffffffffffffffff8311176103b8576103b491604052600381526204558560ec1b602082015260405191829182610732565b0390f35b634e487b7160e01b5f52604160045260245ffd5b346100f75760203660031901126100f7576103e561075c565b6338377508600c525f52602080600c2054604051908152f35b346100f75760203660031901126100f75761041761075c565b6387a211a2600c525f52602080600c2054604051908152f35b346100f75760403660031901126100f75761000e61044c61075c565b602435906107ac565b346100f7575f3660031901126100f757602060a0610471610788565b828101906e04578706572696d656e74455243323608c1b8252519020604051907f8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f8252838201527fc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6604082015246606082015230608082015220604051908152f35b346100f7575f3660031901126100f757602060405160128152f35b346100f75760203660031901126100f7576004356387a211a2600c52335f526020600c2090815490818111610359575f80806103e88487839688039055806805345cdf77eb68f44c54036805345cdf77eb68f44c5580835282335f51602061080d5f395f51905f52602083a304818115610598575b3390f11561058d57005b6040513d5f823e3d90fd5b506108fc610583565b346100f75760603660031901126100f7576105ba61075c565b6105c2610772565b604435908260601b33602052637f5e9f208117600c526034600c20908154918219610643575b506387a211a2915017600c526020600c2080548084116103595783900390555f526020600c20818154019055602052600c5160601c9060018060a01b03165f51602061080d5f395f51905f52602080a3602060405160018152f35b82851161065a57846387a211a293039055856105e8565b6313be252b5f526004601cfd5b346100f7575f3660031901126100f75760206805345cdf77eb68f44c54604051908152f35b346100f75760403660031901126100f7576106a561075c565b60243590602052637f5e9f20600c52335f52806034600c20555f52602c5160601c337f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b92560205fa3602060405160018152f35b346100f7575f3660031901126100f7576103b4610712610788565b6e04578706572696d656e74455243323608c1b6020820152604051918291825b602060409281835280519182918282860152018484015e5f828201840152601f01601f1916010190565b600435906001600160a01b03821682036100f757565b602435906001600160a01b03821682036100f757565b604051906040820182811067ffffffffffffffff8211176103b857604052600f8252565b6805345cdf77eb68f44c548281019081106107ff576805345cdf77eb68f44c556387a211a2600c525f526020600c20818154019055602052600c5160601c5f5f51602061080d5f395f51905f52602080a3565b63e5cfe9575f526004601cfdfeddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3efa2646970667358221220fbe302881d9891005ba1448ba48547cc1cb17dea1a5c4011dfcb035de325bb1d64736f6c634300081b0033"
-);
 
 pub type State = foundry_evm::utils::StateChangeset;
 
@@ -239,9 +226,6 @@ pub struct Backend {
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
-    // === wallet === //
-    capabilities: Arc<RwLock<WalletCapabilities>>,
-    executor_wallet: Arc<RwLock<Option<EthereumWallet>>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
 }
@@ -340,8 +324,6 @@ impl Backend {
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
-            capabilities: Arc::new(RwLock::new(WalletCapabilities(Default::default()))),
-            executor_wallet: Arc::new(RwLock::new(None)),
             disable_pool_balance_checks,
         };
 
@@ -361,42 +343,9 @@ impl Backend {
         Ok(())
     }
 
-    /// Get the capabilities of the wallet.
-    ///
-    /// Currently the only capability is delegation.
-    ///
-    /// See `anvil_core::eth::wallet::Capabilities` for construction helpers.
-    pub(crate) fn get_capabilities(&self) -> WalletCapabilities {
-        self.capabilities.read().clone()
-    }
-
     /// Updates memory limits that should be more strict when auto-mine is enabled
     pub(crate) fn update_interval_mine_block_time(&self, block_time: Duration) {
         self.states.write().update_interval_mine_block_time(block_time)
-    }
-
-    /// Adds an address to the wallet's delegation capability.
-    pub(crate) fn add_capability(&self, address: Address) {
-        let chain_id = self.env.read().evm_env.cfg_env.chain_id;
-        let mut capabilities = self.capabilities.write();
-        let mut capability = capabilities
-            .get(chain_id)
-            .cloned()
-            .unwrap_or(Capabilities { delegation: DelegationCapability { addresses: vec![] } });
-        capability.delegation.addresses.push(address);
-        capabilities.0.insert(chain_id, capability);
-    }
-
-    pub(crate) fn set_executor(&self, executor_pk: String) -> Result<Address, BlockchainError> {
-        let signer: PrivateKeySigner =
-            executor_pk.parse().map_err(|_| RpcError::invalid_params("Invalid private key"))?;
-
-        let executor = signer.address();
-        let wallet = EthereumWallet::new(signer);
-
-        *self.executor_wallet.write() = Some(wallet);
-
-        Ok(executor)
     }
 
     /// Applies the configured genesis settings
@@ -2192,8 +2141,7 @@ impl Backend {
             let from_block =
                 self.convert_block_number(filter.block_option.get_from_block().copied());
             if from_block > best {
-                // requested log range does not exist yet
-                return Ok(vec![]);
+                return Err(BlockchainError::BlockOutOfRange(best, from_block));
             }
 
             self.logs_for_range(&filter, from_block, to_block).await
@@ -3134,7 +3082,8 @@ impl Backend {
             blob_gas_used,
         };
 
-        let inner = FoundryTxReceipt::new(receipt);
+        // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
+        let inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp);
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
@@ -3461,18 +3410,7 @@ impl Backend {
         };
 
         {
-            // Set state to common state
-            self.db.write().await.clear();
-            for (address, acc) in common_state {
-                for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
-                }
-                self.db.write().await.insert_account(address, acc.info);
-            }
-        }
-
-        {
-            // Unwind the storage back to the common ancestor
+            // Unwind the storage back to the common ancestor first
             self.blockchain
                 .storage
                 .write()
@@ -3488,6 +3426,41 @@ impl Backend {
 
             self.time.reset(env.evm_env.block_env.timestamp.saturating_to());
         }
+
+        {
+            // Collect block hashes before acquiring db lock to avoid holding blockchain storage
+            // lock across await. Only collect the last 256 blocks since that's all BLOCKHASH can
+            // access.
+            let block_hashes: Vec<_> = {
+                let storage = self.blockchain.storage.read();
+                let min_block = common_block.header.number.saturating_sub(256);
+                storage
+                    .hashes
+                    .iter()
+                    .filter(|(num, _)| **num >= min_block)
+                    .map(|(&num, &hash)| (num, hash))
+                    .collect()
+            };
+
+            // Acquire db lock once for the entire restore operation to reduce lock churn.
+            let mut db = self.db.write().await;
+            db.clear();
+
+            // Insert account info before storage to prevent fork-mode RPC fetches after clear.
+            for (address, acc) in common_state {
+                db.insert_account(address, acc.info);
+                for (key, value) in acc.storage {
+                    db.set_storage_at(address, key.into(), value.into())?;
+                }
+            }
+
+            // Restore block hashes from blockchain storage (now unwound, contains only valid
+            // blocks).
+            for (block_num, hash) in block_hashes {
+                db.insert_block_hash(U256::from(block_num), hash);
+            }
+        }
+
         Ok(())
     }
 }

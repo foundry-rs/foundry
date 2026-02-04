@@ -2486,6 +2486,50 @@ interface Interface {
     ]]);
 });
 
+// tests that `cast interface --flatten` inlines inherited struct types into the interface
+// <https://github.com/foundry-rs/foundry/issues/9960>
+casttest!(interface_flatten, |prj, cmd| {
+    let interface = include_str!("../fixtures/interface_inherited_struct.json");
+
+    let path = prj.root().join("interface_inherited_struct.json");
+    fs::write(&path, interface).unwrap();
+
+    // Without --flatten, a separate library is generated for the struct
+    cmd.arg("interface").arg(&path).assert_success().stdout_eq(str![[
+        r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+library IBase {
+    struct TestStruct {
+        address asset;
+    }
+}
+
+interface Interface {
+    function test(IBase.TestStruct memory param) external;
+}
+
+"#
+    ]]);
+
+    // With --flatten, the struct is inlined into the interface
+    cmd.cast_fuse().arg("interface").arg("--flatten").arg(&path).assert_success().stdout_eq(str![
+        [r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface Interface {
+    // Types from `IBase`
+    struct TestStruct {
+        address asset;
+    }
+
+    function test(TestStruct memory param) external;
+}
+
+"#]
+    ]);
+});
+
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
 casttest!(flaky_fetch_weth_interface_from_etherscan, |_prj, cmd| {
@@ -4734,4 +4778,57 @@ casttest!(curl_call, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
+});
+
+// https://github.com/foundry-rs/foundry/issues/11584
+// Tests that invalid hex calldata (odd length) produces a clear error message
+casttest!(cast_call_invalid_hex_calldata_error, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "--data",
+        "0x0", // Invalid: odd length hex
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: Invalid hex calldata '0x0': odd number of digits
+
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/11584
+// Tests that valid hex calldata works correctly
+casttest!(cast_call_valid_hex_calldata, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "--data",
+        "0x00", // Valid: even length hex
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
+});
+
+// https://github.com/foundry-rs/foundry/issues/11584
+// Tests that invalid hex with uppercase 0X prefix also produces clear error
+casttest!(cast_call_invalid_hex_uppercase_prefix, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "--data",
+        "0X1", // Invalid: odd length hex with uppercase prefix
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: Invalid hex calldata '0X1': odd number of digits
+
+"#]]);
 });

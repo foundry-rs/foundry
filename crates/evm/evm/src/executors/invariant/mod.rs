@@ -1,14 +1,21 @@
 use crate::{
-    executors::{Executor, RawCallResult},
+    executors::{
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
+        RawCallResult, corpus::WorkerCorpus,
+    },
     inspectors::Fuzzer,
 };
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, Selector, U256,
+    Address, Bytes, FixedBytes, I256, Selector, U256,
     map::{AddressMap, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    TestFunctionExt,
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    sh_println,
+};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{
@@ -30,6 +37,8 @@ use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
@@ -44,16 +53,10 @@ mod replay;
 pub use replay::{replay_error, replay_run};
 
 mod result;
-use foundry_common::{TestFunctionExt, sh_println};
 pub use result::InvariantFuzzTestResult;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 mod shrink;
-use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, FuzzTestTimer, corpus::CorpusManager,
-};
-pub use shrink::check_sequence;
+pub use shrink::{check_sequence, check_sequence_value};
 
 sol! {
     interface IInvariantTest {
@@ -142,6 +145,11 @@ struct InvariantTestData {
     // until the desired `depth` so we can use the evolving fuzz dictionary
     // during the run.
     branch_runner: TestRunner,
+
+    // Optimization mode state: tracks the best (maximum) value and the sequence that produced it.
+    // Only used when invariant function returns int256.
+    optimization_best_value: Option<I256>,
+    optimization_best_sequence: Vec<BasicTxDetails>,
 }
 
 /// Contains invariant test data.
@@ -176,6 +184,8 @@ impl InvariantTest {
             line_coverage: None,
             metrics: Map::default(),
             branch_runner,
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
         };
         Self { fuzz_state, targeted_contracts, test_data }
     }
@@ -243,6 +253,14 @@ impl InvariantTest {
 
         // Revert state to not persist values between runs.
         self.fuzz_state.revert();
+    }
+
+    /// Updates the optimization state if the new value is better (higher) than the current best.
+    fn update_optimization_value(&mut self, value: I256, sequence: &[BasicTxDetails]) {
+        if self.test_data.optimization_best_value.is_none_or(|best| value > best) {
+            self.test_data.optimization_best_value = Some(value);
+            self.test_data.optimization_best_sequence = sequence.to_vec();
+        }
     }
 }
 
@@ -452,11 +470,9 @@ impl<'a> InvariantExecutor<'a> {
                     {
                         warn!(target: "forge::test", "{error}");
                     }
-                    current_run.fuzz_runs.push(FuzzCase {
-                        calldata: tx.call_details.calldata.clone(),
-                        gas: call_result.gas_used,
-                        stipend: call_result.stipend,
-                    });
+                    current_run
+                        .fuzz_runs
+                        .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.
@@ -500,8 +516,12 @@ impl<'a> InvariantExecutor<'a> {
                                 invariant_test.test_data.failures.error =
                                     Some(InvariantFuzzError::Revert(case_data));
                                 result::RichInvariantResults::new(false, None)
-                            } else {
+                            } else if !invariant_contract.is_optimization() {
+                                // In optimization mode, keep reverted calls to preserve
+                                // warp/roll values for correct replay during shrinking.
                                 current_run.inputs.pop();
+                                result::RichInvariantResults::new(true, None)
+                            } else {
                                 result::RichInvariantResults::new(true, None)
                             }
                         } else {
@@ -582,7 +602,9 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
-            failed_corpus_replays: corpus_manager.failed_replays(),
+            failed_corpus_replays: corpus_manager.failed_replays,
+            optimization_best_value: result.optimization_best_value,
+            optimization_best_sequence: result.optimization_best_sequence,
         })
     }
 
@@ -594,7 +616,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
-    ) -> Result<(InvariantTest, CorpusManager)> {
+    ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -674,13 +696,15 @@ impl<'a> InvariantExecutor<'a> {
             }
         }
 
-        let corpus_manager = CorpusManager::new(
+        let worker = WorkerCorpus::new(
+            0,
             self.config.corpus.clone(),
             strategy.boxed(),
-            &self.executor,
+            Some(&self.executor),
             None,
             Some(&targeted_contracts),
         )?;
+
         let invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,
@@ -689,7 +713,7 @@ impl<'a> InvariantExecutor<'a> {
             self.runner.clone(),
         );
 
-        Ok((invariant_test, corpus_manager))
+        Ok((invariant_test, worker))
     }
 
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string
@@ -1073,28 +1097,32 @@ pub(crate) fn call_invariant_function(
     Ok((call_result, success))
 }
 
-/// Calls the invariant selector and returns call result and if succeeded.
-/// Updates the block number and block timestamp if configured.
+/// Executes a fuzz call and returns the result.
+/// Applies any block timestamp (warp) and block number (roll) adjustments before the call.
 pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result<RawCallResult> {
-    // Apply pre-call block adjustments.
-    if let Some(warp) = tx.warp {
+    let warp = tx.warp.unwrap_or_default();
+    let roll = tx.roll.unwrap_or_default();
+
+    if warp > 0 || roll > 0 {
+        // Apply pre-call block adjustments to the executor's env.
         executor.env_mut().evm_env.block_env.timestamp += warp;
-    }
-    if let Some(roll) = tx.roll {
         executor.env_mut().evm_env.block_env.number += roll;
+
+        // Also update the inspector's cheatcodes.block if set.
+        // The inspector's block may override the env during interpreter initialization,
+        // so we need to add our warp/roll on top of any existing cheatcode-set values.
+        let block_env = executor.env().evm_env.block_env.clone();
+        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
+            if let Some(block) = cheatcodes.block.as_mut() {
+                block.timestamp += warp;
+                block.number += roll;
+            } else {
+                cheatcodes.block = Some(block_env);
+            }
+        }
     }
 
-    // Perform the raw call.
-    let mut call_result = executor
+    executor
         .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), U256::ZERO)
-        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-
-    // Propagate block adjustments to call result which will be committed.
-    if let Some(warp) = tx.warp {
-        call_result.env.evm_env.block_env.timestamp += warp;
-    }
-    if let Some(roll) = tx.roll {
-        call_result.env.evm_env.block_env.number += roll;
-    }
-    Ok(call_result)
+        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }
