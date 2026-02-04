@@ -39,9 +39,7 @@ async fn can_send_eip4844_transaction() {
         .with_blob_sidecar(sidecar)
         .value(U256::from(5));
 
-    let mut tx = WithOtherFields::new(tx);
-
-    tx.populate_blob_hashes();
+    let tx = WithOtherFields::new(tx);
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -103,6 +101,29 @@ async fn can_send_eip4844_transaction_eth_send_transaction() {
     let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
 }
 
+// <https://github.com/foundry-rs/foundry/issues/13217>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_eip4844_transaction_with_eip7594_sidecar_format() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = ProviderBuilder::new().connect(handle.http_endpoint().as_str()).await.unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
+    let sidecar = sidecar.build_7594().unwrap();
+
+    let mut tx = TransactionRequest::default().with_from(alice).with_to(bob);
+    alloy_network::TransactionBuilder7594::set_blob_sidecar_7594(&mut tx, sidecar);
+
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let receipt = pending_tx.get_receipt().await.unwrap();
+    let tx_hash = receipt.transaction_hash;
+
+    let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_multiple_blobs_in_one_tx() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
@@ -131,9 +152,7 @@ async fn can_send_multiple_blobs_in_one_tx() {
         .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
         .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
         .with_blob_sidecar(sidecar);
-    let mut tx = WithOtherFields::new(tx);
-
-    tx.populate_blob_hashes();
+    let tx = WithOtherFields::new(tx);
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -169,9 +188,7 @@ async fn cannot_exceed_six_blobs() {
         .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
         .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
         .with_blob_sidecar(sidecar);
-    let mut tx = WithOtherFields::new(tx);
-
-    tx.populate_blob_hashes();
+    let tx = WithOtherFields::new(tx);
 
     let err = provider.send_transaction(tx).await.unwrap_err();
 
@@ -211,8 +228,6 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
         .with_blob_sidecar(sidecar);
     let mut tx = WithOtherFields::new(tx);
 
-    tx.populate_blob_hashes();
-
     let first_tx = provider.send_transaction(tx.clone()).await.unwrap();
 
     let second_batch = vec![1u8; DATA_GAS_PER_BLOB as usize * 2];
@@ -224,7 +239,6 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     let sidecar = sidecar.build().unwrap();
     tx.set_blob_sidecar(sidecar);
     tx.set_nonce(1);
-    tx.populate_blob_hashes();
     let second_tx = provider.send_transaction(tx).await.unwrap();
 
     api.mine_one().await;
@@ -428,9 +442,7 @@ async fn can_get_blobs_by_versioned_hash() {
         .with_blob_sidecar(sidecar.clone())
         .value(U256::from(5));
 
-    let mut tx = WithOtherFields::new(tx);
-
-    tx.populate_blob_hashes();
+    let tx = WithOtherFields::new(tx);
 
     let _receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -466,10 +478,7 @@ async fn can_get_blobs_by_tx_hash() {
         .with_blob_sidecar(sidecar.clone())
         .value(U256::from(5));
 
-    let mut tx = WithOtherFields::new(tx);
-
-    tx.populate_blob_hashes();
-
+    let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     let hash = receipt.transaction_hash;
     api.anvil_set_auto_mine(true).await.unwrap();

@@ -63,6 +63,8 @@ Encountered a total of 3 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 

@@ -2141,8 +2141,7 @@ impl Backend {
             let from_block =
                 self.convert_block_number(filter.block_option.get_from_block().copied());
             if from_block > best {
-                // requested log range does not exist yet
-                return Ok(vec![]);
+                return Err(BlockchainError::BlockOutOfRange(best, from_block));
             }
 
             self.logs_for_range(&filter, from_block, to_block).await
@@ -3191,7 +3190,8 @@ impl Backend {
             blob_gas_used,
         };
 
-        let inner = FoundryTxReceipt::new(receipt);
+        // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
+        let inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp);
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
