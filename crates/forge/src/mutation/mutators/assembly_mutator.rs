@@ -137,10 +137,10 @@ impl Mutator for AssemblyMutator {
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
-        if let Some(yul_expr) = ctxt.yul_expr {
-            if let yul::ExprKind::Call(call) = &yul_expr.kind {
-                return self.opcode_mutations.contains_key(call.name.as_str());
-            }
+        if let Some(yul_expr) = ctxt.yul_expr
+            && let yul::ExprKind::Call(call) = &yul_expr.kind
+        {
+            return self.opcode_mutations.contains_key(call.name.as_str());
         }
         false
     }
