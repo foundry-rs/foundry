@@ -258,14 +258,19 @@ impl<P: Provider> WarningsProvider<P> {
             };
 
             // Get allowed keys from the default config for this nested section
-            let Some(default_value) = default_dict.get(key) else {
-                continue;
+            // Special case for vyper: VyperConfig uses skip_serializing_if on all Option fields,
+            // so the default serialization produces an empty dict. Use explicit keys instead.
+            let allowed_keys: BTreeSet<String> = if key == "vyper" {
+                VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else {
+                let Some(default_value) = default_dict.get(key) else {
+                    continue;
+                };
+                let Some(default_nested_dict) = default_value.as_dict() else {
+                    continue;
+                };
+                default_nested_dict.keys().cloned().collect()
             };
-            let Some(default_nested_dict) = default_value.as_dict() else {
-                continue;
-            };
-
-            let allowed_keys: BTreeSet<String> = default_nested_dict.keys().cloned().collect();
 
             for nested_key in nested_dict.keys() {
                 let is_not_allowed = !allowed_keys.contains(nested_key)
