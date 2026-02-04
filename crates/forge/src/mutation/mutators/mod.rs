@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use eyre::Result;
-use solar::ast::{Expr, Span, VariableDefinition};
+use solar::ast::{yul, Expr, Span, VariableDefinition};
 
 use crate::mutation::Mutant;
 
+pub mod assembly_mutator;
 pub mod assignment_mutator;
 pub mod binary_op_mutator;
 pub mod delete_expression_mutator;
@@ -27,6 +28,8 @@ pub struct MutationContext<'a> {
     /// The expression to mutate
     pub expr: Option<&'a Expr<'a>>,
     pub var_definition: Option<&'a VariableDefinition<'a>>,
+    /// Yul expression for assembly block mutations
+    pub yul_expr: Option<&'a yul::Expr<'a>>,
     /// The full source code (used to extract original text for mutations)
     pub source: Option<&'a str>,
 }
@@ -92,6 +95,7 @@ pub struct MutationContextBuilder<'a> {
     span: Option<Span>,
     expr: Option<&'a Expr<'a>>,
     var_definition: Option<&'a VariableDefinition<'a>>,
+    yul_expr: Option<&'a yul::Expr<'a>>,
     source: Option<&'a str>,
 }
 
@@ -103,6 +107,7 @@ impl<'a> MutationContextBuilder<'a> {
             span: None,
             expr: None,
             var_definition: None,
+            yul_expr: None,
             source: None,
         }
     }
@@ -131,6 +136,12 @@ impl<'a> MutationContextBuilder<'a> {
         self
     }
 
+    // Optional - for assembly block mutations
+    pub fn with_yul_expr(mut self, yul_expr: &'a yul::Expr<'a>) -> Self {
+        self.yul_expr = Some(yul_expr);
+        self
+    }
+
     // Optional - provide source code for extracting original text
     pub fn with_source(mut self, source: &'a str) -> Self {
         self.source = Some(source);
@@ -146,6 +157,7 @@ impl<'a> MutationContextBuilder<'a> {
             span,
             expr: self.expr,
             var_definition: self.var_definition,
+            yul_expr: self.yul_expr,
             source: self.source,
         })
     }

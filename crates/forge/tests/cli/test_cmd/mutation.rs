@@ -578,3 +578,99 @@ contract MathLibTest is Test {
     assert!(stdout.contains("Mutation Score:"), 
         "Should calculate mutation score for library");
 });
+
+// Test that inline assembly (Yul) code is properly mutated
+forgetest_init!(mutation_testing_assembly_code, |prj, cmd| {
+    // A contract with inline assembly using common Yul opcodes
+    prj.add_source(
+        "Assembly.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract AssemblyMath {
+    function addAsm(uint256 a, uint256 b) public pure returns (uint256 result) {
+        assembly {
+            result := add(a, b)
+        }
+    }
+
+    function subAsm(uint256 a, uint256 b) public pure returns (uint256 result) {
+        assembly {
+            result := sub(a, b)
+        }
+    }
+
+    function ltAsm(uint256 a, uint256 b) public pure returns (bool result) {
+        assembly {
+            result := lt(a, b)
+        }
+    }
+
+    function andAsm(uint256 a, uint256 b) public pure returns (uint256 result) {
+        assembly {
+            result := and(a, b)
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Assembly.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/Assembly.sol";
+
+contract AssemblyTest is Test {
+    AssemblyMath public asm;
+
+    function setUp() public {
+        asm = new AssemblyMath();
+    }
+
+    function test_AddAsm() public view {
+        assertEq(asm.addAsm(2, 3), 5);
+        assertEq(asm.addAsm(0, 0), 0);
+    }
+
+    function test_SubAsm() public view {
+        assertEq(asm.subAsm(5, 3), 2);
+        assertEq(asm.subAsm(10, 10), 0);
+    }
+
+    function test_LtAsm() public view {
+        assertTrue(asm.ltAsm(1, 2));
+        assertFalse(asm.ltAsm(2, 1));
+        assertFalse(asm.ltAsm(1, 1));
+    }
+
+    function test_AndAsm() public view {
+        assertEq(asm.andAsm(0xFF, 0x0F), 0x0F);
+        assertEq(asm.andAsm(0, 0xFF), 0);
+    }
+}
+"#,
+    );
+
+    // Run mutation testing on the assembly contract
+    cmd.args(["test", "--mutate", "src/Assembly.sol", "--mutation-jobs", "1"]);
+    
+    let output = cmd.assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    
+    // Verify mutations were generated for assembly code
+    assert!(!stdout.contains("No mutants generated"), 
+        "Assembly code should generate mutants, but got: {}", stdout);
+    
+    // Verify mutation testing ran and produced results
+    assert!(stdout.contains("MUTATION TESTING RESULTS"), 
+        "Should show mutation results for assembly code");
+    
+    // Verify we got mutations (assembly opcodes like add, sub, lt, and should be mutated)
+    assert!(stdout.contains("Mutation Score:"), 
+        "Should calculate mutation score for assembly code");
+});

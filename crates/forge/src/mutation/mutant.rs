@@ -225,6 +225,17 @@ pub enum MutationType {
     /// replace x with all other operator in op
     /// Pre or post- are different UnOp
     UnaryOperator(UnaryOpMutated),
+
+    /// For a Yul/assembly opcode (e.g., add, sub, mul, lt, gt):
+    /// replace with semantically related opcode
+    YulOpcode {
+        /// The original opcode name (e.g., "add")
+        original_opcode: String,
+        /// The new opcode name (e.g., "sub")
+        new_opcode: String,
+        /// The full mutated expression
+        mutated_expr: String,
+    },
 }
 
 impl Display for MutationType {
@@ -240,6 +251,8 @@ impl Display for MutationType {
             Self::ElimDelegate => write!(f, "call"),
             Self::UnaryOperator(mutated) => write!(f, "{mutated}"),
             Self::RequireCondition { mutated_call } => write!(f, "{mutated_call}"),
+
+            Self::YulOpcode { mutated_expr, .. } => write!(f, "{mutated_expr}"),
 
             Self::FunctionCall
             | Self::Require
