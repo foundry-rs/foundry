@@ -63,7 +63,7 @@ Encountered a total of 3 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
 
-Fuzz seed: 0xaae417b6ebef2f416faf951cc37909f9b62fb1a448f2b3b03c8e736702e78c0 (use `--fuzz-seed` to reproduce)
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
