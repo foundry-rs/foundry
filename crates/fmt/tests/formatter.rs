@@ -247,10 +247,10 @@ contract ProofOfConcept {
     let fmt_config = Arc::new(FormatterConfig::default());
     let path = Path::new("test.sol");
     let formatted = format(source, path, fmt_config);
-    
+
     println!("=== Input ===\n{}", source);
     println!("=== Output ===\n{}", formatted);
     println!("=== Expected ===\n{}", expected);
-    
+
     assert_eq!(formatted, expected, "Formatting mismatch");
 }
