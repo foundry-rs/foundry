@@ -6887,21 +6887,22 @@ mod tests {
                 "#,
             )?;
 
-            let cfg = Config::load();
+            let cfg = Config::load().unwrap();
             // None of the valid vyper keys should trigger warnings
             let vyper_warnings: Vec<_> = cfg
                 .warnings
                 .iter()
-                .filter(|w| matches!(
-                    w,
-                    crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
-                ))
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
                 .collect();
 
             assert!(
                 vyper_warnings.is_empty(),
-                "Valid vyper keys should not trigger warnings, got: {:?}",
-                vyper_warnings
+                "Valid vyper keys should not trigger warnings, got: {vyper_warnings:?}"
             );
 
             Ok(())
@@ -6925,21 +6926,22 @@ mod tests {
                 "#,
             )?;
 
-            let cfg = Config::load();
+            let cfg = Config::load().unwrap();
             // None of the valid vyper keys should trigger warnings
             let vyper_warnings: Vec<_> = cfg
                 .warnings
                 .iter()
-                .filter(|w| matches!(
-                    w,
-                    crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
-                ))
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
                 .collect();
 
             assert!(
                 vyper_warnings.is_empty(),
-                "Valid nested vyper keys should not trigger warnings, got: {:?}",
-                vyper_warnings
+                "Valid nested vyper keys should not trigger warnings, got: {vyper_warnings:?}"
             );
 
             Ok(())
@@ -6962,7 +6964,7 @@ mod tests {
                 "#,
             )?;
 
-            let cfg = Config::load();
+            let cfg = Config::load().unwrap();
             assert!(
                 cfg.warnings.iter().any(|w| matches!(
                     w,
