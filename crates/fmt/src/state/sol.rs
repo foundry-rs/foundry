@@ -406,8 +406,11 @@ impl<'ast> State<'_, 'ast> {
             // restore block depth
             self.block_depth -= 1;
         } else {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                self.zerobreak();
+            let has_comment = self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some();
+            if has_comment {
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                self.s.offset(-self.ind);
             } else if self.config.bracket_spacing {
                 self.nbsp();
             };
