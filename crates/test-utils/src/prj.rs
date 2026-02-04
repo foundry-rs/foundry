@@ -836,6 +836,7 @@ fn test_redactions() -> snapbox::Redactions {
                 "[ESTIMATED_AMOUNT_REQUIRED]",
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
+            ("[SEED]", r"Fuzz seed: 0x[0-9A-Fa-f]+"),
         ])
     });
     REDACTIONS.clone()
