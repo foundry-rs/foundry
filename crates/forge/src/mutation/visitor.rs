@@ -1,6 +1,6 @@
 use std::{ops::ControlFlow, path::PathBuf};
 
-use solar::ast::{yul, Expr, Span, VariableDefinition, visit::Visit};
+use solar::ast::{Expr, Span, VariableDefinition, visit::Visit, yul};
 
 #[cfg(test)]
 use crate::mutation::mutators::Mutator;

@@ -177,10 +177,7 @@ mod tests {
     fn test_mutate_yul_call() {
         assert_eq!(mutate_yul_call("add(x, y)", "add", "sub"), "sub(x, y)");
         assert_eq!(mutate_yul_call("lt(a, b)", "lt", "gt"), "gt(a, b)");
-        assert_eq!(
-            mutate_yul_call("shl(8, value)", "shl", "shr"),
-            "shr(8, value)"
-        );
+        assert_eq!(mutate_yul_call("shl(8, value)", "shl", "shr"), "shr(8, value)");
     }
 
     #[test]

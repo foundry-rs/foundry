@@ -4,12 +4,14 @@
 //! The mutation visitor must traverse into library function bodies just like contract functions.
 
 use solar::{
-    ast::{interface::source_map::FileName, visit::Visit, Arena},
+    ast::{Arena, interface::source_map::FileName, visit::Visit},
     parse::Parser,
 };
 use std::path::PathBuf;
 
-use crate::mutation::{Session, mutators::mutator_registry::MutatorRegistry, visitor::MutantVisitor};
+use crate::mutation::{
+    Session, mutators::mutator_registry::MutatorRegistry, visitor::MutantVisitor,
+};
 
 /// Test that mutations are generated for code inside a Solidity library.
 #[test]
@@ -74,7 +76,7 @@ library MathLib {
 
     // Should have mutations from all three functions
     // add: a + b
-    // sub: a - b  
+    // sub: a - b
     // min: a < b
     assert!(
         mutations.len() >= 3,

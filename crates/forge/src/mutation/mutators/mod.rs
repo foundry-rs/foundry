@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use eyre::Result;
-use solar::ast::{yul, Expr, Span, VariableDefinition};
+use solar::ast::{Expr, Span, VariableDefinition, yul};
 
 use crate::mutation::Mutant;
 

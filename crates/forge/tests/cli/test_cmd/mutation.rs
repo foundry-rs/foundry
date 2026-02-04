@@ -557,7 +557,7 @@ contract MathLibTest is Test {
 
     // Run mutation testing specifically on the library file
     cmd.args(["test", "--mutate", "src/MathLib.sol", "--mutation-jobs", "1"]);
-    
+
     // Library code should generate mutations for:
     // - Binary operators in mulDivDown: x * y, (x * y) / d
     // - Binary operators in mulDivUp: x * y, d - 1, (x * y + (d - 1)) / d
@@ -565,18 +565,22 @@ contract MathLibTest is Test {
     // Expect multiple mutations to be generated and tested
     let output = cmd.assert_success();
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    
+
     // Verify mutations were generated (not 0 mutants)
-    assert!(!stdout.contains("No mutants generated"), 
-        "Library code should generate mutants, but got: {}", stdout);
-    
+    assert!(
+        !stdout.contains("No mutants generated"),
+        "Library code should generate mutants, but got: {}",
+        stdout
+    );
+
     // Verify mutation testing ran and produced results
-    assert!(stdout.contains("MUTATION TESTING RESULTS"), 
-        "Should show mutation results for library code");
-    
+    assert!(
+        stdout.contains("MUTATION TESTING RESULTS"),
+        "Should show mutation results for library code"
+    );
+
     // Verify we got a reasonable mutation score (library functions should be testable)
-    assert!(stdout.contains("Mutation Score:"), 
-        "Should calculate mutation score for library");
+    assert!(stdout.contains("Mutation Score:"), "Should calculate mutation score for library");
 });
 
 // Test that inline assembly (Yul) code is properly mutated
@@ -658,19 +662,26 @@ contract AssemblyTest is Test {
 
     // Run mutation testing on the assembly contract
     cmd.args(["test", "--mutate", "src/Assembly.sol", "--mutation-jobs", "1"]);
-    
+
     let output = cmd.assert_success();
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    
+
     // Verify mutations were generated for assembly code
-    assert!(!stdout.contains("No mutants generated"), 
-        "Assembly code should generate mutants, but got: {}", stdout);
-    
+    assert!(
+        !stdout.contains("No mutants generated"),
+        "Assembly code should generate mutants, but got: {}",
+        stdout
+    );
+
     // Verify mutation testing ran and produced results
-    assert!(stdout.contains("MUTATION TESTING RESULTS"), 
-        "Should show mutation results for assembly code");
-    
+    assert!(
+        stdout.contains("MUTATION TESTING RESULTS"),
+        "Should show mutation results for assembly code"
+    );
+
     // Verify we got mutations (assembly opcodes like add, sub, lt, and should be mutated)
-    assert!(stdout.contains("Mutation Score:"), 
-        "Should calculate mutation score for assembly code");
+    assert!(
+        stdout.contains("Mutation Score:"),
+        "Should calculate mutation score for assembly code"
+    );
 });
