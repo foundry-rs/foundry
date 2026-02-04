@@ -1,5 +1,7 @@
 use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
-use foundry_config::{DenyLevel, LintSeverity, LinterConfig, lint::LintSpecificConfig, SolidityErrorCode};
+use foundry_config::{
+    DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode, lint::LintSpecificConfig,
+};
 
 mod geiger;
 
