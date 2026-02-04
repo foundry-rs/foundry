@@ -446,3 +446,135 @@ Mutation Score: 98.1% (51/52 mutants killed); [ELAPSED]
 ...
 "#]]);
 });
+
+// Test that Solidity library code (library keyword) is properly mutated
+forgetest_init!(mutation_testing_library_code, |prj, cmd| {
+    // A library with internal functions (common pattern like MathLib)
+    prj.add_source(
+        "MathLib.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+library MathLib {
+    function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        return (x * y) / d;
+    }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        return (x * y + (d - 1)) / d;
+    }
+
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+}
+"#,
+    );
+
+    // A contract that uses the library
+    prj.add_source(
+        "Calculator.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "./MathLib.sol";
+
+contract Calculator {
+    using MathLib for uint256;
+
+    function calculateShare(uint256 amount, uint256 totalSupply, uint256 totalAssets) public pure returns (uint256) {
+        if (totalSupply == 0) return amount;
+        return amount.mulDivDown(totalSupply, totalAssets);
+    }
+
+    function calculateShareRoundUp(uint256 amount, uint256 totalSupply, uint256 totalAssets) public pure returns (uint256) {
+        if (totalSupply == 0) return amount;
+        return amount.mulDivUp(totalSupply, totalAssets);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "MathLib.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/MathLib.sol";
+import "../src/Calculator.sol";
+
+contract MathLibTest is Test {
+    Calculator public calc;
+
+    function setUp() public {
+        calc = new Calculator();
+    }
+
+    // Tests for mulDivDown
+    function test_MulDivDown() public pure {
+        // 100 * 50 / 200 = 25
+        assertEq(MathLib.mulDivDown(100, 50, 200), 25);
+    }
+
+    function test_MulDivDownRoundsDown() public pure {
+        // 100 * 3 / 7 = 42.857... rounds to 42
+        assertEq(MathLib.mulDivDown(100, 3, 7), 42);
+    }
+
+    // Tests for mulDivUp  
+    function test_MulDivUp() public pure {
+        // 100 * 50 / 200 = 25 (no rounding needed)
+        assertEq(MathLib.mulDivUp(100, 50, 200), 25);
+    }
+
+    function test_MulDivUpRoundsUp() public pure {
+        // 100 * 3 / 7 = 42.857... rounds to 43
+        assertEq(MathLib.mulDivUp(100, 3, 7), 43);
+    }
+
+    // Tests for min
+    function test_MinReturnsSmaller() public pure {
+        assertEq(MathLib.min(5, 10), 5);
+        assertEq(MathLib.min(10, 5), 5);
+    }
+
+    function test_MinWithEqual() public pure {
+        assertEq(MathLib.min(7, 7), 7);
+    }
+
+    // Tests via Calculator contract
+    function test_CalculatorShare() public view {
+        // 1000 * 500 / 2000 = 250
+        assertEq(calc.calculateShare(1000, 500, 2000), 250);
+    }
+}
+"#,
+    );
+
+    // Run mutation testing specifically on the library file
+    cmd.args(["test", "--mutate", "src/MathLib.sol", "--mutation-jobs", "1"]);
+    
+    // Library code should generate mutations for:
+    // - Binary operators in mulDivDown: x * y, (x * y) / d
+    // - Binary operators in mulDivUp: x * y, d - 1, (x * y + (d - 1)) / d
+    // - Comparison in min: a < b
+    // Expect multiple mutations to be generated and tested
+    let output = cmd.assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    
+    // Verify mutations were generated (not 0 mutants)
+    assert!(!stdout.contains("No mutants generated"), 
+        "Library code should generate mutants, but got: {}", stdout);
+    
+    // Verify mutation testing ran and produced results
+    assert!(stdout.contains("MUTATION TESTING RESULTS"), 
+        "Should show mutation results for library code");
+    
+    // Verify we got a reasonable mutation score (library functions should be testable)
+    assert!(stdout.contains("Mutation Score:"), 
+        "Should calculate mutation score for library");
+});
