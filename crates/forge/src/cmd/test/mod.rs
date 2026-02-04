@@ -436,6 +436,7 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
+        let fuzz_seed = config.fuzz.seed;
         if self.list {
             return list(runner, filter);
         }
@@ -511,13 +512,13 @@ impl TestArgs {
                 }
             });
             sh_println!("{}", serde_json::to_string(&results)?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure));
+            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure));
+            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
         }
 
         let remote_chain =
@@ -574,6 +575,7 @@ impl TestArgs {
         let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
 
         let mut outcome = TestOutcome::empty(None, self.allow_failure);
+        outcome.fuzz_seed = fuzz_seed;
 
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
