@@ -169,6 +169,7 @@ fmt_tests! {
     ArrayExpressions,
     BlockComments,
     BlockCommentsFunction,
+    CommentEmptyLine,
     ConditionFormatStyle,
     ConditionalOperatorExpression,
     ConstructorDefinition,
@@ -224,4 +225,29 @@ fmt_tests! {
     WhileStatement,
     Yul,
     YulStrings,
+}
+
+#[test]
+fn test_comment_empty_line_bug() {
+    init_tracing();
+    let source = r#"pragma solidity ^0.8.0;
+
+contract ProofOfConcept {
+    // some comment
+
+}
+"#;
+
+    let expected = r#"pragma solidity ^0.8.0;
+
+contract ProofOfConcept {
+    // some comment
+}
+"#;
+
+    let fmt_config = Arc::new(FormatterConfig::default());
+    let path = Path::new("test.sol");
+    let formatted = format(source, path, fmt_config);
+
+    assert_eq!(formatted, expected, "Formatting mismatch");
 }

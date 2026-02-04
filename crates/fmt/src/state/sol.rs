@@ -407,7 +407,9 @@ impl<'ast> State<'_, 'ast> {
             self.block_depth -= 1;
         } else {
             if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                self.zerobreak();
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                self.s.offset(-self.ind);
             } else if self.config.bracket_spacing {
                 self.nbsp();
             };
