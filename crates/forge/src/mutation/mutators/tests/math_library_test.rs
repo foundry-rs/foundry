@@ -1,7 +1,8 @@
-//! Tests to verify that Morpho Blue's MathLib pattern is properly mutated.
+//! Tests to verify that library math functions are properly mutated.
 //!
-//! This tests the issue where MathLib library functions (mulDivDown, mulDivUp, etc.)
-//! were not being mutated correctly.
+//! This tests the mutation of fixed-point arithmetic library patterns where
+//! functions like mulDivDown, mulDivUp, etc. should generate mutations for
+//! all binary operators.
 
 use solar::{
     ast::{Arena, interface::source_map::FileName, visit::Visit},
@@ -11,32 +12,33 @@ use std::path::PathBuf;
 
 use crate::mutation::{Session, visitor::MutantVisitor};
 
-/// The exact MathLib from Morpho Blue.
-/// We must generate mutations for all binary operators in all functions.
-const MORPHO_MATHLIB: &str = r#"
-// SPDX-License-Identifier: GPL-2.0-or-later
+/// Test that a fixed-point math library generates the expected mutations.
+/// This tests the pattern where library functions contain arithmetic that
+/// should be mutated.
+#[test]
+fn test_math_library_mutations() {
+    let source = r#"
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-uint256 constant WAD = 1e18;
+uint256 constant SCALE = 1e18;
 
-/// @title MathLib
-/// @author Morpho Labs
-/// @custom:contact security@morpho.org
-/// @notice Library to manage fixed-point arithmetic.
-library MathLib {
-    /// @dev Returns (`x` * `y`) / `WAD` rounded down.
-    function wMulDown(uint256 x, uint256 y) internal pure returns (uint256) {
-        return mulDivDown(x, y, WAD);
+/// @title FixedPointMath
+/// @notice Library to manage fixed-point arithmetic operations.
+library FixedPointMath {
+    /// @dev Returns (`x` * `y`) / `SCALE` rounded down.
+    function scaledMulDown(uint256 x, uint256 y) internal pure returns (uint256) {
+        return mulDivDown(x, y, SCALE);
     }
 
-    /// @dev Returns (`x` * `WAD`) / `y` rounded down.
-    function wDivDown(uint256 x, uint256 y) internal pure returns (uint256) {
-        return mulDivDown(x, WAD, y);
+    /// @dev Returns (`x` * `SCALE`) / `y` rounded down.
+    function scaledDivDown(uint256 x, uint256 y) internal pure returns (uint256) {
+        return mulDivDown(x, SCALE, y);
     }
 
-    /// @dev Returns (`x` * `WAD`) / `y` rounded up.
-    function wDivUp(uint256 x, uint256 y) internal pure returns (uint256) {
-        return mulDivUp(x, WAD, y);
+    /// @dev Returns (`x` * `SCALE`) / `y` rounded up.
+    function scaledDivUp(uint256 x, uint256 y) internal pure returns (uint256) {
+        return mulDivUp(x, SCALE, y);
     }
 
     /// @dev Returns (`x` * `y`) / `d` rounded down.
@@ -50,19 +52,16 @@ library MathLib {
     }
 
     /// @dev Returns the sum of the first three non-zero terms of a Taylor expansion of e^(nx) - 1.
-    function wTaylorCompounded(uint256 x, uint256 n) internal pure returns (uint256) {
+    function taylorCompounded(uint256 x, uint256 n) internal pure returns (uint256) {
         uint256 firstTerm = x * n;
-        uint256 secondTerm = mulDivDown(firstTerm, firstTerm, 2 * WAD);
-        uint256 thirdTerm = mulDivDown(secondTerm, firstTerm, 3 * WAD);
+        uint256 secondTerm = mulDivDown(firstTerm, firstTerm, 2 * SCALE);
+        uint256 thirdTerm = mulDivDown(secondTerm, firstTerm, 3 * SCALE);
         return firstTerm + secondTerm + thirdTerm;
     }
 }
 "#;
 
-/// Test that Morpho Blue's MathLib generates the expected mutations.
-#[test]
-fn test_morpho_mathlib_mutations() {
-    let mutations = generate_mutations(MORPHO_MATHLIB);
+    let mutations = generate_mutations(source);
 
     // Print all mutations for debugging
     for m in &mutations {
@@ -70,7 +69,7 @@ fn test_morpho_mathlib_mutations() {
     }
 
     // Check we have mutations
-    assert!(!mutations.is_empty(), "MathLib should generate mutations. Got 0 mutations.");
+    assert!(!mutations.is_empty(), "FixedPointMath should generate mutations. Got 0 mutations.");
 
     // mulDivDown: (x * y) / d should have at least 2 mutations (one for *, one for /)
     let mul_div_down_mutations = mutations
@@ -102,7 +101,7 @@ fn test_morpho_mathlib_mutations() {
         mul_div_up_mutations
     );
 
-    // wTaylorCompounded: firstTerm + secondTerm + thirdTerm
+    // taylorCompounded: firstTerm + secondTerm + thirdTerm
     let taylor_mutations = mutations
         .iter()
         .filter(|m| {
@@ -113,7 +112,7 @@ fn test_morpho_mathlib_mutations() {
 
     assert!(
         taylor_mutations >= 2,
-        "wTaylorCompounded should have mutations for additions. Found {} relevant mutations",
+        "taylorCompounded should have mutations for additions. Found {} relevant mutations",
         taylor_mutations
     );
 }
