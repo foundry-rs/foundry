@@ -149,7 +149,22 @@ impl CloneArgs {
             SourceExplorer::Etherscan => {
                 let etherscan_api_key =
                     config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-                let client = Client::new(chain, etherscan_api_key.clone())?;
+                let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+
+                let mut builder = Client::builder();
+                builder = if let Some(etherscan_config) = etherscan_config {
+                    if !etherscan_config.api_url.is_empty() {
+                        let api_url = etherscan_config.api_url.trim_end_matches('/');
+                        let base_url = etherscan_config.browser_url.as_deref().unwrap_or(api_url);
+                        builder.with_api_url(api_url)?.with_url(base_url)?
+                    } else {
+                        builder.chain(chain)?
+                    }
+                } else {
+                    builder.chain(chain)?
+                };
+
+                let client = builder.with_api_key(etherscan_api_key.clone()).build()?;
                 sh_println!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Etherscan", None)

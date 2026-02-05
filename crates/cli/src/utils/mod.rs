@@ -235,7 +235,22 @@ pub async fn fetch_abi_from_etherscan(
 ) -> Result<Vec<(JsonAbi, String)>> {
     let chain = config.chain.unwrap_or_default();
     let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+
+    let mut builder = foundry_block_explorers::Client::builder();
+    builder = if let Some(etherscan_config) = etherscan_config {
+        if !etherscan_config.api_url.is_empty() {
+            let api_url = etherscan_config.api_url.trim_end_matches('/');
+            let base_url = etherscan_config.browser_url.as_deref().unwrap_or(api_url);
+            builder.with_api_url(api_url)?.with_url(base_url)?
+        } else {
+            builder.chain(chain)?
+        }
+    } else {
+        builder.chain(chain)?
+    };
+
+    let client = builder.with_api_key(api_key).build()?;
     let source = client.contract_source_code(address).await?;
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
