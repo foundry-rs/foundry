@@ -65,7 +65,6 @@ alloy-transport.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
-ctrlc = "3"
 dunce.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
@@ -79,7 +78,7 @@ similar = { version = "2", features = ["inline"] }
 solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "signal"] }
 toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
@@ -110,7 +109,7 @@ reqwest = { workspace = true, features = ["json"] }
 
 mockall = "0.14"
 globset = "0.4"
-rstest = "0.25.0"
+rstest = "0.26"
 similar-asserts.workspace = true
 svm.workspace = true
 tempfile.workspace = true

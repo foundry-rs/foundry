@@ -273,7 +273,7 @@ pub struct Mutant {
     #[serde(serialize_with = "serialize_span", deserialize_with = "deserialize_span")]
     pub span: Span,
     pub mutation: MutationType,
-    /// The original source text that will be replaced by this mutation
+    /// The original source text that will be replaced by this mutation (full expression)
     #[serde(default)]
     pub original: String,
     /// The full source line for context (e.g., "uint256 x = a * b;")
@@ -282,6 +282,9 @@ pub struct Mutant {
     /// Line number in the source file (1-indexed)
     #[serde(default)]
     pub line_number: usize,
+    /// Column number in the source file (1-indexed)
+    #[serde(default)]
+    pub column_number: usize,
 }
 
 // Custom serialization for Span (since solar::parse::ast::Span doesn't implement Serialize)

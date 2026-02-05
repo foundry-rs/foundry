@@ -51,6 +51,7 @@ impl Mutator for UnaryOperatorMutator {
         let original = context.original_text();
         let source_line = context.source_line();
         let line_number = context.line_number();
+        let column_number = context.column_number();
 
         // Bool has only the Not operator as possible target -> we try removing it
         if op == UnOpKind::Not {
@@ -64,6 +65,7 @@ impl Mutator for UnaryOperatorMutator {
                 original,
                 source_line,
                 line_number,
+                column_number,
             }]);
         }
 
@@ -84,6 +86,7 @@ impl Mutator for UnaryOperatorMutator {
                     original: original.clone(),
                     source_line: source_line.clone(),
                     line_number,
+                    column_number,
                 }
             })
             .collect();
@@ -101,6 +104,7 @@ impl Mutator for UnaryOperatorMutator {
                     original: original.clone(),
                     source_line: source_line.clone(),
                     line_number,
+                    column_number,
                 }
             },
         ));

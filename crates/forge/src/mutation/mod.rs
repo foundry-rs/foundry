@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 pub use crate::mutation::{
     orchestrator::{MutationConfig, MutationRunResult, run_mutation_testing},
@@ -16,6 +20,7 @@ use crate::{
     },
     result::TestOutcome,
 };
+use serde::Serialize;
 use solar::{
     ast::{
         Span,
@@ -140,6 +145,70 @@ impl MutationsSummary {
     pub fn mutation_score(&self) -> f64 {
         let valid_mutants = self.dead.len() + self.survived.len();
         if valid_mutants == 0 { 0.0 } else { self.dead.len() as f64 / valid_mutants as f64 * 100.0 }
+    }
+
+    /// Convert to JSON output format
+    pub fn to_json_output(&self, duration_secs: f64) -> MutationJsonOutput {
+        let mut survived_mutants: HashMap<String, Vec<SurvivedMutantJson>> = HashMap::new();
+
+        for mutant in &self.survived {
+            let file_path = mutant.relative_path();
+            let entry = survived_mutants.entry(file_path).or_default();
+            entry.push(SurvivedMutantJson::from_mutant(mutant));
+        }
+
+        MutationJsonOutput {
+            summary: MutationSummaryJson {
+                total: self.total_mutants(),
+                killed: self.total_dead(),
+                survived: self.total_survived(),
+                invalid: self.total_invalid(),
+                skipped: self.total_skipped(),
+                mutation_score: self.mutation_score(),
+                duration_secs,
+            },
+            survived_mutants,
+        }
+    }
+}
+
+/// JSON output for mutation testing results
+#[derive(Debug, Clone, Serialize)]
+pub struct MutationJsonOutput {
+    pub summary: MutationSummaryJson,
+    pub survived_mutants: HashMap<String, Vec<SurvivedMutantJson>>,
+}
+
+/// Summary section of JSON output
+#[derive(Debug, Clone, Serialize)]
+pub struct MutationSummaryJson {
+    pub total: usize,
+    pub killed: usize,
+    pub survived: usize,
+    pub invalid: usize,
+    pub skipped: usize,
+    pub mutation_score: f64,
+    pub duration_secs: f64,
+}
+
+/// Individual survived mutant in JSON output
+#[derive(Debug, Clone, Serialize)]
+pub struct SurvivedMutantJson {
+    pub line: usize,
+    pub column: usize,
+    pub original: String,
+    pub mutant: String,
+}
+
+impl SurvivedMutantJson {
+    /// Create from a Mutant, using the full original expression
+    pub fn from_mutant(mutant: &Mutant) -> Self {
+        Self {
+            line: mutant.line_number,
+            column: mutant.column_number,
+            original: mutant.original.clone(),
+            mutant: mutant.mutation.to_string(),
+        }
     }
 }
 

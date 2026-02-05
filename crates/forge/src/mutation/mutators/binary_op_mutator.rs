@@ -56,6 +56,7 @@ impl Mutator for BinaryOpMutator {
         // Get line context
         let source_line = context.source_line();
         let line_number = context.line_number();
+        let column_number = context.column_number();
 
         Ok(operations
             .into_iter()
@@ -70,6 +71,7 @@ impl Mutator for BinaryOpMutator {
                     original: original_expr.clone(),
                     source_line: source_line.clone(),
                     line_number,
+                    column_number,
                 }
             })
             .collect())

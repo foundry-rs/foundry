@@ -18,6 +18,7 @@ impl Mutator for ElimDelegateMutator {
             original: context.original_text(),
             source_line: context.source_line(),
             line_number: context.line_number(),
+            column_number: context.column_number(),
         }])
     }
 
