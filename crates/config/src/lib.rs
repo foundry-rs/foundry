@@ -6846,6 +6846,89 @@ mod tests {
         });
     }
 
+    // Test for issue #13316: vyper inline table config should not trigger unknown key warnings
+    #[test]
+    fn no_warning_for_valid_vyper_inline_table_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                vyper = { optimize = "gas" }
+
+                [profile.venom]
+                src = "src"
+                vyper = { experimental_codegen = true }
+
+                [profile.custom]
+                src = "src"
+                vyper = { path = "/usr/bin/vyper", optimize = "codesize" }
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+
+            // There should be no warnings for valid vyper keys
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| matches!(
+                    w,
+                    crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                ))
+                .collect();
+
+            assert!(
+                vyper_warnings.is_empty(),
+                "Expected no warnings for valid vyper config, got: {:?}",
+                vyper_warnings
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test that unknown vyper keys still trigger warnings
+    #[test]
+    fn warns_on_unknown_vyper_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                vyper = { optimize = "gas", unknown_key = true }
+
+                [vyper]
+                experimental_codegen = true
+                another_unknown = "value"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+
+            // Should warn for unknown keys in both inline and standalone vyper sections
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| matches!(
+                    w,
+                    crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                ))
+                .collect();
+
+            assert_eq!(
+                vyper_warnings.len(),
+                2,
+                "Expected 2 warnings for unknown vyper keys, got: {:?}",
+                vyper_warnings
+            );
+
+            Ok(())
+        });
+    }
+
     // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
     #[test]
     fn fails_on_unknown_profile() {
