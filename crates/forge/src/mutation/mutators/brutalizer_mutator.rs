@@ -1,49 +1,78 @@
-//! Brutalizer mutator inspired by Solady's Brutalizer.sol.
+//! Brutalizer mutator inspired by [Solady's Brutalizer.sol](https://github.com/Vectorized/solady/blob/main/test/utils/Brutalizer.sol).
 //!
-//! Solady's Brutalizer uses XOR with pseudorandom values to dirty the unused
-//! bits of sub-256-bit types, testing that code properly validates/masks inputs.
-//! This mutator applies the same concept at the source level for mutation testing:
-//! it XORs type-cast expressions with a deterministic per-site mask to produce
-//! observably different values.
+//! # What this mutator tests
 //!
-//! ## Mutations Generated
+//! The EVM operates on 256-bit words, but Solidity types like `address` (160 bits),
+//! `uint8` (8 bits), and `bytes4` (32 bits) occupy only a portion of a word. The
+//! remaining bits *should* be zero, but nothing in the EVM enforces this. If code
+//! (especially inline assembly) reads the full 256-bit word without masking, dirty
+//! upper/lower bits leak through and cause incorrect behavior.
 //!
-//! ### Value brutalization (type casts)
+//! This mutator deliberately dirties those unused bits to surface these bugs. It also
+//! tests memory safety assumptions in inline assembly by polluting scratch space and
+//! misaligning the free memory pointer.
+//!
+//! # How mutation results should be interpreted
+//!
+//! - **Mutation killed** (test fails): the test suite detected the dirty bits or
+//!   polluted memory. The code properly validates inputs or uses memory safely.
+//! - **Mutation survives** (tests still pass): the tests do not verify that this value
+//!   is properly sanitized, or that memory assumptions hold. This indicates either a
+//!   bug in the code's input handling, or a gap in test coverage.
+//!
+//! # Mutations generated
+//!
+//! ## Value brutalization (type casts)
+//!
+//! XORs the value with a deterministic per-site mask before casting, dirtying bits
+//! that the cast should strip. If the code properly masks inputs, behavior is
+//! unchanged. If not, the dirty bits leak through.
 //!
 //! Only explicit type casts are mutated (where the target type is known from AST):
 //! - `address(x)` → `address(uint160(uint256(uint160(x)) ^ uint256(MASK)))`
 //! - `uint8(x)` → `uint8(uint256(x) ^ uint256(MASK))`
 //! - `bytes4(x)` → `bytes4(bytes32(uint256(bytes32(x)) ^ uint256(MASK)))`
 //!
-//! ### Memory brutalization (function entry)
+//! This is equivalent to what Solady's `_brutalized(address value)` does at runtime:
+//! `(randomness << 160) ^ value` — dirty the upper bits and see if anything breaks.
+//!
+//! ## Memory brutalization (function entry)
 //!
 //! Injects inline assembly at external function entry points to dirty scratch space
-//! (0x00-0x3f) and memory beyond the free memory pointer. Catches inline assembly that
-//! assumes zero-initialized memory. Only applied to functions that contain assembly
-//! blocks. Restricted to `external` functions because they can only be entered via
-//! CALL/STATICCALL/DELEGATECALL which guarantees fresh zeroed memory. `public` functions
-//! are excluded because they can also be called internally (JUMP), sharing the caller's
-//! memory — brutalizing would overwrite legitimate state.
+//! (0x00-0x3f) and memory beyond the free memory pointer. Catches inline assembly
+//! that reads from uninitialized memory, assuming it is zero.
 //!
-//! ### Free memory pointer misalignment (function entry)
+//! Only applied to functions that contain assembly blocks. Restricted to `external`
+//! functions because they can only be entered via CALL/STATICCALL/DELEGATECALL, which
+//! guarantees fresh zeroed memory. `public` functions are excluded because they can
+//! also be called internally (JUMP), sharing the caller's memory — brutalizing would
+//! overwrite legitimate state and produce false positives.
 //!
-//! Injects inline assembly at external function entry points to misalign the free memory
-//! pointer by a small deterministic odd offset (1-31 bytes). Catches inline assembly that
-//! assumes word-aligned memory pointers. Same targeting rules as memory brutalization.
+//! ## Free memory pointer misalignment (function entry)
 //!
-//! ## Limitations
+//! Injects inline assembly at external function entry points to misalign the free
+//! memory pointer by a small deterministic odd offset (1-31 bytes). Catches inline
+//! assembly that assumes word-aligned memory pointers (e.g., code that uses
+//! `mload(0x40)` and writes at 32-byte intervals without checking alignment).
+//! Same targeting rules as memory brutalization.
+//!
+//! # Limitations
 //!
 //! - **Bool**: Solady creates non-canonical truthy values (e.g., 0xFF for true) via assembly. This
 //!   cannot be replicated via source-level mutation since Solidity enforces 0/1 for bool. Bool
 //!   casts are not mutated.
-//! - **Heuristics**: Unlike the original approach, we do NOT guess types from variable names. Only
-//!   explicit type casts are mutated.
+//! - **Public functions**: excluded from memory/FMP brutalization because at the source level we
+//!   cannot distinguish external calls (fresh memory) from internal calls (shared memory).
+//! - **Heuristics**: we do NOT guess types from variable names. Only explicit type casts are
+//!   mutated.
 
 use eyre::Result;
-use solar::ast::{
-    CallArgsKind, ElementaryType, ExprKind, FunctionKind, Span, TypeKind, TypeSize, Visibility,
+use solar::{
+    ast::{
+        CallArgsKind, ElementaryType, ExprKind, FunctionKind, Span, TypeKind, TypeSize, Visibility,
+    },
+    interface::BytePos,
 };
-use solar::interface::BytePos;
 
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
@@ -61,8 +90,7 @@ impl Mutator for BrutalizerMutator {
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
         if ctxt.fn_body_span.is_some() {
-            return ctxt.fn_has_assembly
-                && is_eligible_function(ctxt.fn_visibility, ctxt.fn_kind);
+            return ctxt.fn_has_assembly && is_eligible_function(ctxt.fn_visibility, ctxt.fn_kind);
         }
 
         if let Some(expr) = ctxt.expr
@@ -136,8 +164,7 @@ impl BrutalizerMutator {
         let body_span =
             context.fn_body_span.ok_or_else(|| eyre::eyre!("BrutalizerMutator: no body span"))?;
 
-        if !context.fn_has_assembly
-            || !is_eligible_function(context.fn_visibility, context.fn_kind)
+        if !context.fn_has_assembly || !is_eligible_function(context.fn_visibility, context.fn_kind)
         {
             return Ok(vec![]);
         }
@@ -400,10 +427,7 @@ mod tests {
 
     #[test]
     fn test_is_eligible_function_kind_filter() {
-        assert!(!is_eligible_function(
-            Some(Visibility::Public),
-            Some(FunctionKind::Constructor)
-        ));
+        assert!(!is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Constructor)));
         assert!(!is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Fallback)));
         assert!(!is_eligible_function(Some(Visibility::External), Some(FunctionKind::Receive)));
         assert!(!is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Modifier)));

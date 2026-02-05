@@ -214,14 +214,11 @@ fn stmt_contains_assembly(kind: &StmtKind<'_>) -> bool {
             stmt_contains_assembly(&then_stmt.kind)
                 || else_stmt.as_ref().is_some_and(|s| stmt_contains_assembly(&s.kind))
         }
-        StmtKind::While(_, body) | StmtKind::DoWhile(body, _) => {
-            stmt_contains_assembly(&body.kind)
-        }
+        StmtKind::While(_, body) | StmtKind::DoWhile(body, _) => stmt_contains_assembly(&body.kind),
         StmtKind::For { body, .. } => stmt_contains_assembly(&body.kind),
-        StmtKind::Try(try_stmt) => try_stmt
-            .clauses
-            .iter()
-            .any(|clause| block_contains_assembly(&clause.block)),
+        StmtKind::Try(try_stmt) => {
+            try_stmt.clauses.iter().any(|clause| block_contains_assembly(&clause.block))
+        }
         _ => false,
     }
 }
