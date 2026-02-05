@@ -92,37 +92,37 @@ jobs:
           # `platform` and `arch`: Used in tarball names
           # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
           # These are pinned to the oldest runner versions to support old libc/SDK versions.
-          - runner: depot-ubuntu-22.04-16
+          - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             svm_target_platform: linux-amd64
             platform: linux
             arch: amd64
-          - runner: depot-ubuntu-22.04-16
+          - runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             svm_target_platform: linux-amd64
             platform: alpine
             arch: amd64
-          - runner: depot-ubuntu-22.04-arm-16
+          - runner: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: depot-ubuntu-22.04-16
+          - runner: ubuntu-22.04
             target: aarch64-unknown-linux-musl
             svm_target_platform: linux-aarch64
             platform: alpine
             arch: arm64
-          - runner: macos-14-large
+          - runner: macos-14
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
             arch: amd64
-          - runner: macos-latest-large
+          - runner: macos-latest
             target: aarch64-apple-darwin
             svm_target_platform: macosx-aarch64
             platform: darwin
             arch: arm64
-          - runner: depot-windows-latest-16
+          - runner: windows-latest
             target: x86_64-pc-windows-msvc
             svm_target_platform: windows-amd64
             platform: win32
@@ -137,10 +137,6 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-        if: ${{ contains(matrix.runner, 'depot') }}
-      - run: printf 'RUSTC_WRAPPER=sccache\n' >> "$GITHUB_ENV"
-        if: ${{ contains(matrix.runner, 'depot') }}
 
       - name: Apple M1 setup
         if: matrix.target == 'aarch64-apple-darwin'
@@ -149,7 +145,7 @@ jobs:
           printf 'MACOSX_DEPLOYMENT_TARGET=%s\n' "$(xcrun -sdk macosx --show-sdk-platform-version)" >> "$GITHUB_ENV"
 
       - name: cross setup
-        if: contains(matrix.target, 'musl')
+        if: contains(matrix.target, 'musl') || matrix.target == 'aarch64-unknown-linux-gnu'
         uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # v2
         with:
           git: https://github.com/cross-rs/cross
@@ -176,7 +172,7 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          if [[ "$TARGET" == *-musl ]]; then
+          if [[ "$TARGET" == *-musl || "$TARGET" == "aarch64-unknown-linux-gnu" ]]; then
             cross build "${flags[@]}"
           else
             cargo build "${flags[@]}"
