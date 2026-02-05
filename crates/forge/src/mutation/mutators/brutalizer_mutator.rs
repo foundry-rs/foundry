@@ -6,21 +6,25 @@
 //! code should mask or validate inputs, but bugs can occur when code assumes
 //! clean inputs.
 //!
-//! Mutations generated:
-//! - For function calls with address/uint8-uint128/bytes1-bytes16 arguments:
-//!   - Wrap argument in a "brutalized" version that dirties upper bits
+//! ## Assembly Focus
 //!
-//! For example:
-//! - `transfer(to, amount)` -> `transfer(address(uint160(to) | (0xdead << 160)), amount)`
-//! - `foo(uint8 x)` -> `foo(uint8(uint256(x) | (0xdeadbeef << 8)))`
+//! In assembly blocks, values are raw 256-bit words. Code that reads function
+//! parameters or calldata directly in assembly must properly mask values to
+//! their expected size. This mutator generates mutations that dirty the unused
+//! bits to catch missing masks.
 //!
-//! This is particularly valuable for:
-//! - Assembly code that reads raw calldata/memory
-//! - Low-level operations that don't properly mask inputs
-//! - Testing that code handles "dirty" inputs correctly
+//! ## Mutations Generated
+//!
+//! For Yul/assembly expressions:
+//! - Identifiers: `x` → `or(x, shl(160, 0xDEAD))` (for address-sized values)
+//! - Function args used in assembly are brutalized
+//!
+//! For Solidity expressions with explicit type casts:
+//! - `address(x)` → `address(uint160(uint256(x) | (0xDEAD << 160)))`
+//! - `uint8(x)` → `uint8(uint256(x) | (0xDEAD << 8))`
 
 use eyre::Result;
-use solar::ast::{CallArgsKind, ElementaryType, ExprKind, Type, TypeKind, TypeSize};
+use solar::ast::{CallArgsKind, ElementaryType, ExprKind, Type, TypeKind, TypeSize, yul};
 
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
@@ -29,25 +33,52 @@ pub struct BrutalizerMutator;
 
 impl Mutator for BrutalizerMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
-        let expr = context.expr.ok_or_else(|| eyre::eyre!("BrutalizerMutator: no expression"))?;
+        // Handle Yul/assembly expressions (primary focus)
+        if let Some(yul_expr) = context.yul_expr {
+            return self.generate_yul_mutants(context, yul_expr);
+        }
 
-        // Only handle function calls
-        let (_callee, call_args) = match &expr.kind {
-            ExprKind::Call(callee, args) => (callee, args),
+        // Handle Solidity expressions with explicit type casts
+        if let Some(expr) = context.expr {
+            return self.generate_solidity_mutants(context, expr);
+        }
+
+        Ok(vec![])
+    }
+
+    fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
+        // Applicable to Yul paths (identifiers) in assembly blocks
+        if let Some(yul_expr) = ctxt.yul_expr {
+            return matches!(yul_expr.kind, yul::ExprKind::Path(_));
+        }
+
+        // Applicable to Solidity type casts
+        if let Some(expr) = ctxt.expr {
+            if let ExprKind::Call(callee, _) = &expr.kind {
+                return matches!(callee.kind, ExprKind::TypeCall(_));
+            }
+        }
+
+        false
+    }
+}
+
+impl BrutalizerMutator {
+    /// Generate mutations for Yul/assembly expressions.
+    /// In assembly, all values are raw 256-bit words, so we can brutalize any path.
+    fn generate_yul_mutants(
+        &self,
+        context: &MutationContext<'_>,
+        yul_expr: &yul::Expr<'_>,
+    ) -> Result<Vec<Mutant>> {
+        let path = match &yul_expr.kind {
+            yul::ExprKind::Path(p) => p,
             _ => return Ok(vec![]),
         };
 
-        // Extract unnamed arguments
-        let args_exprs = match &call_args.kind {
-            CallArgsKind::Unnamed(exprs) => exprs,
-            CallArgsKind::Named(_) => return Ok(vec![]), // Named args not commonly brutalizable
-        };
+        // Get the identifier name from the path (first segment)
+        let ident_name = path.first().as_str();
 
-        if args_exprs.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let source = context.source.unwrap_or("");
         let original = context.original_text();
         let source_line = context.source_line();
         let line_number = context.line_number();
@@ -55,130 +86,121 @@ impl Mutator for BrutalizerMutator {
 
         let mut mutants = Vec::new();
 
-        // For each argument, check if it's a brutalizable type and generate a mutation
-        for (idx, arg_expr) in args_exprs.iter().enumerate() {
-            let arg_text = extract_span_text(source, arg_expr.span);
-            if arg_text.is_empty() {
-                continue;
-            }
+        // Generate brutalized versions for different assumed sizes
+        // Most relevant: address (160 bits), uint8 (8 bits), uint128 (128 bits)
+        let brutalizations = [
+            ("160", format!("or({ident_name}, shl(160, 0xDEADBEEFCAFE))")),
+            ("128", format!("or({ident_name}, shl(128, 0xDEADBEEFCAFE))")),
+            ("64", format!("or({ident_name}, shl(64, 0xDEADBEEFCAFE))")),
+            ("8", format!("or({ident_name}, shl(8, 0xDEADBEEFCAFE))")),
+        ];
 
-            // Try to infer the type from the expression and generate brutalized version
-            if let Some(brutalized) = try_brutalize_expr(arg_expr, &arg_text) {
-                // Build the mutated call by replacing this argument
-                let mutated_call = build_mutated_call_from_slice(source, expr.span, args_exprs, idx, &brutalized);
-
-                mutants.push(Mutant {
-                    span: expr.span,
-                    mutation: MutationType::Brutalized {
-                        arg_index: idx,
-                        original_arg: arg_text,
-                        brutalized_arg: brutalized,
-                        mutated_call,
-                    },
-                    path: context.path.clone(),
-                    original: original.clone(),
-                    source_line: source_line.clone(),
-                    line_number,
-                    column_number,
-                });
-            }
+        for (bits, brutalized) in brutalizations {
+            mutants.push(Mutant {
+                span: context.span,
+                mutation: MutationType::BrutalizedYul {
+                    original_ident: ident_name.to_string(),
+                    assumed_bits: bits.to_string(),
+                    brutalized_expr: brutalized.clone(),
+                },
+                path: context.path.clone(),
+                original: original.clone(),
+                source_line: source_line.clone(),
+                line_number,
+                column_number,
+            });
         }
 
         Ok(mutants)
     }
 
-    fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
-        ctxt.expr.as_ref().is_some_and(|expr| matches!(expr.kind, ExprKind::Call(..)))
-    }
-}
+    /// Generate mutations for Solidity expressions with explicit type casts.
+    fn generate_solidity_mutants(
+        &self,
+        context: &MutationContext<'_>,
+        expr: &solar::ast::Expr<'_>,
+    ) -> Result<Vec<Mutant>> {
+        let (callee, call_args) = match &expr.kind {
+            ExprKind::Call(callee, args) => (callee, args),
+            _ => return Ok(vec![]),
+        };
 
-/// Try to generate a brutalized version of an expression.
-/// Returns the brutalized expression string, or None if not applicable.
-fn try_brutalize_expr(expr: &solar::ast::Expr<'_>, arg_text: &str) -> Option<String> {
-    // Check for explicit type casts or identifiers that might be brutalizable
-    match &expr.kind {
-        // Handle explicit type casts like `address(x)` or `uint8(y)`
-        ExprKind::Call(callee, _) => {
-            // Type casts appear as Call with TypeCall callee
-            if let ExprKind::TypeCall(ty) = &callee.kind {
-                return brutalize_by_type(ty, arg_text);
-            }
-        }
-        // Handle identifiers - we'll assume address type for identifiers that look like addresses
-        ExprKind::Ident(ident) => {
-            let name = ident.to_string();
-            // Common address variable names
-            if name.contains("addr")
-                || name.contains("owner")
-                || name.contains("recipient")
-                || name.contains("to")
-                || name.contains("from")
-                || name.contains("sender")
-                || name.contains("receiver")
-                || name.contains("spender")
-                || name.contains("operator")
-            {
-                return Some(brutalize_address(arg_text));
-            }
-        }
-        // Handle member access like `msg.sender`
-        ExprKind::Member(base, member) => {
-            if let ExprKind::Ident(base_ident) = &base.kind {
-                if base_ident.to_string() == "msg" && member.to_string() == "sender" {
-                    return Some(brutalize_address(arg_text));
-                }
-            }
-        }
-        _ => {}
-    }
+        // Only handle type casts (TypeCall expressions)
+        let ty = match &callee.kind {
+            ExprKind::TypeCall(ty) => ty,
+            _ => return Ok(vec![]),
+        };
 
-    None
+        // Get the brutalized version based on type
+        let source = context.source.unwrap_or("");
+        let original = context.original_text();
+
+        let brutalized = match brutalize_by_type(ty, &original) {
+            Some(b) => b,
+            None => return Ok(vec![]),
+        };
+
+        let source_line = context.source_line();
+        let line_number = context.line_number();
+        let column_number = context.column_number();
+
+        // Extract the inner argument for display
+        let inner_arg = match &call_args.kind {
+            CallArgsKind::Unnamed(exprs) if !exprs.is_empty() => {
+                extract_span_text(source, exprs[0].span)
+            }
+            _ => original.clone(),
+        };
+
+        Ok(vec![Mutant {
+            span: context.span,
+            mutation: MutationType::Brutalized {
+                arg_index: 0,
+                original_arg: inner_arg,
+                brutalized_arg: brutalized.clone(),
+                mutated_call: brutalized,
+            },
+            path: context.path.clone(),
+            original,
+            source_line,
+            line_number,
+            column_number,
+        }])
+    }
 }
 
 /// Generate a brutalized version based on the type.
 fn brutalize_by_type(ty: &Type<'_>, arg_text: &str) -> Option<String> {
     match &ty.kind {
-        TypeKind::Elementary(elem_ty) => {
-            match elem_ty {
-                ElementaryType::Address(_) => Some(brutalize_address(arg_text)),
-                ElementaryType::UInt(size) => brutalize_uint(*size, arg_text),
-                ElementaryType::Int(size) => brutalize_int(*size, arg_text),
-                ElementaryType::FixedBytes(size) => brutalize_fixed_bytes(*size, arg_text),
-                ElementaryType::Bool => Some(brutalize_bool(arg_text)),
-                // Dynamic bytes and string can't be brutalized this way
-                ElementaryType::Bytes | ElementaryType::String => None,
-                // Fixed-point types are rare, skip for now
-                ElementaryType::Fixed(..) | ElementaryType::UFixed(..) => None,
-            }
-        }
+        TypeKind::Elementary(elem_ty) => match elem_ty {
+            ElementaryType::Address(_) => Some(brutalize_address(arg_text)),
+            ElementaryType::UInt(size) => brutalize_uint(*size, arg_text),
+            ElementaryType::Int(size) => brutalize_int(*size, arg_text),
+            ElementaryType::FixedBytes(size) => brutalize_fixed_bytes(*size, arg_text),
+            ElementaryType::Bool => Some(brutalize_bool(arg_text)),
+            // Dynamic bytes and string can't be brutalized this way
+            ElementaryType::Bytes | ElementaryType::String => None,
+            // Fixed-point types are rare, skip for now
+            ElementaryType::Fixed(..) | ElementaryType::UFixed(..) => None,
+        },
         _ => None,
     }
 }
 
 /// Brutalize an address by OR-ing garbage into the upper 96 bits.
-/// `addr` -> `address(uint160(addr) | (uint160(0xdead) << 160))`
-/// Simplified: just OR with a pattern that sets high bits
 fn brutalize_address(arg_text: &str) -> String {
-    // The pattern is: address(uint160(uint256(keccak256(...)) << 96) | uint160(original))
-    // Simplified version for mutation testing:
-    format!(
-        "address(uint160(uint256(uint160({arg_text})) | (0xDEADBEEFCAFEBABE << 160)))"
-    )
+    format!("address(uint160(uint256(uint160({arg_text})) | (0xDEADBEEFCAFEBABE << 160)))")
 }
 
 /// Brutalize a uint by OR-ing garbage into the upper bits.
 fn brutalize_uint(size: TypeSize, arg_text: &str) -> Option<String> {
     let bits = size.bits_raw();
-    // 0 means uint (defaults to 256), otherwise use the actual bits
     let actual_bits = if bits == 0 { 256 } else { bits };
     if actual_bits >= 256 {
-        return None; // uint256 has no upper bits to dirty
+        return None;
     }
 
-    // OR with a pattern shifted to the upper bits
-    Some(format!(
-        "uint{actual_bits}(uint256({arg_text}) | (0xDEADBEEFCAFEBABE << {actual_bits}))"
-    ))
+    Some(format!("uint{actual_bits}(uint256({arg_text}) | (0xDEADBEEFCAFEBABE << {actual_bits}))"))
 }
 
 /// Brutalize a signed int by OR-ing garbage into the upper bits.
@@ -186,7 +208,7 @@ fn brutalize_int(size: TypeSize, arg_text: &str) -> Option<String> {
     let bits = size.bits_raw();
     let actual_bits = if bits == 0 { 256 } else { bits };
     if actual_bits >= 256 {
-        return None; // int256 has no upper bits to dirty
+        return None;
     }
 
     Some(format!(
@@ -195,58 +217,19 @@ fn brutalize_int(size: TypeSize, arg_text: &str) -> Option<String> {
 }
 
 /// Brutalize fixed-size bytes by OR-ing garbage into the lower bits.
-/// For bytes1-bytes16, the value is left-aligned, so we dirty the RIGHT side.
 fn brutalize_fixed_bytes(size: TypeSize, arg_text: &str) -> Option<String> {
     let bytes = size.bytes_raw();
     if bytes >= 32 || bytes == 0 {
-        return None; // bytes32 has no extra bits, 0 is invalid
+        return None;
     }
 
     let shift = (32 - bytes as u16) * 8;
-    Some(format!(
-        "bytes{bytes}(bytes32({arg_text}) | bytes32(uint256(0xDEAD) >> {shift}))"
-    ))
+    Some(format!("bytes{bytes}(bytes32({arg_text}) | bytes32(uint256(0xDEAD) >> {shift}))"))
 }
 
 /// Brutalize a bool by using a non-1 truthy value.
-/// In the EVM, any non-zero value is truthy, but Solidity expects 0 or 1.
 fn brutalize_bool(arg_text: &str) -> String {
-    // Convert bool to a "dirty" non-standard truthy value
-    format!(
-        "({arg_text} ? true : false) != false ? ({arg_text} ? bool(uint8(0xFF)) : false) : false"
-    )
-}
-
-/// Build the full mutated call expression by replacing one argument.
-/// Works with BoxSlice from solar AST.
-fn build_mutated_call_from_slice<'ast>(
-    source: &str,
-    call_span: solar::ast::Span,
-    args: &solar::ast::BoxSlice<'ast, solar::ast::Box<'ast, solar::ast::Expr<'ast>>>,
-    replace_idx: usize,
-    replacement: &str,
-) -> String {
-    let call_text = extract_span_text(source, call_span);
-    
-    // Find the opening paren
-    let open_paren = match call_text.find('(') {
-        Some(idx) => idx,
-        None => return call_text,
-    };
-    
-    let func_name = &call_text[..open_paren];
-    
-    // Build new arguments list
-    let mut new_args = Vec::new();
-    for (idx, arg) in args.iter().enumerate() {
-        if idx == replace_idx {
-            new_args.push(replacement.to_string());
-        } else {
-            new_args.push(extract_span_text(source, arg.span));
-        }
-    }
-    
-    format!("{}({})", func_name, new_args.join(", "))
+    format!("({arg_text} ? bool(uint8(0xFF)) : false)")
 }
 
 /// Extract text from source given a span.
@@ -270,7 +253,6 @@ mod tests {
 
     #[test]
     fn test_brutalize_uint8() {
-        // TypeSize uses bits internally, uint8 = 8 bits
         let size = TypeSize::new_int_bits(8);
         let result = brutalize_uint(size, "x").unwrap();
         assert!(result.contains("uint8"));
@@ -286,10 +268,9 @@ mod tests {
 
     #[test]
     fn test_brutalize_bytes1() {
-        // TypeSize for fixed bytes uses bytes internally, bytes1 = 1 byte = 8 bits
         let size = TypeSize::new_fb_bytes(1);
         let result = brutalize_fixed_bytes(size, "x").unwrap();
         assert!(result.contains("bytes1"));
-        assert!(result.contains(">> 248")); // (32-1)*8 = 248
+        assert!(result.contains(">> 248"));
     }
 }

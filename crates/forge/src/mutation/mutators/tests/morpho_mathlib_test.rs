@@ -70,10 +70,7 @@ fn test_morpho_mathlib_mutations() {
     }
 
     // Check we have mutations
-    assert!(
-        !mutations.is_empty(),
-        "MathLib should generate mutations. Got 0 mutations."
-    );
+    assert!(!mutations.is_empty(), "MathLib should generate mutations. Got 0 mutations.");
 
     // mulDivDown: (x * y) / d should have at least 2 mutations (one for *, one for /)
     let mul_div_down_mutations = mutations
@@ -187,10 +184,8 @@ library MathLib {
     // 3. (x * y) + (d - 1)
     // 4. (...) / d
 
-    let mutation_strs: Vec<String> = mutations
-        .iter()
-        .map(|m| format!("{} -> {}", m.original, m.mutation))
-        .collect();
+    let mutation_strs: Vec<String> =
+        mutations.iter().map(|m| format!("{} -> {}", m.original, m.mutation)).collect();
 
     // Must have at least 4 mutations from the nested expression
     assert!(
@@ -230,13 +225,17 @@ contract Vault {
     let mutations = generate_mutations(source);
 
     // Should have mutations from both the library AND the contract
-    let library_mutations = mutations.iter().filter(|m| {
-        m.original.contains("x * y") || m.original.contains("(x * y) / d")
-    }).count();
+    let library_mutations = mutations
+        .iter()
+        .filter(|m| m.original.contains("x * y") || m.original.contains("(x * y) / d"))
+        .count();
 
-    let contract_mutations = mutations.iter().filter(|m| {
-        m.original.contains("assets * totalShares") || m.original.contains("/ totalAssets")
-    }).count();
+    let contract_mutations = mutations
+        .iter()
+        .filter(|m| {
+            m.original.contains("assets * totalShares") || m.original.contains("/ totalAssets")
+        })
+        .count();
 
     assert!(
         library_mutations > 0,

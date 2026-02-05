@@ -1,7 +1,8 @@
 //! Tests for the BrutalizerMutator.
 //!
-//! The brutalizer mutator dirties the upper bits of function arguments to test
-//! that code properly handles "dirty" inputs (common issue in assembly code).
+//! The brutalizer mutator dirties the upper bits of values to test that code
+//! properly handles "dirty" inputs - especially relevant in assembly blocks
+//! where values are raw 256-bit words.
 
 use solar::{
     ast::{Arena, interface::source_map::FileName, visit::Visit},
@@ -11,175 +12,193 @@ use std::path::PathBuf;
 
 use crate::mutation::{Session, visitor::MutantVisitor};
 
-/// Test that address arguments are brutalized.
+/// Test that Yul identifiers in assembly blocks are brutalized.
 #[test]
-fn test_brutalize_address_argument() {
+fn test_brutalize_yul_identifier() {
     let source = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract Token {
-    function transfer(address to, uint256 amount) external returns (bool) {
-        return true;
-    }
-}
-
-contract Caller {
-    Token token;
-    
-    function doTransfer(address recipient, uint256 amount) external {
-        token.transfer(recipient, amount);
+contract Example {
+    function getBalance(address account) external view returns (uint256) {
+        assembly {
+            let bal := balance(account)
+            mstore(0, bal)
+            return(0, 32)
+        }
     }
 }
 "#;
 
     let mutations = generate_mutations(source);
 
-    // Look for brutalized mutations on address arguments
-    let brutalized_mutations: Vec<_> = mutations
+    // Look for brutalized Yul identifiers
+    let brutalized_yul: Vec<_> = mutations
         .iter()
         .filter(|m| {
             let s = m.mutation.to_string();
-            s.contains("uint160") && s.contains("DEADBEEF")
+            s.contains("or(") && s.contains("shl(")
         })
         .collect();
 
-    // Print for debugging
-    for m in &brutalized_mutations {
-        eprintln!("Brutalized: {} -> {}", m.original, m.mutation);
-    }
-
-    assert!(
-        !brutalized_mutations.is_empty(),
-        "Should generate brutalized mutations for address arguments. All mutations: {:?}",
-        mutations.iter().map(|m| format!("{} -> {}", m.original, m.mutation)).collect::<Vec<_>>()
-    );
-}
-
-/// Test that msg.sender is brutalized.
-#[test]
-fn test_brutalize_msg_sender() {
-    let source = r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-}
-
-contract Example {
-    IERC20 token;
-    
-    function claimRewards() external {
-        token.transfer(msg.sender, 100);
-    }
-}
-"#;
-
-    let mutations = generate_mutations(source);
-
-    // Look for brutalized msg.sender
-    let brutalized = mutations
-        .iter()
-        .filter(|m| {
-            let s = m.mutation.to_string();
-            s.contains("msg.sender") && s.contains("DEADBEEF")
-        })
-        .count();
-
-    assert!(
-        brutalized > 0,
-        "Should brutalize msg.sender. Got: {:?}",
-        mutations.iter().map(|m| format!("{} -> {}", m.original, m.mutation)).collect::<Vec<_>>()
-    );
-}
-
-/// Test that explicit uint8 casts are brutalized.
-#[test]
-fn test_brutalize_small_uint_cast() {
-    let source = r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract Example {
-    function setSlot(uint8 slot, uint256 value) external {}
-    
-    function useSlot() external {
-        uint256 x = 5;
-        this.setSlot(uint8(x), 100);
-    }
-}
-"#;
-
-    let mutations = generate_mutations(source);
-
-    // Should brutalize the uint8 cast
-    let brutalized = mutations
-        .iter()
-        .filter(|m| {
-            let s = m.mutation.to_string();
-            s.contains("uint8") && s.contains("<< 8")
-        })
-        .count();
-
-    eprintln!("All mutations:");
-    for m in &mutations {
+    eprintln!("Brutalized Yul mutations:");
+    for m in &brutalized_yul {
         eprintln!("  {} -> {}", m.original, m.mutation);
     }
 
-    // This might be 0 if we can't infer the type - that's okay, we primarily target
-    // identifiers with common address-like names
-    if brutalized > 0 {
-        eprintln!("Found uint8 brutalized mutations: {brutalized}");
-    }
+    assert!(
+        !brutalized_yul.is_empty(),
+        "Should generate brutalized mutations for Yul identifiers in assembly"
+    );
+
+    // Should brutalize both 'account' and 'bal'
+    let has_account = brutalized_yul.iter().any(|m| m.original == "account");
+    let has_bal = brutalized_yul.iter().any(|m| m.original == "bal");
+
+    assert!(has_account, "Should brutalize 'account' identifier");
+    assert!(has_bal, "Should brutalize 'bal' identifier");
 }
 
-/// Test real-world pattern: ERC20 transfer with owner variable.
+/// Test that assembly code with calldataload is brutalized.
 #[test]
-fn test_brutalize_owner_transfer() {
+fn test_brutalize_calldataload_result() {
     let source = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-}
-
-contract Owned {
-    address public owner;
-    IERC20 token;
-    
-    function withdrawTo(address recipient) external {
-        token.transfer(owner, 100);
-        token.transfer(recipient, 50);
+contract LowLevel {
+    function readAddress() external pure returns (address) {
+        assembly {
+            let addr := calldataload(4)
+            mstore(0, addr)
+            return(0, 32)
+        }
     }
 }
 "#;
 
     let mutations = generate_mutations(source);
 
-    // Look for brutalized owner or recipient
-    let has_owner_brutalized = mutations.iter().any(|m| {
-        let s = m.mutation.to_string();
-        s.contains("owner") && s.contains("DEADBEEF")
-    });
-
-    let has_recipient_brutalized = mutations.iter().any(|m| {
-        let s = m.mutation.to_string();
-        s.contains("recipient") && s.contains("DEADBEEF")
-    });
-
-    eprintln!("Mutations found:");
-    for m in &mutations {
-        if m.mutation.to_string().contains("DEADBEEF") {
-            eprintln!("  {} -> {}", m.original, m.mutation);
-        }
-    }
+    // The 'addr' identifier should be brutalized
+    let addr_mutations: Vec<_> = mutations
+        .iter()
+        .filter(|m| {
+            let s = m.mutation.to_string();
+            s.contains("addr") && s.contains("or(")
+        })
+        .collect();
 
     assert!(
-        has_owner_brutalized || has_recipient_brutalized,
-        "Should brutalize owner or recipient address arguments"
+        !addr_mutations.is_empty(),
+        "Should brutalize the 'addr' identifier. Got mutations: {:?}",
+        mutations.iter().map(|m| m.mutation.to_string()).collect::<Vec<_>>()
     );
+}
+
+/// Test that multiple assumed bit sizes are generated for Yul identifiers.
+#[test]
+fn test_brutalize_multiple_bit_sizes() {
+    let source = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract BitSizes {
+    function example(uint256 x) external pure returns (uint256) {
+        assembly {
+            let result := add(x, 1)
+            mstore(0, result)
+            return(0, 32)
+        }
+    }
+}
+"#;
+
+    let mutations = generate_mutations(source);
+
+    // Should have brutalizations for different bit sizes (160, 128, 64, 8)
+    let x_mutations: Vec<_> = mutations
+        .iter()
+        .filter(|m| m.original == "x" && m.mutation.to_string().contains("or("))
+        .collect();
+
+    // Should have 4 mutations for 'x' (one for each bit size)
+    assert!(
+        x_mutations.len() >= 4,
+        "Should generate multiple bit size brutalizations for 'x'. Got {}",
+        x_mutations.len()
+    );
+
+    // Verify different bit sizes are present
+    let has_160 = x_mutations.iter().any(|m| m.mutation.to_string().contains("shl(160"));
+    let has_8 = x_mutations.iter().any(|m| m.mutation.to_string().contains("shl(8"));
+
+    assert!(has_160, "Should have 160-bit brutalization (for address)");
+    assert!(has_8, "Should have 8-bit brutalization (for uint8)");
+}
+
+/// Test that assembly in a library is brutalized.
+#[test]
+fn test_brutalize_library_assembly() {
+    let source = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library MathLib {
+    function unsafeDiv(uint256 x, uint256 y) internal pure returns (uint256 result) {
+        assembly {
+            result := div(x, y)
+        }
+    }
+}
+"#;
+
+    let mutations = generate_mutations(source);
+
+    // Should brutalize x and y in the assembly block
+    let brutalized: Vec<_> = mutations
+        .iter()
+        .filter(|m| {
+            m.mutation.to_string().contains("or(") && m.mutation.to_string().contains("shl(")
+        })
+        .collect();
+
+    assert!(
+        brutalized.len() >= 8, // 4 bit sizes * 2 identifiers (x, y)
+        "Should brutalize assembly identifiers in library. Got {} mutations",
+        brutalized.len()
+    );
+}
+
+/// Test that Yul function parameters are brutalized.
+#[test]
+fn test_brutalize_yul_function_params() {
+    let source = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract YulFunc {
+    function example() external pure returns (uint256) {
+        assembly {
+            function helper(a, b) -> c {
+                c := add(a, b)
+            }
+            let result := helper(1, 2)
+            mstore(0, result)
+            return(0, 32)
+        }
+    }
+}
+"#;
+
+    let mutations = generate_mutations(source);
+
+    // Should brutalize a, b in the helper function
+    let has_a =
+        mutations.iter().any(|m| m.original == "a" && m.mutation.to_string().contains("or("));
+    let has_b =
+        mutations.iter().any(|m| m.original == "b" && m.mutation.to_string().contains("or("));
+
+    assert!(has_a || has_b, "Should brutalize Yul function parameters");
 }
 
 /// Helper function to generate mutations from source code.

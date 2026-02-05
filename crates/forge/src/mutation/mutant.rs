@@ -252,6 +252,18 @@ pub enum MutationType {
         /// The full mutated call expression
         mutated_call: String,
     },
+
+    /// Brutalized Yul/assembly identifier.
+    /// In assembly, values are raw 256-bit words. This mutation dirties unused
+    /// bits to test that code properly masks inputs.
+    BrutalizedYul {
+        /// The original identifier name
+        original_ident: String,
+        /// The assumed bit size (e.g., "160" for address, "8" for uint8)
+        assumed_bits: String,
+        /// The brutalized expression (e.g., "or(x, shl(160, 0xDEAD))")
+        brutalized_expr: String,
+    },
 }
 
 impl Display for MutationType {
@@ -270,6 +282,7 @@ impl Display for MutationType {
 
             Self::YulOpcode { mutated_expr, .. } => write!(f, "{mutated_expr}"),
             Self::Brutalized { mutated_call, .. } => write!(f, "{mutated_call}"),
+            Self::BrutalizedYul { brutalized_expr, .. } => write!(f, "{brutalized_expr}"),
 
             Self::FunctionCall
             | Self::Require
