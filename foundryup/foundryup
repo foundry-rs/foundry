@@ -377,14 +377,14 @@ main() {
     say "done!"
   # Install from Monad's fork of Foundry if --network monad is set
   elif [[ "$FOUNDRYUP_NETWORK" == "monad" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable-monad}
     FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
 
     # Normalize versions (handle versions without v prefix)
     if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" =~ ^stable ]]; then
-      FOUNDRYUP_VERSION="stable"
+      FOUNDRYUP_VERSION="stable-monad"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"

@@ -5,7 +5,7 @@ permissions: {}
 on:
   push:
     tags:
-      - "stable"
+      - "stable-monad"
       - "v*.*.*-monad.*"
   schedule:
     - cron: "0 6 * * *"
