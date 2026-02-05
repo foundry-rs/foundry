@@ -916,6 +916,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -966,6 +968,8 @@ Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });

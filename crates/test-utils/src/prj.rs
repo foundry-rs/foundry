@@ -1,11 +1,8 @@
 use crate::{init_tracing, rpc::rpc_endpoints};
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
-    artifacts::Contract,
-    cache::CompilerCache,
-    compilers::multi::MultiCompiler,
-    project_util::{TempProject, copy_dir},
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, artifacts::Contract,
+    cache::CompilerCache, compilers::multi::MultiCompiler, project_util::TempProject,
     solc::SolcSettings,
 };
 use foundry_config::Config;
@@ -25,7 +22,7 @@ use std::{
     },
 };
 
-use crate::util::{SOLC_VERSION, pretty_err};
+use crate::util::{SOLC_VERSION, copy_dir_filtered, pretty_err};
 
 static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -356,12 +353,12 @@ impl TestProject {
         config_paths_exist(&paths, self.inner.project().cached);
     }
 
-    /// Copies the project's root directory to the given target
+    /// Copies the project's root directory to the given target, excluding build artifacts.
     #[track_caller]
     pub fn copy_to(&self, target: impl AsRef<Path>) {
         let target = target.as_ref();
         pretty_err(target, fs::create_dir_all(target));
-        pretty_err(target, copy_dir(self.root(), target));
+        pretty_err(target, copy_dir_filtered(self.root(), target));
     }
 
     /// Creates a file with contents `contents` in the test project's directory. The
@@ -836,6 +833,7 @@ fn test_redactions() -> snapbox::Redactions {
                 "[ESTIMATED_AMOUNT_REQUIRED]",
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
+            ("[SEED]", r"Fuzz seed: 0x[0-9A-Fa-f]+"),
         ])
     });
     REDACTIONS.clone()

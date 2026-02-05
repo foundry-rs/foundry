@@ -234,6 +234,7 @@ impl NodeArgs {
         Ok(NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
+            .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
@@ -543,6 +544,10 @@ pub struct AnvilEvmArgs {
         conflicts_with = "gas_limit"
     )]
     pub disable_block_gas_limit: bool,
+
+    /// Enable the transaction gas limit check as imposed by EIP-7825 (Osaka hardfork).
+    #[arg(long, visible_alias = "tx-gas-limit", help_heading = "Environment config")]
+    pub enable_tx_gas_limit: bool,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. To
     /// disable entirely, use `--disable-code-size-limit`. By default, it is 0x6000 (~25kb).
@@ -893,6 +898,16 @@ mod tests {
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
         assert!(args.is_err());
+    }
+
+    #[test]
+    fn can_parse_enable_tx_gas_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--enable-tx-gas-limit"]);
+        assert!(args.evm.enable_tx_gas_limit);
+
+        // Also test the alias
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--tx-gas-limit"]);
+        assert!(args.evm.enable_tx_gas_limit);
     }
 
     #[test]
