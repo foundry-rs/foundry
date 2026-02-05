@@ -65,7 +65,8 @@ impl Mutator for BrutalizerMutator {
             // Try to infer the type from the expression and generate brutalized version
             if let Some(brutalized) = try_brutalize_expr(arg_expr, &arg_text) {
                 // Build the mutated call by replacing this argument
-                let mutated_call = build_mutated_call_from_slice(source, expr.span, args_exprs, idx, &brutalized);
+                let mutated_call =
+                    build_mutated_call_from_slice(source, expr.span, args_exprs, idx, &brutalized);
 
                 mutants.push(Mutant {
                     span: expr.span,
@@ -161,9 +162,7 @@ fn brutalize_by_type(ty: &Type<'_>, arg_text: &str) -> Option<String> {
 fn brutalize_address(arg_text: &str) -> String {
     // The pattern is: address(uint160(uint256(keccak256(...)) << 96) | uint160(original))
     // Simplified version for mutation testing:
-    format!(
-        "address(uint160(uint256(uint160({arg_text})) | (0xDEADBEEFCAFEBABE << 160)))"
-    )
+    format!("address(uint160(uint256(uint160({arg_text})) | (0xDEADBEEFCAFEBABE << 160)))")
 }
 
 /// Brutalize a uint by OR-ing garbage into the upper bits.
@@ -176,9 +175,7 @@ fn brutalize_uint(size: TypeSize, arg_text: &str) -> Option<String> {
     }
 
     // OR with a pattern shifted to the upper bits
-    Some(format!(
-        "uint{actual_bits}(uint256({arg_text}) | (0xDEADBEEFCAFEBABE << {actual_bits}))"
-    ))
+    Some(format!("uint{actual_bits}(uint256({arg_text}) | (0xDEADBEEFCAFEBABE << {actual_bits}))"))
 }
 
 /// Brutalize a signed int by OR-ing garbage into the upper bits.
@@ -203,9 +200,7 @@ fn brutalize_fixed_bytes(size: TypeSize, arg_text: &str) -> Option<String> {
     }
 
     let shift = (32 - bytes as u16) * 8;
-    Some(format!(
-        "bytes{bytes}(bytes32({arg_text}) | bytes32(uint256(0xDEAD) >> {shift}))"
-    ))
+    Some(format!("bytes{bytes}(bytes32({arg_text}) | bytes32(uint256(0xDEAD) >> {shift}))"))
 }
 
 /// Brutalize a bool by using a non-1 truthy value.
@@ -227,15 +222,15 @@ fn build_mutated_call_from_slice<'ast>(
     replacement: &str,
 ) -> String {
     let call_text = extract_span_text(source, call_span);
-    
+
     // Find the opening paren
     let open_paren = match call_text.find('(') {
         Some(idx) => idx,
         None => return call_text,
     };
-    
+
     let func_name = &call_text[..open_paren];
-    
+
     // Build new arguments list
     let mut new_args = Vec::new();
     for (idx, arg) in args.iter().enumerate() {
@@ -245,7 +240,7 @@ fn build_mutated_call_from_slice<'ast>(
             new_args.push(extract_span_text(source, arg.span));
         }
     }
-    
+
     format!("{}({})", func_name, new_args.join(", "))
 }
 
