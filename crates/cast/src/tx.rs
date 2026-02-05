@@ -682,8 +682,6 @@ where
             self.tx.set_blob_sidecar_7594(sidecar);
         }
 
-        self.tx.populate_blob_hashes();
-
         Ok(self)
     }
 }

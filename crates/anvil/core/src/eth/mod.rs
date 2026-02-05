@@ -1,5 +1,5 @@
 use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
-use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U256};
+use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U256, map::HashSet};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
     anvil::{Forking, MineOptions},
@@ -10,6 +10,7 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
+        parity::TraceType,
     },
 };
 use alloy_serde::WithOtherFields;
@@ -324,6 +325,13 @@ pub enum EthRequest {
     // Return filtered traces over blocks
     #[serde(rename = "trace_filter", with = "sequence")]
     TraceFilter(TraceFilter),
+
+    /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
+    #[serde(rename = "trace_replayBlockTransactions")]
+    TraceReplayBlockTransactions(
+        #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
+        HashSet<TraceType>,
+    ),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.

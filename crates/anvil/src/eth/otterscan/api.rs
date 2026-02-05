@@ -419,8 +419,14 @@ impl EthApi {
 
         let receipts = join_all(receipt_futs.map(|r| async {
             if let Ok(Some(r)) = r.await {
-                let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+                // Try to get timestamp from receipt's other fields first (set by mined receipts),
+                // fallback to block lookup for fork receipts that may not have it
+                let timestamp = if let Some(ts) = r.block_timestamp() {
+                    ts
+                } else {
+                    let block = self.block_by_number(r.block_number().unwrap().into()).await?;
+                    block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp
+                };
                 let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {
