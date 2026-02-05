@@ -8,23 +8,41 @@
 //!
 //! ## Mutations Generated
 //!
+//! ### Value brutalization (type casts)
+//!
 //! Only explicit type casts are mutated (where the target type is known from AST):
 //! - `address(x)` → `address(uint160(uint256(uint160(x)) ^ uint256(MASK)))`
 //! - `uint8(x)` → `uint8(uint256(x) ^ uint256(MASK))`
 //! - `bytes4(x)` → `bytes4(bytes32(uint256(bytes32(x)) ^ uint256(MASK)))`
+//!
+//! ### Memory brutalization (function entry)
+//!
+//! Injects inline assembly at public/external function entry points to dirty scratch
+//! space (0x00-0x3f) and memory beyond the free memory pointer. Catches inline assembly
+//! that assumes zero-initialized memory. Only applied to functions that contain assembly
+//! blocks, and only at call-frame boundaries (public/external) where the EVM guarantees
+//! fresh memory — injecting into internal functions would overwrite legitimate caller state.
+//!
+//! ### Free memory pointer misalignment (function entry)
+//!
+//! Injects inline assembly at public/external function entry points to misalign the
+//! free memory pointer by a small deterministic odd offset (1-31 bytes). Catches inline
+//! assembly that assumes word-aligned memory pointers. Same targeting rules as memory
+//! brutalization.
 //!
 //! ## Limitations
 //!
 //! - **Bool**: Solady creates non-canonical truthy values (e.g., 0xFF for true) via assembly. This
 //!   cannot be replicated via source-level mutation since Solidity enforces 0/1 for bool. Bool
 //!   casts are not mutated.
-//! - **Memory/FMP**: Solady also brutalizes memory and misaligns the free memory pointer. These
-//!   environmental mutations are out of scope for this mutator.
 //! - **Heuristics**: Unlike the original approach, we do NOT guess types from variable names. Only
 //!   explicit type casts are mutated.
 
 use eyre::Result;
-use solar::ast::{CallArgsKind, ElementaryType, ExprKind, TypeKind, TypeSize};
+use solar::ast::{
+    CallArgsKind, ElementaryType, ExprKind, FunctionKind, Span, TypeKind, TypeSize, Visibility,
+};
+use solar::interface::BytePos;
 
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
@@ -33,6 +51,30 @@ pub struct BrutalizerMutator;
 
 impl Mutator for BrutalizerMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
+        if context.fn_body_span.is_some() {
+            return self.generate_function_entry_mutants(context);
+        }
+
+        self.generate_type_cast_mutants(context)
+    }
+
+    fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
+        if ctxt.fn_body_span.is_some() {
+            return ctxt.fn_has_assembly
+                && is_eligible_function(ctxt.fn_visibility, ctxt.fn_kind);
+        }
+
+        if let Some(expr) = ctxt.expr
+            && let ExprKind::Call(callee, _) = &expr.kind
+        {
+            return matches!(callee.kind, ExprKind::Type(_));
+        }
+        false
+    }
+}
+
+impl BrutalizerMutator {
+    fn generate_type_cast_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
         let expr = context.expr.ok_or_else(|| eyre::eyre!("BrutalizerMutator: no expression"))?;
 
         let (callee, call_args) = match &expr.kind {
@@ -86,14 +128,91 @@ impl Mutator for BrutalizerMutator {
         }])
     }
 
-    fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
-        if let Some(expr) = ctxt.expr {
-            if let ExprKind::Call(callee, _) = &expr.kind {
-                return matches!(callee.kind, ExprKind::Type(_));
-            }
+    fn generate_function_entry_mutants(
+        &self,
+        context: &MutationContext<'_>,
+    ) -> Result<Vec<Mutant>> {
+        let body_span =
+            context.fn_body_span.ok_or_else(|| eyre::eyre!("BrutalizerMutator: no body span"))?;
+
+        if !context.fn_has_assembly
+            || !is_eligible_function(context.fn_visibility, context.fn_kind)
+        {
+            return Ok(vec![]);
         }
-        false
+
+        let insert_pos = body_span.lo().0 + 1;
+        let insert_span = Span::new(BytePos(insert_pos), BytePos(insert_pos));
+
+        let source_line = context.source_line();
+        let line_number = context.line_number();
+
+        let mut mutants = Vec::with_capacity(2);
+
+        let memory_asm = generate_memory_brutalization_assembly(insert_span);
+        mutants.push(Mutant {
+            span: insert_span,
+            mutation: MutationType::BrutalizeMemory { injected_assembly: memory_asm },
+            path: context.path.clone(),
+            original: String::new(),
+            source_line: source_line.clone(),
+            line_number,
+        });
+
+        let fmp_asm = generate_fmp_misalignment_assembly(insert_span);
+        mutants.push(Mutant {
+            span: insert_span,
+            mutation: MutationType::MisalignFreeMemoryPointer { injected_assembly: fmp_asm },
+            path: context.path.clone(),
+            original: String::new(),
+            source_line,
+            line_number,
+        });
+
+        Ok(mutants)
     }
+}
+
+fn is_eligible_function(visibility: Option<Visibility>, kind: Option<FunctionKind>) -> bool {
+    if let Some(kind) = kind
+        && !matches!(kind, FunctionKind::Function)
+    {
+        return false;
+    }
+
+    match visibility {
+        Some(Visibility::External | Visibility::Public) => true,
+        None => false,
+        _ => false,
+    }
+}
+
+fn generate_memory_brutalization_assembly(_span: Span) -> String {
+    concat!(
+        " assembly { ",
+        "mstore(0x00, not(0)) ",
+        "mstore(0x20, not(0)) ",
+        "let _b_p := mload(0x40) ",
+        "mstore(_b_p, not(0)) ",
+        "mstore(add(_b_p, 0x20), not(0)) ",
+        "} ",
+    )
+    .to_string()
+}
+
+fn generate_fmp_misalignment_assembly(span: Span) -> String {
+    let offset = deterministic_fmp_offset(span);
+    format!(" assembly {{ mstore(0x40, add(mload(0x40), {offset})) }} ")
+}
+
+fn deterministic_fmp_offset(span: Span) -> u8 {
+    let seed = (span.lo().0 as u64).wrapping_mul(0x9e3779b97f4a7c15)
+        ^ (span.hi().0 as u64).wrapping_mul(0xff51afd7ed558ccd);
+    let mut h = seed;
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
+    h ^= h >> 33;
+    ((h % 31) as u8) | 1
 }
 
 /// Generate a deterministic mask from a span's byte offsets.
@@ -162,8 +281,6 @@ fn extract_span_text(source: &str, span: solar::ast::Span) -> String {
 
 #[cfg(test)]
 mod tests {
-    use solar::interface::BytePos;
-
     use super::*;
 
     #[test]
@@ -232,5 +349,66 @@ mod tests {
             "0x1234",
         );
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_memory_brutalization_assembly_contains_scratch_space() {
+        let span = Span::new(BytePos(100), BytePos(100));
+        let asm = generate_memory_brutalization_assembly(span);
+        assert!(asm.contains("mstore(0x00, not(0))"), "Should dirty scratch space at 0x00");
+        assert!(asm.contains("mstore(0x20, not(0))"), "Should dirty scratch space at 0x20");
+        assert!(asm.contains("mload(0x40)"), "Should read free memory pointer");
+        assert!(asm.contains("assembly"), "Should be wrapped in assembly block");
+    }
+
+    #[test]
+    fn test_fmp_misalignment_assembly_contains_offset() {
+        let span = Span::new(BytePos(100), BytePos(100));
+        let asm = generate_fmp_misalignment_assembly(span);
+        assert!(asm.contains("mstore(0x40,"), "Should write to FMP slot");
+        assert!(asm.contains("add(mload(0x40),"), "Should add offset to current FMP");
+        assert!(asm.contains("assembly"), "Should be wrapped in assembly block");
+    }
+
+    #[test]
+    fn test_deterministic_fmp_offset_is_odd() {
+        for lo in [0u32, 10, 50, 100, 255, 1000] {
+            let span = Span::new(BytePos(lo), BytePos(lo));
+            let offset = deterministic_fmp_offset(span);
+            assert!(offset % 2 == 1, "FMP offset should be odd for misalignment, got {offset}");
+            assert!(offset >= 1 && offset <= 31, "FMP offset should be 1..=31, got {offset}");
+        }
+    }
+
+    #[test]
+    fn test_deterministic_fmp_offset_varies_by_span() {
+        let offsets: Vec<u8> = (0..10)
+            .map(|i| {
+                let span = Span::new(BytePos(i * 100), BytePos(i * 100));
+                deterministic_fmp_offset(span)
+            })
+            .collect();
+        let unique: std::collections::HashSet<_> = offsets.iter().collect();
+        assert!(unique.len() > 1, "Different spans should produce varying offsets: {offsets:?}");
+    }
+
+    #[test]
+    fn test_is_eligible_function_public_external() {
+        assert!(is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Function)));
+        assert!(is_eligible_function(Some(Visibility::External), Some(FunctionKind::Function)));
+        assert!(!is_eligible_function(Some(Visibility::Internal), Some(FunctionKind::Function)));
+        assert!(!is_eligible_function(Some(Visibility::Private), Some(FunctionKind::Function)));
+        assert!(!is_eligible_function(None, Some(FunctionKind::Function)));
+    }
+
+    #[test]
+    fn test_is_eligible_function_kind_filter() {
+        assert!(!is_eligible_function(
+            Some(Visibility::Public),
+            Some(FunctionKind::Constructor)
+        ));
+        assert!(!is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Fallback)));
+        assert!(!is_eligible_function(Some(Visibility::External), Some(FunctionKind::Receive)));
+        assert!(!is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Modifier)));
     }
 }
