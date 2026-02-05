@@ -216,27 +216,55 @@ fn is_eligible_function(visibility: Option<Visibility>, kind: Option<FunctionKin
     matches!(visibility, Some(Visibility::External))
 }
 
-/// Generates an inline assembly block that dirties EVM scratch space and memory
-/// beyond the free memory pointer.
+/// Applies the splitmix64 finalizer to produce a well-distributed 64-bit hash.
 ///
-/// The injected assembly:
-/// - Writes `not(0)` (all 1s) to scratch space at 0x00 and 0x20 — the 64 bytes the EVM reserves for
-///   hashing. Code that reads scratch space without writing first will get `0xfff...f` instead of
-///   zero.
-/// - Reads the free memory pointer (`mload(0x40)`), then writes `not(0)` to the two words at that
-///   pointer. Code that allocates memory via FMP and reads it without initializing will get
-///   `0xfff...f`.
-fn generate_memory_brutalization_assembly(_span: Span) -> String {
-    concat!(
-        " assembly { ",
-        "mstore(0x00, not(0)) ",
-        "mstore(0x20, not(0)) ",
-        "let _b_p := mload(0x40) ",
-        "mstore(_b_p, not(0)) ",
-        "mstore(add(_b_p, 0x20), not(0)) ",
-        "} ",
+/// The constants are from splitmix64 (part of the SplitMix PRNG family):
+/// - `0xbf58476d1ce4e5b9`: first finalizer multiplier
+/// - `0x94d049bb133111eb`: second finalizer multiplier
+/// - `>> 30` / `>> 27` / `>> 31`: avalanche shifts to propagate bits
+fn splitmix64(mut x: u64) -> u64 {
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d049bb133111eb);
+    x ^= x >> 31;
+    x
+}
+
+/// Derives a deterministic seed from a span's byte offsets.
+///
+/// Mixes lo and hi positions using the golden ratio constant (`0x9e3779b97f4a7c15`)
+/// to produce a unique seed per source location.
+fn span_seed(span: Span) -> u64 {
+    let lo = span.lo().0 as u64;
+    let hi = span.hi().0 as u64;
+    splitmix64(lo.wrapping_mul(0x9e3779b97f4a7c15) ^ hi.wrapping_mul(0xff51afd7ed558ccd))
+}
+
+/// Generates an inline assembly block that dirties EVM scratch space and memory
+/// beyond the free memory pointer with deterministic random values.
+///
+/// The injected assembly writes span-derived random 256-bit words to:
+/// - Scratch space at 0x00 and 0x20 (the 64 bytes the EVM reserves for hashing)
+/// - Two words at the free memory pointer (freshly allocated memory)
+///
+/// Using random values instead of a fixed pattern (like `not(0)`) catches more
+/// bugs: code might accidentally work with all-1s but break with other patterns.
+fn generate_memory_brutalization_assembly(span: Span) -> String {
+    let s = span_seed(span);
+    let w0 = splitmix64(s);
+    let w1 = splitmix64(s.wrapping_add(1));
+    let w2 = splitmix64(s.wrapping_add(2));
+    let w3 = splitmix64(s.wrapping_add(3));
+    format!(
+        " assembly {{ \
+        mstore(0x00, 0x{w0:016x}{w1:016x}) \
+        mstore(0x20, 0x{w2:016x}{w3:016x}) \
+        let _b_p := mload(0x40) \
+        mstore(_b_p, 0x{w0:016x}{w2:016x}) \
+        mstore(add(_b_p, 0x20), 0x{w1:016x}{w3:016x}) \
+        }} "
     )
-    .to_string()
 }
 
 /// Generates an inline assembly block that misaligns the free memory pointer
@@ -252,24 +280,9 @@ fn generate_fmp_misalignment_assembly(span: Span) -> String {
 }
 
 /// Returns a small odd offset (1-31) derived deterministically from the span position.
-///
-/// Uses splitmix64 to hash the span's byte offsets into a well-distributed value,
-/// then maps to range [1, 31] and forces odd with `| 1`. Odd guarantees the FMP
-/// is never 32-byte aligned (which is the invariant we want to break).
-///
-/// The constants are from splitmix64 (part of the SplitMix PRNG family):
-/// - `0x9e3779b97f4a7c15`: golden ratio constant (2^64 / φ), used as a mixing multiplier
-/// - `0xff51afd7ed558ccd`: a second mixing multiplier for independence
-/// - `0xc4ceb9fe1a85ec53`: finalizer multiplier from splitmix64
-/// - `>> 33`: avalanche shift to propagate high bits downward
+/// Odd guarantees the FMP is never 32-byte aligned (which is the invariant we want to break).
 fn deterministic_fmp_offset(span: Span) -> u8 {
-    let seed = (span.lo().0 as u64).wrapping_mul(0x9e3779b97f4a7c15)
-        ^ (span.hi().0 as u64).wrapping_mul(0xff51afd7ed558ccd);
-    let mut h = seed;
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
-    h ^= h >> 33;
-    ((h % 31) as u8) | 1
+    ((span_seed(span) % 31) as u8) | 1
 }
 
 /// Returns a deterministic 64-bit hex mask (e.g. `0x1a2b3c4d5e6f7890`) derived
@@ -279,15 +292,9 @@ fn deterministic_fmp_offset(span: Span) -> u8 {
 /// testing on the same source produces identical mutations. The mask is XORed into
 /// the value being cast, dirtying bits that the cast should strip.
 ///
-/// Uses the same splitmix64 hash as [`deterministic_fmp_offset`]. The mask is
-/// guaranteed non-zero (falls back to 1) so the XOR always changes the value.
+/// The mask is guaranteed non-zero (falls back to 1) so the XOR always changes the value.
 fn deterministic_mask(span: solar::ast::Span) -> String {
-    let seed = (span.lo().0 as u64).wrapping_mul(0x9e3779b97f4a7c15)
-        ^ (span.hi().0 as u64).wrapping_mul(0xff51afd7ed558ccd);
-    let mut h = seed;
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
-    h ^= h >> 33;
+    let h = span_seed(span);
     let mask = if h == 0 { 1 } else { h };
     format!("0x{mask:016x}")
 }
@@ -416,13 +423,30 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_brutalization_assembly_contains_scratch_space() {
+    fn test_memory_brutalization_assembly_contains_random_values() {
         let span = Span::new(BytePos(100), BytePos(100));
         let asm = generate_memory_brutalization_assembly(span);
-        assert!(asm.contains("mstore(0x00, not(0))"), "Should dirty scratch space at 0x00");
-        assert!(asm.contains("mstore(0x20, not(0))"), "Should dirty scratch space at 0x20");
+        assert!(asm.contains("mstore(0x00, 0x"), "Should dirty scratch space at 0x00 with random");
+        assert!(asm.contains("mstore(0x20, 0x"), "Should dirty scratch space at 0x20 with random");
         assert!(asm.contains("mload(0x40)"), "Should read free memory pointer");
         assert!(asm.contains("assembly"), "Should be wrapped in assembly block");
+    }
+
+    #[test]
+    fn test_memory_brutalization_is_reproducible() {
+        let span = Span::new(BytePos(42), BytePos(99));
+        let asm1 = generate_memory_brutalization_assembly(span);
+        let asm2 = generate_memory_brutalization_assembly(span);
+        assert_eq!(asm1, asm2, "Same span should produce identical assembly");
+    }
+
+    #[test]
+    fn test_memory_brutalization_varies_by_span() {
+        let span1 = Span::new(BytePos(10), BytePos(20));
+        let span2 = Span::new(BytePos(50), BytePos(80));
+        let asm1 = generate_memory_brutalization_assembly(span1);
+        let asm2 = generate_memory_brutalization_assembly(span2);
+        assert_ne!(asm1, asm2, "Different spans should produce different random values");
     }
 
     #[test]

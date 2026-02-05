@@ -476,8 +476,8 @@ contract ScratchSpaceReader {
     );
 
     let asm = memory[0].mutation.to_string();
-    assert!(asm.contains("mstore(0x00, not(0))"), "Should dirty scratch space at 0x00");
-    assert!(asm.contains("mstore(0x20, not(0))"), "Should dirty scratch space at 0x20");
+    assert!(asm.contains("mstore(0x00, 0x"), "Should dirty scratch space at 0x00 with random");
+    assert!(asm.contains("mstore(0x20, 0x"), "Should dirty scratch space at 0x20 with random");
     assert!(asm.contains("mload(0x40)"), "Should reference free memory pointer");
 }
 
