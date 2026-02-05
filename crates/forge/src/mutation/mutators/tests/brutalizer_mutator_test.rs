@@ -656,8 +656,10 @@ interface IExample {
     assert!(fmp.is_empty(), "Interface function should NOT get FMP misalignment");
 }
 
-/// Test that multiple public/external functions with assembly each get their own
-/// mutations, while internal functions and functions without assembly are excluded.
+/// Test that multiple external functions with assembly each get their own mutations,
+/// while public, internal, and functions without assembly are excluded.
+/// Public functions are excluded because they can be called internally (JUMP),
+/// sharing the caller's memory — brutalizing would overwrite legitimate state.
 #[test]
 fn test_memory_brutalization_multiple_functions() {
     let source = r#"
@@ -665,7 +667,7 @@ fn test_memory_brutalization_multiple_functions() {
 pragma solidity ^0.8.0;
 
 contract Example {
-    function foo(uint256 x) public pure returns (uint256) {
+    function foo(uint256 x) external pure returns (uint256) {
         assembly {
             mstore(0x00, x)
             return(0x00, 0x20)
@@ -677,6 +679,13 @@ contract Example {
             let ptr := mload(0x40)
             mstore(ptr, x)
             return(ptr, 0x20)
+        }
+    }
+
+    function pubFn(uint256 x) public pure returns (uint256) {
+        assembly {
+            mstore(0x00, x)
+            return(0x00, 0x20)
         }
     }
 
@@ -700,13 +709,52 @@ contract Example {
     assert_eq!(
         memory.len(),
         2,
-        "Should get memory brutalization for foo and bar (not _baz/noAssembly). Got: {:?}",
+        "Should get memory brutalization for foo and bar only. Got: {:?}",
         fmt_mutations(&memory)
     );
     assert_eq!(
         fmp.len(),
         2,
-        "Should get FMP misalignment for foo and bar (not _baz/noAssembly). Got: {:?}",
+        "Should get FMP misalignment for foo and bar only. Got: {:?}",
+        fmt_mutations(&fmp)
+    );
+}
+
+/// Test that public functions with assembly do NOT get memory/FMP mutations.
+/// Public functions can be called internally (JUMP, shared memory) or externally
+/// (CALL, fresh memory). We cannot distinguish at the source level, so we exclude
+/// them to avoid false positives from corrupting the caller's memory state.
+#[test]
+fn test_no_memory_brutalization_public() {
+    let source = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Example {
+    function hashPair(bytes32 a, bytes32 b) public pure returns (bytes32) {
+        assembly {
+            mstore(0x00, a)
+            mstore(0x20, b)
+            let result := keccak256(0x00, 0x40)
+            mstore(0x00, result)
+            return(0x00, 0x20)
+        }
+    }
+}
+"#;
+
+    let mutations = generate_mutations(source);
+    let memory = filter_memory_mutations(&mutations);
+    let fmp = filter_fmp_mutations(&mutations);
+
+    assert!(
+        memory.is_empty(),
+        "Public function should NOT get memory brutalization (may be called internally). Got: {:?}",
+        fmt_mutations(&memory)
+    );
+    assert!(
+        fmp.is_empty(),
+        "Public function should NOT get FMP misalignment (may be called internally). Got: {:?}",
         fmt_mutations(&fmp)
     );
 }

@@ -17,18 +17,19 @@
 //!
 //! ### Memory brutalization (function entry)
 //!
-//! Injects inline assembly at public/external function entry points to dirty scratch
-//! space (0x00-0x3f) and memory beyond the free memory pointer. Catches inline assembly
-//! that assumes zero-initialized memory. Only applied to functions that contain assembly
-//! blocks, and only at call-frame boundaries (public/external) where the EVM guarantees
-//! fresh memory — injecting into internal functions would overwrite legitimate caller state.
+//! Injects inline assembly at external function entry points to dirty scratch space
+//! (0x00-0x3f) and memory beyond the free memory pointer. Catches inline assembly that
+//! assumes zero-initialized memory. Only applied to functions that contain assembly
+//! blocks. Restricted to `external` functions because they can only be entered via
+//! CALL/STATICCALL/DELEGATECALL which guarantees fresh zeroed memory. `public` functions
+//! are excluded because they can also be called internally (JUMP), sharing the caller's
+//! memory — brutalizing would overwrite legitimate state.
 //!
 //! ### Free memory pointer misalignment (function entry)
 //!
-//! Injects inline assembly at public/external function entry points to misalign the
-//! free memory pointer by a small deterministic odd offset (1-31 bytes). Catches inline
-//! assembly that assumes word-aligned memory pointers. Same targeting rules as memory
-//! brutalization.
+//! Injects inline assembly at external function entry points to misalign the free memory
+//! pointer by a small deterministic odd offset (1-31 bytes). Catches inline assembly that
+//! assumes word-aligned memory pointers. Same targeting rules as memory brutalization.
 //!
 //! ## Limitations
 //!
@@ -180,11 +181,7 @@ fn is_eligible_function(visibility: Option<Visibility>, kind: Option<FunctionKin
         return false;
     }
 
-    match visibility {
-        Some(Visibility::External | Visibility::Public) => true,
-        None => false,
-        _ => false,
-    }
+    matches!(visibility, Some(Visibility::External))
 }
 
 fn generate_memory_brutalization_assembly(_span: Span) -> String {
@@ -393,9 +390,9 @@ mod tests {
     }
 
     #[test]
-    fn test_is_eligible_function_public_external() {
-        assert!(is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Function)));
+    fn test_is_eligible_function_external_only() {
         assert!(is_eligible_function(Some(Visibility::External), Some(FunctionKind::Function)));
+        assert!(!is_eligible_function(Some(Visibility::Public), Some(FunctionKind::Function)));
         assert!(!is_eligible_function(Some(Visibility::Internal), Some(FunctionKind::Function)));
         assert!(!is_eligible_function(Some(Visibility::Private), Some(FunctionKind::Function)));
         assert!(!is_eligible_function(None, Some(FunctionKind::Function)));
