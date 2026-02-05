@@ -2559,13 +2559,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice
+gasPrice             
 input                [..]
-maxFeePerBlobGas
-maxFeePerGas
-maxPriorityFeePerGas
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
 nonce                0
-to
+to                   
 type                 0
 value                0
 
@@ -2574,11 +2574,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice
+gasPrice             
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas
-maxFeePerGas
-maxPriorityFeePerGas
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
