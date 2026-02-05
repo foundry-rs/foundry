@@ -7,8 +7,6 @@ on:
     tags:
       - "stable-monad"
       - "v*.*.*-monad.*"
-  schedule:
-    - cron: "0 6 * * *"
   workflow_dispatch:
 
 env:
