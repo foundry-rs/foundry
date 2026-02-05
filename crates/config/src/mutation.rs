@@ -23,6 +23,7 @@ pub enum MutatorType {
     Assembly,
     Assignment,
     BinaryOp,
+    Brutalizer,
     DeleteExpression,
     ElimDelegate,
     Require,
@@ -37,7 +38,7 @@ impl MutatorType {
 
     /// Returns the operators that are excluded by default.
     pub fn default_excluded() -> Vec<Self> {
-        vec![]
+        vec![Self::Brutalizer]
     }
 }
 
