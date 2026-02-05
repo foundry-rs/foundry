@@ -628,7 +628,7 @@ impl AnvilEvmArgs {
 }
 
 /// Helper type to periodically dump the state of the chain to disk
-struct PeriodicStateDumper {
+pub struct PeriodicStateDumper {
     in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
     api: EthApi,
     dump_state: Option<PathBuf>,
@@ -637,7 +637,7 @@ struct PeriodicStateDumper {
 }
 
 impl PeriodicStateDumper {
-    fn new(
+    pub fn new(
         api: EthApi,
         dump_state: Option<PathBuf>,
         interval: Duration,
@@ -655,7 +655,7 @@ impl PeriodicStateDumper {
         Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
-    async fn dump(&self) {
+    pub async fn dump(&self) {
         if let Some(state) = self.dump_state.clone() {
             Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
         }

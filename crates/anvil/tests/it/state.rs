@@ -6,14 +6,18 @@ use alloy_primitives::{Bytes, U256, Uint, address, b256, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
+use anvil::cmd::PeriodicStateDumper;
 use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
+use flate2::read::GzDecoder;
 use foundry_test_utils::rpc::next_http_archive_rpc_url;
 use revm::{
     context_interface::block::BlobExcessGasAndPrice,
     primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
 };
 use serde_json::json;
+use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_state() {
@@ -135,6 +139,84 @@ async fn can_load_existing_state() {
 
     let block_number = api.block_number().unwrap();
     assert_eq!(block_number, Uint::from(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_load_existing_compressed_state() {
+    let state_file = Path::new("test-data/state-dump.json");
+    let state: SerializableState = foundry_common::fs::read_json_file(state_file).unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let compressed_state_file = tmp.path().join("state.json.gz");
+    foundry_common::fs::write_json_gzip_file(&compressed_state_file, &state).unwrap();
+
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_init_state_path(compressed_state_file)).await;
+
+    let block_number = api.block_number().unwrap();
+    assert_eq!(block_number, Uint::from(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_preserve_compressed_historical_states_between_dump_and_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    let compressed_state_file = tmp.path().join("state.json.gz");
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let state_dumper = PeriodicStateDumper::new(
+        api.clone(),
+        Some(compressed_state_file.clone()),
+        // Irrelevant since we are not polling state dumper in this test
+        Duration::from_secs(1),
+        true,
+    );
+
+    let provider = handle.http_provider();
+
+    let greeter = Greeter::deploy(&provider, "Hello".to_string()).await.unwrap();
+
+    let address = greeter.address();
+
+    let deploy_blk_num = provider.get_block_number().await.unwrap();
+
+    let tx = greeter
+        .setGreeting("World!".to_string())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let change_greeting_blk_num = tx.block_number.unwrap();
+
+    api.mine_one().await;
+
+    state_dumper.dump().await;
+
+    // Assert that the state we dumped is indeed compressed
+    let buf = foundry_common::fs::read(&compressed_state_file).unwrap();
+    let decoder = GzDecoder::new(buf.as_slice());
+    assert!(decoder.header().is_some(), "compressed state is not a valid gzip file");
+
+    let (api, handle) = spawn(NodeConfig::test().with_init_state_path(compressed_state_file)).await;
+
+    let block_number = api.block_number().unwrap();
+    assert_eq!(block_number, Uint::from(3));
+
+    let provider = handle.http_provider();
+
+    let greeter = Greeter::new(*address, provider);
+
+    let greeting_at_init =
+        greeter.greet().block(BlockId::number(deploy_blk_num)).call().await.unwrap();
+
+    assert_eq!(greeting_at_init, "Hello");
+
+    let greeting_after_change =
+        greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap();
+
+    assert_eq!(greeting_after_change, "World!");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -384,7 +466,7 @@ async fn test_backward_compatibility_deserialization_v1_2() {
             "coinbase": "0x1234567890123456789012345678901234567890",
             "timestamp": "0x688c83b5",
             "gas_limit": "0x1c9c380",
-            "basefee": "0x3b9aca00",  
+            "basefee": "0x3b9aca00",
             "difficulty": "0x0",
             "prevrandao": "0xecc5f0af8ff6b65c14bfdac55ba9db870d89482eb2b87200c6d7e7cd3a3a5ad5",
             "blob_excess_gas_and_price": {
