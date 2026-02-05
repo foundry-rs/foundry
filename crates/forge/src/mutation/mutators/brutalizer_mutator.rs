@@ -211,6 +211,16 @@ fn is_eligible_function(visibility: Option<Visibility>, kind: Option<FunctionKin
     matches!(visibility, Some(Visibility::External))
 }
 
+/// Generates an inline assembly block that dirties EVM scratch space and memory
+/// beyond the free memory pointer.
+///
+/// The injected assembly:
+/// - Writes `not(0)` (all 1s) to scratch space at 0x00 and 0x20 — the 64 bytes
+///   the EVM reserves for hashing. Code that reads scratch space without writing
+///   first will get `0xfff...f` instead of zero.
+/// - Reads the free memory pointer (`mload(0x40)`), then writes `not(0)` to the
+///   two words at that pointer. Code that allocates memory via FMP and reads it
+///   without initializing will get `0xfff...f`.
 fn generate_memory_brutalization_assembly(_span: Span) -> String {
     concat!(
         " assembly { ",
@@ -224,11 +234,29 @@ fn generate_memory_brutalization_assembly(_span: Span) -> String {
     .to_string()
 }
 
+/// Generates an inline assembly block that misaligns the free memory pointer
+/// by a small odd byte offset.
+///
+/// Solidity keeps the FMP at 0x40 word-aligned (multiples of 32). Assembly code
+/// often assumes this alignment when computing offsets. Adding an odd offset
+/// (1-31 bytes) breaks that assumption. The offset is deterministic per mutation
+/// site so results are reproducible.
 fn generate_fmp_misalignment_assembly(span: Span) -> String {
     let offset = deterministic_fmp_offset(span);
     format!(" assembly {{ mstore(0x40, add(mload(0x40), {offset})) }} ")
 }
 
+/// Returns a small odd offset (1-31) derived deterministically from the span position.
+///
+/// Uses splitmix64 to hash the span's byte offsets into a well-distributed value,
+/// then maps to range [1, 31] and forces odd with `| 1`. Odd guarantees the FMP
+/// is never 32-byte aligned (which is the invariant we want to break).
+///
+/// The constants are from splitmix64 (part of the SplitMix PRNG family):
+/// - `0x9e3779b97f4a7c15`: golden ratio constant (2^64 / φ), used as a mixing multiplier
+/// - `0xff51afd7ed558ccd`: a second mixing multiplier for independence
+/// - `0xc4ceb9fe1a85ec53`: finalizer multiplier from splitmix64
+/// - `>> 33`: avalanche shift to propagate high bits downward
 fn deterministic_fmp_offset(span: Span) -> u8 {
     let seed = (span.lo().0 as u64).wrapping_mul(0x9e3779b97f4a7c15)
         ^ (span.hi().0 as u64).wrapping_mul(0xff51afd7ed558ccd);
@@ -239,8 +267,15 @@ fn deterministic_fmp_offset(span: Span) -> u8 {
     ((h % 31) as u8) | 1
 }
 
-/// Generate a deterministic mask from a span's byte offsets.
-/// Each mutation site gets a unique but reproducible mask.
+/// Returns a deterministic 64-bit hex mask (e.g. `0x1a2b3c4d5e6f7890`) derived
+/// from the span's byte offsets.
+///
+/// Each mutation site gets a unique but reproducible mask, so re-running mutation
+/// testing on the same source produces identical mutations. The mask is XORed into
+/// the value being cast, dirtying bits that the cast should strip.
+///
+/// Uses the same splitmix64 hash as [`deterministic_fmp_offset`]. The mask is
+/// guaranteed non-zero (falls back to 1) so the XOR always changes the value.
 fn deterministic_mask(span: solar::ast::Span) -> String {
     let seed = (span.lo().0 as u64).wrapping_mul(0x9e3779b97f4a7c15)
         ^ (span.hi().0 as u64).wrapping_mul(0xff51afd7ed558ccd);
