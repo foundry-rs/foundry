@@ -65,7 +65,6 @@ library FixedPointMathLib {
     assert_has_opcode_mutation(&yul, "add", "sub");
     assert_has_opcode_mutation(&yul, "div", "mul");
     assert_has_opcode_mutation(&yul, "mod", "div");
-    assert_has_opcode_mutation(&yul, "iszero", "not");
 }
 
 /// Solady: `zeroFloorSub` / `saturatingSub` uses gt, sub, mul.
@@ -294,7 +293,6 @@ library AssemblyLib {
     let yul = yul_mutations(source);
     assert_has_opcode_mutation(&yul, "add", "sub");
     assert_has_opcode_mutation(&yul, "add", "mul");
-    assert_has_opcode_mutation(&yul, "add", "xor");
 }
 
 /// Nested calls: only the outermost opcode at each visit should be mutated,
@@ -377,7 +375,6 @@ library FixedPointMathLib {
     assert_has_opcode_mutation(&yul, "mod", "div");
     assert_has_opcode_mutation(&yul, "eq", "lt");
     assert_has_opcode_mutation(&yul, "slt", "sgt");
-    assert_has_opcode_mutation(&yul, "iszero", "not");
 }
 
 /// Solady: `rpow` uses exp — exponentiation mutation.

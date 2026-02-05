@@ -20,9 +20,10 @@ impl AssemblyMutator {
     pub fn new() -> Self {
         let mut opcode_mutations: HashMap<&'static str, Vec<&'static str>> = HashMap::new();
 
-        opcode_mutations.insert("add", vec!["sub", "mul", "xor"]);
+        // Arithmetic — stay within arithmetic family
+        opcode_mutations.insert("add", vec!["sub", "mul"]);
         opcode_mutations.insert("sub", vec!["add", "mul", "div"]);
-        opcode_mutations.insert("mul", vec!["add", "div", "and"]);
+        opcode_mutations.insert("mul", vec!["add", "div"]);
         opcode_mutations.insert("div", vec!["mul", "sub", "mod"]);
         opcode_mutations.insert("sdiv", vec!["smod", "mul"]);
         opcode_mutations.insert("mod", vec!["div", "mul"]);
@@ -31,17 +32,19 @@ impl AssemblyMutator {
         opcode_mutations.insert("addmod", vec!["mulmod"]);
         opcode_mutations.insert("mulmod", vec!["addmod"]);
 
+        // Comparisons — stay within comparison family
         opcode_mutations.insert("lt", vec!["gt", "eq", "slt"]);
         opcode_mutations.insert("gt", vec!["lt", "eq", "sgt"]);
         opcode_mutations.insert("slt", vec!["sgt", "lt"]);
         opcode_mutations.insert("sgt", vec!["slt", "gt"]);
         opcode_mutations.insert("eq", vec!["lt", "gt"]);
-        opcode_mutations.insert("iszero", vec!["not"]);
 
+        // Bitwise — stay within bitwise family
         opcode_mutations.insert("and", vec!["or", "xor"]);
         opcode_mutations.insert("or", vec!["and", "xor"]);
         opcode_mutations.insert("xor", vec!["and", "or"]);
-        opcode_mutations.insert("not", vec!["iszero"]);
+
+        // Shifts — stay within shift family
         opcode_mutations.insert("shl", vec!["shr", "sar"]);
         opcode_mutations.insert("shr", vec!["shl", "sar"]);
         opcode_mutations.insert("sar", vec!["shr", "shl"]);
@@ -49,8 +52,8 @@ impl AssemblyMutator {
         Self { opcode_mutations }
     }
 
-    pub fn get_mutations(&self, opcode: &str) -> Option<&Vec<&'static str>> {
-        self.opcode_mutations.get(opcode)
+    pub fn get_mutations(&self, opcode: &str) -> Option<&[&'static str]> {
+        self.opcode_mutations.get(opcode).map(|v| v.as_slice())
     }
 }
 
@@ -71,6 +74,15 @@ impl Mutator for AssemblyMutator {
         };
 
         let original = context.original_text();
+        if original.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let expected_len = (context.span.hi().0 - context.span.lo().0) as usize;
+        if original.len() != expected_len {
+            return Ok(vec![]);
+        }
+
         let source_line = context.source_line();
         let line_number = context.line_number();
         let column_number = context.column_number();
@@ -79,9 +91,10 @@ impl Mutator for AssemblyMutator {
 
         let mutants = alternatives
             .iter()
-            .map(|&new_opcode| {
-                let mutated = replace_at_span(&original, context.span, name_span, new_opcode);
-                Mutant {
+            .filter_map(|&new_opcode| {
+                let mutated =
+                    replace_at_span(&original, context.span, name_span, opcode_name, new_opcode)?;
+                Some(Mutant {
                     span: context.span,
                     mutation: MutationType::YulOpcode {
                         original_opcode: opcode_name.to_string(),
@@ -93,7 +106,7 @@ impl Mutator for AssemblyMutator {
                     source_line: source_line.clone(),
                     line_number,
                     column_number,
-                }
+                })
             })
             .collect();
 
@@ -114,22 +127,29 @@ fn replace_at_span(
     original: &str,
     outer_span: solar::ast::Span,
     target_span: solar::ast::Span,
+    expected_opcode: &str,
     replacement: &str,
-) -> String {
+) -> Option<String> {
     let outer_lo = outer_span.lo().0 as usize;
     let target_lo = target_span.lo().0 as usize;
     let target_hi = target_span.hi().0 as usize;
 
-    let rel_lo = target_lo - outer_lo;
-    let rel_hi = target_hi - outer_lo;
+    let rel_lo = target_lo.checked_sub(outer_lo)?;
+    let rel_hi = target_hi.checked_sub(outer_lo)?;
 
-    debug_assert!(
-        rel_hi <= original.len(),
-        "target span exceeds original text: rel_hi={rel_hi}, len={}",
-        original.len()
-    );
-    let rel_hi = rel_hi.min(original.len());
-    format!("{}{}{}", &original[..rel_lo], replacement, &original[rel_hi..])
+    if rel_lo > rel_hi || rel_hi > original.len() {
+        return None;
+    }
+
+    let prefix = original.get(..rel_lo)?;
+    let replaced = original.get(rel_lo..rel_hi)?;
+    let suffix = original.get(rel_hi..)?;
+
+    if replaced != expected_opcode {
+        return None;
+    }
+
+    Some(format!("{prefix}{replacement}{suffix}"))
 }
 
 #[cfg(test)]
@@ -151,9 +171,72 @@ mod tests {
     }
 
     #[test]
+    fn test_no_cross_family_mutations() {
+        let mutator = AssemblyMutator::new();
+        let add_alts = mutator.get_mutations("add").unwrap();
+        assert!(!add_alts.contains(&"xor"), "add should not mutate to xor (cross-family)");
+        assert!(!add_alts.contains(&"and"), "add should not mutate to and (cross-family)");
+
+        let mul_alts = mutator.get_mutations("mul").unwrap();
+        assert!(!mul_alts.contains(&"and"), "mul should not mutate to and (cross-family)");
+    }
+
+    #[test]
+    fn test_no_iszero_not_mapping() {
+        let mutator = AssemblyMutator::new();
+        assert!(mutator.get_mutations("iszero").is_none(), "iszero should not be mutated");
+        assert!(mutator.get_mutations("not").is_none(), "not should not be mutated");
+    }
+
+    #[test]
     fn test_no_mload_sload_mapping() {
         let mutator = AssemblyMutator::new();
         assert!(mutator.get_mutations("mload").is_none());
         assert!(mutator.get_mutations("sload").is_none());
+    }
+
+    #[test]
+    fn test_replace_at_span_valid() {
+        use solar::interface::BytePos;
+        let original = "add(a, b)";
+        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
+        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
+        let result = replace_at_span(original, outer, target, "add", "sub");
+        assert_eq!(result, Some("sub(a, b)".to_string()));
+    }
+
+    #[test]
+    fn test_replace_at_span_target_outside_outer() {
+        use solar::interface::BytePos;
+        let original = "add(a, b)";
+        let outer = solar::ast::Span::new(BytePos(20), BytePos(29));
+        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
+        assert!(replace_at_span(original, outer, target, "add", "sub").is_none());
+    }
+
+    #[test]
+    fn test_replace_at_span_target_exceeds_length() {
+        use solar::interface::BytePos;
+        let original = "add(a, b)";
+        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
+        let target = solar::ast::Span::new(BytePos(10), BytePos(30));
+        assert!(replace_at_span(original, outer, target, "add", "sub").is_none());
+    }
+
+    #[test]
+    fn test_replace_at_span_opcode_mismatch() {
+        use solar::interface::BytePos;
+        let original = "mul(a, b)";
+        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
+        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
+        assert!(replace_at_span(original, outer, target, "add", "sub").is_none());
+    }
+
+    #[test]
+    fn test_replace_at_span_empty_original() {
+        use solar::interface::BytePos;
+        let outer = solar::ast::Span::new(BytePos(10), BytePos(19));
+        let target = solar::ast::Span::new(BytePos(10), BytePos(13));
+        assert!(replace_at_span("", outer, target, "add", "sub").is_none());
     }
 }
