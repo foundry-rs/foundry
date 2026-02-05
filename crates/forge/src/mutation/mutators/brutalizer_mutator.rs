@@ -39,8 +39,9 @@
 //! ## Memory brutalization (function entry)
 //!
 //! Injects inline assembly at external function entry points to dirty scratch space
-//! (0x00-0x3f) and memory beyond the free memory pointer. Catches inline assembly
-//! that reads from uninitialized memory, assuming it is zero.
+//! (0x00-0x3f) and fill 1 KB (32 words) of memory beyond the free memory pointer
+//! with deterministic junk via a `keccak256` chain. Catches inline assembly that
+//! reads from uninitialized memory, assuming it is zero.
 //!
 //! Only applied to functions that contain assembly blocks. Restricted to `external`
 //! functions because they can only be entered via CALL/STATICCALL/DELEGATECALL, which
@@ -241,28 +242,35 @@ fn span_seed(span: Span) -> u64 {
     splitmix64(lo.wrapping_mul(0x9e3779b97f4a7c15) ^ hi.wrapping_mul(0xff51afd7ed558ccd))
 }
 
-/// Generates an inline assembly block that dirties EVM scratch space and memory
-/// beyond the free memory pointer with deterministic random values.
+/// Generates an inline assembly block that dirties EVM scratch space and fills
+/// 1 KB of memory beyond the free memory pointer with deterministic junk.
 ///
-/// The injected assembly writes span-derived random 256-bit words to:
-/// - Scratch space at 0x00 and 0x20 (the 64 bytes the EVM reserves for hashing)
-/// - Two words at the free memory pointer (freshly allocated memory)
+/// Scratch space (0x00-0x3f) is written with splitmix64-derived 256-bit literals.
+/// Memory past the FMP is filled using a `keccak256` chain: one splitmix-derived
+/// seed word is written at the FMP, then each subsequent word is the hash of the
+/// previous — giving 32 words (1024 bytes) of deterministic, high-entropy junk.
 ///
-/// Using random values instead of a fixed pattern (like `not(0)`) catches more
-/// bugs: code might accidentally work with all-1s but break with other patterns.
+/// This catches inline assembly that reads uninitialized memory assuming it is
+/// zero, whether in scratch space or in freshly "allocated" regions past the FMP.
 fn generate_memory_brutalization_assembly(span: Span) -> String {
     let s = span_seed(span);
     let w0 = splitmix64(s);
     let w1 = splitmix64(s.wrapping_add(1));
     let w2 = splitmix64(s.wrapping_add(2));
     let w3 = splitmix64(s.wrapping_add(3));
+    let s0 = splitmix64(s.wrapping_add(4));
+    let s1 = splitmix64(s.wrapping_add(5));
+    let s2 = splitmix64(s.wrapping_add(6));
+    let s3 = splitmix64(s.wrapping_add(7));
     format!(
         " assembly {{ \
         mstore(0x00, 0x{w0:016x}{w1:016x}) \
         mstore(0x20, 0x{w2:016x}{w3:016x}) \
         let _b_p := mload(0x40) \
-        mstore(_b_p, 0x{w0:016x}{w2:016x}) \
-        mstore(add(_b_p, 0x20), 0x{w1:016x}{w3:016x}) \
+        mstore(_b_p, 0x{s0:016x}{s1:016x}{s2:016x}{s3:016x}) \
+        for {{ let _b_i := 0x20 }} lt(_b_i, 0x400) {{ _b_i := add(_b_i, 0x20) }} {{ \
+        mstore(add(_b_p, _b_i), keccak256(add(_b_p, sub(_b_i, 0x20)), 0x20)) \
+        }} \
         }} "
     )
 }
@@ -429,6 +437,9 @@ mod tests {
         assert!(asm.contains("mstore(0x00, 0x"), "Should dirty scratch space at 0x00 with random");
         assert!(asm.contains("mstore(0x20, 0x"), "Should dirty scratch space at 0x20 with random");
         assert!(asm.contains("mload(0x40)"), "Should read free memory pointer");
+        assert!(asm.contains("mstore(_b_p, 0x"), "Should write seed word at FMP");
+        assert!(asm.contains("lt(_b_i, 0x400)"), "Should loop to fill 1KB (0x400 bytes)");
+        assert!(asm.contains("keccak256("), "Should use keccak256 chain to expand seed");
         assert!(asm.contains("assembly"), "Should be wrapped in assembly block");
     }
 
