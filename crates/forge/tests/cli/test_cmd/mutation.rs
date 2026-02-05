@@ -439,3 +439,61 @@ Mutation Score: 98.1% (51/52 mutants killed); [ELAPSED]
 ...
 "#]]);
 });
+
+forgetest_init!(mutation_testing_assembly_code, |prj, cmd| {
+    prj.add_source(
+        "AsmMath.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+library AsmMath {
+    function add(uint256 a, uint256 b) internal pure returns (uint256 result) {
+        assembly {
+            result := add(a, b)
+        }
+    }
+
+    function sub(uint256 a, uint256 b) internal pure returns (uint256 result) {
+        assembly {
+            result := sub(a, b)
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "AsmMath.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/AsmMath.sol";
+
+contract AsmMathTest {
+    using AsmMath for uint256;
+
+    function test_Add() public pure {
+        assert(uint256(2).add(3) == 5);
+        assert(uint256(0).add(0) == 0);
+    }
+
+    function test_Sub() public pure {
+        assert(uint256(5).sub(3) == 2);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mutate", "src/AsmMath.sol", "--mutation-jobs", "1"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Running mutation tests with 1 parallel workers...
+...
+════════════════════════════════════════════════════════════
+MUTATION TESTING RESULTS
+════════════════════════════════════════════════════════════
+...
+"#]]);
+});

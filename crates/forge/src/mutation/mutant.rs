@@ -225,6 +225,12 @@ pub enum MutationType {
     /// replace x with all other operator in op
     /// Pre or post- are different UnOp
     UnaryOperator(UnaryOpMutated),
+
+    YulOpcode {
+        original_opcode: String,
+        new_opcode: String,
+        mutated_expr: String,
+    },
 }
 
 impl Display for MutationType {
@@ -240,6 +246,8 @@ impl Display for MutationType {
             Self::ElimDelegate => write!(f, "call"),
             Self::UnaryOperator(mutated) => write!(f, "{mutated}"),
             Self::RequireCondition { mutated_call } => write!(f, "{mutated_call}"),
+
+            Self::YulOpcode { mutated_expr, .. } => write!(f, "{mutated_expr}"),
 
             Self::FunctionCall
             | Self::Require
