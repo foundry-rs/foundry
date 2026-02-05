@@ -2,7 +2,8 @@ use crate::mutation::mutant::Mutant;
 
 use super::{
     MutationContext, Mutator, assembly_mutator, assignment_mutator, binary_op_mutator,
-    delete_expression_mutator, elim_delegate_mutator, require_mutator, unary_op_mutator,
+    brutalizer_mutator, delete_expression_mutator, elim_delegate_mutator, require_mutator,
+    unary_op_mutator,
 };
 
 /// Registry of all available mutators (ie implementing the Mutator trait)
@@ -17,6 +18,7 @@ impl MutatorRegistry {
         registry.mutators.push(Box::new(assembly_mutator::AssemblyMutator::new()));
         registry.mutators.push(Box::new(assignment_mutator::AssignmentMutator));
         registry.mutators.push(Box::new(binary_op_mutator::BinaryOpMutator));
+        registry.mutators.push(Box::new(brutalizer_mutator::BrutalizerMutator));
         registry.mutators.push(Box::new(delete_expression_mutator::DeleteExpressionMutator));
         registry.mutators.push(Box::new(elim_delegate_mutator::ElimDelegateMutator));
         registry.mutators.push(Box::new(require_mutator::RequireMutator));

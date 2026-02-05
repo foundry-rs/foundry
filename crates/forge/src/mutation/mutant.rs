@@ -236,6 +236,22 @@ pub enum MutationType {
         /// The full mutated expression
         mutated_expr: String,
     },
+
+    /// Brutalized function argument (inspired by Solady's Brutalizer.sol).
+    /// Dirties the upper/lower bits of arguments to test input validation.
+    /// For address: OR garbage into upper 96 bits
+    /// For uint8-uint128: OR garbage into upper bits
+    /// For bytes1-bytes16: OR garbage into lower bits
+    Brutalized {
+        /// Index of the argument that was brutalized (0-indexed)
+        arg_index: usize,
+        /// The original argument expression
+        original_arg: String,
+        /// The brutalized argument expression
+        brutalized_arg: String,
+        /// The full mutated call expression
+        mutated_call: String,
+    },
 }
 
 impl Display for MutationType {
@@ -253,6 +269,7 @@ impl Display for MutationType {
             Self::RequireCondition { mutated_call } => write!(f, "{mutated_call}"),
 
             Self::YulOpcode { mutated_expr, .. } => write!(f, "{mutated_expr}"),
+            Self::Brutalized { mutated_call, .. } => write!(f, "{mutated_call}"),
 
             Self::FunctionCall
             | Self::Require

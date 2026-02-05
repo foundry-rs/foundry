@@ -9,9 +9,7 @@ use solar::{
 };
 use std::path::PathBuf;
 
-use crate::mutation::{
-    Session, mutators::mutator_registry::MutatorRegistry, visitor::MutantVisitor,
-};
+use crate::mutation::{Session, visitor::MutantVisitor};
 
 /// Test that mutations are generated for code inside a Solidity library.
 #[test]
