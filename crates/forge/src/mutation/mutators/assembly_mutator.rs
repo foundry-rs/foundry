@@ -73,6 +73,7 @@ impl Mutator for AssemblyMutator {
         let original = context.original_text();
         let source_line = context.source_line();
         let line_number = context.line_number();
+        let column_number = context.column_number();
 
         let name_span = call.name.span;
 
@@ -91,6 +92,7 @@ impl Mutator for AssemblyMutator {
                     original: original.clone(),
                     source_line: source_line.clone(),
                     line_number,
+                    column_number,
                 }
             })
             .collect();
