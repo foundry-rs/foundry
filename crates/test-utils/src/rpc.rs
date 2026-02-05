@@ -44,30 +44,28 @@ shuffled_list!(
     HTTP_ARCHIVE_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/rpc",
+        "ethereum.reth.rs/rpc",
     ],
 );
 shuffled_list!(
     HTTP_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/rpc",
-        // "reth-ethereum-full.ithaca.xyz/rpc",
+        "ethereum.reth.rs/rpc",
     ],
 );
 shuffled_list!(
     WS_ARCHIVE_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/ws",
+        "ethereum.reth.rs/ws",
     ],
 );
 shuffled_list!(
     WS_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/ws",
-        // "reth-ethereum-full.ithaca.xyz/ws",
+        "ethereum.reth.rs/ws",
     ],
 );
 
@@ -108,6 +106,9 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),
         ("avaxTestnet", RpcEndpointUrl::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
         ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
+        ("polkadotTestnet", RpcEndpointUrl::Url("https://eth-rpc-testnet.polkadot.io".into())),
+        ("kusama", RpcEndpointUrl::Url("https://eth-rpc-kusama.polkadot.io".into())),
+        ("polkadot", RpcEndpointUrl::Url("https://eth-rpc.polkadot.io".into())),
         ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),
     ])
 }

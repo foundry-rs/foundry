@@ -3,6 +3,7 @@ use crate::{
     json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
+use alloy_network::AnyNetwork;
 use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
@@ -238,7 +239,7 @@ impl Cheatcode for eth_getLogsCall {
             .database
             .active_fork_url()
             .ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::new(&url).build()?;
+        let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, &topic) in topics.iter().enumerate() {
             filter.topics[i] = topic.into();
@@ -275,7 +276,7 @@ impl Cheatcode for getRawBlockHeaderCall {
             .database
             .active_fork_url()
             .ok_or_else(|| fmt_err!("no active fork"))?;
-        let provider = ProviderBuilder::new(&url).build()?;
+        let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
         let block_number = u64::try_from(blockNumber)
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
         let block =
@@ -397,7 +398,7 @@ fn persist_caller(ccx: &mut CheatsCtxt) {
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
 fn rpc_call(url: &str, method: &str, params: &str) -> Result {
-    let provider = ProviderBuilder::new(url).build()?;
+    let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
     let params_json: serde_json::Value = serde_json::from_str(params)?;
     let result =
         foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
