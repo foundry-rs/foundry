@@ -14,11 +14,11 @@
 //!
 //! # How mutation results should be interpreted
 //!
-//! - **Mutation killed** (test fails): the test suite detected the dirty bits or
-//!   polluted memory. The code properly validates inputs or uses memory safely.
-//! - **Mutation survives** (tests still pass): the tests do not verify that this value
-//!   is properly sanitized, or that memory assumptions hold. This indicates either a
-//!   bug in the code's input handling, or a gap in test coverage.
+//! - **Mutation killed** (test fails): the test suite detected the dirty bits or polluted memory.
+//!   The code properly validates inputs or uses memory safely.
+//! - **Mutation survives** (tests still pass): the tests do not verify that this value is properly
+//!   sanitized, or that memory assumptions hold. This indicates either a bug in the code's input
+//!   handling, or a gap in test coverage.
 //!
 //! # Mutations generated
 //!
@@ -129,6 +129,7 @@ impl BrutalizerMutator {
         let original = context.original_text();
         let source_line = context.source_line();
         let line_number = context.line_number();
+        let column_number = context.column_number();
 
         let mask = deterministic_mask(context.span);
 
@@ -154,6 +155,7 @@ impl BrutalizerMutator {
             original,
             source_line,
             line_number,
+            column_number,
         }])
     }
 
@@ -174,6 +176,7 @@ impl BrutalizerMutator {
 
         let source_line = context.source_line();
         let line_number = context.line_number();
+        let column_number = context.column_number();
 
         let mut mutants = Vec::with_capacity(2);
 
@@ -185,6 +188,7 @@ impl BrutalizerMutator {
             original: String::new(),
             source_line: source_line.clone(),
             line_number,
+            column_number,
         });
 
         let fmp_asm = generate_fmp_misalignment_assembly(insert_span);
@@ -195,6 +199,7 @@ impl BrutalizerMutator {
             original: String::new(),
             source_line,
             line_number,
+            column_number,
         });
 
         Ok(mutants)
@@ -215,12 +220,12 @@ fn is_eligible_function(visibility: Option<Visibility>, kind: Option<FunctionKin
 /// beyond the free memory pointer.
 ///
 /// The injected assembly:
-/// - Writes `not(0)` (all 1s) to scratch space at 0x00 and 0x20 — the 64 bytes
-///   the EVM reserves for hashing. Code that reads scratch space without writing
-///   first will get `0xfff...f` instead of zero.
-/// - Reads the free memory pointer (`mload(0x40)`), then writes `not(0)` to the
-///   two words at that pointer. Code that allocates memory via FMP and reads it
-///   without initializing will get `0xfff...f`.
+/// - Writes `not(0)` (all 1s) to scratch space at 0x00 and 0x20 — the 64 bytes the EVM reserves for
+///   hashing. Code that reads scratch space without writing first will get `0xfff...f` instead of
+///   zero.
+/// - Reads the free memory pointer (`mload(0x40)`), then writes `not(0)` to the two words at that
+///   pointer. Code that allocates memory via FMP and reads it without initializing will get
+///   `0xfff...f`.
 fn generate_memory_brutalization_assembly(_span: Span) -> String {
     concat!(
         " assembly { ",
@@ -435,7 +440,7 @@ mod tests {
             let span = Span::new(BytePos(lo), BytePos(lo));
             let offset = deterministic_fmp_offset(span);
             assert!(offset % 2 == 1, "FMP offset should be odd for misalignment, got {offset}");
-            assert!(offset >= 1 && offset <= 31, "FMP offset should be 1..=31, got {offset}");
+            assert!((1..=31).contains(&offset), "FMP offset should be 1..=31, got {offset}");
         }
     }
 

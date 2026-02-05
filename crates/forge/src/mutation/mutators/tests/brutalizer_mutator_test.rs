@@ -30,11 +30,6 @@ contract Example {
 
     let brutalized = filter_xor_mutations(&mutations);
 
-    eprintln!("Address cast mutations:");
-    for m in &brutalized {
-        eprintln!("  {} -> {}", m.original, m.mutation);
-    }
-
     assert!(
         !brutalized.is_empty(),
         "address() cast should generate XOR brutalization. All mutations: {:?}",
