@@ -561,7 +561,7 @@ impl InspectorStack {
         });
 
         InspectorData {
-            logs: log_collector.map(|logs| logs.into_captured_logs()).flatten().unwrap_or_default(),
+            logs: log_collector.and_then(|logs| logs.into_captured_logs()).unwrap_or_default(),
             labels: cheatcodes
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())

@@ -32,8 +32,8 @@ impl LogCollector {
 
     pub fn into_captured_logs(self) -> Option<Vec<Log>> {
         match self {
-            LogCollector::Capture { logs } => Some(logs),
-            LogCollector::LiveLogs => None,
+            Self::Capture { logs } => Some(logs),
+            Self::LiveLogs => None,
         }
     }
 
@@ -79,7 +79,7 @@ impl LogCollector {
 
     fn push_msg(&mut self, msg: &str) {
         match self {
-            Self::Capture { logs } => logs.push(new_console_log(&msg)),
+            Self::Capture { logs } => logs.push(new_console_log(msg)),
             Self::LiveLogs => sh_println!("{msg}").expect("fail printing to stdout"),
         }
     }
