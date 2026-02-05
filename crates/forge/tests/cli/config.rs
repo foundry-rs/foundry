@@ -157,14 +157,6 @@ lint_on_build = true
 mixed_case_exceptions = [
     "ERC",
     "URI",
-    "ID",
-    "URL",
-    "API",
-    "JSON",
-    "XML",
-    "HTML",
-    "HTTP",
-    "HTTPS",
 ]
 
 [doc]
