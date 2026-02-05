@@ -242,7 +242,7 @@ impl Create2Args {
                         unsafe { std::str::from_utf8_unchecked(checksum_buf.get_unchecked(2..)) }
                     } else {
                         // SAFETY: hex::encode_to_slice always produces valid UTF-8 (hex digits).
-                        hex::encode_to_slice(addr.as_slice(), &mut hex_buf);
+                        let _ = hex::encode_to_slice(addr.as_slice(), &mut hex_buf);
                         unsafe { std::str::from_utf8_unchecked(&hex_buf) }
                     };
                     if regex.matches(s).into_iter().count() == regex_len {
