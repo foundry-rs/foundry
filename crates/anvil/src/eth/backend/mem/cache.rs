@@ -59,16 +59,14 @@ impl DiskStateCache {
     ///
     /// Returns `true` if the write was successful, `false` otherwise.
     pub fn write(&mut self, hash: B256, state: &StateSnapshot) -> bool {
-        self.with_cache_file(hash, |file| {
-            match foundry_common::fs::write_json_file(&file, state) {
-                Ok(_) => {
-                    trace!(target: "backend", ?hash, "wrote state json file");
-                    true
-                }
-                Err(err) => {
-                    error!(target: "backend", %err, ?hash, "Failed to write state snapshot");
-                    false
-                }
+        self.with_cache_file(hash, |file| match foundry_common::fs::write_json_file(&file, state) {
+            Ok(_) => {
+                trace!(target: "backend", ?hash, "wrote state json file");
+                true
+            }
+            Err(err) => {
+                error!(target: "backend", %err, ?hash, "Failed to write state snapshot");
+                false
             }
         })
         .unwrap_or(false)
