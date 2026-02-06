@@ -955,7 +955,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         // Sort once at the end by block number and flatten
         all_results.sort_by_key(|(block_num, _)| *block_num);
 
-        let mut all_logs = Vec::new();
+        let mut all_logs = Vec::with_capacity(all_results.len());
         for (_, logs) in all_results {
             all_logs.extend(logs);
         }
