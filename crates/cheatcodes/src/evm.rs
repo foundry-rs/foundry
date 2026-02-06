@@ -959,10 +959,11 @@ impl Cheatcode for getStorageSlotsCall {
 
         trace!(storage = ?storage_layout.storage, "fetched storage");
 
+        let variable_name_lower = variableName.to_lowercase();
         let storage = storage_layout
             .storage
             .iter()
-            .find(|s| s.label.to_lowercase() == *variableName.to_lowercase())
+            .find(|s| s.label.to_lowercase() == variable_name_lower)
             .ok_or_else(|| fmt_err!("variable '{variableName}' not found in storage layout"))?;
 
         let storage_type = storage_layout
