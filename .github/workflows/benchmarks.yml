@@ -29,7 +29,7 @@ env:
 jobs:
   run-benchmarks:
     name: Run All Benchmarks
-    runs-on: foundry-runner
+    runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: write
     steps:

@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: crate-ci/typos@a1d64977b4aa1709d6328d518aa753f4899352d8 # v1
+      - uses: crate-ci/typos@93cbdb2d23269548cf0db0f74d0bc6a09a3f0d5c # v1
 
   shellcheck:
     runs-on: depot-ubuntu-latest
@@ -140,7 +140,7 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@710817a1645ef40daad5bcde7431ceccf6cc3528 # v2
+      - uses: taiki-e/install-action@650c5ca14212efbbf3e580844b04bdccf68dac31 # v2
         with:
           tool: cargo-hack
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
