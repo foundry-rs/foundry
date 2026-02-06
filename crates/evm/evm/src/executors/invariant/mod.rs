@@ -980,16 +980,17 @@ impl<'a> InvariantExecutor<'a> {
                 .abi
                 .functions()
                 .filter_map(|func| {
+                    let selector = func.selector();
                     if matches!(
                         func.state_mutability,
                         alloy_json_abi::StateMutability::Pure
                             | alloy_json_abi::StateMutability::View
                     ) || func.is_reserved()
-                        || excluded_test_selectors.contains(&func.selector())
+                        || excluded_test_selectors.contains(&selector)
                     {
                         None
                     } else {
-                        Some(func.selector())
+                        Some(selector)
                     }
                 })
                 .collect();
