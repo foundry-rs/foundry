@@ -2662,7 +2662,7 @@ Script ran successfully.
 "#]]);
 });
 
-// Tests that script reverts if `msg.sender` is used inside a broadcast block
+// Tests that script reverts if `msg.sender` is used inside a startBroadcast(pk) block
 // when the broadcast signer differs from the default script sender.
 forgetest_init!(should_revert_on_msg_sender_in_broadcast, |prj, cmd| {
     prj.add_script(
@@ -2698,6 +2698,161 @@ Script ran successfully.
 "#]]);
 });
 
+// Tests that script reverts if `msg.sender` is used inside a single-call vm.broadcast(pk).
+forgetest_init!(should_revert_on_msg_sender_in_single_broadcast, |prj, cmd| {
+    prj.add_script(
+        "ScriptWithSingleBroadcast.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptWithSingleBroadcast is Script {
+        function run() public {
+            uint256 pk = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+            vm.broadcast(pk);
+            console.log("sender", msg.sender);
+        }
+    }
+    "#,
+    );
+
+    cmd.arg("script").arg("ScriptWithSingleBroadcast").assert_failure().stderr_eq(str![[r#"
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266`. Use `vm.addr(<pk>)` instead.
+
+"#]]);
+});
+
+// Tests that script reverts if `msg.sender` is used inside a startBroadcast(address) block.
+forgetest_init!(should_revert_on_msg_sender_in_broadcast_with_address, |prj, cmd| {
+    prj.add_script(
+        "ScriptWithBroadcastAddr.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptWithBroadcastAddr is Script {
+        function run() public {
+            vm.startBroadcast(address(0x1337));
+            console.log("sender", msg.sender);
+            vm.stopBroadcast();
+        }
+    }
+    "#,
+    );
+
+    cmd.arg("script").arg("ScriptWithBroadcastAddr").assert_failure().stderr_eq(str![[r#"
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0x0000000000000000000000000000000000001337`. Use `vm.addr(<pk>)` instead.
+
+"#]]);
+});
+
+// Tests that `msg.sender` before and after a broadcast block does not revert.
+forgetest_init!(should_allow_msg_sender_outside_broadcast, |prj, cmd| {
+    prj.add_script(
+        "ScriptMsgSenderOutside.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptMsgSenderOutside is Script {
+        function run() public {
+            // msg.sender before broadcast is fine
+            address sender_before = msg.sender;
+            console.log("before broadcast", sender_before);
+
+            uint256 pk = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+            vm.startBroadcast(pk);
+            new Counter();
+            vm.stopBroadcast();
+
+            // msg.sender after broadcast is fine
+            address sender_after = msg.sender;
+            console.log("after broadcast", sender_after);
+        }
+    }
+
+    contract Counter {
+        uint256 public count;
+    }
+    "#,
+    );
+
+    cmd.arg("script").arg("ScriptMsgSenderOutside").assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+});
+
+// Tests that `msg.sender` inside a deployed contract called from a broadcast block
+// does NOT revert (the check only applies to the script contract itself).
+forgetest_init!(should_allow_msg_sender_in_called_contract, |prj, cmd| {
+    prj.add_script(
+        "ScriptMsgSenderInContract.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract Token {
+        mapping(address => uint256) public balances;
+        function mint(address to, uint256 amount) external {
+            // msg.sender here is fine - this is a deployed contract, not the script
+            balances[to] = amount;
+            console.log("minter (msg.sender in contract):", msg.sender);
+        }
+    }
+
+    contract ScriptMsgSenderInContract is Script {
+        function run() public {
+            uint256 pk = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+            address deployer = vm.addr(pk);
+            vm.startBroadcast(pk);
+            Token token = new Token();
+            token.mint(deployer, 1000);
+            vm.stopBroadcast();
+        }
+    }
+    "#,
+    );
+
+    cmd.arg("script").arg("ScriptMsgSenderInContract").assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+});
+
+// Tests that `tx.origin` inside a broadcast block does NOT trigger the revert
+// (the check only applies to the CALLER opcode, not ORIGIN).
+forgetest_init!(should_allow_tx_origin_in_broadcast, |prj, cmd| {
+    prj.add_script(
+        "ScriptTxOriginInBroadcast.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptTxOriginInBroadcast is Script {
+        function run() public {
+            uint256 pk = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+            vm.startBroadcast(pk);
+            // tx.origin uses ORIGIN opcode, not CALLER - should not revert
+            console.log("tx.origin", tx.origin);
+            new Counter();
+            vm.stopBroadcast();
+        }
+    }
+
+    contract Counter {
+        uint256 public count;
+    }
+    "#,
+    );
+
+    cmd.arg("script").arg("ScriptTxOriginInBroadcast").assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+});
+
 // Tests that script does NOT revert on `msg.sender` inside a broadcast block
 // when the broadcast signer matches the script sender (e.g. --sender or --private-key).
 forgetest_init!(should_allow_msg_sender_in_broadcast_when_matching, |prj, cmd| {
@@ -2724,6 +2879,65 @@ forgetest_init!(should_allow_msg_sender_in_broadcast_when_matching, |prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+});
+
+// Tests that --sender flag makes msg.sender match the broadcast signer,
+// so no revert occurs even with startBroadcast(address).
+forgetest_init!(should_allow_msg_sender_with_sender_flag, |prj, cmd| {
+    prj.add_script(
+        "ScriptWithSenderFlag.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptWithSenderFlag is Script {
+        function run() public {
+            vm.startBroadcast(address(0x1337));
+            console.log("sender", msg.sender);
+            vm.stopBroadcast();
+        }
+    }
+    "#,
+    );
+
+    cmd.args([
+        "script",
+        "--sender",
+        "0x0000000000000000000000000000000000001337",
+        "ScriptWithSenderFlag",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+});
+
+// Tests that startBroadcast() with no args and no --sender/--private-key
+// does NOT revert because the broadcast signer defaults to tx.origin (same as msg.sender).
+forgetest_init!(should_allow_msg_sender_in_broadcast_no_args, |prj, cmd| {
+    prj.add_script(
+        "ScriptBroadcastNoArgs.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptBroadcastNoArgs is Script {
+        function run() public {
+            vm.startBroadcast();
+            console.log("sender", msg.sender);
+            vm.stopBroadcast();
+        }
+    }
+    "#,
+    );
+
+    cmd.arg("script").arg("ScriptBroadcastNoArgs").assert_success().stdout_eq(str![[r#"
 ...
 Script ran successfully.
 ...
