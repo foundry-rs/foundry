@@ -2424,8 +2424,14 @@ impl Backend {
             None => None,
         };
         let block_number = self.convert_block_number(block_number);
+        let current_number = self.best_number();
 
-        if block_number < self.env.read().evm_env.block_env.number.saturating_to() {
+        // Reject requests for future blocks that don't exist yet
+        if block_number > current_number {
+            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
+        }
+
+        if block_number < current_number {
             if let Some((block_hash, block)) = self
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
@@ -2443,10 +2449,7 @@ impl Backend {
             }
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
-            return Err(BlockchainError::BlockOutOfRange(
-                self.env.read().evm_env.block_env.number.saturating_to(),
-                block_number,
-            ));
+            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
         }
 
         let db = self.db.read().await;
