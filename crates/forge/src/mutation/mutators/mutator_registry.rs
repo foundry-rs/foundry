@@ -1,8 +1,8 @@
 use crate::mutation::mutant::Mutant;
 
 use super::{
-    MutationContext, Mutator, assignment_mutator, binary_op_mutator, delete_expression_mutator,
-    elim_delegate_mutator, require_mutator, unary_op_mutator,
+    MutationContext, Mutator, assembly_mutator, assignment_mutator, binary_op_mutator,
+    delete_expression_mutator, elim_delegate_mutator, require_mutator, unary_op_mutator,
 };
 
 /// Registry of all available mutators (ie implementing the Mutator trait)
@@ -14,6 +14,7 @@ impl MutatorRegistry {
     pub fn default() -> Self {
         let mut registry = Self { mutators: Vec::new() };
 
+        registry.mutators.push(Box::new(assembly_mutator::AssemblyMutator::new()));
         registry.mutators.push(Box::new(assignment_mutator::AssignmentMutator));
         registry.mutators.push(Box::new(binary_op_mutator::BinaryOpMutator));
         registry.mutators.push(Box::new(delete_expression_mutator::DeleteExpressionMutator));

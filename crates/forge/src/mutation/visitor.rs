@@ -1,6 +1,6 @@
 use std::{ops::ControlFlow, path::PathBuf};
 
-use solar::ast::{Expr, Span, VariableDefinition, visit::Visit};
+use solar::ast::{Expr, Span, VariableDefinition, visit::Visit, yul};
 
 #[cfg(test)]
 use crate::mutation::mutators::Mutator;
@@ -119,5 +119,28 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
         self.walk_expr(expr)
+    }
+
+    fn visit_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let Some(ref filter) = self.span_filter
+            && filter(expr.span)
+        {
+            self.skipped_count += 1;
+            return self.walk_yul_expr(expr);
+        }
+
+        let mut builder = MutationContext::builder()
+            .with_path(self.path.clone())
+            .with_span(expr.span)
+            .with_yul_expr(expr);
+
+        if let Some(src) = self.source {
+            builder = builder.with_source(src);
+        }
+
+        let context = builder.build().unwrap();
+
+        self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
+        self.walk_yul_expr(expr)
     }
 }

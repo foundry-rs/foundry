@@ -91,8 +91,6 @@ impl Mutator for RequireMutator {
             column_number,
         });
 
-        // Mutation 2: require(x) -> require(false)
-        // Tests should pass if this code path is reachable
         let mutated_false = format!("{func_name}(false{rest_args})");
         mutants.push(Mutant {
             span: expr.span,
@@ -104,9 +102,6 @@ impl Mutator for RequireMutator {
             column_number,
         });
 
-        // Mutation 3: require(x) -> require(!x)
-        // Inverts the condition - should fail if original was correct
-        // Skip if condition already starts with ! to avoid double negation
         if !condition_text.trim().starts_with('!') {
             let mutated_inverted = format!("{func_name}(!({condition_text}){rest_args})");
             mutants.push(Mutant {
