@@ -218,7 +218,10 @@ impl Create2Args {
                 // Important: add the thread index to the salt to avoid duplicate results.
                 *salt_word = salt_word.wrapping_add(i);
 
-                let mut checksum = [0; 42];
+                // Use checksum format only when case_sensitive is enabled.
+                // This avoids an extra keccak256 call per iteration when not needed.
+                let mut checksum_buf = [0u8; 42];
+                let mut hex_buf = [0u8; 40];
                 loop {
                     // Stop if a result was found in another thread.
                     if found.load(Ordering::Relaxed) {
@@ -229,11 +232,19 @@ impl Create2Args {
                     #[expect(clippy::needless_borrows_for_generic_args)]
                     let addr = deployer.create2(&salt.0, &init_code_hash);
 
-                    // Check if the regex matches the calculated address' checksum.
-                    let _ = addr.to_checksum_raw(&mut checksum, None);
-                    // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8 string
-                    // is safe.
-                    let s = unsafe { std::str::from_utf8_unchecked(checksum.get_unchecked(2..)) };
+                    // Check if the regex matches the calculated address.
+                    // When case_sensitive is true, use EIP-55 checksum format (requires keccak256).
+                    // Otherwise, use lowercase hex to avoid the extra hash computation.
+                    let s = if case_sensitive {
+                        let _ = addr.to_checksum_raw(&mut checksum_buf, None);
+                        // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8
+                        // string is safe.
+                        unsafe { std::str::from_utf8_unchecked(checksum_buf.get_unchecked(2..)) }
+                    } else {
+                        // SAFETY: hex::encode_to_slice always produces valid UTF-8 (hex digits).
+                        let _ = hex::encode_to_slice(addr.as_slice(), &mut hex_buf);
+                        unsafe { std::str::from_utf8_unchecked(&hex_buf) }
+                    };
                     if regex.matches(s).into_iter().count() == regex_len {
                         // Notify other threads that we found a result.
                         found.store(true, Ordering::Relaxed);
