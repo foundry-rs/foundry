@@ -78,7 +78,7 @@ impl AnvilInspector {
 
     /// Configures the `Tracer` [`revm::Inspector`] with a log collector
     pub fn with_log_collector(mut self) -> Self {
-        self.log_collector = Some(LogCollector::new(true));
+        self.log_collector = Some(LogCollector::Capture { logs: Vec::new() });
         self
     }
 

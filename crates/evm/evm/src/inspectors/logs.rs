@@ -25,11 +25,6 @@ pub enum LogCollector {
 }
 
 impl LogCollector {
-    /// Creates a new instance of `LogCollector`.
-    pub fn new(capture: bool) -> Self {
-        if capture { Self::Capture { logs: Vec::new() } } else { Self::LiveLogs }
-    }
-
     pub fn into_captured_logs(self) -> Option<Vec<Log>> {
         match self {
             Self::Capture { logs } => Some(logs),

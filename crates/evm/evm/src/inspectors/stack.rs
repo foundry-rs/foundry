@@ -60,7 +60,8 @@ pub struct InspectorStackBuilder {
     pub trace_mode: TraceMode,
     /// Whether logs should be collected.
     /// - None for no log collection.
-    /// - Some(capture) for log collection with the specified capture mode.
+    /// - Some(true) for realtime console.log-ing.
+    /// - Some(false) for log collection.
     pub logs: Option<bool>,
     /// Whether line coverage info should be collected.
     pub line_coverage: Option<bool>,
@@ -139,8 +140,7 @@ impl InspectorStackBuilder {
     /// Set the log collector, and whether to print the logs directly to stdout.
     #[inline]
     pub fn logs(mut self, live_logs: bool) -> Self {
-        let capture = !live_logs;
-        self.logs = Some(capture);
+        self.logs = Some(live_logs);
         self
     }
 
@@ -483,10 +483,17 @@ impl InspectorStack {
 
     /// Set whether to enable the log collector.
     /// - None for no log collection.
-    /// - Some(capture) for log collection with the specified capture mode.
+    /// - Some(true) for realtime console.log-ing.
+    /// - Some(false) for log collection.
     #[inline]
-    pub fn collect_logs(&mut self, capture: Option<bool>) {
-        self.log_collector = capture.map(|do_capture| Box::new(LogCollector::new(do_capture)));
+    pub fn collect_logs(&mut self, live_logs: Option<bool>) {
+        self.log_collector = live_logs.map(|live_logs| {
+            Box::new(if live_logs {
+                LogCollector::LiveLogs
+            } else {
+                LogCollector::Capture { logs: Vec::new() }
+            })
+        });
     }
 
     /// Set whether to enable the trace printer.
