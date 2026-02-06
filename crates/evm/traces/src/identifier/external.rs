@@ -150,8 +150,8 @@ impl TraceIdentifier for ExternalIdentifier {
 
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
-        let mut identities = Vec::new();
-        let mut to_fetch = Vec::new();
+        let mut identities = Vec::with_capacity(nodes.len());
+        let mut to_fetch = Vec::with_capacity(nodes.len());
 
         // Check cache first.
         for &node in nodes {
