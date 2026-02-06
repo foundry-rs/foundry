@@ -86,10 +86,18 @@ impl CallStack {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    /// Returns true if any chained call in the stack has its own indentation.
-    /// Used to determine if commasep should skip its own indentation (to avoid double indent).
-    pub(crate) fn has_chain_with_indent(&self) -> bool {
-        self.stack.iter().any(|call| call.is_chained() && call.has_indent)
+    /// Returns true if the current named-args context is the **direct** argument list of a
+    /// chained call (i.e. the stack ends with `[…, Chained(has_indent=true), Nested]`).
+    ///
+    /// This distinguishes:
+    /// - `TransferMessage({fields}).pack()` → true  (suppress extra indent)
+    /// - `.initialize(PoolKey({fields}), …)` → false (keep normal indent)
+    pub(crate) fn named_args_directly_in_chain(&self) -> bool {
+        let len = self.stack.len();
+        len >= 2 && self.stack[len - 1].is_nested() && {
+            let parent = &self.stack[len - 2];
+            parent.is_chained() && parent.has_indent
+        }
     }
 }
 
