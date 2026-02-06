@@ -508,6 +508,9 @@ pub struct Cheatcodes {
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
+    /// The address of the script contract being executed, if script execution protection is
+    /// enabled. Used to detect `msg.sender` usage inside broadcast blocks.
+    pub script_address: Option<Address>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
@@ -570,6 +573,7 @@ impl Cheatcodes {
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
+            script_address: Default::default(),
             wallets: Default::default(),
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
@@ -1145,6 +1149,27 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interpreter);
+        }
+
+        // Revert if `msg.sender` is used inside a script contract while a broadcast is active
+        // and the broadcast signer differs from the current caller (i.e. `msg.sender` would
+        // resolve to the default script sender, not the broadcast signer).
+        if interpreter.bytecode.opcode() == op::CALLER
+            && let Some(broadcast) = &self.broadcast
+            && let Some(script_address) = self.script_address
+            && broadcast.original_origin != broadcast.new_origin
+            && interpreter.input.target_address == script_address
+            && interpreter.input.bytecode_address == Some(script_address)
+        {
+            interpreter.bytecode.set_action(InterpreterAction::new_return(
+                InstructionResult::Revert,
+                Bytes::from(format!(
+                    "Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `{:#x}`, not the broadcast signer `{:#x}`. Use `vm.addr(<pk>)` instead.",
+                    broadcast.original_origin,
+                    broadcast.new_origin,
+                ).into_bytes()),
+                interpreter.gas,
+            ));
         }
 
         // `pauseGasMetering`: pause / resume interpreter gas.

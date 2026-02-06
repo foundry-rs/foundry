@@ -2662,6 +2662,75 @@ Script ran successfully.
 "#]]);
 });
 
+// Tests that script reverts if `msg.sender` is used inside a broadcast block
+// when the broadcast signer differs from the default script sender.
+forgetest_init!(should_revert_on_msg_sender_in_broadcast, |prj, cmd| {
+    prj.add_script(
+        "ScriptWithMsgSender.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptWithMsgSender is Script {
+        function run() public {
+            uint256 pk = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+            vm.startBroadcast(pk);
+            console.log("sender", msg.sender);
+            vm.stopBroadcast();
+        }
+    }
+    "#,
+    );
+
+    cmd.arg("script").arg("ScriptWithMsgSender").assert_failure().stderr_eq(str![[r#"
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266`. Use `vm.addr(<pk>)` instead.
+
+"#]]);
+
+    // Disable script protection.
+    prj.update_config(|config| {
+        config.script_execution_protection = false;
+    });
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+});
+
+// Tests that script does NOT revert on `msg.sender` inside a broadcast block
+// when the broadcast signer matches the script sender (e.g. --sender or --private-key).
+forgetest_init!(should_allow_msg_sender_in_broadcast_when_matching, |prj, cmd| {
+    prj.add_script(
+        "ScriptWithMsgSenderMatch.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract ScriptWithMsgSenderMatch is Script {
+        function run() public {
+            vm.startBroadcast();
+            console.log("sender", msg.sender);
+            vm.stopBroadcast();
+        }
+    }
+    "#,
+    );
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "ScriptWithMsgSenderMatch",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+});
+
 // Tests that script warns if no tx to broadcast.
 // <https://github.com/foundry-rs/foundry/issues/10015>
 forgetest_async!(warns_if_no_transactions_to_broadcast, |prj, cmd| {
