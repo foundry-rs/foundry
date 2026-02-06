@@ -1738,7 +1738,7 @@ impl Backend {
                             })
                             .collect(),
                     };
-                    logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
+                    logs.extend(sim_res.logs.iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
@@ -1981,7 +1981,7 @@ impl Backend {
 
             drop(evm);
             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
-            let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
+            let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
 
             trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
 
