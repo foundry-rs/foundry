@@ -4589,17 +4589,20 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 });
 
 // Test cast run Celo transfer with precompiles.
-casttest!(flaky_run_celo_with_precompiles, |_prj, cmd| {
-    let rpc = next_rpc_endpoint(NamedChain::Celo);
-    cmd.args([
-        "run",
-        "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
-        "--quick",
-        "--rpc-url",
-        rpc.as_str(),
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "requires debug_traceTransaction, which most free Celo RPC endpoints no longer support"]
+    flaky_run_celo_with_precompiles,
+    |_prj, cmd| {
+        let rpc = next_rpc_endpoint(NamedChain::Celo);
+        cmd.args([
+            "run",
+            "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
+            "--quick",
+            "--rpc-url",
+            rpc.as_str(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Traces:
   [17776] 0x471EcE3750Da237f93B8E339c536989b8978a438::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17])
     ├─ [12370] 0xFeA1B35f1D5f2A58532a70e7A32e6F2D3Bc4F7B1::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17]) [delegatecall]
@@ -4614,7 +4617,8 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+    }
+);
 casttest!(keccak_stdin_bytes, |_prj, cmd| {
     cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
 0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa

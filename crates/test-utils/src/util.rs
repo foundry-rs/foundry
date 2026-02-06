@@ -235,6 +235,7 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
 /// like `out/`, `cache/`, and `broadcast/` which are build artifacts that should not be
 /// copied to temporary test workspaces.
 pub fn copy_dir_filtered(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
     copy_dir_filtered_inner(src, dst, true)
 }
 
