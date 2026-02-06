@@ -2682,7 +2682,7 @@ forgetest_init!(should_revert_on_msg_sender_in_broadcast, |prj, cmd| {
     );
 
     cmd.arg("script").arg("ScriptWithMsgSender").assert_failure().stderr_eq(str![[r#"
-Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266`. Use `vm.addr(<pk>)` instead.
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266`. Use the `--sender` flag or store the deployer address in a variable instead.
 
 "#]]);
 
@@ -2716,7 +2716,7 @@ forgetest_init!(should_revert_on_msg_sender_in_single_broadcast, |prj, cmd| {
     );
 
     cmd.arg("script").arg("ScriptWithSingleBroadcast").assert_failure().stderr_eq(str![[r#"
-Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266`. Use `vm.addr(<pk>)` instead.
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266`. Use the `--sender` flag or store the deployer address in a variable instead.
 
 "#]]);
 });
@@ -2739,7 +2739,7 @@ forgetest_init!(should_revert_on_msg_sender_in_broadcast_with_address, |prj, cmd
     );
 
     cmd.arg("script").arg("ScriptWithBroadcastAddr").assert_failure().stderr_eq(str![[r#"
-Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0x0000000000000000000000000000000000001337`. Use `vm.addr(<pk>)` instead.
+Error: script failed: Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`, not the broadcast signer `0x0000000000000000000000000000000000001337`. Use the `--sender` flag or store the deployer address in a variable instead.
 
 "#]]);
 });

@@ -1164,7 +1164,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             interpreter.bytecode.set_action(InterpreterAction::new_return(
                 InstructionResult::Revert,
                 Bytes::from(format!(
-                    "Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `{:#x}`, not the broadcast signer `{:#x}`. Use `vm.addr(<pk>)` instead.",
+                    "Usage of `msg.sender` inside a `broadcast` in script contract detected. `msg.sender` is the default sender `{:#x}`, not the broadcast signer `{:#x}`. Use the `--sender` flag or store the deployer address in a variable instead.",
                     broadcast.original_origin,
                     broadcast.new_origin,
                 ).into_bytes()),
