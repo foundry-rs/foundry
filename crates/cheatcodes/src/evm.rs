@@ -1443,8 +1443,9 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
     }
 
     // Look up contract names and storage layouts for all addresses
-    let mut contract_names = HashMap::new();
-    let mut storage_layouts = HashMap::new();
+    let capacity = addresses_to_lookup.len();
+    let mut contract_names = HashMap::with_capacity(capacity);
+    let mut storage_layouts = HashMap::with_capacity(capacity);
     for address in addresses_to_lookup {
         if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
             contract_names.insert(address, artifact_id.identifier());
