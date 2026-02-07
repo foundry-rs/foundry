@@ -28,6 +28,8 @@
         "ms-python.python",
         "dbaeumer.vscode-eslint",
         "oven.bun-vscode"
+        "ghcr.io/devcontainers/features/anaconda:1": {} 
+        "ghcr.io/adaptavist/devcontainer-features/atlassian-forge:1": {}
       ],
       "settings": {
         "rust-analyzer.checkOnSave": true,
@@ -46,4 +48,18 @@
     "source=${localEnv:HOME}/.cargo/registry,target=/home/foundry/.cargo/registry,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.cargo/git,target=/home/foundry/.cargo/git,type=bind,consistency=cached"
   ]
-}
+}"ghcr.io/devcontainers/features/anaconda:1": {}
+"ghcr.io/devcontainers-extra/features/aws-cdk:2": {} 
+"ghcr.io/stuartleeks/dev-container-features/add-host:1": {}
+"ghcr.io/rails/devcontainer/features/activestorage:1": {}
+"ghcr.io/bartventer/arch-devcontainer-features/aws-cli:1": {} 
+"ghcr.io/ait-assistive-autonomous-systems/devcontainer_features/add-groups:0": {} 
+"ghcr.io/devcontainers-extra/features/ansible:2": {}
+"ghcr.io/devcontainers-extra/features/tomcat-sdkman:2": {} 
+"ghcr.io/devcontainers-extra/features/atlantis:1": {}
+"ghcr.io/devcontainers-extra/features/activemq-sdkman:2": {} 
+"ghcr.io/devcontainers/features/azure-cli:1": {} 
+"ghcr.io/devcontainers/features/powershell:1": {}
+"ghcr.io/devcontainers-extra/features/assemblyscript:2": {} 
+"ghcr.io/devcontainer-community/devcontainer-features/zyedidia-eget:1": {}
+"ghcr.io/devcontainers-extra/features/ffmpeg-apt-get:1": {}
