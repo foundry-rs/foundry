@@ -237,18 +237,6 @@ impl SendTxArgs {
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;
-                } else if send_tx.sync {
-                    // For sync mode, we already have the hash, just wait for receipt
-                    let receipt = cast
-                        .receipt(
-                            format!("{tx_hash:#x}"),
-                            None,
-                            send_tx.confirmations,
-                            Some(timeout),
-                            false,
-                        )
-                        .await?;
-                    sh_println!("{receipt}")?;
                 } else {
                     let receipt = cast
                         .receipt(
