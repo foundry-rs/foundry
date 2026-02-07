@@ -3421,14 +3421,14 @@ impl Backend {
                 .into_iter()
                 .map(|(_, v)| v)
                 .collect();
-            let storage_proofs = prove_storage(&account.storage, &keys);
+            let (storage_hash, storage_proofs) = prove_storage(&account.storage, &keys);
 
             let account_proof = AccountProof {
                 address,
                 balance: account.info.balance,
                 nonce: account.info.nonce,
                 code_hash: account.info.code_hash,
-                storage_hash: storage_root(&account.storage),
+                storage_hash,
                 account_proof: proof,
                 storage_proof: keys
                     .into_iter()
@@ -3903,7 +3903,7 @@ pub fn transaction_build(
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)
-pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<Bytes>> {
+pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> (B256, Vec<Vec<Bytes>>) {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
     let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));
@@ -3912,7 +3912,7 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
         builder.add_leaf(key, &value);
     }
 
-    let _ = builder.root();
+    let root = builder.root();
 
     let mut proofs = Vec::new();
     let all_proof_nodes = builder.take_proof_nodes();
@@ -3925,7 +3925,7 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
         proofs.push(matching_proof_nodes.collect());
     }
 
-    proofs
+    (root, proofs)
 }
 
 pub fn is_arbitrum(chain_id: u64) -> bool {
