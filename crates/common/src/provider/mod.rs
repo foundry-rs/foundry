@@ -451,7 +451,11 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
     {
         return Ok(path.to_path_buf());
     }
-    Err(())
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        std::env::current_dir().map(|d| d.join(path)).map_err(drop)
+    }
 }
 
 #[cfg(test)]
