@@ -312,7 +312,11 @@ impl FuzzDictionary {
         storage_layouts: &HashMap<Address, Arc<StorageLayout>>,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        for (address, account) in state_changeset {
+        // Sort state changeset by address to ensure deterministic dictionary generation.
+        let mut state = state_changeset.iter().collect::<Vec<_>>();
+        state.sort_by_key(|(address, _)| *address);
+
+        for (address, account) in state {
             // Insert basic account information.
             self.insert_value(address.into_word());
             // Insert push bytes.
@@ -325,7 +329,9 @@ impl FuzzDictionary {
                     mapping_slots.is_some_and(|m| m.contains_key(address))
                 );
                 let mapping_slots = mapping_slots.and_then(|m| m.get(address));
-                for (slot, value) in &account.storage {
+                // Sort storage values before inserting to ensure deterministic dictionary.
+                let storage = account.storage.iter().collect::<BTreeMap<_, _>>();
+                for (slot, value) in storage {
                     self.insert_storage_value(
                         slot,
                         &value.present_value,
