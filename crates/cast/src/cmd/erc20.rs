@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_eips::{BlockId, Encodable2718};
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, NetworkWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{U64, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
@@ -118,8 +118,7 @@ async fn send_erc20_tx<P: Provider<AnyNetwork>>(
             ftx.set_chain_id(provider.get_chain_id().await?);
         }
 
-        // Sign using NetworkWallet<FoundryNetwork>
-        let signed_tx = signer.sign_request(ftx).await?;
+        let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
 
         // Encode and send raw
         let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());

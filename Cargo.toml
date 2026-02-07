@@ -150,7 +150,6 @@ ruint.opt-level = 3
 
 sha2.opt-level = 3
 sha3.opt-level = 3
-tiny-keccak.opt-level = 3
 keccak.opt-level = 3
 
 # Fuzzing.

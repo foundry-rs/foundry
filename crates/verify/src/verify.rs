@@ -544,7 +544,10 @@ impl figment::Provider for VerifyCheckArgs {
 /// alloy-chains. This function returns the properly formatted URL for such chains.
 fn sourcify_api_url(chain: Chain) -> Option<String> {
     if chain.is_custom_sourcify() {
-        chain.etherscan_urls().map(|(api_url, _)| format!("{api_url}/").replace("//", "/"))
+        chain.etherscan_urls().map(|(api_url, _)| {
+            let api_url = api_url.trim_end_matches('/');
+            format!("{api_url}/")
+        })
     } else {
         None
     }
