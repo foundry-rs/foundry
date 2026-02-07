@@ -349,15 +349,7 @@ fn all_whitespace(s: &str, col: CharPos) -> Option<usize> {
 /// Returns `Some(k)` where `k` is the byte offset of the first non-whitespace char. Returns `k = 0`
 /// if `s` starts with a non-whitespace char. If `s` only contains whitespaces, returns `None`.
 fn first_non_whitespace(s: &str) -> Option<usize> {
-    let mut len = 0;
-    for (i, ch) in s.char_indices() {
-        if ch.is_whitespace() {
-            len = ch.len_utf8()
-        } else {
-            return if i == 0 { Some(0) } else { Some(i + 1 - len) };
-        }
-    }
-    None
+    s.char_indices().find(|(_, ch)| !ch.is_whitespace()).map(|(i, _)| i)
 }
 
 /// Returns a slice of `s` with a whitespace prefix removed based on `col`. If the first `col` chars
@@ -461,4 +453,43 @@ fn line_begin_pos(sf: &SourceFile, pos: BytePos) -> BytePos {
     let line_index = sf.lookup_line(pos).unwrap();
     let line_start_pos = sf.lines()[line_index];
     sf.absolute_position(line_start_pos)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_non_whitespace_ascii() {
+        assert_eq!(first_non_whitespace("hello"), Some(0));
+        assert_eq!(first_non_whitespace(" hello"), Some(1));
+        assert_eq!(first_non_whitespace("  hello"), Some(2));
+        assert_eq!(first_non_whitespace("\thello"), Some(1));
+        assert_eq!(first_non_whitespace(" \thello"), Some(2));
+        assert_eq!(first_non_whitespace("   "), None);
+        assert_eq!(first_non_whitespace(""), None);
+    }
+
+    #[test]
+    fn first_non_whitespace_multibyte() {
+        // U+00A0 NO-BREAK SPACE (2 bytes in UTF-8)
+        assert_eq!(first_non_whitespace("\u{00A0}hello"), Some(2));
+        assert_eq!(first_non_whitespace(" \u{00A0}hello"), Some(3));
+        // U+2003 EM SPACE (3 bytes in UTF-8)
+        assert_eq!(first_non_whitespace("\u{2003}hello"), Some(3));
+        assert_eq!(first_non_whitespace("\u{00A0}\u{2003}hello"), Some(5));
+    }
+
+    #[test]
+    fn normalize_block_comment_ws_multibyte() {
+        // Ensure slicing after multi-byte whitespace doesn't panic
+        let result = normalize_block_comment_ws("\u{00A0}hello", CharPos(0));
+        assert_eq!(result, "\u{00A0}hello");
+
+        let result = normalize_block_comment_ws("\u{00A0}hello", CharPos(1));
+        assert_eq!(result, "hello");
+
+        let result = normalize_block_comment_ws("\u{00A0}\u{2003}hello", CharPos(1));
+        assert_eq!(result, "\u{2003}hello");
+    }
 }
