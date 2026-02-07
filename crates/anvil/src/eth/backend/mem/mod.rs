@@ -54,7 +54,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
-    map::{AddressMap, HashMap},
+    map::{AddressMap, HashMap, HashSet},
 };
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
@@ -71,7 +71,7 @@ use alloy_rpc_types::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
         },
-        parity::LocalizedTransactionTrace,
+        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
 };
 use alloy_serde::{OtherFields, WithOtherFields};
@@ -1738,7 +1738,7 @@ impl Backend {
                             })
                             .collect(),
                     };
-                    logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
+                    logs.extend(sim_res.logs.iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
@@ -1981,7 +1981,7 @@ impl Backend {
 
             drop(evm);
             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
-            let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
+            let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
 
             trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
 
@@ -2424,8 +2424,14 @@ impl Backend {
             None => None,
         };
         let block_number = self.convert_block_number(block_number);
+        let current_number = self.best_number();
 
-        if block_number < self.env.read().evm_env.block_env.number.saturating_to() {
+        // Reject requests for future blocks that don't exist yet
+        if block_number > current_number {
+            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
+        }
+
+        if block_number < current_number {
             if let Some((block_hash, block)) = self
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
@@ -2443,10 +2449,7 @@ impl Backend {
             }
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
-            return Err(BlockchainError::BlockOutOfRange(
-                self.env.read().evm_env.block_env.number.saturating_to(),
-                block_number,
-            ));
+            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
         }
 
         let db = self.db.read().await;
@@ -2943,6 +2946,114 @@ impl Backend {
         Ok(vec![])
     }
 
+    /// Replays all transactions in a block and returns the requested traces for each transaction
+    pub async fn trace_replay_block_transactions(
+        &self,
+        block: BlockNumber,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
+        let block_number = self.convert_block_number(Some(block));
+
+        // Try mined blocks first
+        if let Some(results) =
+            self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)
+        {
+            return Ok(results);
+        }
+
+        // Fallback to fork if block predates fork
+        if let Some(fork) = self.get_fork()
+            && fork.predates_fork(block_number)
+        {
+            return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
+        }
+
+        Ok(vec![])
+    }
+
+    /// Returns the trace results for all transactions in a mined block by replaying them
+    fn mined_parity_trace_replay_block_transactions(
+        &self,
+        block_number: u64,
+        trace_types: &HashSet<TraceType>,
+    ) -> Option<Vec<TraceResultsWithTransactionHash>> {
+        let block = self.get_block(block_number)?;
+
+        // Execute this in the context of the parent state
+        let parent_hash = block.header.parent_hash;
+        let trace_config = TracingInspectorConfig::from_parity_config(trace_types);
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&parent_hash) {
+            self.replay_block_transactions_with_inspector(&block, state, trace_config, trace_types)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard.get_on_disk_state(&parent_hash)?;
+            self.replay_block_transactions_with_inspector(&block, state, trace_config, trace_types)
+        }
+    }
+
+    /// Replays all transactions in a block with the tracing inspector to generate TraceResults
+    fn replay_block_transactions_with_inspector(
+        &self,
+        block: &Block,
+        parent_state: &StateDb,
+        trace_config: TracingInspectorConfig,
+        trace_types: &HashSet<TraceType>,
+    ) -> Option<Vec<TraceResultsWithTransactionHash>> {
+        let mut cache_db = CacheDB::new(Box::new(parent_state));
+        let mut results = Vec::new();
+
+        // Configure the block environment
+        let mut env = self.env.read().clone();
+        env.evm_env.block_env = BlockEnv {
+            number: U256::from(block.header.number),
+            beneficiary: block.header.beneficiary,
+            timestamp: U256::from(block.header.timestamp),
+            difficulty: block.header.difficulty,
+            prevrandao: Some(block.header.mix_hash),
+            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+            gas_limit: block.header.gas_limit,
+            ..Default::default()
+        };
+
+        // Execute each transaction in the block with tracing
+        for tx_envelope in &block.body.transactions {
+            let tx_hash = tx_envelope.hash();
+
+            // Create a fresh inspector for this transaction
+            let mut inspector = TracingInspector::new(trace_config);
+
+            // Prepare transaction environment
+            let pending_tx =
+                PendingTransaction::from_maybe_impersonated(tx_envelope.clone()).ok()?;
+            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+                pending_tx.transaction.as_ref(),
+                *pending_tx.sender(),
+            );
+            if env.networks.is_optimism() {
+                tx_env.enveloped_tx = Some(pending_tx.transaction.encoded_2718().into());
+            }
+
+            // Execute the transaction with the inspector
+            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+            let result = evm.transact(tx_env.clone()).ok()?;
+
+            // Build TraceResults from the inspector and execution result
+            let full_trace = inspector
+                .into_parity_builder()
+                .into_trace_results_with_state(&result, trace_types, &cache_db)
+                .ok()?;
+
+            results.push(TraceResultsWithTransactionHash { transaction_hash: tx_hash, full_trace });
+
+            // Commit the state changes for the next transaction
+            cache_db.commit(result.state);
+        }
+
+        Some(results)
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -3082,7 +3193,8 @@ impl Backend {
             blob_gas_used,
         };
 
-        let inner = FoundryTxReceipt::new(receipt);
+        // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
+        let inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp);
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
@@ -3309,14 +3421,14 @@ impl Backend {
                 .into_iter()
                 .map(|(_, v)| v)
                 .collect();
-            let storage_proofs = prove_storage(&account.storage, &keys);
+            let (storage_hash, storage_proofs) = prove_storage(&account.storage, &keys);
 
             let account_proof = AccountProof {
                 address,
                 balance: account.info.balance,
                 nonce: account.info.nonce,
                 code_hash: account.info.code_hash,
-                storage_hash: storage_root(&account.storage),
+                storage_hash,
                 account_proof: proof,
                 storage_proof: keys
                     .into_iter()
@@ -3791,7 +3903,7 @@ pub fn transaction_build(
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)
-pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<Bytes>> {
+pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> (B256, Vec<Vec<Bytes>>) {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
     let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));
@@ -3800,7 +3912,7 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
         builder.add_leaf(key, &value);
     }
 
-    let _ = builder.root();
+    let root = builder.root();
 
     let mut proofs = Vec::new();
     let all_proof_nodes = builder.take_proof_nodes();
@@ -3813,7 +3925,7 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
         proofs.push(matching_proof_nodes.collect());
     }
 
-    proofs
+    (root, proofs)
 }
 
 pub fn is_arbitrum(chain_id: u64) -> bool {
