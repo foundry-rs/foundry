@@ -1771,7 +1771,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // Clean single-call prank once we have returned to the original depth
             if prank.single_call {
-                std::mem::take(&mut self.pranks);
+                self.pranks.remove(&curr_depth);
             }
         }
 
