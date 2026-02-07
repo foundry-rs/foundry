@@ -6,7 +6,7 @@ use solar::{
 use std::ops::ControlFlow;
 
 /// Trait for lints that operate directly on the AST.
-/// Its methods mirror `ast::visit::Visit`, with the addition of `LintCotext`.
+/// Its methods mirror `ast::visit::Visit`, with the addition of `LintContext`.
 pub trait EarlyLintPass<'ast>: Send + Sync {
     fn check_expr(&mut self, _ctx: &LintContext, _expr: &'ast ast::Expr<'ast>) {}
     fn check_item_struct(&mut self, _ctx: &LintContext, _struct: &'ast ast::ItemStruct<'ast>) {}

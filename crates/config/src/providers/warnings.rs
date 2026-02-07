@@ -24,6 +24,11 @@ const COMPILATION_RESTRICTIONS_KEYS: &[&str] = &[
 const SETTINGS_OVERRIDES_KEYS: &[&str] =
     &["name", "via_ir", "evm_version", "optimizer", "optimizer_runs", "bytecode_hash"];
 
+/// Allowed keys for VyperConfig.
+/// Required because VyperConfig uses `skip_serializing_if = "Option::is_none"` on all fields,
+/// causing the default serialization to produce an empty dict.
+const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
+
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
 
@@ -183,14 +188,19 @@ impl<P: Provider> WarningsProvider<P> {
             };
 
             // Get allowed keys for this section from the default config
-            let Some(default_section_value) = default_dict.get(*section_name) else {
-                continue;
+            // Special case for vyper: VyperConfig uses skip_serializing_if on all Option fields,
+            // so the default serialization produces an empty dict. Use explicit keys instead.
+            let allowed_keys: BTreeSet<String> = if *section_name == "vyper" {
+                VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else {
+                let Some(default_section_value) = default_dict.get(*section_name) else {
+                    continue;
+                };
+                let Some(default_section_dict) = default_section_value.as_dict() else {
+                    continue;
+                };
+                default_section_dict.keys().cloned().collect()
             };
-            let Some(default_section_dict) = default_section_value.as_dict() else {
-                continue;
-            };
-
-            let allowed_keys: BTreeSet<String> = default_section_dict.keys().cloned().collect();
 
             for key in section_dict.keys() {
                 let is_not_allowed =
@@ -248,14 +258,19 @@ impl<P: Provider> WarningsProvider<P> {
             };
 
             // Get allowed keys from the default config for this nested section
-            let Some(default_value) = default_dict.get(key) else {
-                continue;
+            // Special case for vyper: VyperConfig uses skip_serializing_if on all Option fields,
+            // so the default serialization produces an empty dict. Use explicit keys instead.
+            let allowed_keys: BTreeSet<String> = if key == "vyper" {
+                VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else {
+                let Some(default_value) = default_dict.get(key) else {
+                    continue;
+                };
+                let Some(default_nested_dict) = default_value.as_dict() else {
+                    continue;
+                };
+                default_nested_dict.keys().cloned().collect()
             };
-            let Some(default_nested_dict) = default_value.as_dict() else {
-                continue;
-            };
-
-            let allowed_keys: BTreeSet<String> = default_nested_dict.keys().cloned().collect();
 
             for nested_key in nested_dict.keys() {
                 let is_not_allowed = !allowed_keys.contains(nested_key)

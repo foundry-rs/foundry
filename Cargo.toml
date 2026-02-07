@@ -26,6 +26,7 @@ members = [
     "crates/primitives/",
     "crates/script-sequence/",
     "crates/test-utils/",
+    "crates/cli-markdown/",
 ]
 resolver = "2"
 
@@ -149,7 +150,6 @@ ruint.opt-level = 3
 
 sha2.opt-level = 3
 sha3.opt-level = 3
-tiny-keccak.opt-level = 3
 keccak.opt-level = 3
 
 # Fuzzing.
@@ -255,6 +255,7 @@ forge-script-sequence = { path = "crates/script-sequence" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
+foundry-cli-markdown = { path = "crates/cli-markdown" }
 foundry-common = { path = "crates/common" }
 foundry-common-fmt = { path = "crates/common/fmt" }
 foundry-config = { path = "crates/config" }
@@ -343,7 +344,7 @@ alloy-op-evm = "0.26.3"
 
 # revm
 revm = { version = "34.0.0", default-features = false }
-revm-inspectors = { version = "0.34.0", features = ["serde"] }
+revm-inspectors = { version = "0.34.2", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
 
 ## cli

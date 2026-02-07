@@ -8,16 +8,19 @@ use crate::{
     provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
 use alloy_chains::NamedChain;
+use alloy_network::{Network, NetworkWallet};
 use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
-    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
+    fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
 };
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{layers::RetryBackoffLayer, utils::guess_local_url};
 use eyre::{Result, WrapErr};
+use foundry_config::Config;
 use reqwest::Url;
 use std::{
+    marker::PhantomData,
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
@@ -36,20 +39,8 @@ const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
 pub type RetryProvider<N = AnyNetwork> = RootProvider<N>;
 
 /// Helper type alias for a retry provider with a signer
-pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
-    JoinFill<
-        JoinFill<
-            Identity,
-            JoinFill<
-                GasFiller,
-                JoinFill<
-                    alloy_provider::fillers::BlobGasFiller,
-                    JoinFill<NonceFiller, ChainIdFiller>,
-                >,
-            >,
-        >,
-        WalletFiller<EthereumWallet>,
-    >,
+pub type RetryProviderWithSigner<N = AnyNetwork, W = EthereumWallet> = FillProvider<
+    JoinFill<JoinFill<Identity, <N as RecommendedFillers>::RecommendedFillers>, WalletFiller<W>>,
     RootProvider<N>,
     N,
 >;
@@ -84,8 +75,10 @@ pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> 
 }
 
 /// Helper type to construct a `RetryProvider`
+///
+/// This builder is generic over the network type `N`, defaulting to `AnyNetwork`.
 #[derive(Debug)]
-pub struct ProviderBuilder {
+pub struct ProviderBuilder<N: Network = AnyNetwork> {
     // Note: this is a result, so we can easily chain builder calls
     url: Result<Url>,
     chain: NamedChain,
@@ -104,10 +97,12 @@ pub struct ProviderBuilder {
     no_proxy: bool,
     /// Whether to output curl commands instead of making requests.
     curl_mode: bool,
+    /// Phantom data for the network type.
+    _network: PhantomData<N>,
 }
 
-impl ProviderBuilder {
-    /// Creates a new builder instance
+impl<N: Network> ProviderBuilder<N> {
+    /// Creates a new ProviderBuilder helper instance.
     pub fn new(url_str: &str) -> Self {
         // a copy is needed for the next lines to work
         let mut url_str = url_str;
@@ -156,7 +151,36 @@ impl ProviderBuilder {
             accept_invalid_certs: false,
             no_proxy: false,
             curl_mode: false,
+            _network: PhantomData,
         }
+    }
+
+    /// Constructs a [ProviderBuilder] instantiated using [Config] values.
+    ///
+    /// Defaults to `http://localhost:8545` and `Mainnet`.
+    pub fn from_config(config: &Config) -> Result<Self> {
+        let url = config.get_rpc_url_or_localhost_http()?;
+        let mut builder = Self::new(url.as_ref());
+
+        builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
+
+        if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
+            builder = builder.chain(chain);
+        }
+
+        if let Some(jwt) = config.get_rpc_jwt_secret()? {
+            builder = builder.jwt(jwt.as_ref());
+        }
+
+        if let Some(rpc_timeout) = config.eth_rpc_timeout {
+            builder = builder.timeout(Duration::from_secs(rpc_timeout));
+        }
+
+        if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
+            builder = builder.headers(rpc_headers);
+        }
+
+        Ok(builder)
     }
 
     /// Enables a request timeout.
@@ -278,7 +302,7 @@ impl ProviderBuilder {
     }
 
     /// Constructs the `RetryProvider` taking all configs into account.
-    pub fn build(self) -> Result<RetryProvider> {
+    pub fn build(self) -> Result<RetryProvider<N>> {
         let Self {
             url,
             chain,
@@ -292,6 +316,7 @@ impl ProviderBuilder {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
+            ..
         } = self;
         let url = url?;
 
@@ -303,7 +328,7 @@ impl ProviderBuilder {
             let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
             let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
-            let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+            let provider = AlloyProviderBuilder::<_, _, N>::default()
                 .connect_provider(RootProvider::new(client));
 
             return Ok(provider);
@@ -330,14 +355,22 @@ impl ProviderBuilder {
             );
         }
 
-        let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
-            .connect_provider(RootProvider::new(client));
+        let provider =
+            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
 
         Ok(provider)
     }
+}
 
+impl<N: Network> ProviderBuilder<N> {
     /// Constructs the `RetryProvider` with a wallet.
-    pub fn build_with_wallet(self, wallet: EthereumWallet) -> Result<RetryProviderWithSigner> {
+    pub fn build_with_wallet<W: NetworkWallet<N> + Clone>(
+        self,
+        wallet: W,
+    ) -> Result<RetryProviderWithSigner<N, W>>
+    where
+        N: RecommendedFillers,
+    {
         let Self {
             url,
             chain,
@@ -351,6 +384,7 @@ impl ProviderBuilder {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
+            ..
         } = self;
         let url = url?;
 
@@ -362,7 +396,7 @@ impl ProviderBuilder {
             let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
             let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
-            let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+            let provider = AlloyProviderBuilder::<_, _, N>::default()
                 .with_recommended_fillers()
                 .wallet(wallet)
                 .connect_provider(RootProvider::new(client));
@@ -392,7 +426,7 @@ impl ProviderBuilder {
             );
         }
 
-        let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
+        let provider = AlloyProviderBuilder::<_, _, N>::default()
             .with_recommended_fillers()
             .wallet(wallet)
             .connect_provider(RootProvider::new(client));
@@ -417,7 +451,11 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
     {
         return Ok(path.to_path_buf());
     }
-    Err(())
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        std::env::current_dir().map(|d| d.join(path)).map_err(drop)
+    }
 }
 
 #[cfg(test)]
@@ -426,7 +464,7 @@ mod tests {
 
     #[test]
     fn can_auto_correct_missing_prefix() {
-        let builder = ProviderBuilder::new("localhost:8545");
+        let builder = ProviderBuilder::<AnyNetwork>::new("localhost:8545");
         assert!(builder.url.is_ok());
 
         let url = builder.url.unwrap();
