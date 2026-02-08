@@ -1084,6 +1084,67 @@ async fn test_mine_first_block_with_interval() {
     assert_eq!(second_block.header.timestamp, init_timestamp + 120);
 }
 
+// Batch mine many empty blocks and verify block chain integrity.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_many_empty_blocks() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let init_number = init_blk.header.number;
+
+    // Mine 100 empty blocks (exercises the batch path).
+    let _ = api.anvil_mine(Some(U256::from(100)), None).await;
+
+    let latest_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(latest_number, init_number + 100);
+
+    // Verify parent_hash chain for a few consecutive blocks.
+    let blk_50 = provider.get_block(50u64.into()).await.unwrap().unwrap();
+    let blk_51 = provider.get_block(51u64.into()).await.unwrap().unwrap();
+    assert_eq!(blk_51.header.parent_hash, blk_50.header.hash);
+    assert_eq!(blk_51.header.number, 51);
+
+    // All empty blocks should have the same state root (no state changes).
+    assert_eq!(blk_50.header.state_root, blk_51.header.state_root);
+}
+
+// Batch mine with interval and verify timestamps increase correctly.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_empty_blocks_with_interval() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let init_block = api.block_by_number(0.into()).await.unwrap().unwrap();
+    let init_timestamp = init_block.header.timestamp;
+
+    // Mine 5 empty blocks with 10-second interval.
+    let _ = api.anvil_mine(Some(U256::from(5)), Some(U256::from(10))).await;
+
+    for i in 1..=5u64 {
+        let blk = api.block_by_number(i.into()).await.unwrap().unwrap();
+        assert_eq!(blk.header.timestamp, init_timestamp + i * 10);
+    }
+}
+
+// Base fee should decay across empty blocks (gas_used = 0).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_empty_blocks_base_fee_decay() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let init_base_fee = init_blk.header.base_fee_per_gas.unwrap();
+
+    // Mine 10 empty blocks.
+    let _ = api.anvil_mine(Some(U256::from(10)), None).await;
+
+    let final_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let final_base_fee = final_blk.header.base_fee_per_gas.unwrap();
+
+    // Base fee should decrease (or stay at floor) since gas_used is 0.
+    assert!(final_base_fee <= init_base_fee);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_non_fork() {
     let (api, handle) = spawn(NodeConfig::test()).await;

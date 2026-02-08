@@ -33,14 +33,15 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TrieAccount, TxEnvelope, Typed2718,
+    Blob, BlockHeader, EMPTY_OMMER_ROOT_HASH, EnvKzgSettings, Header, Signed,
+    Transaction as TransactionTrait, TrieAccount, TxEnvelope, Typed2718,
+    constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
 use alloy_eips::{
-    BlockNumHash, Encodable2718, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
-    eip7910::SystemContract,
+    BlockNumHash, Encodable2718, eip4844::kzg_to_versioned_hash, eip7685::EMPTY_REQUESTS_HASH,
+    eip7840::BlobParams, eip7910::SystemContract,
 };
 use alloy_evm::{
     Database, Evm, FromRecoveredTx,
@@ -53,7 +54,7 @@ use alloy_network::{
     ReceiptResponse, TransactionBuilder, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
+    Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
 };
 use alloy_rpc_types::{
@@ -78,7 +79,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_signer::Signature;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
-    block::{Block, BlockInfo},
+    block::{Block, BlockInfo, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
 };
 use anvil_rpc::error::RpcError;
@@ -1438,6 +1439,186 @@ impl Backend {
         self.notify_on_new_block(header, block_hash);
 
         outcome
+    }
+
+    /// Mines `num_blocks` empty blocks in a batch, reusing the cached state root.
+    ///
+    /// This is the fast path for `anvil_mine(n)` when there are no pending transactions.
+    /// Instead of running the full `TransactionExecutor` and recomputing the Merkle state root
+    /// for each block, it constructs minimal block headers with the same state root
+    /// (since no state changes occur in empty blocks).
+    ///
+    /// This reduces per-block cost from O(accounts * log(accounts)) to O(1).
+    pub async fn mine_empty_blocks(
+        &self,
+        num_blocks: u64,
+        interval: Option<u64>,
+    ) -> Vec<MinedBlockOutcome> {
+        let _mining_guard = self.mining.lock().await;
+
+        let mut outcomes = Vec::with_capacity(num_blocks as usize);
+
+        // Read the current state root from the latest block — this will be reused
+        // for all empty blocks since no state transitions occur.
+        let cached_state_root = {
+            let storage = self.blockchain.storage.read();
+            storage
+                .blocks
+                .get(&storage.best_hash)
+                .map(|b| b.header.state_root)
+                .unwrap_or_default()
+        };
+
+        // Snapshot spec-level flags once (constant for the batch).
+        let spec = *self.env.read().evm_env.spec_id();
+        let is_london = spec.is_enabled_in(SpecId::LONDON);
+        let is_shanghai = spec >= SpecId::SHANGHAI;
+        let is_cancun = spec >= SpecId::CANCUN;
+        let is_prague = spec >= SpecId::PRAGUE;
+        let is_post_merge = self.is_eip3675();
+        let is_arb = is_arbitrum(self.env.read().evm_env.cfg_env.chain_id);
+        let gas_limit = self.env.read().evm_env.block_env.gas_limit;
+        let beneficiary = self.env.read().evm_env.block_env.beneficiary;
+
+        // Acquire DB write lock once for all block hash insertions.
+        let mut db = self.db.write().await;
+
+        for _ in 0..num_blocks {
+            // Advance time if interval is set.
+            if let Some(interval) = interval {
+                self.time.increase_time(interval);
+            }
+            let timestamp = self.time.next_timestamp();
+
+            // Read current chain tip.
+            let (best_hash, best_number) = {
+                let storage = self.blockchain.storage.read();
+                (storage.best_hash, storage.best_number)
+            };
+            let block_number = best_number.saturating_add(1);
+
+            // Compute prevrandao deterministically from parent hash + block number.
+            let prevrandao = {
+                let mut input = Vec::with_capacity(40);
+                input.extend_from_slice(best_hash.as_slice());
+                input.extend_from_slice(&block_number.to_le_bytes());
+                keccak256(&input)
+            };
+
+            // Store state snapshot for history if configured.
+            if self.prune_state_history_config.is_state_history_supported() {
+                let state_db = db.current_state();
+                self.states.write().insert(best_hash, state_db);
+            }
+
+            // Read current fee values.
+            let current_base_fee = self.base_fee();
+            let base_fee_per_gas = if is_london { Some(current_base_fee) } else { None };
+            let excess_blob_gas = if is_cancun {
+                self.excess_blob_gas_and_price().map(|e| e.excess_blob_gas)
+            } else {
+                None
+            };
+
+            // Construct the empty block header.
+            let header = Header {
+                parent_hash: best_hash,
+                ommers_hash: EMPTY_OMMER_ROOT_HASH,
+                beneficiary,
+                state_root: cached_state_root,
+                transactions_root: Default::default(),
+                receipts_root: Default::default(),
+                logs_bloom: Bloom::default(),
+                difficulty: U256::ZERO,
+                number: block_number,
+                gas_limit,
+                gas_used: 0,
+                timestamp,
+                extra_data: Default::default(),
+                mix_hash: prevrandao,
+                nonce: Default::default(),
+                base_fee_per_gas,
+                parent_beacon_block_root: is_cancun.then_some(Default::default()),
+                blob_gas_used: if is_cancun { Some(0u64) } else { None },
+                excess_blob_gas,
+                withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+                requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+            };
+
+            // Create block with empty transaction list.
+            let block =
+                create_block(header, std::iter::empty::<MaybeImpersonatedTransaction>());
+            let block_hash = block.header.hash_slow();
+            let header = block.header.clone();
+
+            // Insert block hash into the DB (for BLOCKHASH opcode).
+            db.insert_block_hash(U256::from(block_number), block_hash);
+
+            // Update blockchain storage.
+            {
+                let mut storage = self.blockchain.storage.write();
+                storage.best_number = block_number;
+                storage.best_hash = block_hash;
+                if !is_post_merge {
+                    storage.total_difficulty =
+                        storage.total_difficulty.saturating_add(header.difficulty);
+                }
+                storage.blocks.insert(block_hash, block);
+                storage.hashes.insert(block_number, block_hash);
+
+                // Prune old transactions if keeper limit is exceeded.
+                if let Some(keeper) = self.transaction_block_keeper
+                    && storage.blocks.len() > keeper
+                {
+                    let to_clear = block_number
+                        .saturating_sub(keeper.try_into().unwrap_or(u64::MAX));
+                    storage.remove_block_transactions_by_number(to_clear);
+                }
+            }
+
+            // Update env with new block number.
+            {
+                let mut env = self.env.write();
+                if is_arb {
+                    env.evm_env.block_env.number = U256::from(block_number);
+                } else {
+                    env.evm_env.block_env.number =
+                        env.evm_env.block_env.number.saturating_add(U256::from(1));
+                }
+                env.evm_env.block_env.difficulty = U256::ZERO;
+                env.evm_env.block_env.timestamp = U256::from(timestamp);
+                env.evm_env.block_env.basefee = self.base_fee();
+            }
+
+            // Update base fee for next block (gas_used=0 for empty blocks).
+            let next_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                header.gas_used,
+                header.gas_limit,
+                header.base_fee_per_gas.unwrap_or_default(),
+            );
+            self.fees.set_base_fee(next_base_fee);
+
+            // Update blob gas for next block (blob_gas_used=0).
+            let next_blob_excess = self.fees.get_next_block_blob_excess_gas(
+                header.excess_blob_gas.unwrap_or_default(),
+                header.blob_gas_used.unwrap_or_default(),
+            );
+            self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                next_blob_excess,
+                get_blob_base_fee_update_fraction_by_spec_id(spec),
+            ));
+
+            // Notify listeners.
+            self.notify_on_new_block(header, block_hash);
+
+            outcomes.push(MinedBlockOutcome {
+                block_number,
+                included: vec![],
+                invalid: vec![],
+            });
+        }
+
+        outcomes
     }
 
     /// Executes the [TransactionRequest] without writing to the DB
