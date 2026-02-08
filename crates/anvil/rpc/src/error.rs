@@ -19,6 +19,13 @@ impl RpcError {
         Self { message: Cow::Borrowed(code.message()), code, data: None }
     }
 
+    fn new_with_message<M>(code: ErrorCode, message: M) -> Self
+    where
+        M: Into<String>,
+    {
+        Self { code, message: Cow::Owned(message.into()), data: None }
+    }
+
     /// Creates a new `ParseError` error.
     pub const fn parse_error() -> Self {
         Self::new(ErrorCode::ParseError)
@@ -44,7 +51,7 @@ impl RpcError {
     where
         M: Into<String>,
     {
-        Self { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
+        Self::new_with_message(ErrorCode::InvalidParams, message)
     }
 
     /// Creates a new `InternalError` error with a message.
@@ -52,7 +59,7 @@ impl RpcError {
     where
         M: Into<String>,
     {
-        Self { code: ErrorCode::InternalError, message: message.into().into(), data: None }
+        Self::new_with_message(ErrorCode::InternalError, message)
     }
 
     /// Creates a new RPC error for when a transaction was rejected.
@@ -60,7 +67,7 @@ impl RpcError {
     where
         M: Into<String>,
     {
-        Self { code: ErrorCode::TransactionRejected, message: message.into().into(), data: None }
+        Self::new_with_message(ErrorCode::TransactionRejected, message)
     }
 }
 
