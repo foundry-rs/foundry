@@ -536,15 +536,17 @@ impl BundledState {
                 }
             }
 
-            let (total_gas, total_gas_price, total_paid) =
-                sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
-                    let gas_used = receipt.gas_used;
-                    let gas_price = receipt.effective_gas_price as u64;
-                    (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
-                });
+            let (total_gas, total_paid) = sequence.receipts.iter().fold((0, 0), |acc, receipt| {
+                let gas_used = receipt.gas_used;
+                let gas_price = receipt.effective_gas_price as u64;
+                (acc.0 + gas_used, acc.1 + gas_used * gas_price)
+            });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
-                .unwrap_or_else(|_| "N/A".to_string());
+            let avg_gas_price = if total_gas > 0 {
+                format_units(total_paid / total_gas, 9).unwrap_or_else(|_| "N/A".to_string())
+            } else {
+                "N/A".to_string()
+            };
 
             let token_symbol = NamedChain::try_from(sequence.chain)
                 .unwrap_or_default()
