@@ -1,7 +1,7 @@
 use crate::tx::{self, CastTxBuilder};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -152,8 +152,7 @@ impl MakeTxArgs {
         if is_tempo {
             let (ftx, _) = tx_builder.build(&signer).await?;
 
-            // Sign using NetworkWallet<FoundryNetwork>
-            let signed_tx = signer.sign_request(ftx).await?;
+            let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
 
             // Encode as 2718
             let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
