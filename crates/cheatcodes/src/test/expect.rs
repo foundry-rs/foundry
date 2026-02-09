@@ -932,10 +932,7 @@ pub(crate) fn handle_expect_emit(
         }
 
         // Maybe match source address.
-        if event_to_fill_or_check
-            .address
-            .is_some_and(|addr| addr.to_checksum(None) != log.address.to_checksum(None))
-        {
+        if event_to_fill_or_check.address.is_some_and(|addr| addr != log.address) {
             event_to_fill_or_check.mismatch_error = Some(format!(
                 "log emitter mismatch: expected={:#x}, got={:#x}",
                 event_to_fill_or_check.address.unwrap(),

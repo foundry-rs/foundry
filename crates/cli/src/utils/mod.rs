@@ -108,29 +108,7 @@ pub fn get_provider(config: &Config) -> Result<RetryProvider> {
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
-    let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = ProviderBuilder::new(url.as_ref());
-
-    builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
-    builder = builder.curl_mode(config.eth_rpc_curl);
-
-    if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
-        builder = builder.chain(chain);
-    }
-
-    if let Some(jwt) = config.get_rpc_jwt_secret()? {
-        builder = builder.jwt(jwt.as_ref());
-    }
-
-    if let Some(rpc_timeout) = config.eth_rpc_timeout {
-        builder = builder.timeout(Duration::from_secs(rpc_timeout));
-    }
-
-    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
-        builder = builder.headers(rpc_headers);
-    }
-
-    Ok(builder)
+    ProviderBuilder::from_config(config)
 }
 
 pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
