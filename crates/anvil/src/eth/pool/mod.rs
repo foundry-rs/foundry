@@ -370,8 +370,8 @@ impl PoolInner {
         }
         trace!(target: "txpool", "Removing invalid transactions: {:?}", tx_hashes);
 
-        let mut removed = self.ready_transactions.remove_with_markers(tx_hashes.clone(), None);
-        removed.extend(self.pending_transactions.remove(tx_hashes));
+        let mut removed = self.pending_transactions.remove(&tx_hashes);
+        removed.extend(self.ready_transactions.remove_with_markers(tx_hashes, None));
 
         trace!(target: "txpool", "Removed invalid transactions: {:?}", removed);
 
@@ -389,8 +389,8 @@ impl PoolInner {
 
         trace!(target: "txpool", "Removing transactions: {:?}", tx_hashes);
 
-        let mut removed = self.ready_transactions.remove_with_markers(tx_hashes.clone(), None);
-        removed.extend(self.pending_transactions.remove(tx_hashes));
+        let mut removed = self.pending_transactions.remove(&tx_hashes);
+        removed.extend(self.ready_transactions.remove_with_markers(tx_hashes, None));
 
         trace!(target: "txpool", "Removed transactions: {:?}", removed);
 

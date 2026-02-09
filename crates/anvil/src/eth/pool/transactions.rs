@@ -246,14 +246,14 @@ impl PendingTransactions {
     /// Removes the transactions associated with the given hashes
     ///
     /// Returns all removed transactions.
-    pub fn remove(&mut self, hashes: Vec<TxHash>) -> Vec<Arc<PoolTransaction>> {
+    pub fn remove(&mut self, hashes: &[TxHash]) -> Vec<Arc<PoolTransaction>> {
         let mut removed = vec![];
         for hash in hashes {
-            if let Some(waiting_tx) = self.waiting_queue.remove(&hash) {
+            if let Some(waiting_tx) = self.waiting_queue.remove(hash) {
                 self.waiting_markers.remove(&waiting_tx.transaction.provides);
                 for marker in waiting_tx.missing_markers {
                     let remove = if let Some(required) = self.required_markers.get_mut(&marker) {
-                        required.remove(&hash);
+                        required.remove(hash);
                         required.is_empty()
                     } else {
                         false
