@@ -18,6 +18,7 @@ use foundry_cli::{
     opts::{RpcOpts, TempoOpts},
     utils::{LoadConfig, get_chain, get_provider_with_curl},
 };
+use foundry_common::shell;
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
 use foundry_primitives::FoundryTransactionRequest;
@@ -363,7 +364,11 @@ impl Erc20Subcommand {
                     .call()
                     .await?;
 
-                sh_println!("{}", format_uint_exp(allowance))?
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&allowance.to_string())?)?
+                } else {
+                    sh_println!("{}", format_uint_exp(allowance))?
+                }
             }
             Self::Balance { token, owner, block, rpc, .. } => {
                 let provider = get_provider_with_curl(&config, rpc.curl)?;
@@ -375,7 +380,12 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                sh_println!("{}", format_uint_exp(balance))?
+
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&balance.to_string())?)?
+                } else {
+                    sh_println!("{}", format_uint_exp(balance))?
+                }
             }
             Self::Name { token, block, rpc, .. } => {
                 let provider = get_provider_with_curl(&config, rpc.curl)?;
@@ -386,7 +396,12 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                sh_println!("{}", name)?
+
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&name)?)?
+                } else {
+                    sh_println!("{}", name)?
+                }
             }
             Self::Symbol { token, block, rpc, .. } => {
                 let provider = get_provider_with_curl(&config, rpc.curl)?;
@@ -397,7 +412,12 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                sh_println!("{}", symbol)?
+
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&symbol)?)?
+                } else {
+                    sh_println!("{}", symbol)?
+                }
             }
             Self::Decimals { token, block, rpc, .. } => {
                 let provider = get_provider_with_curl(&config, rpc.curl)?;
@@ -419,7 +439,12 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                sh_println!("{}", format_uint_exp(total_supply))?
+
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&total_supply.to_string())?)?
+                } else {
+                    sh_println!("{}", format_uint_exp(total_supply))?
+                }
             }
             // State-changing
             Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
