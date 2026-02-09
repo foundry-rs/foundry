@@ -135,10 +135,10 @@ async fn test_verify_bytecode_with_ignore(
     }
 }
 
-// Note: Originally tested no-metadata config with SystemConfig (0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1).
-// Switched to StrategyManager due to duplicate Initializable declarations in SystemConfig's
-// flattened source from Etherscan. The test now uses default metadata config but still
-// validates basic verify-bytecode functionality. See: https://github.com/foundry-rs/foundry/issues/13368
+// Note: Originally tested no-metadata config with SystemConfig
+// (0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1). Switched to StrategyManager due to duplicate
+// Initializable declarations in SystemConfig's flattened source from Etherscan. The test now uses
+// default metadata config but still validates basic verify-bytecode functionality. See: https://github.com/foundry-rs/foundry/issues/13368
 forgetest_async!(flaky_verify_bytecode_no_metadata, |prj, cmd| {
     test_verify_bytecode(
         prj,
@@ -204,11 +204,11 @@ forgetest_async!(flaky_verify_bytecode_with_blockscout, |prj, cmd| {
 });
 
 // Test CREATE2 deployed contract with blockscout
-// Note: Originally tested CREATE2-deployed SystemConfig (0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1).
-// Switched to StrategyManager due to duplicate Initializable declarations in SystemConfig's
-// flattened source from Etherscan. StrategyManager may not be CREATE2-deployed, but the test
-// logic doesn't specifically validate CREATE2 behavior - it tests verify-bytecode with blockscout.
-// See: https://github.com/foundry-rs/foundry/issues/13368
+// Note: Originally tested CREATE2-deployed SystemConfig
+// (0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1). Switched to StrategyManager due to duplicate
+// Initializable declarations in SystemConfig's flattened source from Etherscan. StrategyManager may
+// not be CREATE2-deployed, but the test logic doesn't specifically validate CREATE2 behavior - it
+// tests verify-bytecode with blockscout. See: https://github.com/foundry-rs/foundry/issues/13368
 forgetest_async!(flaky_verify_bytecode_create2_with_blockscout, |prj, cmd| {
     test_verify_bytecode(
         prj,
