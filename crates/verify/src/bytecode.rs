@@ -35,7 +35,8 @@ use foundry_evm::{
     utils::{configure_tx_env, configure_tx_req_env},
 };
 use revm::state::AccountInfo;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
+use tokio::time::timeout;
 
 impl_figment_convert!(VerifyBytecodeArgs);
 
@@ -435,145 +436,185 @@ impl VerifyBytecodeArgs {
         }
 
         if !self.ignore.is_some_and(|b| b.is_runtime()) {
-            // Get contract creation block.
-            let simulation_block = match self.block {
-                Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
-                Some(_) => eyre::bail!("Invalid block number"),
-                None => {
-                    let provider = utils::get_provider(&config)?;
-                    provider
-                    .get_transaction_by_hash(creation_data.transaction_hash)
-                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
-                        eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-                    })?
-                    .block_number.ok_or_else(|| {
-                        eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
-                    })?
-                }
-            };
+            const RUNTIME_VERIFICATION_TIMEOUT_SECS: u64 = 300;
 
-            // Fork the chain at `simulation_block`.
-            let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-            let (mut env, mut executor) = crate::utils::get_tracing_executor(
-                &mut fork_config,
-                simulation_block - 1, // env.fork_block_number
-                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
-                evm_opts,
-            )
-            .await?;
-            env.evm_env.block_env.number = U256::from(simulation_block);
-            let block = provider.get_block(simulation_block.into()).full().await?;
+            let runtime_result = timeout(
+                Duration::from_secs(RUNTIME_VERIFICATION_TIMEOUT_SECS),
+                async {
+                    // Get contract creation block.
+                    trace!(target: "forge::verify", "fetching creation block");
+                    let simulation_block = match self.block {
+                        Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
+                        Some(_) => eyre::bail!("Invalid block number"),
+                        None => {
+                            let provider = utils::get_provider(&config)?;
+                            provider
+                                .get_transaction_by_hash(creation_data.transaction_hash)
+                                .await
+                                .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+                                .ok_or_else(|| {
+                                    eyre::eyre!(
+                                        "Transaction not found for hash {}",
+                                        creation_data.transaction_hash
+                                    )
+                                })?
+                                .block_number
+                                .ok_or_else(|| {
+                                    eyre::eyre!(
+                                        "Failed to get block number of the contract creation tx, specify using the --block flag"
+                                    )
+                                })?
+                        }
+                    };
 
-            // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
-            // block.
-            let prev_block_id = BlockId::number(simulation_block - 1);
+                    // Fork the chain at `simulation_block`.
+                    trace!(target: "forge::verify", simulation_block, "forking chain");
+                    let (mut fork_config, mut evm_opts) = config.clone().load_config_and_evm_opts()?;
+                    // Use config timeout and limit retries to avoid long hangs on slow RPCs.
+                    evm_opts.fork_timeout = config.eth_rpc_timeout;
+                    evm_opts.fork_retries = Some(2);
+                    let (mut env, mut executor) = crate::utils::get_tracing_executor(
+                        &mut fork_config,
+                        simulation_block - 1, // env.fork_block_number
+                        etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
+                        evm_opts,
+                    )
+                    .await?;
+                    trace!(target: "forge::verify", "fork ready, fetching block");
+                    env.evm_env.block_env.number = U256::from(simulation_block);
+                    let block = provider.get_block(simulation_block.into()).full().await?;
 
-            // Use `transaction.from` instead of `creation_data.contract_creator` to resolve
-            // blockscout creation data discrepancy in case of CREATE2.
-            let prev_block_nonce = provider
-                .get_transaction_count(transaction.from.unwrap())
-                .block_id(prev_block_id)
-                .await?;
-            transaction.set_nonce(prev_block_nonce);
+                    // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
+                    // block.
+                    let prev_block_id = BlockId::number(simulation_block - 1);
 
-            if let Some(ref block) = block {
-                configure_env_block(&mut env.as_env_mut(), block, config.networks);
+                    // Use `transaction.from` instead of `creation_data.contract_creator` to resolve
+                    // blockscout creation data discrepancy in case of CREATE2.
+                    let prev_block_nonce = provider
+                        .get_transaction_count(transaction.from.unwrap())
+                        .block_id(prev_block_id)
+                        .await?;
+                    transaction.set_nonce(prev_block_nonce);
 
-                let BlockTransactions::Full(ref txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"));
-                };
+                    if let Some(ref block) = block {
+                        configure_env_block(&mut env.as_env_mut(), block, config.networks);
 
-                // Replay txes in block until the contract creation one.
-                for tx in txs {
-                    trace!("replay tx::: {}", tx.tx_hash());
-                    if is_known_system_sender(tx.from())
-                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
-                    {
-                        continue;
-                    }
-                    if tx.tx_hash() == tx_hash {
-                        break;
-                    }
+                        let BlockTransactions::Full(ref txs) = block.transactions else {
+                            return Err(eyre::eyre!("Could not get block txs"));
+                        };
 
-                    configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+                        // Replay txes in block until the contract creation one.
+                        for tx in txs {
+                            trace!("replay tx::: {}", tx.tx_hash());
+                            if is_known_system_sender(tx.from())
+                                || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+                            {
+                                continue;
+                            }
+                            if tx.tx_hash() == tx_hash {
+                                break;
+                            }
 
-                    if let TxKind::Call(_) = tx.inner.kind() {
-                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
-                            format!(
-                                "Failed to execute transaction: {:?} in block {}",
-                                tx.tx_hash(),
-                                env.evm_env.block_env.number
-                            )
-                        })?;
-                    } else if let Err(error) = executor.deploy_with_env(env.clone(), None) {
-                        match error {
-                            // Reverted transactions should be skipped
-                            EvmError::Execution(_) => (),
-                            error => {
-                                return Err(error).wrap_err_with(|| {
+                            configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+
+                            if let TxKind::Call(_) = tx.inner.kind() {
+                                executor.transact_with_env(env.clone()).wrap_err_with(|| {
                                     format!(
-                                        "Failed to deploy transaction: {:?} in block {}",
+                                        "Failed to execute transaction: {:?} in block {}",
                                         tx.tx_hash(),
                                         env.evm_env.block_env.number
                                     )
-                                });
+                                })?;
+                            } else if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                                match error {
+                                    // Reverted transactions should be skipped
+                                    EvmError::Execution(_) => (),
+                                    error => {
+                                        return Err(error).wrap_err_with(|| {
+                                            format!(
+                                                "Failed to deploy transaction: {:?} in block {}",
+                                                tx.tx_hash(),
+                                                env.evm_env.block_env.number
+                                            )
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
+                    trace!(target: "forge::verify", "block replay done");
 
-            // Replace the `input` with local creation code in the creation tx.
-            if let Some(TxKind::Call(to)) = transaction.kind() {
-                if to == DEFAULT_CREATE2_DEPLOYER {
-                    let mut input = transaction.input.input.unwrap()[..32].to_vec(); // Salt
-                    input.extend_from_slice(&local_bytecode_vec);
-                    transaction.input = TransactionInput::both(Bytes::from(input));
+                    // Replace the `input` with local creation code in the creation tx.
+                    if let Some(TxKind::Call(to)) = transaction.kind() {
+                        if to == DEFAULT_CREATE2_DEPLOYER {
+                            let mut input =
+                                transaction.input.input.unwrap()[..32].to_vec(); // Salt
+                            input.extend_from_slice(&local_bytecode_vec);
+                            transaction.input = TransactionInput::both(Bytes::from(input));
 
-                    // Deploy default CREATE2 deployer
-                    executor.deploy_create2_deployer()?;
-                }
-            } else {
-                transaction.input = TransactionInput::both(Bytes::from(local_bytecode_vec));
-            }
+                            // Deploy default CREATE2 deployer
+                            executor.deploy_create2_deployer()?;
+                        }
+                    } else {
+                        transaction.input =
+                            TransactionInput::both(Bytes::from(local_bytecode_vec));
+                    }
 
-            // configure_req__env(&mut env, &transaction.inner);
-            configure_tx_req_env(&mut env.as_env_mut(), &transaction, None)
-                .wrap_err("Failed to configure tx request env")?;
+                    // configure_req__env(&mut env, &transaction.inner);
+                    configure_tx_req_env(&mut env.as_env_mut(), &transaction, None)
+                        .wrap_err("Failed to configure tx request env")?;
 
-            let fork_address = crate::utils::deploy_contract(
-                &mut executor,
-                &env,
-                config.evm_spec_id(),
-                transaction.to,
-            )?;
+                    let fork_address = crate::utils::deploy_contract(
+                        &mut executor,
+                        &env,
+                        config.evm_spec_id(),
+                        transaction.to,
+                    )?;
+                    trace!(target: "forge::verify", "fetching runtime code");
 
-            // State committed using deploy_with_env, now get the runtime bytecode from the db.
-            let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
-                &mut executor,
-                &provider,
-                self.address,
-                fork_address,
-                Some(simulation_block),
+                    // State committed using deploy_with_env, now get the runtime bytecode from the db.
+                    let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
+                        &mut executor,
+                        &provider,
+                        self.address,
+                        fork_address,
+                        Some(simulation_block),
+                    )
+                    .await?;
+
+                    // Compare the onchain runtime bytecode with the runtime code from the fork.
+                    let match_type = crate::utils::match_bytecodes(
+                        fork_runtime_code.original_byte_slice(),
+                        &onchain_runtime_code,
+                        &constructor_args,
+                        true,
+                        config.bytecode_hash,
+                    );
+
+                    crate::utils::print_result(
+                        match_type,
+                        BytecodeType::Runtime,
+                        &mut json_results,
+                        etherscan_metadata,
+                        &config,
+                    );
+                    Ok::<(), eyre::Report>(())
+                },
             )
-            .await?;
+            .await;
 
-            // Compare the onchain runtime bytecode with the runtime code from the fork.
-            let match_type = crate::utils::match_bytecodes(
-                fork_runtime_code.original_byte_slice(),
-                &onchain_runtime_code,
-                &constructor_args,
-                true,
-                config.bytecode_hash,
-            );
-
-            crate::utils::print_result(
-                match_type,
-                BytecodeType::Runtime,
-                &mut json_results,
-                etherscan_metadata,
-                &config,
-            );
+            match runtime_result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return Err(e),
+                Err(_elapsed) => {
+                    return Err(eyre::eyre!(
+                        "Runtime verification timed out after {} seconds. \
+                         The RPC may be slow or not support historical state. \
+                         Set eth_rpc_timeout in foundry.toml, use --ignore runtime to skip runtime verification, or use a different RPC endpoint.",
+                        RUNTIME_VERIFICATION_TIMEOUT_SECS
+                    ));
+                }
+            }
         }
 
         if shell::is_json() {
