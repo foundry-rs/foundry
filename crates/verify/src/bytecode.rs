@@ -335,6 +335,7 @@ impl VerifyBytecodeArgs {
             );
         };
 
+        let creation_block = transaction.block_number;
         let mut transaction: TransactionRequest = match transaction.inner.inner.inner() {
             AnyTxEnvelope::Ethereum(tx) => tx.clone().into(),
             AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
@@ -440,7 +441,7 @@ impl VerifyBytecodeArgs {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
                 Some(_) => eyre::bail!("Invalid block number"),
                 None => {
-                    transaction.block_number.ok_or_else(|| {
+                    creation_block.ok_or_else(|| {
                         eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
                     })?
                 }
