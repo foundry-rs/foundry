@@ -61,7 +61,14 @@ impl ExternalIdentifier {
         }
         if let Some(config) = config {
             debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            fetchers.push(Arc::new(EtherscanFetcher::new(config.into_client()?)));
+            match config.into_client() {
+                Ok(client) => {
+                    fetchers.push(Arc::new(EtherscanFetcher::new(client)));
+                }
+                Err(err) => {
+                    warn!(target: "evm::traces::external", ?err, "failed to create etherscan client");
+                }
+            }
         }
         if fetchers.is_empty() {
             debug!(target: "evm::traces::external", "no fetchers enabled");
