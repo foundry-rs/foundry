@@ -1,4 +1,5 @@
 use crate::mutation::mutant::Mutant;
+use foundry_config::MutatorType;
 
 use super::{
     MutationContext, Mutator, assembly_mutator, assignment_mutator, binary_op_mutator,
@@ -11,16 +12,41 @@ pub struct MutatorRegistry {
 }
 
 impl MutatorRegistry {
+    #[cfg(test)]
     pub fn default() -> Self {
+        Self::from_enabled(&MutatorType::all())
+    }
+
+    pub fn from_enabled(enabled: &[MutatorType]) -> Self {
         let mut registry = Self { mutators: Vec::new() };
 
-        registry.mutators.push(Box::new(assembly_mutator::AssemblyMutator::new()));
-        registry.mutators.push(Box::new(assignment_mutator::AssignmentMutator));
-        registry.mutators.push(Box::new(binary_op_mutator::BinaryOpMutator));
-        registry.mutators.push(Box::new(delete_expression_mutator::DeleteExpressionMutator));
-        registry.mutators.push(Box::new(elim_delegate_mutator::ElimDelegateMutator));
-        registry.mutators.push(Box::new(require_mutator::RequireMutator));
-        registry.mutators.push(Box::new(unary_op_mutator::UnaryOperatorMutator));
+        for ty in enabled {
+            match ty {
+                MutatorType::Assembly => {
+                    registry.mutators.push(Box::new(assembly_mutator::AssemblyMutator::new()));
+                }
+                MutatorType::Assignment => {
+                    registry.mutators.push(Box::new(assignment_mutator::AssignmentMutator));
+                }
+                MutatorType::BinaryOp => {
+                    registry.mutators.push(Box::new(binary_op_mutator::BinaryOpMutator));
+                }
+                MutatorType::DeleteExpression => {
+                    registry
+                        .mutators
+                        .push(Box::new(delete_expression_mutator::DeleteExpressionMutator));
+                }
+                MutatorType::ElimDelegate => {
+                    registry.mutators.push(Box::new(elim_delegate_mutator::ElimDelegateMutator));
+                }
+                MutatorType::Require => {
+                    registry.mutators.push(Box::new(require_mutator::RequireMutator));
+                }
+                MutatorType::UnaryOp => {
+                    registry.mutators.push(Box::new(unary_op_mutator::UnaryOperatorMutator));
+                }
+            }
+        }
 
         registry
     }
