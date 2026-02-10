@@ -8,6 +8,7 @@ use crate::mutation::{
     mutant::{Mutant, OwnedLiteral},
     mutators::{MutationContext, mutator_registry::MutatorRegistry},
 };
+use foundry_config::MutatorType;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AssignVarTypes {
@@ -26,7 +27,20 @@ pub struct MutantVisitor<'src> {
 }
 
 impl<'src> MutantVisitor<'src> {
-    /// Use all mutator from registry::default
+    /// Create a visitor with the specified mutator operators enabled
+    pub fn with_operators(path: PathBuf, operators: &[MutatorType]) -> Self {
+        Self {
+            mutation_to_conduct: Vec::new(),
+            mutator_registry: MutatorRegistry::from_enabled(operators),
+            path,
+            span_filter: None,
+            skipped_count: 0,
+            source: None,
+        }
+    }
+
+    /// Use all mutators from registry (all operators enabled)
+    #[cfg(test)]
     pub fn default(path: PathBuf) -> Self {
         Self {
             mutation_to_conduct: Vec::new(),

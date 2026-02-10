@@ -370,8 +370,9 @@ impl MutationHandler {
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            // Create visitor with adaptive span filter and source code for original text
-            let mut mutant_visitor = MutantVisitor::default(path.clone())
+            // Create visitor with configured operators, adaptive span filter, and source code
+            let operators = self.config.mutation.enabled_operators();
+            let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
                 .with_span_filter(move |span| survived_spans_clone.should_skip(span))
                 .with_source(&target_content);
             let _ = mutant_visitor.visit_source_unit(&ast);

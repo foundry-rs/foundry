@@ -110,6 +110,9 @@ pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
 mod invariant;
 pub use invariant::InvariantConfig;
 
+pub mod mutation;
+pub use mutation::{MutationConfig, MutatorType};
+
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 
@@ -352,6 +355,8 @@ pub struct Config {
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
     pub invariant: InvariantConfig,
+    /// Configuration for mutation testing
+    pub mutation: MutationConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to allow `expectRevert` for internal functions.
@@ -701,6 +706,7 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "mutation",
         "labels",
         "dependencies",
         "soldeer",
@@ -2574,6 +2580,7 @@ impl Default for Config {
             show_progress: false,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
+            mutation: MutationConfig::default(),
             always_use_create_2_factory: false,
             ffi: false,
             allow_internal_expect_revert: false,
