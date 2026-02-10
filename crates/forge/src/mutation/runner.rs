@@ -39,6 +39,18 @@ fn is_safe_relative_path(p: &Path) -> bool {
         && p.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
+/// Validates that `rel` is a safe relative path. Returns an error mentioning `label` and `orig`
+/// if the path contains `..`, is absolute, or otherwise escapes the project root.
+fn ensure_safe_relative_path(rel: &Path, label: &str, orig: &Path) -> Result<()> {
+    if !is_safe_relative_path(rel) {
+        eyre::bail!(
+            "mutation testing requires {label} directory under project root, got: {}",
+            orig.display()
+        );
+    }
+    Ok(())
+}
+
 /// Result of testing a single mutant.
 #[derive(Debug, Clone)]
 pub struct MutantTestResult {
@@ -133,9 +145,11 @@ fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
 /// Uses symlinks for lib directories (read-only dependencies) to avoid expensive copies.
 /// Preserves the project's directory layout (handles custom src/test paths).
 fn copy_project_for_mutation(config: &Config, temp_dir: &Path) -> Result<()> {
-    // Compute relative paths to preserve project layout
     let src_rel = relative_to_root(&config.root, &config.src);
+    ensure_safe_relative_path(&src_rel, "src", &config.src)?;
+
     let test_rel = relative_to_root(&config.root, &config.test);
+    ensure_safe_relative_path(&test_rel, "test", &config.test)?;
 
     // Copy src directory (will be mutated)
     copy_dir_recursive(&config.src, &temp_dir.join(&src_rel))?;
@@ -151,6 +165,7 @@ fn copy_project_for_mutation(config: &Config, temp_dir: &Path) -> Result<()> {
     for lib_path in &config.libs {
         if lib_path.exists() {
             let lib_rel = relative_to_root(&config.root, lib_path);
+            ensure_safe_relative_path(&lib_rel, "lib", lib_path)?;
             let target = temp_dir.join(&lib_rel);
 
             if !target.exists() {
@@ -395,13 +410,7 @@ pub fn run_mutations_parallel_with_progress(
         })?
         .to_path_buf();
 
-    // Safety check: ensure source_relative is safe (no .., no absolute, no escaping)
-    if !is_safe_relative_path(&source_relative) {
-        return Err(eyre::eyre!(
-            "Unsafe source path (contains '..' or is absolute): {}",
-            source_relative.display()
-        ));
-    }
+    ensure_safe_relative_path(&source_relative, "source", &source_abs)?;
 
     // Default to available parallelism if num_workers is 0
     let num_workers = if num_workers == 0 {
@@ -486,12 +495,11 @@ pub fn run_mutations_parallel_with_progress(
     // Clear progress and handle cancellation
     if let Some(ref progress) = shared_state.progress {
         progress.clear();
-        if shared_state.is_cancelled() {
+        if shared_state.is_cancelled() && !shared_state.silent {
             let _ = sh_println!(
                 "\nMutation testing cancelled. Showing results for {} completed mutants.\n",
                 results.len()
             );
-            // Return results so report is shown, then caller should exit
         }
     }
 
@@ -719,7 +727,7 @@ impl ParallelMutationRunner {
         handler.read_source_contract()?;
 
         // Generate mutants
-        handler.generate_ast().await;
+        handler.generate_ast(false).await?;
         let mutants = handler.mutations.clone();
 
         if mutants.is_empty() {

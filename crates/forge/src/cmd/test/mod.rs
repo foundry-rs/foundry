@@ -4,7 +4,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
-    mutation::{MutationConfig, run_mutation_testing},
+    mutation::{MutationRunConfig, run_mutation_testing},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -458,7 +458,7 @@ impl TestArgs {
 
             let json_output = shell::is_json();
 
-            let mutation_config = MutationConfig {
+            let mutation_config = MutationRunConfig {
                 mutate_paths: mutate.clone(),
                 mutate_path_pattern: self.mutate_path.clone(),
                 mutate_contract_pattern: self.mutate_contract.clone(),
@@ -509,7 +509,9 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
+        let silent = self.gas_report && shell::is_json()
+            || self.summary && shell::is_json()
+            || self.mutate.is_some() && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
@@ -563,7 +565,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && !self.summary && shell::is_json() {
+        if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {

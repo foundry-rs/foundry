@@ -248,12 +248,10 @@ Each represents a potential bug that your tests would miss.
      return a + b;
      Mutation:
        - a + b
-       + a | b
 ...
      return a + b;
      Mutation:
        - a + b
-       + a ^ b
 ...
 ────────────────────────────────────────────────────────────
 ✓ 8 mutants killed (tests caught these mutations)

@@ -8,7 +8,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::sh_println;
 use foundry_compilers::{
@@ -25,7 +25,7 @@ use crate::mutation::{
 };
 
 /// Configuration for mutation testing run.
-pub struct MutationConfig {
+pub struct MutationRunConfig {
     /// Paths to mutate (if empty, use all source files).
     pub mutate_paths: Vec<PathBuf>,
     /// Optional glob pattern to filter paths.
@@ -40,7 +40,7 @@ pub struct MutationConfig {
     pub json_output: bool,
 }
 
-impl MutationConfig {
+impl MutationRunConfig {
     /// Determine number of workers, using auto-detection if 0.
     pub fn effective_workers(&self) -> usize {
         if self.num_workers == 0 {
@@ -74,7 +74,7 @@ pub async fn run_mutation_testing(
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
     env: Env,
-    mutation_config: MutationConfig,
+    mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
@@ -129,7 +129,7 @@ pub async fn run_mutation_testing(
         let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
             ms
         } else {
-            handler.generate_ast().await;
+            handler.generate_ast(json_output).await?;
             handler.mutations.clone()
         };
 
@@ -227,7 +227,7 @@ pub async fn run_mutation_testing(
 fn resolve_mutate_paths(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
-    mutation_config: &MutationConfig,
+    mutation_config: &MutationRunConfig,
 ) -> Result<Vec<PathBuf>> {
     let paths = if let Some(pattern) = &mutation_config.mutate_path_pattern {
         // If --mutate-path is provided, use it to filter paths
@@ -242,8 +242,8 @@ fn resolve_mutate_paths(
                     && !entry.is_sol_test()
                     && output
                         .artifact_ids()
-                        .find(|(id, _)| id.source == *entry)
-                        .is_some_and(|(id, _)| contract_pattern.is_match(&id.name))
+                        .filter(|(id, _)| id.source == *entry)
+                        .any(|(id, _)| contract_pattern.is_match(&id.name))
             })
             .collect()
     } else if mutation_config.mutate_paths.is_empty() {
@@ -252,8 +252,36 @@ fn resolve_mutate_paths(
             .filter(|entry| entry.is_sol() && !entry.is_sol_test())
             .collect()
     } else {
-        // If --mutate is passed with arguments, use those paths
-        mutation_config.mutate_paths.clone()
+        // If --mutate is passed with arguments, validate and use those paths
+        let root_canon =
+            config.root.canonicalize().wrap_err("failed to canonicalize project root")?;
+        let mut validated = Vec::with_capacity(mutation_config.mutate_paths.len());
+        for path in &mutation_config.mutate_paths {
+            let resolved = if path.is_relative() { config.root.join(path) } else { path.clone() };
+            if !resolved.exists() {
+                eyre::bail!("mutate path does not exist: {}", resolved.display());
+            }
+            if !resolved.is_file() {
+                eyre::bail!("mutate path is not a file: {}", resolved.display());
+            }
+            let canon = resolved
+                .canonicalize()
+                .wrap_err_with(|| format!("failed to canonicalize: {}", resolved.display()))?;
+            if !canon.starts_with(&root_canon) {
+                eyre::bail!("mutate path is outside the project root: {}", resolved.display());
+            }
+            if !canon.is_sol() {
+                eyre::bail!("mutate path is not a Solidity file: {}", resolved.display());
+            }
+            if canon.is_sol_test() {
+                eyre::bail!(
+                    "mutate path is a test file, not a source file: {}",
+                    resolved.display()
+                );
+            }
+            validated.push(canon);
+        }
+        validated
     };
 
     Ok(paths)

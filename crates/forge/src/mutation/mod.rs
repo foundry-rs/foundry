@@ -5,7 +5,7 @@ use std::{
 };
 
 pub use crate::mutation::{
-    orchestrator::{MutationConfig, MutationRunResult, run_mutation_testing},
+    orchestrator::{MutationRunConfig, MutationRunResult, run_mutation_testing},
     progress::MutationProgress,
     reporter::MutationReporter,
     runner::{
@@ -317,51 +317,61 @@ impl MutationHandler {
 
     // Note: we now get the build hash directly from the recent compile output (see test flow)
 
-    /// Persists cached mutants using build hash for cache invalidation.
-    /// Writes to `cache/mutation/<hash>_<filename>.mutants`.
-    pub fn persist_cached_mutants(&self, hash: &str, mutants: &[Mutant]) -> std::io::Result<()> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        std::fs::create_dir_all(&cache_dir)?;
-
-        let filename =
+    /// Returns the cache file path for the given build hash and extension.
+    /// The filename encodes a hash of the full contract path to prevent collisions
+    /// between files with the same stem in different directories.
+    fn cache_file_path(&self, hash: &str, ext: &str) -> PathBuf {
+        use std::{
+            collections::hash_map::DefaultHasher,
+            hash::{Hash, Hasher},
+        };
+        let mut hasher = DefaultHasher::new();
+        self.contract_to_mutate.hash(&mut hasher);
+        let path_hash = hasher.finish();
+        let stem =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{hash}_{filename}.mutants"));
-        let json = serde_json::to_string_pretty(mutants).map_err(std::io::Error::other)?;
-        std::fs::write(cache_file, json)?;
+        self.config
+            .root
+            .join(&self.config.mutation_dir)
+            .join(format!("{hash}_{stem}_{path_hash:x}.{ext}"))
+    }
 
-        Ok(())
+    /// Persists cached mutants using build hash for cache invalidation.
+    pub fn persist_cached_mutants(&self, hash: &str, mutants: &[Mutant]) -> std::io::Result<()> {
+        let cache_file = self.cache_file_path(hash, "mutants");
+        if let Some(dir) = cache_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let json = serde_json::to_string_pretty(mutants).map_err(std::io::Error::other)?;
+        std::fs::write(cache_file, json)
     }
 
     /// Persists results for mutants using build hash for cache invalidation.
-    /// Writes to `cache/mutation/<hash>_<filename>.results`.
     pub fn persist_cached_results(
         &self,
         hash: &str,
         results: &[(Mutant, crate::mutation::mutant::MutationResult)],
     ) -> std::io::Result<()> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        std::fs::create_dir_all(&cache_dir)?;
-
-        let filename =
-            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{hash}_{filename}.results"));
+        let cache_file = self.cache_file_path(hash, "results");
+        if let Some(dir) = cache_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let json = serde_json::to_string_pretty(results).map_err(std::io::Error::other)?;
-        std::fs::write(cache_file, json)?;
-
-        Ok(())
+        std::fs::write(cache_file, json)
     }
 
     /// Read a source string, and for each contract found, gets its ast and visit it to list
-    /// all mutations to conduct
-    pub async fn generate_ast(&mut self) {
+    /// all mutations to conduct.
+    ///
+    /// When `silent` is true, suppresses informational output (for JSON mode).
+    pub async fn generate_ast(&mut self, silent: bool) -> eyre::Result<()> {
         let path = &self.contract_to_mutate;
         let target_content = Arc::clone(&self.src);
         let sess = Session::builder().with_silent_emitter(None).build();
 
-        // Clone survived_spans for use in the closure
         let survived_spans_clone = self.survived_spans.clone();
 
-        let _ = sess.enter(|| -> solar::interface::Result<()> {
+        let result = sess.enter(|| -> solar::interface::Result<Vec<Mutant>> {
             let arena = solar::ast::Arena::new();
             let mut parser =
                 Parser::from_lazy_source_code(&sess, &arena, FileName::from(path.clone()), || {
@@ -370,86 +380,46 @@ impl MutationHandler {
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            // Create visitor with configured operators, adaptive span filter, and source code
             let operators = self.config.mutation.enabled_operators();
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
                 .with_span_filter(move |span| survived_spans_clone.should_skip(span))
                 .with_source(&target_content);
             let _ = mutant_visitor.visit_source_unit(&ast);
-            self.mutations.extend(mutant_visitor.mutation_to_conduct);
-            // Log skipped mutations for debugging
-            if mutant_visitor.skipped_count > 0 {
+
+            if mutant_visitor.skipped_count > 0 && !silent {
                 let _ = sh_println!(
                     "Adaptive mutation: Skipped {} mutation points (already have surviving mutations)",
                     mutant_visitor.skipped_count
                 );
             }
-            Ok(())
+
+            Ok(mutant_visitor.mutation_to_conduct)
         });
-    }
 
-    /// Based on a given mutation, emit the corresponding mutated solidity code and write it to disk
-    pub fn generate_mutated_solidity(&self, mutation: &Mutant) {
-        let span = mutation.span;
-        let replacement = mutation.mutation.to_string();
-
-        let src_content = Arc::clone(&self.src);
-
-        let start_pos = span.lo().0 as usize;
-        let end_pos = span.hi().0 as usize;
-
-        let before = &src_content[..start_pos];
-        let after = &src_content[end_pos..];
-
-        let mut new_content = String::with_capacity(before.len() + replacement.len() + after.len());
-        new_content.push_str(before);
-        new_content.push_str(&replacement);
-        new_content.push_str(after);
-
-        std::fs::write(&self.contract_to_mutate, new_content).unwrap_or_else(|_| {
-            panic!("Failed to write to target file {:?}", &self.contract_to_mutate)
-        });
-    }
-
-    // @todo src to mutate should be in a tmp dir for safety (and modify config accordingly)
-    /// Restore the original source contract to the target file (end of mutation tests)
-    pub fn restore_original_source(&self) {
-        std::fs::write(&self.contract_to_mutate, &*self.src).unwrap_or_else(|_| {
-            panic!("Failed to write to target file {:?}", &self.contract_to_mutate)
-        });
+        match result {
+            Ok(mutations) => {
+                self.mutations.extend(mutations);
+                Ok(())
+            }
+            Err(_) => {
+                eyre::bail!("failed to parse {}", path.display());
+            }
+        }
     }
 
     /// Retrieves cached mutants using build hash.
-    /// Reads from `cache/mutation/<hash>_<filename>.mutants`.
     pub fn retrieve_cached_mutants(&self, hash: &str) -> Option<Vec<Mutant>> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let filename =
-            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{hash}_{filename}.mutants"));
-
-        if !cache_file.exists() {
-            return None;
-        }
-
+        let cache_file = self.cache_file_path(hash, "mutants");
         let data = std::fs::read_to_string(cache_file).ok()?;
         serde_json::from_str(&data).ok()
     }
 
     /// Retrieves cached results using build hash.
-    /// Reads from `cache/mutation/<hash>_<filename>.results`.
     pub fn retrieve_cached_mutant_results(
         &self,
         hash: &str,
     ) -> Option<Vec<(Mutant, MutationResult)>> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let filename =
-            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{hash}_{filename}.results"));
-
-        if !cache_file.exists() {
-            return None;
-        }
-
+        let cache_file = self.cache_file_path(hash, "results");
         let data = std::fs::read_to_string(cache_file).ok()?;
         serde_json::from_str(&data).ok()
     }
@@ -465,33 +435,19 @@ impl MutationHandler {
     }
 
     /// Persist survived spans to cache for adaptive mutation testing.
-    /// Writes to `cache/mutation/<hash>_<filename>.survived`.
     pub fn persist_survived_spans(&self, hash: &str) -> std::io::Result<()> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        std::fs::create_dir_all(&cache_dir)?;
-
-        let filename =
-            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{hash}_{filename}.survived"));
-
+        let cache_file = self.cache_file_path(hash, "survived");
+        if let Some(dir) = cache_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let spans = self.survived_spans.to_vec();
         let json = serde_json::to_string_pretty(&spans).map_err(std::io::Error::other)?;
-        std::fs::write(cache_file, json)?;
-
-        Ok(())
+        std::fs::write(cache_file, json)
     }
 
     /// Retrieve survived spans from cache.
-    /// Reads from `cache/mutation/<hash>_<filename>.survived`.
     pub fn retrieve_survived_spans(&mut self, hash: &str) -> bool {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let filename =
-            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{hash}_{filename}.survived"));
-
-        if !cache_file.exists() {
-            return false;
-        }
+        let cache_file = self.cache_file_path(hash, "survived");
 
         if let Ok(data) = std::fs::read_to_string(cache_file)
             && let Ok(pairs) = serde_json::from_str::<Vec<(u32, u32)>>(&data)

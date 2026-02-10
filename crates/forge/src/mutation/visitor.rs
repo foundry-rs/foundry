@@ -105,7 +105,9 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
             builder = builder.with_source(src);
         }
 
-        let context = builder.build().unwrap();
+        let context = builder
+            .build()
+            .expect("MutationContext requires both path and span for variable definition");
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
         self.walk_variable_definition(var)
@@ -129,7 +131,8 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
             builder = builder.with_source(src);
         }
 
-        let context = builder.build().unwrap();
+        let context =
+            builder.build().expect("MutationContext requires both path and span for expression");
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
         self.walk_expr(expr)
@@ -152,7 +155,9 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
             builder = builder.with_source(src);
         }
 
-        let context = builder.build().unwrap();
+        let context = builder
+            .build()
+            .expect("MutationContext requires both path and span for yul expression");
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
         self.walk_yul_expr(expr)
