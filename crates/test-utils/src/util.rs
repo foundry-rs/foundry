@@ -1,6 +1,4 @@
-use foundry_compilers::{
-    Project, ProjectCompileOutput, Vyper, project_util::copy_dir, utils::RuntimeOrHandle,
-};
+use foundry_compilers::{Project, ProjectCompileOutput, Vyper, utils::RuntimeOrHandle};
 use foundry_config::Config;
 use std::{
     env,
@@ -10,6 +8,11 @@ use std::{
     process::Command,
     sync::LazyLock,
 };
+
+/// Directories to skip when copying project directories.
+/// These are build artifacts and runtime-generated files that should not be copied to temp
+/// workspaces.
+const SKIP_DIRS: &[&str] = &["out", "cache", "broadcast"];
 
 pub use crate::{ext::*, prj::*};
 
@@ -101,8 +104,8 @@ pub fn initialize(target: &Path) {
             // Remove the existing template, if any.
             let _ = fs::remove_dir_all(tpath);
 
-            // Copy the template to the global template path.
-            pretty_err(tpath, copy_dir(prj.root(), tpath));
+            // Copy the template to the global template path, excluding build artifacts.
+            pretty_err(tpath, copy_dir_filtered(prj.root(), tpath));
 
             // Update lockfile to mark that template is initialized.
             write.set_len(0).unwrap();
@@ -117,7 +120,7 @@ pub fn initialize(target: &Path) {
 
     test_debug!("- copying template dir from {}", tpath.display());
     pretty_err(target, fs::create_dir_all(target));
-    pretty_err(target, copy_dir(tpath, target));
+    pretty_err(target, copy_dir_filtered(tpath, target));
 }
 
 /// Compile the project with a lock for the cache.
@@ -224,4 +227,38 @@ pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T
 pub fn read_string(path: impl AsRef<Path>) -> String {
     let path = path.as_ref();
     pretty_err(path, std::fs::read_to_string(path))
+}
+
+/// Copies the directory at `src` to `dst`, skipping build artifact directories.
+///
+/// This is similar to `foundry_compilers::project_util::copy_dir`, but skips directories
+/// like `out/`, `cache/`, and `broadcast/` which are build artifacts that should not be
+/// copied to temporary test workspaces.
+pub fn copy_dir_filtered(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    copy_dir_filtered_inner(src, dst, true)
+}
+
+fn copy_dir_filtered_inner(src: &Path, dst: &Path, is_root: bool) -> std::io::Result<()> {
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if ty.is_dir() {
+            // Skip build artifact directories at the root level
+            if is_root
+                && let Some(name) = entry.file_name().to_str()
+                && SKIP_DIRS.contains(&name)
+            {
+                continue;
+            }
+            fs::create_dir_all(&dst_path)?;
+            copy_dir_filtered_inner(&src_path, &dst_path, false)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
