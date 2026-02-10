@@ -91,4 +91,4 @@ jobs:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           update_existing: true
-          filename: .github/FLAKY_TEST_FAILURE_TEMPLATE.md
+          filename: .github/FLAKY_TEST_ISOLATE_FAILURE_TEMPLATE.md
