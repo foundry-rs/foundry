@@ -1821,7 +1821,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.named_args_directly_in_chain())
+                    .without_ind(self.call_stack.has_indented_parent_chain())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
