@@ -504,12 +504,11 @@ pub fn run_mutations_parallel_with_progress(
     // Clear progress and handle cancellation
     if let Some(ref progress) = shared_state.progress {
         progress.clear();
-        if shared_state.is_cancelled() {
+        if shared_state.is_cancelled() && !shared_state.silent {
             let _ = sh_println!(
                 "\nMutation testing cancelled. Showing results for {} completed mutants.\n",
                 results.len()
             );
-            // Return results so report is shown, then caller should exit
         }
     }
 
@@ -737,7 +736,7 @@ impl ParallelMutationRunner {
         handler.read_source_contract()?;
 
         // Generate mutants
-        handler.generate_ast().await?;
+        handler.generate_ast(false).await?;
         let mutants = handler.mutations.clone();
 
         if mutants.is_empty() {

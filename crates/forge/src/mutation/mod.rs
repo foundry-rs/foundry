@@ -363,8 +363,10 @@ impl MutationHandler {
     }
 
     /// Read a source string, and for each contract found, gets its ast and visit it to list
-    /// all mutations to conduct
-    pub async fn generate_ast(&mut self) -> eyre::Result<()> {
+    /// all mutations to conduct.
+    ///
+    /// When `silent` is true, suppresses informational output (for JSON mode).
+    pub async fn generate_ast(&mut self, silent: bool) -> eyre::Result<()> {
         let path = &self.contract_to_mutate;
         let target_content = Arc::clone(&self.src);
         let sess = Session::builder().with_silent_emitter(None).build();
@@ -386,7 +388,7 @@ impl MutationHandler {
                 .with_source(&target_content);
             let _ = mutant_visitor.visit_source_unit(&ast);
 
-            if mutant_visitor.skipped_count > 0 {
+            if mutant_visitor.skipped_count > 0 && !silent {
                 let _ = sh_println!(
                     "Adaptive mutation: Skipped {} mutation points (already have surviving mutations)",
                     mutant_visitor.skipped_count
@@ -415,6 +417,16 @@ impl MutationHandler {
         let src_bytes = src_content.as_bytes();
         let start_pos = span.lo().0 as usize;
         let end_pos = span.hi().0 as usize;
+
+        if start_pos > end_pos || end_pos > src_bytes.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "invalid span bounds for mutation: {start_pos}..{end_pos} (source len={})",
+                    src_bytes.len()
+                ),
+            ));
+        }
 
         let mut new_content = Vec::with_capacity(src_bytes.len() + replacement.len());
         new_content.extend_from_slice(&src_bytes[..start_pos]);

@@ -509,7 +509,9 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
+        let silent = self.gas_report && shell::is_json()
+            || self.summary && shell::is_json()
+            || self.mutate.is_some() && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
@@ -563,7 +565,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && !self.summary && shell::is_json() {
+        if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {

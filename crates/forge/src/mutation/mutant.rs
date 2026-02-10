@@ -316,16 +316,28 @@ where
 }
 
 impl Mutant {
-    /// Returns a relative path string (strips common prefixes like absolute paths)
+    /// Returns a relative path string.
+    ///
+    /// Walks ancestor components looking for a well-known directory root
+    /// (`src`, `test`, `lib`, `contracts`) so the output is cross-platform and
+    /// does not rely on OS-specific path separators.
     pub fn relative_path(&self) -> String {
-        let path_str = self.path.display().to_string();
-        // Try to find src/, test/, or lib/ and show from there
-        for prefix in ["src/", "test/", "lib/", "contracts/"] {
-            if let Some(idx) = path_str.find(prefix) {
-                return path_str[idx..].to_string();
+        let components: Vec<_> = self.path.components().collect();
+        for (i, comp) in components.iter().enumerate() {
+            if let std::path::Component::Normal(name) = comp {
+                let s = name.to_string_lossy();
+                if matches!(s.as_ref(), "src" | "test" | "lib" | "contracts") {
+                    let parts: Vec<_> = components[i..]
+                        .iter()
+                        .filter_map(|c| match c {
+                            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
+                            _ => None,
+                        })
+                        .collect();
+                    return parts.join("/");
+                }
             }
         }
-        // Fallback to just filename
         self.path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string()
     }
 

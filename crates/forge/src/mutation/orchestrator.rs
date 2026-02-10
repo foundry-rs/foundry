@@ -8,7 +8,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::sh_println;
 use foundry_compilers::{
@@ -129,7 +129,7 @@ pub async fn run_mutation_testing(
         let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
             ms
         } else {
-            handler.generate_ast().await?;
+            handler.generate_ast(json_output).await?;
             handler.mutations.clone()
         };
 
@@ -242,8 +242,8 @@ fn resolve_mutate_paths(
                     && !entry.is_sol_test()
                     && output
                         .artifact_ids()
-                        .find(|(id, _)| id.source == *entry)
-                        .is_some_and(|(id, _)| contract_pattern.is_match(&id.name))
+                        .filter(|(id, _)| id.source == *entry)
+                        .any(|(id, _)| contract_pattern.is_match(&id.name))
             })
             .collect()
     } else if mutation_config.mutate_paths.is_empty() {
@@ -252,8 +252,36 @@ fn resolve_mutate_paths(
             .filter(|entry| entry.is_sol() && !entry.is_sol_test())
             .collect()
     } else {
-        // If --mutate is passed with arguments, use those paths
-        mutation_config.mutate_paths.clone()
+        // If --mutate is passed with arguments, validate and use those paths
+        let root_canon =
+            config.root.canonicalize().wrap_err("failed to canonicalize project root")?;
+        let mut validated = Vec::with_capacity(mutation_config.mutate_paths.len());
+        for path in &mutation_config.mutate_paths {
+            let resolved = if path.is_relative() { config.root.join(path) } else { path.clone() };
+            if !resolved.exists() {
+                eyre::bail!("mutate path does not exist: {}", resolved.display());
+            }
+            if !resolved.is_file() {
+                eyre::bail!("mutate path is not a file: {}", resolved.display());
+            }
+            let canon = resolved
+                .canonicalize()
+                .wrap_err_with(|| format!("failed to canonicalize: {}", resolved.display()))?;
+            if !canon.starts_with(&root_canon) {
+                eyre::bail!("mutate path is outside the project root: {}", resolved.display());
+            }
+            if !canon.is_sol() {
+                eyre::bail!("mutate path is not a Solidity file: {}", resolved.display());
+            }
+            if canon.is_sol_test() {
+                eyre::bail!(
+                    "mutate path is a test file, not a source file: {}",
+                    resolved.display()
+                );
+            }
+            validated.push(canon);
+        }
+        validated
     };
 
     Ok(paths)
