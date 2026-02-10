@@ -317,7 +317,10 @@ impl MutationHandler {
 
     // Note: we now get the build hash directly from the recent compile output (see test flow)
 
-    fn cache_filename_prefix(&self) -> String {
+    /// Returns the cache file path for the given build hash and extension.
+    /// The filename encodes a hash of the full contract path to prevent collisions
+    /// between files with the same stem in different directories.
+    fn cache_file_path(&self, hash: &str, ext: &str) -> PathBuf {
         use std::{
             collections::hash_map::DefaultHasher,
             hash::{Hash, Hasher},
@@ -327,39 +330,34 @@ impl MutationHandler {
         let path_hash = hasher.finish();
         let stem =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        format!("{stem}_{path_hash:x}")
+        self.config
+            .root
+            .join(&self.config.mutation_dir)
+            .join(format!("{hash}_{stem}_{path_hash:x}.{ext}"))
     }
 
     /// Persists cached mutants using build hash for cache invalidation.
-    /// Writes to `cache/mutation/<hash>_<filename>.mutants`.
     pub fn persist_cached_mutants(&self, hash: &str, mutants: &[Mutant]) -> std::io::Result<()> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        std::fs::create_dir_all(&cache_dir)?;
-
-        let prefix = self.cache_filename_prefix();
-        let cache_file = cache_dir.join(format!("{hash}_{prefix}.mutants"));
+        let cache_file = self.cache_file_path(hash, "mutants");
+        if let Some(dir) = cache_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let json = serde_json::to_string_pretty(mutants).map_err(std::io::Error::other)?;
-        std::fs::write(cache_file, json)?;
-
-        Ok(())
+        std::fs::write(cache_file, json)
     }
 
     /// Persists results for mutants using build hash for cache invalidation.
-    /// Writes to `cache/mutation/<hash>_<filename>.results`.
     pub fn persist_cached_results(
         &self,
         hash: &str,
         results: &[(Mutant, crate::mutation::mutant::MutationResult)],
     ) -> std::io::Result<()> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        std::fs::create_dir_all(&cache_dir)?;
-
-        let prefix = self.cache_filename_prefix();
-        let cache_file = cache_dir.join(format!("{hash}_{prefix}.results"));
+        let cache_file = self.cache_file_path(hash, "results");
+        if let Some(dir) = cache_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let json = serde_json::to_string_pretty(results).map_err(std::io::Error::other)?;
-        std::fs::write(cache_file, json)?;
-
-        Ok(())
+        std::fs::write(cache_file, json)
     }
 
     /// Read a source string, and for each contract found, gets its ast and visit it to list
@@ -409,67 +407,19 @@ impl MutationHandler {
         }
     }
 
-    /// Based on a given mutation, emit the corresponding mutated solidity code and write it to disk
-    pub fn generate_mutated_solidity(&self, mutation: &Mutant) -> Result<(), std::io::Error> {
-        let span = mutation.span;
-        let replacement = mutation.mutation.to_string();
-        let src_content = Arc::clone(&self.src);
-        let src_bytes = src_content.as_bytes();
-        let start_pos = span.lo().0 as usize;
-        let end_pos = span.hi().0 as usize;
-
-        if start_pos > end_pos || end_pos > src_bytes.len() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "invalid span bounds for mutation: {start_pos}..{end_pos} (source len={})",
-                    src_bytes.len()
-                ),
-            ));
-        }
-
-        let mut new_content = Vec::with_capacity(src_bytes.len() + replacement.len());
-        new_content.extend_from_slice(&src_bytes[..start_pos]);
-        new_content.extend_from_slice(replacement.as_bytes());
-        new_content.extend_from_slice(&src_bytes[end_pos..]);
-
-        std::fs::write(&self.contract_to_mutate, new_content)
-    }
-
-    /// Restore the original source contract to the target file (end of mutation tests)
-    pub fn restore_original_source(&self) -> Result<(), std::io::Error> {
-        std::fs::write(&self.contract_to_mutate, &*self.src)
-    }
-
     /// Retrieves cached mutants using build hash.
-    /// Reads from `cache/mutation/<hash>_<filename>.mutants`.
     pub fn retrieve_cached_mutants(&self, hash: &str) -> Option<Vec<Mutant>> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let prefix = self.cache_filename_prefix();
-        let cache_file = cache_dir.join(format!("{hash}_{prefix}.mutants"));
-
-        if !cache_file.exists() {
-            return None;
-        }
-
+        let cache_file = self.cache_file_path(hash, "mutants");
         let data = std::fs::read_to_string(cache_file).ok()?;
         serde_json::from_str(&data).ok()
     }
 
     /// Retrieves cached results using build hash.
-    /// Reads from `cache/mutation/<hash>_<filename>.results`.
     pub fn retrieve_cached_mutant_results(
         &self,
         hash: &str,
     ) -> Option<Vec<(Mutant, MutationResult)>> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let prefix = self.cache_filename_prefix();
-        let cache_file = cache_dir.join(format!("{hash}_{prefix}.results"));
-
-        if !cache_file.exists() {
-            return None;
-        }
-
+        let cache_file = self.cache_file_path(hash, "results");
         let data = std::fs::read_to_string(cache_file).ok()?;
         serde_json::from_str(&data).ok()
     }
@@ -485,31 +435,19 @@ impl MutationHandler {
     }
 
     /// Persist survived spans to cache for adaptive mutation testing.
-    /// Writes to `cache/mutation/<hash>_<filename>.survived`.
     pub fn persist_survived_spans(&self, hash: &str) -> std::io::Result<()> {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        std::fs::create_dir_all(&cache_dir)?;
-
-        let prefix = self.cache_filename_prefix();
-        let cache_file = cache_dir.join(format!("{hash}_{prefix}.survived"));
-
+        let cache_file = self.cache_file_path(hash, "survived");
+        if let Some(dir) = cache_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let spans = self.survived_spans.to_vec();
         let json = serde_json::to_string_pretty(&spans).map_err(std::io::Error::other)?;
-        std::fs::write(cache_file, json)?;
-
-        Ok(())
+        std::fs::write(cache_file, json)
     }
 
     /// Retrieve survived spans from cache.
-    /// Reads from `cache/mutation/<hash>_<filename>.survived`.
     pub fn retrieve_survived_spans(&mut self, hash: &str) -> bool {
-        let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let prefix = self.cache_filename_prefix();
-        let cache_file = cache_dir.join(format!("{hash}_{prefix}.survived"));
-
-        if !cache_file.exists() {
-            return false;
-        }
+        let cache_file = self.cache_file_path(hash, "survived");
 
         if let Ok(data) = std::fs::read_to_string(cache_file)
             && let Ok(pairs) = serde_json::from_str::<Vec<(u32, u32)>>(&data)
