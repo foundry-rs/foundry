@@ -2,10 +2,10 @@ use rstest::*;
 
 use crate::mutation::mutators::{
     tests::helper::{MutatorTestCase, MutatorTester},
-    unary_op_mutator::UnaryOperatorMutator,
+    unary_op_mutator::UnaryOpMutator,
 };
 
-impl MutatorTester for UnaryOperatorMutator {}
+impl MutatorTester for UnaryOpMutator {}
 
 #[rstest]
 #[case::pre_inc("++x", Some(vec!["--x", "~x", "-x", "x++", "x--"]))]
@@ -20,7 +20,7 @@ fn test_unary_op_mutator_arithmetic(
     #[case] input: &'static str,
     #[case] expected_mutations: Option<Vec<&'static str>>,
 ) {
-    let mutator: UnaryOperatorMutator = UnaryOperatorMutator;
+    let mutator: UnaryOpMutator = UnaryOpMutator;
     let test_case = MutatorTestCase { input, expected_mutations };
-    UnaryOperatorMutator::test_mutator(mutator, test_case);
+    UnaryOpMutator::test_mutator(mutator, test_case);
 }
