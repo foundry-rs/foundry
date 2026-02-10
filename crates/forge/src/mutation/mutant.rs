@@ -341,26 +341,6 @@ impl Mutant {
         self.path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string()
     }
 
-    /// Compute line number from byte position given the source content
-    pub fn line_number(&self, source: &str) -> usize {
-        let pos = self.span.lo().0 as usize;
-        source.get(..pos).map(|s| s.lines().count()).unwrap_or(1).max(1)
-    }
-
-    /// Returns a formatted Solidity diff showing the mutation.
-    /// Format:
-    /// ```text
-    /// - original_code
-    /// + mutated_code
-    /// ```
-    pub fn format_diff(&self) -> String {
-        let original =
-            if self.original.is_empty() { "<unknown>".to_string() } else { self.original.clone() };
-        let mutated = self.mutation.to_string();
-
-        format!("- {}\n+ {}", original.trim(), mutated.trim())
-    }
-
     /// Returns a concise one-line description of the mutation (full original code)
     pub fn short_description(&self) -> String {
         let original = if self.original.is_empty() {
@@ -371,16 +351,6 @@ impl Mutant {
         let mutated = self.mutation.to_string();
 
         format!("`{}` → `{}`", original, mutated.trim())
-    }
-
-    /// Returns a description with line context
-    pub fn description_with_context(&self) -> String {
-        let mutation_desc = self.short_description();
-        if self.source_line.is_empty() {
-            mutation_desc
-        } else {
-            format!("{}\n     in: {}", mutation_desc, self.source_line)
-        }
     }
 }
 

@@ -4,21 +4,15 @@ use std::{
     sync::Arc,
 };
 
+use crate::mutation::{
+    mutant::{Mutant, MutationResult},
+    visitor::MutantVisitor,
+};
 pub use crate::mutation::{
     orchestrator::{MutationRunConfig, MutationRunResult, run_mutation_testing},
     progress::MutationProgress,
     reporter::MutationReporter,
-    runner::{
-        MutantTestResult, ParallelMutationRunner, run_mutations_parallel,
-        run_mutations_parallel_with_progress,
-    },
-};
-use crate::{
-    mutation::{
-        mutant::{Mutant, MutationResult},
-        visitor::MutantVisitor,
-    },
-    result::TestOutcome,
+    runner::run_mutations_parallel_with_progress,
 };
 use serde::Serialize;
 use solar::{
@@ -54,14 +48,6 @@ impl Default for MutationsSummary {
 impl MutationsSummary {
     pub fn new() -> Self {
         Self { dead: vec![], survived: vec![], invalid: vec![], skipped: vec![] }
-    }
-
-    pub fn update_valid_mutant(&mut self, outcome: &TestOutcome, mutant: Mutant) {
-        if outcome.failures().count() > 0 {
-            self.dead.push(mutant);
-        } else {
-            self.survived.push(mutant);
-        }
     }
 
     pub fn update_invalid_mutant(&mut self, mutant: Mutant) {
@@ -100,22 +86,6 @@ impl MutationsSummary {
         self.skipped.len()
     }
 
-    pub fn dead(&self) -> String {
-        self.dead.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
-    }
-
-    pub fn survived(&self) -> String {
-        self.survived.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
-    }
-
-    pub fn invalid(&self) -> String {
-        self.invalid.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
-    }
-
-    pub fn skipped(&self) -> String {
-        self.skipped.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
-    }
-
     pub fn get_dead(&self) -> &Vec<Mutant> {
         &self.dead
     }
@@ -126,10 +96,6 @@ impl MutationsSummary {
 
     pub fn get_invalid(&self) -> &Vec<Mutant> {
         &self.invalid
-    }
-
-    pub fn get_skipped(&self) -> &Vec<Mutant> {
-        &self.skipped
     }
 
     /// Merge another MutationsSummary into this one
@@ -308,11 +274,6 @@ impl MutationHandler {
     /// Get a reference to the current report
     pub fn get_report(&self) -> &MutationsSummary {
         &self.report
-    }
-
-    /// Get a mutable reference to the current report
-    pub fn get_report_mut(&mut self) -> &mut MutationsSummary {
-        &mut self.report
     }
 
     // Note: we now get the build hash directly from the recent compile output (see test flow)

@@ -25,7 +25,7 @@ use tempfile::TempDir;
 use crate::{
     MultiContractRunnerBuilder,
     mutation::{
-        MutationHandler, MutationsSummary, SurvivedSpans,
+        SurvivedSpans,
         mutant::{Mutant, MutationResult},
         progress::MutationProgress,
     },
@@ -331,35 +331,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Run mutation tests in parallel using isolated workspaces.
-///
-/// Each mutant is tested in complete isolation:
-/// 1. Create a temp directory with a copy of the project
-/// 2. Apply the mutation to the copied source
-/// 3. Compile and run tests with fail-fast
-/// 4. Collect results
-pub fn run_mutations_parallel(
-    mutants: Vec<Mutant>,
-    source_path: PathBuf,
-    original_source: Arc<String>,
-    config: Arc<Config>,
-    evm_opts: EvmOpts,
-    env: Env,
-    num_workers: usize,
-) -> Result<Vec<MutantTestResult>> {
-    run_mutations_parallel_with_progress(
-        mutants,
-        source_path,
-        original_source,
-        config,
-        evm_opts,
-        env,
-        num_workers,
-        None,
-        false,
-    )
 }
 
 /// Run mutation tests in parallel with optional progress display.
@@ -694,78 +665,6 @@ fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts, env: &Env) -> Resu
     let killed = results.values().any(|suite| suite.failed() > 0);
 
     Ok(killed)
-}
-
-/// Parallel mutation runner for a single source file.
-///
-/// This is a higher-level wrapper that handles:
-/// - Generating mutants from source
-/// - Running tests in parallel with isolated workspaces
-/// - Collecting and caching results
-pub struct ParallelMutationRunner {
-    pub source_path: PathBuf,
-    pub config: Arc<Config>,
-    pub evm_opts: EvmOpts,
-    pub env: Env,
-    pub num_workers: usize,
-}
-
-impl ParallelMutationRunner {
-    pub fn new(
-        source_path: PathBuf,
-        config: Arc<Config>,
-        evm_opts: EvmOpts,
-        env: Env,
-        num_workers: usize,
-    ) -> Self {
-        Self { source_path, config, evm_opts, env, num_workers }
-    }
-
-    /// Run mutation testing on the source file using parallel isolated workspaces.
-    pub async fn run(&self) -> Result<MutationsSummary> {
-        let mut handler = MutationHandler::new(self.source_path.clone(), self.config.clone());
-        handler.read_source_contract()?;
-
-        // Generate mutants
-        handler.generate_ast(false).await?;
-        let mutants = handler.mutations.clone();
-
-        if mutants.is_empty() {
-            let _ = sh_println!("No mutants generated for {}", self.source_path.display());
-            return Ok(MutationsSummary::new());
-        }
-
-        let _ = sh_println!(
-            "Generated {} mutants for {}, testing with {} workers",
-            mutants.len(),
-            self.source_path.display(),
-            self.num_workers
-        );
-
-        // Run mutations in parallel
-        let results = run_mutations_parallel(
-            mutants,
-            self.source_path.clone(),
-            handler.src.clone(),
-            self.config.clone(),
-            self.evm_opts.clone(),
-            self.env.clone(),
-            self.num_workers,
-        )?;
-
-        // Aggregate results
-        let mut summary = MutationsSummary::new();
-        for result in results {
-            match result.result {
-                MutationResult::Dead => summary.add_dead_mutant(result.mutant),
-                MutationResult::Alive => summary.add_survived_mutant(result.mutant),
-                MutationResult::Invalid => summary.update_invalid_mutant(result.mutant),
-                MutationResult::Skipped => summary.add_skipped_mutant(result.mutant),
-            }
-        }
-
-        Ok(summary)
-    }
 }
 
 #[cfg(test)]
