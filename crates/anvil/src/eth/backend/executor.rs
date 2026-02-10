@@ -71,7 +71,7 @@ impl ExecutedTransaction {
         *cumulative_gas_used = cumulative_gas_used.saturating_add(self.gas_used);
 
         // successful return see [Return]
-        let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
+        let status_code = u8::from(self.exit_reason.is_ok());
         let receipt_with_bloom: ReceiptWithBloom = Receipt {
             status: (status_code == 1).into(),
             cumulative_gas_used: *cumulative_gas_used,
