@@ -4,9 +4,9 @@ use solar::ast::{ExprKind, LitKind, UnOpKind};
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType, UnaryOpMutated};
 
-pub struct UnaryOperatorMutator;
+pub struct UnaryOpMutator;
 
-impl Mutator for UnaryOperatorMutator {
+impl Mutator for UnaryOpMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
         let operations = vec![
             UnOpKind::PreInc, // number

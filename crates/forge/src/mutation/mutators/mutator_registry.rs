@@ -43,7 +43,7 @@ impl MutatorRegistry {
                     registry.mutators.push(Box::new(require_mutator::RequireMutator));
                 }
                 MutatorType::UnaryOp => {
-                    registry.mutators.push(Box::new(unary_op_mutator::UnaryOperatorMutator));
+                    registry.mutators.push(Box::new(unary_op_mutator::UnaryOpMutator));
                 }
             }
         }
