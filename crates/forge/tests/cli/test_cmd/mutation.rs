@@ -502,3 +502,209 @@ MUTATION TESTING RESULTS
 ...
 "#]]);
 });
+
+// Seeded gap test: access control bypass detection.
+// A weak test suite that only tests the happy path (owner calls) but never
+// tests that non-owners are rejected. The require(msg.sender == owner)
+// mutation to require(true) should SURVIVE, proving the gap.
+forgetest_init!(mutation_detects_access_control_gap, |prj, cmd| {
+    prj.add_source(
+        "Owned.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Owned {
+    address public owner;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function changeOwner(address newOwner) public {
+        require(msg.sender == owner, "Not owner");
+        owner = newOwner;
+    }
+}
+"#,
+    );
+
+    // Weak test: only tests that the owner CAN call changeOwner.
+    // Never tests that a non-owner is rejected.
+    prj.add_test(
+        "Owned.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/Owned.sol";
+
+contract OwnedTest is Test {
+    Owned public owned;
+
+    function setUp() public {
+        owned = new Owned();
+    }
+
+    function test_OwnerCanChangeOwner() public {
+        address newOwner = address(0x1234);
+        owned.changeOwner(newOwner);
+        assertEq(owned.owner(), newOwner);
+    }
+}
+"#,
+    );
+
+    // The require(msg.sender == owner) -> require(true) mutation should survive
+    // because we never test that non-owners are rejected.
+    cmd.args(["test", "--mutate", "src/Owned.sol", "--mutation-jobs", "1", "--json"]);
+    let output = cmd.assert_success().get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    let survived = json["summary"]["survived"].as_u64().unwrap();
+    assert!(survived > 0, "Expected surviving mutants (access control gap not detected)");
+
+    // Verify that a require-related mutation survived
+    let survived_mutants = json["survived_mutants"]["src/Owned.sol"].as_array().unwrap();
+    let has_require_survivor = survived_mutants.iter().any(|m| {
+        let mutant_text = m["mutant"].as_str().unwrap_or("");
+        mutant_text.contains("true") || mutant_text.contains("false") || mutant_text.contains("!=")
+    });
+    assert!(
+        has_require_survivor,
+        "Expected a require/condition mutation to survive (access control gap), but survivors were: {:?}",
+        survived_mutants
+    );
+});
+
+// Seeded gap test: boundary condition detection.
+// A test suite that tests withdrawal with amounts well below the balance
+// but never tests the exact boundary (amount == balance). The >= to >
+// mutation should SURVIVE.
+forgetest_init!(mutation_detects_boundary_condition_gap, |prj, cmd| {
+    prj.add_source(
+        "Balance.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Balance {
+    mapping(address => uint256) public balances;
+
+    function deposit() public payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    function withdraw(uint256 amount) public {
+        require(balances[msg.sender] >= amount, "Insufficient");
+        balances[msg.sender] -= amount;
+        payable(msg.sender).transfer(amount);
+    }
+}
+"#,
+    );
+
+    // Weak test: deposits 1 ether but only withdraws 0.5 ether.
+    // Never tests withdrawing the exact balance (boundary).
+    prj.add_test(
+        "Balance.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/Balance.sol";
+
+contract BalanceTest is Test {
+    Balance public b;
+
+    function setUp() public {
+        b = new Balance();
+    }
+
+    function test_DepositAndPartialWithdraw() public {
+        b.deposit{value: 1 ether}();
+        assertEq(b.balances(address(this)), 1 ether);
+        b.withdraw(0.5 ether);
+        assertEq(b.balances(address(this)), 0.5 ether);
+    }
+
+    function test_WithdrawTooMuch() public {
+        b.deposit{value: 1 ether}();
+        vm.expectRevert("Insufficient");
+        b.withdraw(2 ether);
+    }
+
+    receive() external payable {}
+}
+"#,
+    );
+
+    // The >= to > mutation should survive because we never test amount == balance
+    cmd.args(["test", "--mutate", "src/Balance.sol", "--mutation-jobs", "1", "--json"]);
+    let output = cmd.assert_success().get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    let survived = json["summary"]["survived"].as_u64().unwrap();
+    assert!(survived > 0, "Expected surviving mutants (boundary condition gap not detected)");
+
+    let score = json["summary"]["mutation_score"].as_f64().unwrap();
+    assert!(score < 100.0, "Score should be < 100% with boundary gap, got {score}");
+});
+
+// Seeded gap test: arithmetic operator detection.
+// A test suite that only tests one input, so swapping + for - is not caught.
+forgetest_init!(mutation_detects_arithmetic_gap, |prj, cmd| {
+    prj.add_source(
+        "Math.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Math {
+    function multiply(uint256 a, uint256 b) public pure returns (uint256) {
+        return a * b;
+    }
+}
+"#,
+    );
+
+    // Weak test: only tests multiply(0, 5) which returns 0 for both * and +
+    // (0 * 5 == 0, 0 + 5 != 0 but 0 * anything == 0 regardless of operator for one operand)
+    // Actually let's use multiply(1, 1) where 1*1==1 and 1+1==2, so + would be caught.
+    // Use multiply(2, 2) where 2*2==4 but 2+2==4 too! So + survives.
+    prj.add_test(
+        "Math.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Math.sol";
+
+contract MathTest {
+    Math public m;
+
+    function setUp() public {
+        m = new Math();
+    }
+
+    function test_MultiplySymmetric() public {
+        // 2*2 == 4, but also 2+2 == 4, so the + mutation survives!
+        assert(m.multiply(2, 2) == 4);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mutate", "src/Math.sol", "--mutation-jobs", "1", "--json"]);
+    let output = cmd.assert_success().get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    let survived = json["summary"]["survived"].as_u64().unwrap();
+    assert!(survived > 0, "Expected surviving mutants (arithmetic gap not detected)");
+
+    // The * -> + mutation should survive since 2*2 == 2+2
+    let score = json["summary"]["mutation_score"].as_f64().unwrap();
+    assert!(score < 100.0, "Score should be < 100% with weak arithmetic test, got {score}");
+});
