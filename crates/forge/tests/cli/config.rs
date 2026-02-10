@@ -216,6 +216,10 @@ show_metrics = true
 show_solidity = false
 check_interval = 1
 
+[mutation]
+include_operators = []
+exclude_operators = []
+
 [labels]
 
 [vyper]
@@ -297,6 +301,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             },
             ..Default::default()
         },
+        mutation: Default::default(),
         ffi: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
@@ -1300,6 +1305,10 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_time_delay": null,
     "max_block_delay": null,
     "check_interval": 1
+  },
+  "mutation": {
+    "include_operators": [],
+    "exclude_operators": []
   },
   "ffi": false,
   "allow_internal_expect_revert": false,

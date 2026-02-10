@@ -110,6 +110,9 @@ pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
 mod invariant;
 pub use invariant::InvariantConfig;
 
+pub mod mutation;
+pub use mutation::{MutationConfig, MutatorType};
+
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 
@@ -352,6 +355,8 @@ pub struct Config {
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
     pub invariant: InvariantConfig,
+    /// Configuration for mutation testing
+    pub mutation: MutationConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to allow `expectRevert` for internal functions.
@@ -701,6 +706,7 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "mutation",
         "labels",
         "dependencies",
         "soldeer",
@@ -2574,6 +2580,7 @@ impl Default for Config {
             show_progress: false,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
+            mutation: MutationConfig::default(),
             always_use_create_2_factory: false,
             ffi: false,
             allow_internal_expect_revert: false,
@@ -6590,6 +6597,9 @@ mod tests {
                 runs = 256
                 unknown_invariant_key = "should_warn"
 
+                [mutation]
+                unknown_mutation_key = "should_warn"
+
                 [vyper]
                 unknown_vyper_key = "should_warn"
 
@@ -6617,6 +6627,9 @@ mod tests {
                 [profile.default.invariant]
                 runs = 512
                 unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.mutation]
+                unknown_nested_mutation_key = "should_warn"
 
                 [profile.default.vyper]
                 unknown_nested_vyper_key = "should_warn"
@@ -6656,6 +6669,7 @@ mod tests {
                 ("unknown_doc_key", "doc"),
                 ("unknown_fuzz_key", "fuzz"),
                 ("unknown_invariant_key", "invariant"),
+                ("unknown_mutation_key", "mutation"),
                 ("unknown_vyper_key", "vyper"),
                 ("unknown_bind_json_key", "bind_json"),
             ];
@@ -6681,6 +6695,7 @@ mod tests {
                 ("unknown_nested_doc_key", "doc"),
                 ("unknown_nested_fuzz_key", "fuzz"),
                 ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_mutation_key", "mutation"),
                 ("unknown_nested_vyper_key", "vyper"),
                 ("unknown_nested_bind_json_key", "bind_json"),
             ];
@@ -6729,11 +6744,11 @@ mod tests {
                 })
                 .collect();
 
-            // 1 profile key + 7 standalone + 7 nested + 2 array = 17 total
+            // 1 profile key + 8 standalone + 8 nested + 2 array = 19 total
             assert_eq!(
                 unknown_key_warnings.len(),
-                17,
-                "Expected 17 unknown key warnings (1 profile + 7 standalone + 7 nested + 2 array), got {}: {:?}",
+                19,
+                "Expected 19 unknown key warnings (1 profile + 8 standalone + 8 nested + 2 array), got {}: {:?}",
                 unknown_key_warnings.len(),
                 unknown_key_warnings
             );
