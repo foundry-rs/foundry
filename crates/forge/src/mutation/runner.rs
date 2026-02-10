@@ -133,9 +133,21 @@ fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
 /// Uses symlinks for lib directories (read-only dependencies) to avoid expensive copies.
 /// Preserves the project's directory layout (handles custom src/test paths).
 fn copy_project_for_mutation(config: &Config, temp_dir: &Path) -> Result<()> {
-    // Compute relative paths to preserve project layout
     let src_rel = relative_to_root(&config.root, &config.src);
+    if !is_safe_relative_path(&src_rel) {
+        eyre::bail!(
+            "mutation testing requires src directory under project root, got: {}",
+            config.src.display()
+        );
+    }
+
     let test_rel = relative_to_root(&config.root, &config.test);
+    if !is_safe_relative_path(&test_rel) {
+        eyre::bail!(
+            "mutation testing requires test directory under project root, got: {}",
+            config.test.display()
+        );
+    }
 
     // Copy src directory (will be mutated)
     copy_dir_recursive(&config.src, &temp_dir.join(&src_rel))?;
@@ -151,6 +163,12 @@ fn copy_project_for_mutation(config: &Config, temp_dir: &Path) -> Result<()> {
     for lib_path in &config.libs {
         if lib_path.exists() {
             let lib_rel = relative_to_root(&config.root, lib_path);
+            if !is_safe_relative_path(&lib_rel) {
+                eyre::bail!(
+                    "mutation testing requires lib directories under project root, got: {}",
+                    lib_path.display()
+                );
+            }
             let target = temp_dir.join(&lib_rel);
 
             if !target.exists() {
@@ -719,7 +737,7 @@ impl ParallelMutationRunner {
         handler.read_source_contract()?;
 
         // Generate mutants
-        handler.generate_ast().await;
+        handler.generate_ast().await?;
         let mutants = handler.mutations.clone();
 
         if mutants.is_empty() {

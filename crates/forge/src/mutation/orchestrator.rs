@@ -25,7 +25,7 @@ use crate::mutation::{
 };
 
 /// Configuration for mutation testing run.
-pub struct MutationConfig {
+pub struct MutationRunConfig {
     /// Paths to mutate (if empty, use all source files).
     pub mutate_paths: Vec<PathBuf>,
     /// Optional glob pattern to filter paths.
@@ -40,7 +40,7 @@ pub struct MutationConfig {
     pub json_output: bool,
 }
 
-impl MutationConfig {
+impl MutationRunConfig {
     /// Determine number of workers, using auto-detection if 0.
     pub fn effective_workers(&self) -> usize {
         if self.num_workers == 0 {
@@ -74,7 +74,7 @@ pub async fn run_mutation_testing(
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
     env: Env,
-    mutation_config: MutationConfig,
+    mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
@@ -129,7 +129,7 @@ pub async fn run_mutation_testing(
         let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
             ms
         } else {
-            handler.generate_ast().await;
+            handler.generate_ast().await?;
             handler.mutations.clone()
         };
 
@@ -227,7 +227,7 @@ pub async fn run_mutation_testing(
 fn resolve_mutate_paths(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
-    mutation_config: &MutationConfig,
+    mutation_config: &MutationRunConfig,
 ) -> Result<Vec<PathBuf>> {
     let paths = if let Some(pattern) = &mutation_config.mutate_path_pattern {
         // If --mutate-path is provided, use it to filter paths
