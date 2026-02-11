@@ -156,8 +156,7 @@ impl StorageArgs {
         }
 
         // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir
-        #[allow(clippy::collection_is_never_read)]
-        let mut _temp_dir = None;
+        let mut temp_dir = None;
         let root_path = if let Some(cache_root) =
             foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
         {
@@ -167,7 +166,7 @@ impl StorageArgs {
                 sh_warn!("Could not create etherscan cache dir, falling back to temp: {err}")?;
                 let tmp = tempfile::tempdir()?;
                 let path = tmp.path().to_path_buf();
-                _temp_dir = Some(tmp);
+                temp_dir = Some(tmp);
                 path
             } else {
                 contract_root
@@ -175,7 +174,7 @@ impl StorageArgs {
         } else {
             let tmp = tempfile::tempdir()?;
             let path = tmp.path().to_path_buf();
-            _temp_dir = Some(tmp);
+            temp_dir = Some(tmp);
             path
         };
         let mut project = etherscan_project(metadata, &root_path)?;
@@ -229,6 +228,7 @@ impl StorageArgs {
             artifact
         };
 
+        drop(temp_dir);
         fetch_and_print_storage(provider, address, block, artifact).await
     }
 }
