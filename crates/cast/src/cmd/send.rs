@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, NetworkWallet};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -172,7 +172,7 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
-                tx.into_inner(),
+                tx.into_inner().into(),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -195,9 +195,8 @@ impl SendTxArgs {
                 && let WalletSigner::Browser(ref browser_signer) = signer
             {
                 let (tx_request, _) = builder.build(from).await?;
-                let tx_hash = browser_signer
-                    .send_transaction_via_browser(tx_request.into_inner().inner)
-                    .await?;
+                let tx_hash =
+                    browser_signer.send_transaction_via_browser(tx_request.into_inner()).await?;
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;
@@ -225,8 +224,7 @@ impl SendTxArgs {
             if is_tempo {
                 let (ftx, _) = builder.build(&signer).await?;
 
-                // Sign using NetworkWallet<FoundryNetwork>
-                let signed_tx = signer.sign_request(ftx).await?;
+                let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
 
                 // Encode and send raw
                 let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
@@ -275,7 +273,7 @@ impl SendTxArgs {
 
             cast_send(
                 provider,
-                tx_request.into_inner(),
+                tx_request.into_inner().into(),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
