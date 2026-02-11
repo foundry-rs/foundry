@@ -646,37 +646,65 @@ pub fn fetch_external_storage_layout(
     address: Address,
     etherscan_config: &foundry_config::ResolvedEtherscanConfig,
 ) -> Option<(String, Arc<StorageLayout>)> {
-    use crate::{
-        abi::find_source,
-        compile::{ProjectCompiler, add_storage_layout_output, etherscan_project},
-    };
+    use crate::compile::{ProjectCompiler, add_storage_layout_output, etherscan_project};
+
+    let chain = etherscan_config.chain.unwrap_or_default();
+    let cache_dir = foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
+        .map(|cache_root| cache_root.join("storage_layouts"));
+
+    // Check disk cache for this address first.
+    if let Some(cached) = read_cached_layout(&cache_dir, address) {
+        return Some(cached);
+    }
 
     let client = etherscan_config.clone().into_client().ok()?;
 
-    // Use find_source which automatically resolves proxy → implementation
-    let source = crate::block_on(async { find_source(client, address).await }).ok()?;
-    let metadata = source.items.into_iter().next()?;
+    // Resolve proxy → implementation manually so we can cache by implementation address.
+    let source = crate::block_on(async { client.contract_source_code(address).await }).ok()?;
+    let metadata = source.items.first()?;
 
-    if metadata.is_vyper() {
+    let (impl_address, impl_metadata) = if metadata.proxy != 0 {
+        let implementation = metadata.implementation?;
+        sh_println!(
+            "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
+        )
+        .ok()?;
+
+        // Check disk cache for the implementation address before fetching.
+        if let Some(cached) = read_cached_layout(&cache_dir, implementation) {
+            // Also cache under the proxy address for next time.
+            write_cached_layout(&cache_dir, address, &cached.0, &cached.1);
+            return Some(cached);
+        }
+
+        let impl_source =
+            crate::block_on(async { client.contract_source_code(implementation).await }).ok()?;
+        let impl_meta = impl_source.items.into_iter().next()?;
+        (Some(implementation), impl_meta)
+    } else {
+        (None, source.items.into_iter().next()?)
+    };
+
+    if impl_metadata.is_vyper() {
         trace!(target: "cheatcodes", %address, "skipping vyper contract for storage layout fetch");
         return None;
     }
 
-    let contract_name = metadata.contract_name.clone();
+    let contract_name = impl_metadata.contract_name.clone();
 
-    let chain = etherscan_config.chain.unwrap_or_default();
     let root_path = if let Some(cache_root) =
         foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
     {
+        let compile_addr = impl_address.unwrap_or(address);
         let sources_root = cache_root.join("sources");
-        let contract_root = sources_root.join(format!("{address}"));
+        let contract_root = sources_root.join(format!("{compile_addr}"));
         std::fs::create_dir_all(&contract_root).ok()?;
         contract_root
     } else {
         std::env::temp_dir().join(format!("foundry-storage-{address}"))
     };
 
-    let mut project = etherscan_project(&metadata, &root_path).ok()?;
+    let mut project = etherscan_project(&impl_metadata, &root_path).ok()?;
     add_storage_layout_output(&mut project);
 
     let output = ProjectCompiler::new().quiet(true).compile(&project).ok()?;
@@ -687,7 +715,51 @@ pub fn fetch_external_storage_layout(
         .and_then(|(_, artifact)| artifact.storage_layout.clone())
         .filter(|layout| !layout.storage.is_empty())?;
 
+    // Cache under the proxy address (always) and the implementation address (if proxy).
+    write_cached_layout(&cache_dir, address, &contract_name, &storage_layout);
+    if let Some(impl_addr) = impl_address {
+        write_cached_layout(&cache_dir, impl_addr, &contract_name, &storage_layout);
+    }
+
     Some((contract_name, Arc::new(storage_layout)))
+}
+
+/// Serializable wrapper for caching a contract's storage layout to disk.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedStorageLayout {
+    contract_name: String,
+    storage_layout: StorageLayout,
+}
+
+/// Read a cached storage layout from disk for the given address.
+fn read_cached_layout(
+    cache_dir: &Option<PathBuf>,
+    address: Address,
+) -> Option<(String, Arc<StorageLayout>)> {
+    let dir = cache_dir.as_ref()?;
+    let data = std::fs::read_to_string(dir.join(format!("{address}.json"))).ok()?;
+    let cached: CachedStorageLayout = serde_json::from_str(&data).ok()?;
+    trace!(target: "cheatcodes", %address, "using cached storage layout from disk");
+    Some((cached.contract_name, Arc::new(cached.storage_layout)))
+}
+
+/// Write a storage layout to disk cache for the given address.
+fn write_cached_layout(
+    cache_dir: &Option<PathBuf>,
+    address: Address,
+    contract_name: &str,
+    storage_layout: &StorageLayout,
+) {
+    let Some(dir) = cache_dir.as_ref() else { return };
+    if std::fs::create_dir_all(dir).is_ok() {
+        let cached = CachedStorageLayout {
+            contract_name: contract_name.to_string(),
+            storage_layout: storage_layout.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&cached) {
+            let _ = std::fs::write(dir.join(format!("{address}.json")), json);
+        }
+    }
 }
 
 #[cfg(test)]

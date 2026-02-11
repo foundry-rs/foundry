@@ -171,6 +171,60 @@ contract DecodeExternalStorageTest is Test {
     .assert_success();
 });
 
+// Test that `--decode-external-storage` correctly resolves proxy contracts
+// by fetching the implementation's storage layout (e.g., USDC is an EIP-1967 proxy).
+forgetest_init!(decode_external_storage_proxy_on_fork, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    let etherscan_api_key = next_etherscan_api_key();
+
+    prj.add_test(
+        "DecodeExternalStorageProxy.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IUSDC {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract DecodeExternalStorageProxyTest is Test {
+    // USDC on mainnet (EIP-1967 proxy -> FiatTokenV2_1 implementation)
+    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    // A large USDC holder (Circle/Centre)
+    address constant USDC_WHALE = 0x55FE002aefF02F77364de339a1292923A15844B8;
+
+    function test_externalStorageDecodingProxy() public {
+        vm.createSelectFork("<url>");
+
+        // Impersonate a whale to perform a transfer
+        vm.prank(USDC_WHALE);
+
+        vm.startStateDiffRecording();
+        IUSDC(USDC).transfer(address(this), 1_000_000); // 1 USDC (6 decimals)
+        string memory diff = vm.getStateDiffJson();
+
+        // The implementation contract (FiatTokenV2_1) has a `balances` mapping.
+        // If proxy resolution works, the decoded JSON should contain "balances"
+        // from the implementation's storage layout, not raw hex slots.
+        assertTrue(vm.contains(diff, "balances"), "expected decoded 'balances' label from implementation storage layout");
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "-vvvv",
+        "--mt",
+        "test_externalStorageDecodingProxy",
+        "--decode-external-storage",
+        "--etherscan-api-key",
+        &etherscan_api_key,
+    ])
+    .assert_success();
+});
+
 // tests that a warning is displayed if there are tests but none match a non-empty filter
 forgetest!(suggest_when_no_tests_match, |prj, cmd| {
     prj.add_source(
