@@ -2602,6 +2602,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "comfy-table",
+ "dialoguer",
  "dirs",
  "dunce",
  "evmole",
