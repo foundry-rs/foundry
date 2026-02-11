@@ -1460,10 +1460,12 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
         }
     }
 
-    // For contracts not found locally, try fetching from Etherscan if configured
-    if let Some(etherscan_config) = ccx.state.config.etherscan_config.clone() {
+    // For contracts not found locally, try fetching from Etherscan if configured.
+    // Resolve the etherscan config lazily using the runtime chain ID so it works
+    // with forks selected via vm.createSelectFork().
+    if let Some(etherscan_config) = ccx.state.config.get_etherscan_config(ccx.ecx.cfg.chain_id) {
         for address in unknown_contracts {
-            // Check external cache first
+            // Check in-memory cache first
             if let Some(cached) = ccx.state.external_storage_layouts.get(&address) {
                 if let Some((name, layout)) = cached {
                     contract_names.insert(address, name.clone());
