@@ -660,7 +660,13 @@ pub fn fetch_external_storage_layout(
     let client = etherscan_config.clone().into_client().ok()?;
 
     // Resolve proxy → implementation manually so we can cache by implementation address.
-    let source = crate::block_on(async { client.contract_source_code(address).await }).ok()?;
+    let source = match crate::block_on(async { client.contract_source_code(address).await }) {
+        Ok(source) => source,
+        Err(e) => {
+            warn!(target: "cheatcodes", %address, %e, "failed to fetch source from Etherscan");
+            return None;
+        }
+    };
     let metadata = source.items.first()?;
 
     let (impl_address, impl_metadata) = if metadata.proxy != 0 {
@@ -677,8 +683,15 @@ pub fn fetch_external_storage_layout(
             return Some(cached);
         }
 
-        let impl_source =
-            crate::block_on(async { client.contract_source_code(implementation).await }).ok()?;
+        let impl_source = match crate::block_on(async {
+            client.contract_source_code(implementation).await
+        }) {
+            Ok(source) => source,
+            Err(e) => {
+                warn!(target: "cheatcodes", %address, %implementation, %e, "failed to fetch implementation source");
+                return None;
+            }
+        };
         let impl_meta = impl_source.items.into_iter().next()?;
         (Some(implementation), impl_meta)
     } else {
@@ -704,16 +717,33 @@ pub fn fetch_external_storage_layout(
         std::env::temp_dir().join(format!("foundry-storage-{address}"))
     };
 
-    let mut project = etherscan_project(&impl_metadata, &root_path).ok()?;
+    let mut project = match etherscan_project(&impl_metadata, &root_path) {
+        Ok(project) => project,
+        Err(e) => {
+            warn!(target: "cheatcodes", %address, name=%contract_name, %e, "failed to create project from Etherscan source");
+            return None;
+        }
+    };
     add_storage_layout_output(&mut project);
 
-    let output = ProjectCompiler::new().quiet(true).compile(&project).ok()?;
+    let output = match ProjectCompiler::new().quiet(true).compile(&project) {
+        Ok(output) => output,
+        Err(e) => {
+            warn!(target: "cheatcodes", %address, name=%contract_name, %e, "failed to compile external contract");
+            return None;
+        }
+    };
 
     let storage_layout = output
         .artifacts()
         .find(|(name, _)| *name == contract_name)
         .and_then(|(_, artifact)| artifact.storage_layout.clone())
-        .filter(|layout| !layout.storage.is_empty())?;
+        .filter(|layout| !layout.storage.is_empty());
+
+    let Some(storage_layout) = storage_layout else {
+        warn!(target: "cheatcodes", %address, name=%contract_name, "no storage layout found in compiled artifacts");
+        return None;
+    };
 
     // Cache under the proxy address (always) and the implementation address (if proxy).
     write_cached_layout(&cache_dir, address, &contract_name, &storage_layout);

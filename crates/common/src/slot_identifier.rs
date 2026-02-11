@@ -94,7 +94,7 @@ impl SlotInfo {
 
                 if length_byte & 1 == 0 {
                     // Short string/bytes (less than 32 bytes)
-                    let length = (length_byte >> 1) as usize;
+                    let length = ((length_byte >> 1) as usize).min(31);
                     // Extract data
                     let data = if length == 0 { Vec::new() } else { value.0[0..length].to_vec() };
 
@@ -218,11 +218,12 @@ impl SlotInfo {
             if length_byte & 1 == 1 {
                 // Long bytes/string - populate members
                 let length: U256 = U256::from_be_bytes(base_value.0) >> 1;
-                let num_slots = length.to::<usize>().div_ceil(32).min(256);
+                let byte_len: usize = length.try_into().unwrap_or(usize::MAX);
+                let num_slots = byte_len.div_ceil(32).min(256);
                 let data_start = U256::from_be_bytes(keccak256(base_slot.0).0);
 
                 let mut members = Vec::new();
-                let mut full_data = Vec::with_capacity(length.to::<usize>());
+                let mut full_data = Vec::with_capacity(num_slots * 32);
 
                 for i in 0..num_slots {
                     let data_slot = B256::from(data_start + U256::from(i));
@@ -245,7 +246,7 @@ impl SlotInfo {
                     if let Some(value) = storage_values.get(&data_slot) {
                         // Collect data
                         let bytes_to_take =
-                            std::cmp::min(32, length.to::<usize>() - full_data.len());
+                            std::cmp::min(32, byte_len.saturating_sub(full_data.len()));
                         full_data.extend_from_slice(&value.0[..bytes_to_take]);
                     }
 
@@ -910,7 +911,7 @@ impl SlotIdentifier {
 
             // Check if our slot is within the data region
             if slot >= data_start && slot < data_start + num_slots {
-                let slot_index = (slot - data_start).to::<usize>();
+                let slot_index: usize = (slot - data_start).try_into().unwrap_or(usize::MAX);
 
                 return Some(SlotInfo {
                     label: format!("{}[{}]", storage.label, slot_index),
