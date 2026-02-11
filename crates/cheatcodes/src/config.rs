@@ -121,14 +121,13 @@ impl CheatsConfig {
         let chain: alloy_chains::Chain = chain_id.into();
 
         // Try to find a matching config in the etherscan configs by chain ID.
-        if let Some(config) = self.etherscan_configs.clone().resolved().find_chain(chain) {
-            if let Ok(mut resolved) = config {
-                // Override key if CLI key is set.
-                if let Some(key) = &self.etherscan_api_key {
-                    resolved.key.clone_from(key);
-                }
-                return Some(resolved);
+        if let Some(Ok(mut resolved)) = self.etherscan_configs.clone().resolved().find_chain(chain)
+        {
+            // Override key if CLI key is set.
+            if let Some(key) = &self.etherscan_api_key {
+                resolved.key.clone_from(key);
             }
+            return Some(resolved);
         }
 
         // Fallback: create from API key + chain.
