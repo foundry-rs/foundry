@@ -2,7 +2,7 @@ use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
 use alloy_primitives::{
     Address,
-    map::{Entry, HashMap},
+    map::{Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
@@ -151,7 +151,7 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
-        let mut to_fetch = Vec::new();
+        let mut to_fetch = HashSet::new();
 
         // Check cache first.
         for &node in nodes {
@@ -163,7 +163,7 @@ impl TraceIdentifier for ExternalIdentifier {
                     // Do nothing. We know that this contract was not verified.
                 }
             } else {
-                to_fetch.push(address);
+                to_fetch.insert(address);
             }
         }
 
@@ -172,6 +172,7 @@ impl TraceIdentifier for ExternalIdentifier {
         }
         trace!(target: "evm::traces::external", "fetching {} addresses", to_fetch.len());
 
+        let to_fetch = to_fetch.into_iter().collect::<Vec<_>>();
         let fetchers =
             self.fetchers.iter().map(|fetcher| ExternalFetcher::new(fetcher.clone(), &to_fetch));
         let fetched_identities = foundry_common::block_on(
