@@ -1,7 +1,7 @@
 use crate::executors::RawCallResult;
 use alloy_primitives::{Bytes, Log, map::HashMap};
 use foundry_evm_core::Breakpoints;
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_fuzz::FuzzCase;
 use foundry_evm_traces::SparsedTraceArena;
 use revm::interpreter::InstructionResult;
@@ -15,6 +15,8 @@ pub struct CaseOutcome {
     pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call.
     pub coverage: Option<HitMaps>,
+    /// The source coverage info collected during the call.
+    pub source_coverage: Option<SourceHitMaps>,
     /// Breakpoints char pc map.
     pub breakpoints: Breakpoints,
     /// logs of a single fuzz test case.

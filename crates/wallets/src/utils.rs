@@ -2,7 +2,7 @@ use crate::{PendingSigner, WalletSigner, error::PrivateKeyError};
 use alloy_primitives::{B256, hex::FromHex};
 use alloy_signer_ledger::HDPath as LedgerHDPath;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_signer_trezor::HDPath as TrezorHDPath;
+// use alloy_signer_trezor::HDPath as TrezorHDPath;
 use eyre::{Context, Result};
 use foundry_config::Config;
 use std::{
@@ -74,17 +74,32 @@ pub async fn create_trezor_signer(
     hd_path: Option<&str>,
     mnemonic_index: u32,
 ) -> Result<WalletSigner> {
-    let derivation = if let Some(hd_path) = hd_path {
-        TrezorHDPath::Other(hd_path.to_owned())
-    } else {
-        TrezorHDPath::TrezorLive(mnemonic_index as usize)
-    };
-
-    WalletSigner::from_trezor_path(derivation).await.wrap_err_with(|| {
-        "\
-Could not connect to Trezor device.
-Make sure it's connected and unlocked, with no other conflicting desktop wallet apps open."
-    })
+    // if let Some(hd_path) = config.trezor_hd_path.as_ref() {
+    //     let derivation = match hd_path.as_str() {
+    //         "eth" => TrezorHDPath::TrezorLive(mnemonic_index as usize),
+    //         _ => TrezorHDPath::Other(hd_path.to_owned()),
+    //     };
+    //
+    //     return WalletSigner::from_trezor_path(derivation).await.wrap_err_with(|| {
+    //         format!(
+    //             "Failed to create Trezor signer with derivation path {hd_path}. \
+    //              Make sure you have the Trezor device connected and unlocked."
+    //         )
+    //     });
+    // } else if config.trezor {
+    //     let derivation = TrezorHDPath::TrezorLive(mnemonic_index as usize);
+    //
+    //     return WalletSigner::from_trezor_path(derivation).await.wrap_err_with(|| {
+    //         format!(
+    //             "Failed to create Trezor signer with default derivation path. \
+    //              Make sure you have the Trezor device connected and unlocked."
+    //         )
+    //     });
+    // }
+    
+    // if config.trezor || config.trezor_hd_path.is_some() {
+        eyre::bail!("Trezor support is currently disabled.");
+    // }
 }
 
 pub fn maybe_get_keystore_path(

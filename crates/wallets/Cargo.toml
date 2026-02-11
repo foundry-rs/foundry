@@ -19,7 +19,7 @@ alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer-ledger = { workspace = true, features = ["eip712"] }
-alloy-signer-trezor.workspace = true
+# alloy-signer-trezor.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true

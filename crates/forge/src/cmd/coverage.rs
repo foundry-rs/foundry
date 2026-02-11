@@ -53,8 +53,7 @@ pub struct CoverageArgs {
     /// The path to output the report.
     ///
     /// If not specified, the report will be stored in the root of the project.
-    #[arg(
-        long,
+    #[arg(long,
         short,
         value_hint = ValueHint::FilePath,
         value_name = "PATH"
@@ -69,6 +68,10 @@ pub struct CoverageArgs {
     #[arg(long)]
     exclude_tests: bool,
 
+    /// Whether to use the experimental source instrumentation engine.
+    #[arg(long, help_heading = "Experimental")]
+    instrument_source: bool,
+
     /// The coverage reporters to use. Constructed from the other fields.
     #[arg(skip)]
     reporters: Vec<Box<dyn CoverageReporter>>,
@@ -80,6 +83,10 @@ pub struct CoverageArgs {
 impl CoverageArgs {
     pub async fn run(mut self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+
+        if self.instrument_source {
+            return self.run_instrumented(config, evm_opts).await;
+        }
 
         // install missing dependencies
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -103,6 +110,105 @@ impl CoverageArgs {
 
         sh_println!("Running tests...")?;
         self.collect(&paths.root, &output, report, config, evm_opts).await
+    }
+
+    /// Experimental source instrumentation mode.
+    async fn run_instrumented(mut self, mut config: Config, evm_opts: EvmOpts) -> Result<()> {
+        sh_println!("Experimental source instrumentation mode enabled.")?;
+
+        // 1. Setup temp directory
+        let temp_dir = tempfile::tempdir()?;
+        let temp_root = temp_dir.path();
+
+        // 2. Collect and instrument sources
+        let mut coverage_items = Vec::new();
+        let sess = solar::interface::Session::builder().with_stderr_emitter().build();
+
+        let project = config.project()?;
+        let source_paths = project.paths.input_files();
+
+        let mut path_to_id: HashMap<PathBuf, usize> = HashMap::default();
+        sess.enter_sequential(|| {
+            for (id, path) in source_paths.iter().enumerate() {
+                let rel_path = path.strip_prefix(&config.root)?;
+                let target_path = temp_root.join(rel_path);
+                if let Some(parent) = target_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                let content = std::fs::read_to_string(path)?;
+                let mut instrumented_content = content.clone();
+
+                let arena = solar::ast::Arena::new();
+                let mut parser = solar::parse::Parser::from_source_code(
+                    &sess,
+                    &arena,
+                    solar::interface::source_map::FileName::Real(path.clone()),
+                    content,
+                )
+                .map_err(|e| {
+                    eyre::eyre!("Failed to create parser for {:?}: {:?}", path, e)
+                })?;
+
+                match parser.parse_file() {
+                    Ok(ast) => {
+                        let mut instrumenter =
+                            crate::coverage::instrument::Instrumenter::new(&sess, id as u32);
+                        let _ =
+                            solar::ast::visit::Visit::visit_source_unit(&mut instrumenter, &ast);
+                        instrumenter.instrument(&mut instrumented_content);
+                        coverage_items.extend(instrumenter.items);
+                    }
+                    Err(err) => {
+                        sh_warn!("Failed to parse {:?}: {:?}", path, err)?;
+                    }
+                }
+
+                instrumented_content.push_str(&format!(
+                    "\n\ninterface VmCoverage_{} {{ function coverageHit(uint256,uint256) external pure; }}",
+                    id
+                ));
+                std::fs::write(&target_path, instrumented_content)
+                    .map_err(|e| eyre::eyre!("Failed to write instrumented file to {:?}: {}", target_path, e))?;
+                path_to_id.insert(path.clone(), id);
+            }
+            Ok::<(), eyre::Error>(())
+        })?;
+
+        // 3. Update config to point to temp root
+        let original_root = config.root.clone();
+        config.root = temp_root.to_path_buf();
+        config.src = temp_root.join(config.src.strip_prefix(&original_root)?);
+        config.test = temp_root.join(config.test.strip_prefix(&original_root)?);
+        config.script = temp_root.join(config.script.strip_prefix(&original_root)?);
+
+        // 4. Build instrumented project
+        let (_project, output) = self.build(&config)?;
+
+        // 5. Prepare Report
+        let mut report = CoverageReport::default();
+        let version = output
+            .output()
+            .sources
+            .sources_with_version()
+            .next()
+            .map(|(_, _, v)| v.clone())
+            .unwrap_or_else(|| Version::new(0, 8, 0));
+
+        for (path, &id) in &path_to_id {
+            let rel_path = path.strip_prefix(&original_root).unwrap_or(path);
+            report.add_source(version.clone(), id, rel_path.to_path_buf());
+        }
+
+        let analysis = SourceAnalysis::from_items(coverage_items);
+        report.add_analysis(version, analysis);
+
+        self.populate_reporters(&original_root);
+
+        sh_println!("Running tests...")?;
+        self.collect(&original_root, &output, report, config, evm_opts).await?;
+
+        Ok(())
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -131,14 +237,26 @@ impl CoverageArgs {
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
 
-        if self.ir_minimum {
-            sh_warn!(
-                "`--ir-minimum` enables `viaIR` with minimum optimization, \
-                 which can result in inaccurate source mappings.\n\
-                 Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
-                 Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
-                 See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
-            )?;
+        // If `via_ir` is enabled in the config, we should use `ir_minimum` to avoid stack too deep
+        // errors and because disabling it might break compilation.
+        let use_ir_minimum = self.ir_minimum || config.via_ir;
+
+        if use_ir_minimum {
+            if !self.ir_minimum && config.via_ir {
+                sh_warn!(
+                    "Enabling `--ir-minimum` automatically because `via_ir` is enabled in configuration.\n\
+                     This enables `viaIR` with minimum optimization, which can result in inaccurate source mappings.\n\
+                     See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
+                )?;
+            } else {
+                sh_warn!(
+                    "`--ir-minimum` enables `viaIR` with minimum optimization, \
+                     which can result in inaccurate source mappings.\n\
+                     Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
+                     Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
+                     See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
+                )?;
+            }
         } else {
             sh_warn!(
                 "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
@@ -148,7 +266,7 @@ impl CoverageArgs {
             )?;
         }
 
-        config.disable_optimizations(&mut project, self.ir_minimum);
+        config.disable_optimizations(&mut project, use_ir_minimum);
 
         let output = ProjectCompiler::default()
             .compile(&project)?
@@ -249,42 +367,62 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
-        let outcome =
-            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
-
-        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
+        let outcome = self
+            .test
+            .run_tests(
+                project_root,
+                config,
+                evm_opts,
+                output,
+                &filter,
+                !self.instrument_source,
+                self.instrument_source,
+            )
+            .await?;
 
         // Add hit data to the coverage report
-        let data = outcome.results.iter().flat_map(|(_, suite)| {
-            let mut hits = Vec::new();
-            for result in suite.test_results.values() {
-                let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
-                for map in hit_maps.0.values() {
-                    if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
-                        hits.push((id, map, true));
-                    } else if let Some((id, _)) =
-                        known_contracts.find_by_creation_code(map.bytecode())
-                    {
-                        hits.push((id, map, false));
+        if self.instrument_source {
+            for suite in outcome.results.values() {
+                for result in suite.test_results.values() {
+                    if let Some(source_hits) = &result.source_coverage {
+                        report.add_source_hit_maps(source_hits)?;
                     }
                 }
             }
-            hits
-        });
+        } else {
+            let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
+            let data = outcome.results.values().flat_map(|suite| {
+                let mut hits = Vec::new();
+                for result in suite.test_results.values() {
+                    let Some(hit_maps) = &result.line_coverage else { continue };
+                    for map in hit_maps.0.values() {
+                        if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode())
+                        {
+                            hits.push((id, map, true));
+                        } else if let Some((id, _)) =
+                            known_contracts.find_by_creation_code(map.bytecode())
+                        {
+                            hits.push((id, map, false));
+                        }
+                    }
+                }
+                hits
+            });
 
-        for (artifact_id, map, is_deployed_code) in data {
-            if let Some(source_id) =
-                report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
-            {
-                report.add_hit_map(
-                    &ContractId {
-                        version: artifact_id.version.clone(),
-                        source_id,
-                        contract_name: artifact_id.name.as_str().into(),
-                    },
-                    map,
-                    is_deployed_code,
-                )?;
+            for (artifact_id, map, is_deployed_code) in data {
+                if let Some(source_id) =
+                    report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
+                {
+                    report.add_hit_map(
+                        &ContractId {
+                            version: artifact_id.version.clone(),
+                            source_id,
+                            contract_name: artifact_id.name.as_str().into(),
+                        },
+                        map,
+                        is_deployed_code,
+                    )?;
+                }
             }
         }
 

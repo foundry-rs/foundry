@@ -1,6 +1,7 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
-    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
+    LogCollector, RevertDiagnostic, ScriptExecutionInspector, SourceCoverageCollector,
+    TracingInspector,
 };
 use alloy_evm::{Evm, eth::EthEvmContext};
 use alloy_primitives::{
@@ -15,7 +16,7 @@ use foundry_evm_core::{
     backend::{DatabaseExt, JournaledState},
     evm::new_evm_with_inspector,
 };
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
@@ -62,6 +63,8 @@ pub struct InspectorStackBuilder {
     pub logs: Option<bool>,
     /// Whether line coverage info should be collected.
     pub line_coverage: Option<bool>,
+    /// Whether source coverage info should be collected.
+    pub source_coverage: Option<bool>,
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
@@ -148,6 +151,13 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to collect source coverage information.
+    #[inline]
+    pub fn source_coverage(mut self, yes: bool) -> Self {
+        self.source_coverage = Some(yes);
+        self
+    }
+
     /// Set whether to enable the trace printer.
     #[inline]
     pub fn print(mut self, yes: bool) -> Self {
@@ -197,6 +207,7 @@ impl InspectorStackBuilder {
             trace_mode,
             logs,
             line_coverage,
+            source_coverage,
             print,
             chisel_state,
             enable_isolation,
@@ -228,6 +239,7 @@ impl InspectorStackBuilder {
             stack.set_chisel(chisel_state);
         }
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
+        stack.collect_source_coverage(source_coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
@@ -278,6 +290,7 @@ pub struct InspectorData {
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
     pub line_coverage: Option<HitMaps>,
+    pub source_coverage: Option<SourceHitMaps>,
     pub edge_coverage: Option<Vec<u8>>,
     pub cheatcodes: Option<Box<Cheatcodes>>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
@@ -332,6 +345,7 @@ pub struct InspectorStackInner {
     pub edge_coverage: Option<Box<EdgeCovInspector>>,
     pub fuzzer: Option<Box<Fuzzer>>,
     pub line_coverage: Option<Box<LineCoverageCollector>>,
+    pub source_coverage: Option<Box<SourceCoverageCollector>>,
     pub log_collector: Option<Box<LogCollector>>,
     pub printer: Option<Box<CustomPrintTracer>>,
     pub revert_diag: Option<Box<RevertDiagnostic>>,
@@ -392,7 +406,7 @@ impl InspectorStack {
                     )*
                 };
             }
-            push!(cheatcodes, chisel_state, line_coverage, fuzzer, log_collector, printer, tracer);
+            push!(cheatcodes, chisel_state, line_coverage, source_coverage, fuzzer, log_collector, printer, tracer);
             if self.enable_isolation {
                 enabled.push("isolation");
             }
@@ -451,6 +465,12 @@ impl InspectorStack {
     #[inline]
     pub fn collect_line_coverage(&mut self, yes: bool) {
         self.line_coverage = yes.then(Default::default);
+    }
+
+    /// Set whether to enable the source coverage collector.
+    #[inline]
+    pub fn collect_source_coverage(&mut self, yes: bool) {
+        self.source_coverage = yes.then(Default::default);
     }
 
     /// Set whether to enable the edge coverage collector.
@@ -529,6 +549,7 @@ impl InspectorStack {
                 InspectorStackInner {
                     chisel_state,
                     line_coverage,
+                    source_coverage,
                     edge_coverage,
                     log_collector,
                     tracer,
@@ -563,6 +584,7 @@ impl InspectorStack {
                 .unwrap_or_default(),
             traces,
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
+            source_coverage: source_coverage.map(|sc| sc.finish()),
             edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
@@ -842,6 +864,7 @@ impl InspectorStackRefMut<'_> {
                 &mut self.edge_coverage,
                 &mut self.fuzzer,
                 &mut self.line_coverage,
+                &mut self.source_coverage,
                 &mut self.printer,
                 &mut self.revert_diag,
                 &mut self.script_execution_inspector,
@@ -883,6 +906,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         call_inspectors!(
             [
                 &mut self.line_coverage,
+                &mut self.source_coverage,
                 &mut self.tracer,
                 &mut self.cheatcodes,
                 &mut self.script_execution_inspector,
@@ -948,6 +972,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             [
                 &mut self.fuzzer,
                 &mut self.tracer,
+                &mut self.source_coverage,
                 &mut self.log_collector,
                 &mut self.printer,
                 &mut self.revert_diag

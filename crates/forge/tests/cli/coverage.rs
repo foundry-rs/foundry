@@ -2,6 +2,7 @@ use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData},
+    util::OutputExt,
 };
 use std::path::Path;
 
@@ -2007,6 +2008,45 @@ contract CounterTest is DSTest {
 ╰-----------------+---------------+---------------+---------------+---------------╯
 ...
 "#]]);
+});
+
+forgetest!(via_ir_config, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function foo() public {}
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    // Enable via_ir in config
+    prj.update_config(|config| {
+        config.via_ir = true;
+    });
+
+    // Run coverage without --ir-minimum flag
+    // It should detect via_ir and enable ir_minimum mode automatically
+    let output = cmd.arg("coverage").assert_success().get_output().stderr_lossy();
+    assert!(output.contains(
+        "Enabling `--ir-minimum` automatically because `via_ir` is enabled in configuration"
+    ));
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10422>

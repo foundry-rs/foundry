@@ -29,7 +29,7 @@ use foundry_evm_core::{
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
 };
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     bytecode::Bytecode,
@@ -869,6 +869,8 @@ pub struct RawCallResult {
     pub traces: Option<SparsedTraceArena>,
     /// The line coverage info collected during the call
     pub line_coverage: Option<HitMaps>,
+    /// The source coverage info collected during the call
+    pub source_coverage: Option<SourceHitMaps>,
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
     /// Scripted transactions generated from this call
@@ -900,6 +902,7 @@ impl Default for RawCallResult {
             labels: HashMap::default(),
             traces: None,
             line_coverage: None,
+            source_coverage: None,
             edge_coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
@@ -1074,6 +1077,7 @@ fn convert_executed_result(
         labels,
         traces,
         line_coverage,
+        source_coverage,
         edge_coverage,
         cheatcodes,
         chisel_state,
@@ -1101,6 +1105,7 @@ fn convert_executed_result(
         labels,
         traces,
         line_coverage,
+        source_coverage,
         edge_coverage,
         transactions,
         state_changeset,

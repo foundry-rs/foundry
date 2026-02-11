@@ -13,7 +13,7 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::{RevertDecoder, SkipReason},
 };
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
     FuzzFixtures, FuzzTestResult,
@@ -63,6 +63,8 @@ struct WorkerState {
     breakpoints: Option<Breakpoints>,
     /// Coverage collected by this worker
     coverage: Option<HitMaps>,
+    /// Stores source coverage information for all fuzz cases.
+    source_coverage: Option<SourceHitMaps>,
     /// Logs from all cases this worker ran
     logs: Vec<Log>,
     /// Deprecated cheatcodes seen by this worker
@@ -283,6 +285,7 @@ impl FuzzedExecutor {
                 case: FuzzCase { gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
                 coverage: call.line_coverage,
+                source_coverage: call.source_coverage,
                 breakpoints,
                 logs: call.logs,
                 deprecated_cheatcodes,
@@ -379,6 +382,7 @@ impl FuzzedExecutor {
             }
             result.gas_report_traces.extend(worker.traces.into_iter().map(|t| t.arena));
             HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
+            SourceHitMaps::merge_opt(&mut result.source_coverage, worker.source_coverage);
             result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
         }
 
@@ -574,6 +578,7 @@ impl FuzzedExecutor {
                         }
 
                         HitMaps::merge_opt(&mut worker.coverage, case.coverage);
+                        SourceHitMaps::merge_opt(&mut worker.source_coverage, case.source_coverage);
                         worker.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {

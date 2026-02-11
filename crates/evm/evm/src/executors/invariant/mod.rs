@@ -47,7 +47,7 @@ use std::{
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
-use foundry_evm_coverage::HitMaps;
+use foundry_evm_coverage::{HitMaps, SourceHitMaps};
 
 mod replay;
 pub use replay::{replay_error, replay_run};
@@ -137,6 +137,8 @@ struct InvariantTestData {
     last_call_results: Option<RawCallResult>,
     // Line coverage information collected from all fuzzed calls.
     line_coverage: Option<HitMaps>,
+    // Source coverage information collected from all fuzzed calls.
+    source_coverage: Option<SourceHitMaps>,
     // Metrics for each fuzzed selector.
     metrics: Map<String, InvariantMetrics>,
 
@@ -182,6 +184,7 @@ impl InvariantTest {
             gas_report_traces: vec![],
             last_call_results,
             line_coverage: None,
+            source_coverage: None,
             metrics: Map::default(),
             branch_runner,
             optimization_best_value: None,
@@ -216,8 +219,14 @@ impl InvariantTest {
     }
 
     /// Merge current collected line coverage with the new coverage from last fuzzed call.
+    /// Merge current collected line coverage with the new coverage from last fuzzed call.
     fn merge_line_coverage(&mut self, new_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
+    }
+
+    /// Merge current collected source coverage with the new coverage from last fuzzed call.
+    fn merge_source_coverage(&mut self, new_coverage: Option<SourceHitMaps>) {
+        SourceHitMaps::merge_opt(&mut self.test_data.source_coverage, new_coverage);
     }
 
     /// Update metrics for a fuzzed selector, extracted from tx details.
@@ -421,6 +430,8 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_line_coverage(call_result.line_coverage.clone());
+                // Collect source coverage from last fuzzed call.
+                invariant_test.merge_source_coverage(call_result.source_coverage.clone());
                 // Collect edge coverage and set the flag in the current run.
                 if corpus_manager.merge_edge_coverage(&mut call_result) {
                     current_run.new_coverage = true;
@@ -601,6 +612,7 @@ impl<'a> InvariantExecutor<'a> {
             last_run_inputs: result.last_run_inputs,
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
+            source_coverage: result.source_coverage,
             metrics: result.metrics,
             failed_corpus_replays: corpus_manager.failed_replays,
             optimization_best_value: result.optimization_best_value,
