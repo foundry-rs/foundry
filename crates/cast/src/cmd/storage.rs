@@ -156,6 +156,7 @@ impl StorageArgs {
         }
 
         // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir
+        #[allow(clippy::collection_is_never_read)]
         let mut _temp_dir = None;
         let root_path = if let Some(cache_root) =
             foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
