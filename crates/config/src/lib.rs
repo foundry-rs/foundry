@@ -354,6 +354,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Whether to show `console.log` outputs in realtime during script/test execution
+    pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
@@ -2572,6 +2574,7 @@ impl Default for Config {
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
+            live_logs: false,
             allow_internal_expect_revert: false,
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,

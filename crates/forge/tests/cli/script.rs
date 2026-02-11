@@ -3422,3 +3422,72 @@ forgetest_async!(can_execute_script_with_createx_and_via_ir, |prj, cmd| {
         ])
         .assert_success();
 });
+
+forgetest_async!(script_can_run_with_live_logs_flag, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract Foo is Script {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function run() pure public {
+        console.log("Run %d", uint256(1));
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["script", "script/Foo.s.sol", "--live-logs"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Run 1
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
+
+forgetest_async!(script_can_run_with_live_logs_config, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.live_logs = true;
+    });
+
+    prj.add_script(
+        "Foo.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract Foo is Script {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function run() pure public {
+        console.log("Run %d", uint256(1));
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse().args(["script", "script/Foo.s.sol"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Run 1
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
