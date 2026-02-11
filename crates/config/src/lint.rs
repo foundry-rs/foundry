@@ -28,8 +28,8 @@ pub struct LinterConfig {
 
     /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
     ///
-    /// Default's to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
-    /// or `tokenURI`.
+    /// Defaults to common abbreviations: `ERC`, `URI`, `ID`, `URL`, `API`, `JSON`, `XML`, `HTML`,
+    /// `HTTP`, `HTTPS`. This allows names like `marketID`, `tokenURI`, `apiURL`, `parseJSON`, etc.
     pub mixed_case_exceptions: Vec<String>,
 }
 
@@ -40,7 +40,18 @@ impl Default for LinterConfig {
             severity: vec![Severity::High, Severity::Med, Severity::Low],
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
-            mixed_case_exceptions: vec!["ERC".to_string(), "URI".to_string()],
+            mixed_case_exceptions: vec![
+                "ERC".to_string(),
+                "URI".to_string(),
+                "ID".to_string(),
+                "URL".to_string(),
+                "API".to_string(),
+                "JSON".to_string(),
+                "XML".to_string(),
+                "HTML".to_string(),
+                "HTTP".to_string(),
+                "HTTPS".to_string(),
+            ],
         }
     }
 }
