@@ -392,7 +392,7 @@ impl SlotIdentifier {
 
         for storage in &self.storage_layout.storage {
             let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
-            let dyn_type = DynSolType::parse(&storage_type.label).ok();
+            let dyn_type = Some(parse_sol_type(&storage_type.label));
 
             // Check if we're able to match on a slot from the layout i.e any of the base slots.
             // This will always be the case for primitive types that fit in a single slot.
@@ -527,7 +527,7 @@ impl SlotIdentifier {
         let total_slots = total_bytes.div_ceil(32);
 
         if slot >= array_start_slot && slot < array_start_slot + U256::from(total_slots) {
-            let parsed_type = DynSolType::parse(&storage_type.label).ok()?;
+            let parsed_type = parse_sol_type(&storage_type.label);
             let index = (slot - array_start_slot).to::<u64>();
             // Format the array element label based on array dimensions
             let label = match &parsed_type {
@@ -613,13 +613,12 @@ impl SlotIdentifier {
                 for member in &members {
                     if let Some(member_type_info) =
                         self.storage_layout.types.get(&member.storage_type)
-                        && let Some(member_type) = DynSolType::parse(&member_type_info.label).ok()
                     {
                         member_infos.push(SlotInfo {
                             label: member.label.clone(),
                             slot_type: StorageTypeInfo {
                                 label: member_type_info.label.clone(),
-                                dyn_sol_type: member_type,
+                                dyn_sol_type: parse_sol_type(&member_type_info.label),
                             },
                             offset: member.offset,
                             slot: slot_str.to_string(),
@@ -677,7 +676,7 @@ impl SlotIdentifier {
                     label: member_label,
                     slot_type: StorageTypeInfo {
                         label: member_type_info.label.clone(),
-                        dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
+                        dyn_sol_type: parse_sol_type(&member_type_info.label),
                     },
                     offset: first_member.offset,
                     slot: slot_str.to_string(),
@@ -716,12 +715,11 @@ impl SlotIdentifier {
                 // Found the exact member slot
 
                 // Regular member
-                let member_type = DynSolType::parse(&member_type_info.label).ok()?;
                 return Some(SlotInfo {
                     label: member_label,
                     slot_type: StorageTypeInfo {
                         label: member_type_info.label.clone(),
-                        dyn_sol_type: member_type,
+                        dyn_sol_type: parse_sol_type(&member_type_info.label),
                     },
                     offset: member.offset,
                     slot: slot_str.to_string(),
@@ -827,8 +825,9 @@ impl SlotIdentifier {
             }
         }
 
-        // Parse the final value type for decoding
-        let dyn_sol_type = DynSolType::parse(&value_type_label).unwrap_or(DynSolType::Bytes);
+        // Parse the final value type for decoding.
+        // Contract types (e.g., "contract IPool") are addresses under the hood.
+        let dyn_sol_type = parse_sol_type(&value_type_label);
 
         Some(SlotInfo {
             label,
@@ -982,6 +981,20 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
             }
         }
         _ => String::new(),
+    }
+}
+
+/// Parses a storage type label into a [`DynSolType`].
+///
+/// Handles `contract X` types (which are addresses under the hood) and `enum X` types
+/// (which are uint8) that `DynSolType::parse` doesn't recognize.
+fn parse_sol_type(label: &str) -> DynSolType {
+    if label.starts_with("contract ") {
+        DynSolType::Address
+    } else if label.starts_with("enum ") {
+        DynSolType::Uint(8)
+    } else {
+        DynSolType::parse(label).unwrap_or(DynSolType::Bytes)
     }
 }
 
