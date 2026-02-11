@@ -667,6 +667,7 @@ impl ScriptConfig {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(target),
+                            None,
                         )
                         .into(),
                     )

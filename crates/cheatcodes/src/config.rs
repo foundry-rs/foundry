@@ -4,8 +4,8 @@ use alloy_primitives::{U256, map::AddressHashMap};
 use foundry_common::{ContractsByArtifact, fs::normalize_path};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
-    Config, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
-    cache::StorageCachingConfig, fs_permissions::FsAccessKind,
+    Config, FsPermissions, ResolvedEtherscanConfig, ResolvedRpcEndpoint, ResolvedRpcEndpoints,
+    RpcEndpoint, RpcEndpointUrl, cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
 use std::{
@@ -48,6 +48,10 @@ pub struct CheatsConfig {
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<ContractsByArtifact>,
+    /// Etherscan config for fetching external contract storage layouts.
+    /// When `Some`, enables fetching verified source code from Etherscan for storage layout
+    /// decoding in `getStateDiff()`.
+    pub etherscan_config: Option<ResolvedEtherscanConfig>,
     /// Currently running artifact.
     pub running_artifact: Option<ArtifactId>,
     /// Whether to enable legacy (non-reverting) assertions.
@@ -65,6 +69,7 @@ impl CheatsConfig {
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
         running_artifact: Option<ArtifactId>,
+        etherscan_config: Option<ResolvedEtherscanConfig>,
     ) -> Self {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
@@ -88,6 +93,7 @@ impl CheatsConfig {
             evm_opts,
             labels: config.labels.clone(),
             available_artifacts,
+            etherscan_config,
             running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
@@ -97,7 +103,13 @@ impl CheatsConfig {
 
     /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
     pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
-        Self::new(config, evm_opts, self.available_artifacts.clone(), self.running_artifact.clone())
+        Self::new(
+            config,
+            evm_opts,
+            self.available_artifacts.clone(),
+            self.running_artifact.clone(),
+            self.etherscan_config.clone(),
+        )
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -218,6 +230,7 @@ impl Default for CheatsConfig {
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
+            etherscan_config: Default::default(),
             running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,
@@ -235,6 +248,7 @@ mod tests {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
+            None,
             None,
             None,
         )

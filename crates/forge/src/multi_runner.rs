@@ -368,11 +368,17 @@ impl TestRunnerConfig {
         artifact_id: &ArtifactId,
         db: Backend,
     ) -> Executor {
+        let etherscan_config = if self.config.decode_external_storage {
+            self.config.get_etherscan_config_with_chain(self.config.chain).ok().flatten()
+        } else {
+            None
+        };
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),
             Some(known_contracts),
             Some(artifact_id.clone()),
+            etherscan_config,
         ));
         ExecutorBuilder::new()
             .inspectors(|stack| {

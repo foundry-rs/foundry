@@ -635,6 +635,48 @@ pub fn find_matching_contract_artifact(
     }
 }
 
+/// Fetches verified source code from Etherscan for the given address, compiles it with
+/// `storageLayout` output, and returns the contract name and storage layout.
+///
+/// Returns `None` if the contract is not verified, is Vyper, or compilation fails.
+pub fn fetch_external_storage_layout(
+    address: Address,
+    etherscan_config: &foundry_config::ResolvedEtherscanConfig,
+) -> Option<(String, Arc<StorageLayout>)> {
+    use crate::compile::{ProjectCompiler, add_storage_layout_output, etherscan_project};
+
+    let client = etherscan_config.clone().into_client().ok()?;
+
+    let metadata = crate::block_on(async { client.contract_source_code(address).await })
+        .ok()?
+        .items
+        .into_iter()
+        .next()?;
+
+    if metadata.is_vyper() {
+        trace!(target: "cheatcodes", %address, "skipping vyper contract for storage layout fetch");
+        return None;
+    }
+
+    let contract_name = metadata.contract_name.clone();
+
+    let root = tempfile::tempdir().ok()?;
+    let root_path = root.path();
+
+    let mut project = etherscan_project(&metadata, root_path).ok()?;
+    add_storage_layout_output(&mut project);
+
+    let output = ProjectCompiler::new().quiet(true).compile(&project).ok()?;
+
+    let storage_layout = output
+        .artifacts()
+        .find(|(name, _)| *name == contract_name)
+        .and_then(|(_, artifact)| artifact.storage_layout.clone())
+        .filter(|layout| !layout.storage.is_empty())?;
+
+    Some((contract_name, Arc::new(storage_layout)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

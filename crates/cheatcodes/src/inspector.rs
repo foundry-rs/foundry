@@ -487,6 +487,12 @@ pub struct Cheatcodes {
     /// Mapping slots.
     pub mapping_slots: Option<AddressHashMap<MappingSlots>>,
 
+    /// Cached storage layouts fetched from external sources (Etherscan/Sourcify).
+    /// Maps address -> (contract_name, storage_layout). `None` value means already tried, not
+    /// found.
+    pub external_storage_layouts:
+        HashMap<Address, Option<(String, Arc<foundry_compilers::artifacts::StorageLayout>)>>,
+
     /// The current program counter.
     pub pc: usize,
     /// Breakpoints supplied by the `breakpoint` cheatcode.
@@ -563,6 +569,7 @@ impl Cheatcodes {
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
             mapping_slots: Default::default(),
+            external_storage_layouts: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
             intercept_next_create_call: Default::default(),

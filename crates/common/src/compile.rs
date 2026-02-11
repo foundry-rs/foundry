@@ -553,6 +553,20 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .build(compiler)?)
 }
 
+/// Adds `storageLayout` to the compiler output selection for the given project.
+pub fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+) {
+    project.artifacts.additional_values.storage_layout = true;
+    project.update_output_selection(|selection| {
+        selection.0.values_mut().for_each(|contract_selection| {
+            contract_selection
+                .values_mut()
+                .for_each(|selection| selection.push("storageLayout".to_string()))
+        });
+    })
+}
+
 /// Configures the reporter and runs the given closure.
 pub fn with_compilation_reporter<O>(
     quiet: bool,

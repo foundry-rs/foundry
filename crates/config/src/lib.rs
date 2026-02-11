@@ -62,8 +62,8 @@ pub use endpoints::{
 };
 
 mod etherscan;
-pub use etherscan::EtherscanConfigError;
-use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
+pub use etherscan::{EtherscanConfigError, ResolvedEtherscanConfig};
+use etherscan::{EtherscanConfigs, EtherscanEnvProvider};
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -510,6 +510,10 @@ pub struct Config {
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
     pub unchecked_cheatcode_artifacts: bool,
+
+    /// Whether to fetch and decode external contracts' storage layouts in state diffs
+    /// by fetching verified source code from Etherscan/Sourcify.
+    pub decode_external_storage: bool,
 
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
@@ -2632,6 +2636,7 @@ impl Default for Config {
             bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
+            decode_external_storage: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             create2_deployer: Self::DEFAULT_CREATE2_DEPLOYER,
             skip: vec![],

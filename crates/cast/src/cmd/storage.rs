@@ -15,16 +15,13 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::find_source,
-    compile::{ProjectCompiler, etherscan_project},
+    compile::{ProjectCompiler, add_storage_layout_output, etherscan_project},
     shell,
 };
 use foundry_compilers::{
-    Artifact, Project,
-    artifacts::{ConfigurableContractArtifact, Contract, StorageLayout},
-    compilers::{
-        Compiler,
-        solc::{Solc, SolcCompiler},
-    },
+    Artifact,
+    artifacts::{ConfigurableContractArtifact, StorageLayout},
+    compilers::solc::{Solc, SolcCompiler},
 };
 use foundry_config::{
     Config,
@@ -361,17 +358,6 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>) -> Result<()>
     sh_println!("\n{table}\n")?;
 
     Ok(())
-}
-
-fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: &mut Project<C>) {
-    project.artifacts.additional_values.storage_layout = true;
-    project.update_output_selection(|selection| {
-        selection.0.values_mut().for_each(|contract_selection| {
-            contract_selection
-                .values_mut()
-                .for_each(|selection| selection.push("storageLayout".to_string()))
-        });
-    })
 }
 
 fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
