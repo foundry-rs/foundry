@@ -24,6 +24,8 @@ pub mod gas_report;
 pub mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
+pub mod brutalizer;
+
 pub mod mutation;
 
 pub mod workspace;

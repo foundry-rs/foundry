@@ -205,7 +205,7 @@ pub struct TestArgs {
 
     /// Enable mutation testing.
     /// If passed with file paths, only those files will be tested.
-    #[arg(long, num_args(0..), value_name = "PATH")]
+    #[arg(long, num_args(0..), value_name = "PATH", conflicts_with = "brutalize")]
     pub mutate: Option<Vec<PathBuf>>,
 
     /// Specify which files to mutate with glob pattern matching.
@@ -220,6 +220,23 @@ pub struct TestArgs {
     /// Defaults to the number of CPU cores.
     #[arg(long, value_name = "JOBS", requires = "mutate")]
     pub mutation_jobs: Option<usize>,
+
+    /// Enable brutalization mode.
+    ///
+    /// Catches latent bugs that normal tests miss because the EVM initializes
+    /// memory to zero and registers to clean values. Applies source-level
+    /// sanitizers before compiling:
+    ///
+    /// - Dirties unused bits in sub-256-bit type casts (address, uint8, bytes4, etc.) to catch
+    ///   assembly code that assumes clean upper bits
+    /// - Fills scratch space (0x00-0x3f) and memory beyond the free memory pointer with junk to
+    ///   catch uninitialized memory reads
+    /// - Misaligns the free memory pointer to catch word-alignment assumptions
+    ///
+    /// If `forge test` passes but `forge test --brutalize` fails, the code has
+    /// a robustness issue that could manifest when called in a different context.
+    #[arg(long, conflicts_with = "mutate")]
+    pub brutalize: bool,
 }
 
 impl TestArgs {
@@ -293,6 +310,11 @@ impl TestArgs {
             config = self.load_config()?;
         }
 
+        // Brutalization mode: copy project to temp dir, brutalize sources, compile+test from there
+        if self.brutalize {
+            return self.compile_and_run_brutalized(config, evm_opts).await;
+        }
+
         // Set up the project.
         let project = config.project()?;
 
@@ -306,6 +328,45 @@ impl TestArgs {
         let output = compiler.compile(&project)?;
 
         self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
+    }
+
+    /// Compile and run tests with brutalization applied to source files.
+    async fn compile_and_run_brutalized(
+        &mut self,
+        config: Config,
+        evm_opts: EvmOpts,
+    ) -> Result<TestOutcome> {
+        use crate::{brutalizer, workspace};
+        use tempfile::TempDir;
+
+        let silent = shell::is_json();
+        let temp_dir = TempDir::with_prefix("forge_brutalize_")?;
+        let temp_path = temp_dir.path();
+
+        if !silent {
+            sh_println!("Brutalizing source files...")?;
+        }
+
+        workspace::copy_project(&config, temp_path)?;
+        let count = brutalizer::brutalize_project(&config, temp_path)?;
+
+        if !silent {
+            sh_println!("Brutalized {count} source files, compiling from temp workspace...")?;
+        }
+
+        // Load config from the temp directory and resolve to absolute paths
+        let temp_config = Config::load_with_root(temp_path)?.sanitized();
+        let project = temp_config.project()?;
+
+        let filter = self.filter(&temp_config)?;
+
+        let compiler = ProjectCompiler::new()
+            .dynamic_test_linking(temp_config.dynamic_test_linking)
+            .quiet(shell::is_json() || self.junit)
+            .files(self.get_sources_to_compile(&temp_config, &filter)?);
+        let output = compiler.compile(&project)?;
+
+        self.run_tests(&project.paths.root, temp_config, evm_opts, &output, &filter, false).await
     }
 
     /// Executes all the tests in the project.
