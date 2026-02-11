@@ -73,6 +73,7 @@ deny = "never"
 test_failures_file = "cache/test-failures"
 show_progress = false
 ffi = false
+live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
 prompt_timeout = 120
@@ -296,6 +297,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             ..Default::default()
         },
         ffi: true,
+        live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
@@ -1299,6 +1301,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "check_interval": 1
   },
   "ffi": false,
+  "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
   "prompt_timeout": 120,

@@ -59,6 +59,9 @@ pub struct InspectorStackBuilder {
     /// Whether to enable tracing and revert diagnostics.
     pub trace_mode: TraceMode,
     /// Whether logs should be collected.
+    /// - None for no log collection.
+    /// - Some(true) for realtime console.log-ing.
+    /// - Some(false) for log collection.
     pub logs: Option<bool>,
     /// Whether line coverage info should be collected.
     pub line_coverage: Option<bool>,
@@ -134,10 +137,10 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to collect logs.
+    /// Set the log collector, and whether to print the logs directly to stdout.
     #[inline]
-    pub fn logs(mut self, yes: bool) -> Self {
-        self.logs = Some(yes);
+    pub fn logs(mut self, live_logs: bool) -> Self {
+        self.logs = Some(live_logs);
         self
     }
 
@@ -228,7 +231,7 @@ impl InspectorStackBuilder {
             stack.set_chisel(chisel_state);
         }
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
-        stack.collect_logs(logs.unwrap_or(true));
+        stack.collect_logs(logs);
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
 
@@ -479,9 +482,18 @@ impl InspectorStack {
     }
 
     /// Set whether to enable the log collector.
+    /// - None for no log collection.
+    /// - Some(true) for realtime console.log-ing.
+    /// - Some(false) for log collection.
     #[inline]
-    pub fn collect_logs(&mut self, yes: bool) {
-        self.log_collector = yes.then(Default::default);
+    pub fn collect_logs(&mut self, live_logs: Option<bool>) {
+        self.log_collector = live_logs.map(|live_logs| {
+            Box::new(if live_logs {
+                LogCollector::LiveLogs
+            } else {
+                LogCollector::Capture { logs: Vec::new() }
+            })
+        });
     }
 
     /// Set whether to enable the trace printer.
@@ -556,7 +568,7 @@ impl InspectorStack {
         });
 
         InspectorData {
-            logs: log_collector.map(|logs| logs.logs).unwrap_or_default(),
+            logs: log_collector.and_then(|logs| logs.into_captured_logs()).unwrap_or_default(),
             labels: cheatcodes
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
