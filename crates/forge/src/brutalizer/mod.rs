@@ -3,8 +3,8 @@ use std::{ops::ControlFlow, path::Path};
 use foundry_config::Config;
 use solar::{
     ast::{
-        Block, CallArgsKind, ElementaryType, Expr, ExprKind, FunctionKind, ItemFunction, Span,
-        StmtKind, TypeKind, TypeSize, Visibility,
+        Block, CallArgsKind, Expr, ExprKind, FunctionKind, ItemFunction, Span, StmtKind,
+        Visibility,
         interface::{Session, source_map::FileName},
         visit::Visit,
     },
@@ -12,8 +12,15 @@ use solar::{
     parse::Parser,
 };
 
+mod fmp;
+mod memory;
 mod utils;
-use utils::{extract_span_text, is_eligible_function, span_seed, splitmix64};
+mod value;
+
+use fmp::generate_fmp_misalignment_assembly;
+use memory::generate_memory_brutalization_assembly;
+use utils::{extract_span_text, is_eligible_function};
+use value::{brutalize_by_type, deterministic_mask};
 
 struct BrutalizerTransform {
     span: Span,
@@ -212,89 +219,6 @@ fn brutalize_sol_files_in_dir(dir: &Path) -> eyre::Result<usize> {
     Ok(count)
 }
 
-fn deterministic_mask(span: Span) -> String {
-    let h = span_seed(span);
-    let mask = if h == 0 { 1 } else { h };
-    format!("0x{mask:016x}")
-}
-
-fn brutalize_by_type(ty: &solar::ast::Type<'_>, arg_text: &str, mask: &str) -> Option<String> {
-    match &ty.kind {
-        TypeKind::Elementary(elem_ty) => match elem_ty {
-            ElementaryType::Address(_) => Some(brutalize_address(arg_text, mask)),
-            ElementaryType::UInt(size) => brutalize_uint(*size, arg_text, mask),
-            ElementaryType::Int(size) => brutalize_int(*size, arg_text, mask),
-            ElementaryType::FixedBytes(size) => brutalize_fixed_bytes(*size, arg_text, mask),
-            ElementaryType::Bool => None,
-            ElementaryType::Bytes | ElementaryType::String => None,
-            ElementaryType::Fixed(..) | ElementaryType::UFixed(..) => None,
-        },
-        _ => None,
-    }
-}
-
-fn brutalize_address(arg_text: &str, mask: &str) -> String {
-    format!("address(uint160(uint256(uint160({arg_text})) ^ uint256({mask})))")
-}
-
-fn brutalize_uint(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
-    let bits = size.bits_raw();
-    let actual_bits = if bits == 0 { 256 } else { bits };
-    if actual_bits >= 256 {
-        return None;
-    }
-    Some(format!("uint{actual_bits}(uint256({arg_text}) ^ uint256({mask}))"))
-}
-
-fn brutalize_int(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
-    let bits = size.bits_raw();
-    let actual_bits = if bits == 0 { 256 } else { bits };
-    if actual_bits >= 256 {
-        return None;
-    }
-    Some(format!("int{actual_bits}(int256({arg_text}) ^ int256(uint256({mask})))"))
-}
-
-fn brutalize_fixed_bytes(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
-    let bytes = size.bytes_raw();
-    if bytes >= 32 || bytes == 0 {
-        return None;
-    }
-    Some(format!("bytes{bytes}(bytes32(uint256(bytes32({arg_text})) ^ uint256({mask})))"))
-}
-
-fn generate_memory_brutalization_assembly(span: Span) -> String {
-    let s = span_seed(span);
-    let w0 = splitmix64(s);
-    let w1 = splitmix64(s.wrapping_add(1));
-    let w2 = splitmix64(s.wrapping_add(2));
-    let w3 = splitmix64(s.wrapping_add(3));
-    let s0 = splitmix64(s.wrapping_add(4));
-    let s1 = splitmix64(s.wrapping_add(5));
-    let s2 = splitmix64(s.wrapping_add(6));
-    let s3 = splitmix64(s.wrapping_add(7));
-    format!(
-        " assembly {{ \
-        mstore(0x00, 0x{w0:016x}{w1:016x}) \
-        mstore(0x20, 0x{w2:016x}{w3:016x}) \
-        let _b_p := mload(0x40) \
-        mstore(_b_p, 0x{s0:016x}{s1:016x}{s2:016x}{s3:016x}) \
-        for {{ let _b_i := 0x20 }} lt(_b_i, 0x400) {{ _b_i := add(_b_i, 0x20) }} {{ \
-        mstore(add(_b_p, _b_i), keccak256(add(_b_p, sub(_b_i, 0x20)), 0x20)) \
-        }} \
-        }} "
-    )
-}
-
-fn generate_fmp_misalignment_assembly(span: Span) -> String {
-    let offset = deterministic_fmp_offset(span);
-    format!(" assembly {{ mstore(0x40, add(mload(0x40), {offset})) }} ")
-}
-
-fn deterministic_fmp_offset(span: Span) -> u8 {
-    ((span_seed(span) % 31) as u8) | 1
-}
-
 fn block_contains_assembly(block: &Block<'_>) -> bool {
     block.stmts.iter().any(|stmt| stmt_contains_assembly(&stmt.kind))
 }
@@ -313,5 +237,86 @@ fn stmt_contains_assembly(kind: &StmtKind<'_>) -> bool {
             try_stmt.clauses.iter().any(|clause| block_contains_assembly(&clause.block))
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn brutalize(source: &str) -> String {
+        brutalize_source(Path::new("test.sol"), source).unwrap()
+    }
+
+    #[test]
+    fn deterministic_output() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    function f(uint160 x) external pure returns (address) {
+        return address(x);
+    }
+}
+"#;
+        let r1 = brutalize(source);
+        let r2 = brutalize(source);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn no_change_without_casts_or_assembly() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    uint256 public x;
+    function set(uint256 v) external {
+        x = v;
+    }
+}
+"#;
+        let result = brutalize(source);
+        assert_eq!(result, source);
+    }
+
+    #[test]
+    fn constructor_not_brutalized() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    constructor() {
+        assembly { sstore(0, 1) }
+    }
+}
+"#;
+        let result = brutalize(source);
+        assert!(!result.contains("mstore(0x00,"));
+    }
+
+    #[test]
+    fn fallback_not_brutalized() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    fallback() external {
+        assembly { sstore(0, 1) }
+    }
+}
+"#;
+        let result = brutalize(source);
+        assert!(!result.contains("mstore(0x00,"));
+    }
+
+    #[test]
+    fn receive_not_brutalized() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    receive() external payable {
+        assembly { sstore(0, 1) }
+    }
+}
+"#;
+        let result = brutalize(source);
+        assert!(!result.contains("mstore(0x00,"));
     }
 }

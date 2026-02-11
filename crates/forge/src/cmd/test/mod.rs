@@ -348,8 +348,8 @@ impl TestArgs {
             sh_println!("Brutalized {count} source files, compiling from temp workspace...")?;
         }
 
-        // Load config from the temp directory
-        let temp_config = Config::load_with_root(temp_path)?;
+        // Load config from the temp directory and resolve to absolute paths
+        let temp_config = Config::load_with_root(temp_path)?.sanitized();
         let project = temp_config.project()?;
 
         let filter = self.filter(&temp_config)?;
