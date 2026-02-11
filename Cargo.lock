@@ -4656,7 +4656,6 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-compiler",
- "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tower",

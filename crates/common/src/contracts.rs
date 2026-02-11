@@ -660,10 +660,19 @@ pub fn fetch_external_storage_layout(
 
     let contract_name = metadata.contract_name.clone();
 
-    let root = tempfile::tempdir().ok()?;
-    let root_path = root.path();
+    let chain = etherscan_config.chain.unwrap_or_default();
+    let root_path = if let Some(cache_root) =
+        foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
+    {
+        let sources_root = cache_root.join("sources");
+        let contract_root = sources_root.join(format!("{address}"));
+        std::fs::create_dir_all(&contract_root).ok()?;
+        contract_root
+    } else {
+        std::env::temp_dir().join(format!("foundry-storage-{address}"))
+    };
 
-    let mut project = etherscan_project(&metadata, root_path).ok()?;
+    let mut project = etherscan_project(&metadata, &root_path).ok()?;
     add_storage_layout_output(&mut project);
 
     let output = ProjectCompiler::new().quiet(true).compile(&project).ok()?;
