@@ -26,6 +26,8 @@ pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
 pub mod mutation;
 
+pub mod workspace;
+
 mod runner;
 pub use runner::ContractRunner;
 
