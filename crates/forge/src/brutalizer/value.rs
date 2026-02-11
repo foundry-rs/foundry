@@ -37,9 +37,7 @@ fn brutalize_uint(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> 
     if actual_bits >= 256 {
         return None;
     }
-    Some(format!(
-        "uint{actual_bits}(uint256({arg_text}) | (uint256({mask}) << {actual_bits}))"
-    ))
+    Some(format!("uint{actual_bits}(uint256({arg_text}) | (uint256({mask}) << {actual_bits}))"))
 }
 
 fn brutalize_int(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
@@ -58,9 +56,7 @@ fn brutalize_fixed_bytes(size: TypeSize, arg_text: &str, mask: &str) -> Option<S
     if bytes >= 32 || bytes == 0 {
         return None;
     }
-    Some(format!(
-        "bytes{bytes}(bytes32(uint256(bytes32({arg_text})) | uint256({mask})))"
-    ))
+    Some(format!("bytes{bytes}(bytes32(uint256(bytes32({arg_text})) | uint256({mask})))"))
 }
 
 #[cfg(test)]

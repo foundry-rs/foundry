@@ -223,12 +223,18 @@ pub struct TestArgs {
 
     /// Enable brutalization mode.
     ///
-    /// Applies source-level sanitizers to catch EVM-specific robustness issues:
-    /// - Dirties unused bits in sub-256-bit type casts (address, uint8, bytes4, etc.)
-    /// - Pollutes scratch space and memory beyond the free memory pointer
-    /// - Misaligns the free memory pointer
+    /// Catches latent bugs that normal tests miss because the EVM initializes
+    /// memory to zero and registers to clean values. Applies source-level
+    /// sanitizers before compiling:
     ///
-    /// Any test failure indicates a robustness issue in the code under test.
+    /// - Dirties unused bits in sub-256-bit type casts (address, uint8, bytes4, etc.) to catch
+    ///   assembly code that assumes clean upper bits
+    /// - Fills scratch space (0x00-0x3f) and memory beyond the free memory pointer with junk to
+    ///   catch uninitialized memory reads
+    /// - Misaligns the free memory pointer to catch word-alignment assumptions
+    ///
+    /// If `forge test` passes but `forge test --brutalize` fails, the code has
+    /// a robustness issue that could manifest when called in a different context.
     #[arg(long, conflicts_with = "mutate")]
     pub brutalize: bool,
 }

@@ -279,44 +279,80 @@ contract T {
     }
 
     #[test]
-    fn constructor_not_brutalized() {
-        let source = r#"
+    fn special_functions_not_brutalized() {
+        for body in [
+            "constructor() { assembly { sstore(0, 1) } }",
+            "fallback() external { assembly { sstore(0, 1) } }",
+            "receive() external payable { assembly { sstore(0, 1) } }",
+        ] {
+            let source = format!("pragma solidity ^0.8.0;\ncontract T {{ {body} }}\n");
+            let result = brutalize(&source);
+            assert!(!result.contains("mstore(0x00,"), "should not inject for: {body}");
+        }
+
+        let free_fn = r#"
 pragma solidity ^0.8.0;
-contract T {
-    constructor() {
-        assembly { sstore(0, 1) }
-    }
+function freeFunc() pure returns (uint256 r) {
+    assembly { r := 42 }
 }
 "#;
-        let result = brutalize(source);
+        let result = brutalize(free_fn);
         assert!(!result.contains("mstore(0x00,"));
     }
 
     #[test]
-    fn fallback_not_brutalized() {
-        let source = r#"
-pragma solidity ^0.8.0;
-contract T {
-    fallback() external {
-        assembly { sstore(0, 1) }
-    }
-}
-"#;
-        let result = brutalize(source);
-        assert!(!result.contains("mstore(0x00,"));
+    fn assembly_in_nested_control_flow() {
+        for body in [
+            "if (true) { assembly { r := 42 } }",
+            "for (uint256 i; i < 1; i++) { assembly { r := 42 } }",
+            "unchecked { assembly { r := 42 } }",
+        ] {
+            let source = format!(
+                "pragma solidity ^0.8.0;\ncontract T {{\n\
+                 function f() external pure returns (uint256 r) {{ {body} }}\n}}\n"
+            );
+            let result = brutalize(&source);
+            assert!(result.contains("mstore(0x00,"), "should inject for: {body}");
+            assert!(
+                result.contains("mstore(0x40, add(mload(0x40),"),
+                "should inject FMP for: {body}"
+            );
+        }
     }
 
     #[test]
-    fn receive_not_brutalized() {
+    fn cast_and_assembly_in_same_function() {
         let source = r#"
 pragma solidity ^0.8.0;
 contract T {
-    receive() external payable {
-        assembly { sstore(0, 1) }
+    function f(uint256 x) external pure returns (uint8 r) {
+        r = uint8(x);
+        assembly { r := add(r, 1) }
     }
 }
 "#;
         let result = brutalize(source);
-        assert!(!result.contains("mstore(0x00,"));
+        assert!(result.contains("uint8(uint256(x) | (uint256(0x"));
+        assert!(result.contains("mstore(0x00,"));
+        assert!(result.contains("mstore(0x40, add(mload(0x40),"));
+    }
+
+    #[test]
+    fn visibility_gates_injection_not_casts() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    function f(uint256 x) internal pure returns (uint8) {
+        return uint8(x);
+    }
+    function g(uint256 x) public pure returns (uint8) {
+        return uint8(x);
+    }
+}
+"#;
+        let result = brutalize(source);
+        let count = result.matches("uint8(uint256(x) | (uint256(0x").count();
+        assert_eq!(count, 2, "casts in internal/public should be brutalized");
+        assert!(!result.contains("mstore(0x00,"), "no memory injection for non-external");
     }
 }

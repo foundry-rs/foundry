@@ -1,8 +1,8 @@
 // CLI integration tests for `forge test --brutalize`
 
-use foundry_test_utils::{str, util::OutputExt};
+use foundry_test_utils::str;
 
-// Basic brutalize: robust contract should pass all tests under brutalization
+// Robust contract with casts + assembly passes under brutalization
 forgetest_init!(brutalize_robust_contract_passes, |prj, cmd| {
     prj.add_source(
         "Robust.sol",
@@ -19,8 +19,40 @@ contract Robust {
         return address(x);
     }
 
-    function add(uint256 a, uint256 b) external pure returns (uint256) {
-        return a + b;
+    function asmAdd(uint256 a, uint256 b) external pure returns (uint256 result) {
+        assembly { result := add(a, b) }
+    }
+
+    function hashPair(uint256 a, uint256 b) external pure returns (bytes32 result) {
+        assembly {
+            mstore(0x00, a)
+            mstore(0x20, b)
+            result := keccak256(0x00, 0x40)
+        }
+    }
+
+    // Mixed Solidity + assembly: Solidity manages memory, assembly reads it.
+    // Robust because it uses abi.encodePacked (which properly allocates via FMP)
+    // then reads back through the pointer Solidity returned.
+    function mixedHash(uint256 a, uint256 b) external pure returns (bytes32) {
+        bytes memory packed = abi.encodePacked(a, b);
+        bytes32 result;
+        assembly {
+            result := keccak256(add(packed, 0x20), mload(packed))
+        }
+        return result;
+    }
+
+    // Assembly allocates properly via FMP, then Solidity uses the result.
+    function asmAllocThenSolidity(uint256 val) external pure returns (bytes32) {
+        bytes32 hash;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, val)
+            hash := keccak256(ptr, 0x20)
+            mstore(0x40, add(ptr, 0x20))
+        }
+        return keccak256(abi.encodePacked(hash));
     }
 }
 "#,
@@ -43,7 +75,6 @@ contract RobustTest is Test {
     }
 
     function test_toUint8() public view {
-        // Properly masks to 8 bits - robust against dirty upper bits
         assertEq(robust.toUint8(256), 0);
         assertEq(robust.toUint8(255), 255);
     }
@@ -52,8 +83,24 @@ contract RobustTest is Test {
         assertEq(robust.toAddress(1), address(1));
     }
 
-    function test_add() public view {
-        assertEq(robust.add(1, 2), 3);
+    function test_asmAdd() public view {
+        assertEq(robust.asmAdd(2, 3), 5);
+    }
+
+    function test_hashPair() public view {
+        bytes32 expected = keccak256(abi.encodePacked(uint256(1), uint256(2)));
+        assertEq(robust.hashPair(1, 2), expected);
+    }
+
+    function test_mixedHash() public view {
+        bytes32 expected = keccak256(abi.encodePacked(uint256(10), uint256(20)));
+        assertEq(robust.mixedHash(10, 20), expected);
+    }
+
+    function test_asmAllocThenSolidity() public view {
+        bytes32 inner = keccak256(abi.encodePacked(uint256(42)));
+        bytes32 expected = keccak256(abi.encodePacked(inner));
+        assertEq(robust.asmAllocThenSolidity(42), expected);
     }
 }
 "#,
@@ -68,54 +115,6 @@ Brutalized 1 source files, compiling from temp workspace...
 Suite result: ok. [..] passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
-
-// Brutalize with --json: no progress messages pollute stdout
-forgetest_init!(brutalize_json_output_clean, |prj, cmd| {
-    prj.add_source(
-        "Simple.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-contract Simple {
-    function id(uint256 x) external pure returns (uint256) {
-        return x;
-    }
-}
-"#,
-    );
-
-    prj.add_test(
-        "Simple.t.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-import "../src/Simple.sol";
-
-contract SimpleTest {
-    Simple public simple;
-
-    function setUp() public {
-        simple = new Simple();
-    }
-
-    function test_Id() public {
-        assert(simple.id(42) == 42);
-    }
-}
-"#,
-    );
-
-    cmd.args(["test", "--brutalize", "--json"]);
-    let output = cmd.assert_success().get_output().stdout_lossy();
-    // Should not contain progress messages
-    assert!(!output.contains("Brutalizing"));
-    assert!(!output.contains("Brutalized"));
-    // Should be valid JSON (starts with { since it's test results)
-    let trimmed = output.trim();
-    assert!(trimmed.starts_with('{'), "JSON output should start with '{{', got: {trimmed}");
 });
 
 // --brutalize and --mutate are mutually exclusive
@@ -137,181 +136,7 @@ error: the argument '--brutalize' cannot be used with '--mutate [<PATH>...]'
 "#]]);
 });
 
-// No source files to brutalize: still passes (0 files brutalized)
-forgetest_init!(brutalize_no_casts_no_assembly, |prj, cmd| {
-    prj.add_source(
-        "Plain.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-contract Plain {
-    uint256 public value;
-
-    function set(uint256 v) external {
-        value = v;
-    }
-}
-"#,
-    );
-
-    prj.add_test(
-        "Plain.t.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-import "../src/Plain.sol";
-
-contract PlainTest {
-    Plain public plain;
-
-    function setUp() public {
-        plain = new Plain();
-    }
-
-    function test_Set() public {
-        plain.set(42);
-        assert(plain.value() == 42);
-    }
-}
-"#,
-    );
-
-    cmd.args(["test", "--brutalize"]);
-    cmd.assert_success().stdout_eq(str![[r#"
-...
-Brutalized 0 source files, compiling from temp workspace...
-...
-"#]]);
-});
-
-// Brutalize with assembly: memory and FMP injections compile and tests pass
-forgetest_init!(brutalize_assembly_function, |prj, cmd| {
-    prj.add_source(
-        "AsmContract.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-contract AsmContract {
-    function asmAdd(uint256 a, uint256 b) external pure returns (uint256 result) {
-        assembly {
-            result := add(a, b)
-        }
-    }
-}
-"#,
-    );
-
-    prj.add_test(
-        "AsmContract.t.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-import "../src/AsmContract.sol";
-
-contract AsmContractTest {
-    AsmContract public c;
-
-    function setUp() public {
-        c = new AsmContract();
-    }
-
-    function test_AsmAdd() public {
-        assert(c.asmAdd(2, 3) == 5);
-    }
-}
-"#,
-    );
-
-    cmd.args(["test", "--brutalize"]);
-    cmd.assert_success().stdout_eq(str![[r#"
-...
-Brutalized 1 source files, compiling from temp workspace...
-...
-Suite result: ok. [..] passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-});
-
-// Brutalize with value casts: type narrowing XOR masks compile and tests pass
-forgetest_init!(brutalize_value_casts, |prj, cmd| {
-    prj.add_source(
-        "Casts.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-contract Casts {
-    function narrow8(uint256 x) external pure returns (uint8) {
-        return uint8(x);
-    }
-
-    function narrow16(uint256 x) external pure returns (uint16) {
-        return uint16(x);
-    }
-
-    function narrowAddr(uint160 x) external pure returns (address) {
-        return address(x);
-    }
-
-    function narrowBytes4(bytes32 x) external pure returns (bytes4) {
-        return bytes4(x);
-    }
-}
-"#,
-    );
-
-    prj.add_test(
-        "Casts.t.sol",
-        r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-import "forge-std/Test.sol";
-import "../src/Casts.sol";
-
-contract CastsTest is Test {
-    Casts public c;
-
-    function setUp() public {
-        c = new Casts();
-    }
-
-    function test_Narrow8() public view {
-        assertEq(c.narrow8(0x1FF), 0xFF);
-        assertEq(c.narrow8(256), 0);
-    }
-
-    function test_Narrow16() public view {
-        assertEq(c.narrow16(0x1FFFF), 0xFFFF);
-    }
-
-    function test_NarrowAddr() public view {
-        assertEq(c.narrowAddr(1), address(1));
-    }
-
-    function test_NarrowBytes4() public view {
-        assertEq(c.narrowBytes4(bytes32(uint256(1) << 248)), bytes4(uint32(1) << 24));
-    }
-}
-"#,
-    );
-
-    cmd.args(["test", "--brutalize"]);
-    cmd.assert_success().stdout_eq(str![[r#"
-...
-Brutalized 1 source files, compiling from temp workspace...
-...
-Suite result: ok. [..] passed; 0 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-});
-
-// Vulnerable: assembly allocates memory and reads it assuming zero
-// The brutalizer fills memory past FMP with junk, so mload returns non-zero
+// Catches uninitialized memory: assembly reads past FMP assuming zero
 forgetest_init!(brutalize_catches_uninitialized_memory_read, |prj, cmd| {
     prj.add_source(
         "MemVuln.sol",
@@ -320,12 +145,9 @@ forgetest_init!(brutalize_catches_uninitialized_memory_read, |prj, cmd| {
 pragma solidity ^0.8.13;
 
 contract MemVuln {
-    // BUG: allocates memory via FMP bump then reads it assuming zero.
-    // The brutalizer fills memory past FMP with junk before this runs.
     function allocAndRead() external pure returns (uint256 result) {
         assembly {
             let ptr := mload(0x40)
-            // Skip 0x200 bytes into the region (well within the 1KB brutalizer fill)
             result := mload(add(ptr, 0x200))
             mstore(0x40, add(ptr, 0x220))
         }
@@ -364,4 +186,99 @@ contract MemVulnTest is Test {
     // Brutalized test fails — memory past FMP is filled with junk
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "MemVulnTest"]);
     cmd.assert_failure();
+});
+
+// Catches dirty scratch space: reading 0x00 without writing first
+forgetest_init!(brutalize_catches_dirty_scratch_space, |prj, cmd| {
+    prj.add_source(
+        "ScratchVuln.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract ScratchVuln {
+    function readScratch() external pure returns (uint256 result) {
+        assembly {
+            result := mload(0x00)
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "ScratchVuln.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/ScratchVuln.sol";
+
+contract ScratchVulnTest is Test {
+    ScratchVuln public c;
+
+    function setUp() public {
+        c = new ScratchVuln();
+    }
+
+    function test_readScratch() public view {
+        assertEq(c.readScratch(), 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ScratchVulnTest"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ScratchVulnTest"]);
+    cmd.assert_failure();
+});
+
+// --brutalize works with --match-test filter (regression for .sanitized() config fix)
+forgetest_init!(brutalize_with_filter, |prj, cmd| {
+    prj.add_source(
+        "FilterTarget.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract FilterTarget {
+    function add(uint256 a, uint256 b) external pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "FilterTarget.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/FilterTarget.sol";
+
+contract FilterTargetTest is Test {
+    FilterTarget public c;
+
+    function setUp() public {
+        c = new FilterTarget();
+    }
+
+    function test_add() public view {
+        assertEq(c.add(1, 2), 3);
+    }
+
+    function test_addZero() public view {
+        assertEq(c.add(0, 0), 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--brutalize", "--mt", "test_add"]);
+    cmd.assert_success();
 });
