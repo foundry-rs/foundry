@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
     TestCommand,
-    rpc::{self, rpc_endpoints},
+    rpc::{self, next_etherscan_api_key, rpc_endpoints},
     str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
@@ -122,6 +122,53 @@ No tests found in project! Forge looks for functions that start with `test`
 No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
+});
+
+// Test that `--decode-external-storage` decodes storage layouts of external contracts
+// fetched from Etherscan when using state diff recording on a fork.
+forgetest_init!(decode_external_storage_on_fork, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    let etherscan_api_key = next_etherscan_api_key();
+
+    prj.add_test(
+        "DecodeExternalStorage.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IWETH {
+    function deposit() external payable;
+}
+
+contract DecodeExternalStorageTest is Test {
+    // WETH on mainnet
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+
+    function test_externalStorageDecoding() public {
+        vm.createSelectFork("<url>");
+
+        vm.startStateDiffRecording();
+        IWETH(WETH).deposit{value: 1 ether}();
+        string memory diff = vm.getStateDiffJson();
+
+        // When external storage decoding is enabled, the JSON should contain
+        // the decoded mapping label "balanceOf" from WETH's storage layout.
+        assertTrue(vm.contains(diff, "balanceOf"), "expected decoded 'balanceOf' label in state diff");
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args([
+        "test",
+        "-vvvv",
+        "--mt",
+        "test_externalStorageDecoding",
+        "--decode-external-storage",
+        "--etherscan-api-key",
+        &etherscan_api_key,
+    ])
+    .assert_success();
 });
 
 // tests that a warning is displayed if there are tests but none match a non-empty filter

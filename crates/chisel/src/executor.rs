@@ -224,6 +224,7 @@ impl SessionSource {
                             self.config.evm_opts.clone(),
                             None,
                             None,
+                            None,
                         )
                         .into(),
                     )
