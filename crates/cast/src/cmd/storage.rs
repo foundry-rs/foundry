@@ -156,6 +156,7 @@ impl StorageArgs {
         }
 
         // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir
+        let mut _temp_dir = None;
         let root_path = if let Some(cache_root) =
             foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
         {
@@ -163,12 +164,18 @@ impl StorageArgs {
             let contract_root = sources_root.join(format!("{address}"));
             if let Err(err) = std::fs::create_dir_all(&contract_root) {
                 sh_warn!("Could not create etherscan cache dir, falling back to temp: {err}")?;
-                tempfile::tempdir()?.path().to_path_buf()
+                let tmp = tempfile::tempdir()?;
+                let path = tmp.path().to_path_buf();
+                _temp_dir = Some(tmp);
+                path
             } else {
                 contract_root
             }
         } else {
-            tempfile::tempdir()?.keep()
+            let tmp = tempfile::tempdir()?;
+            let path = tmp.path().to_path_buf();
+            _temp_dir = Some(tmp);
+            path
         };
         let mut project = etherscan_project(metadata, &root_path)?;
         add_storage_layout_output(&mut project);
