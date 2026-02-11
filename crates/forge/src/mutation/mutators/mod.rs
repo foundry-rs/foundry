@@ -1,17 +1,13 @@
 use std::path::PathBuf;
 
 use eyre::Result;
-use solar::ast::{Expr, FunctionKind, Span, VariableDefinition, Visibility, yul};
+use solar::ast::{Expr, Span, VariableDefinition, yul};
 
 use crate::mutation::Mutant;
 
 pub mod assembly_mutator;
 pub mod assignment_mutator;
 pub mod binary_op_mutator;
-pub mod brutalizer_fmp_mutator;
-pub mod brutalizer_memory_mutator;
-pub mod brutalizer_utils;
-pub mod brutalizer_value_mutator;
 pub mod delete_expression_mutator;
 pub mod elim_delegate_mutator;
 pub mod mutator_registry;
@@ -36,14 +32,6 @@ pub struct MutationContext<'a> {
     pub yul_expr: Option<&'a yul::Expr<'a>>,
     /// The full source code (used to extract original text for mutations)
     pub source: Option<&'a str>,
-    /// Function body span (includes braces) — set when visiting a function definition
-    pub fn_body_span: Option<Span>,
-    /// Function visibility (external, public, internal, private)
-    pub fn_visibility: Option<Visibility>,
-    /// Function kind (function, constructor, fallback, receive, modifier)
-    pub fn_kind: Option<FunctionKind>,
-    /// Whether the function body contains inline assembly
-    pub fn_has_assembly: bool,
 }
 
 impl MutationContext<'_> {
@@ -109,10 +97,6 @@ pub struct MutationContextBuilder<'a> {
     var_definition: Option<&'a VariableDefinition<'a>>,
     yul_expr: Option<&'a yul::Expr<'a>>,
     source: Option<&'a str>,
-    fn_body_span: Option<Span>,
-    fn_visibility: Option<Visibility>,
-    fn_kind: Option<FunctionKind>,
-    fn_has_assembly: bool,
 }
 
 impl<'a> MutationContextBuilder<'a> {
@@ -125,10 +109,6 @@ impl<'a> MutationContextBuilder<'a> {
             var_definition: None,
             yul_expr: None,
             source: None,
-            fn_body_span: None,
-            fn_visibility: None,
-            fn_kind: None,
-            fn_has_assembly: false,
         }
     }
 
@@ -168,30 +148,6 @@ impl<'a> MutationContextBuilder<'a> {
         self
     }
 
-    // Optional - function body span (includes braces)
-    pub fn with_fn_body_span(mut self, span: Span) -> Self {
-        self.fn_body_span = Some(span);
-        self
-    }
-
-    // Optional - function visibility
-    pub fn with_fn_visibility(mut self, visibility: Visibility) -> Self {
-        self.fn_visibility = Some(visibility);
-        self
-    }
-
-    // Optional - function kind
-    pub fn with_fn_kind(mut self, kind: FunctionKind) -> Self {
-        self.fn_kind = Some(kind);
-        self
-    }
-
-    // Optional - whether the function body contains inline assembly
-    pub fn with_fn_has_assembly(mut self, has_assembly: bool) -> Self {
-        self.fn_has_assembly = has_assembly;
-        self
-    }
-
     pub fn build(self) -> Result<MutationContext<'a>, &'static str> {
         let span = self.span.ok_or("Span is required for MutationContext")?;
         let path = self.path.ok_or("Path is required for MutationContext")?;
@@ -203,10 +159,6 @@ impl<'a> MutationContextBuilder<'a> {
             var_definition: self.var_definition,
             yul_expr: self.yul_expr,
             source: self.source,
-            fn_body_span: self.fn_body_span,
-            fn_visibility: self.fn_visibility,
-            fn_kind: self.fn_kind,
-            fn_has_assembly: self.fn_has_assembly,
         })
     }
 }

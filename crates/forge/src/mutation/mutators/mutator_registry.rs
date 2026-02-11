@@ -3,7 +3,6 @@ use foundry_config::MutatorType;
 
 use super::{
     MutationContext, Mutator, assembly_mutator, assignment_mutator, binary_op_mutator,
-    brutalizer_fmp_mutator, brutalizer_memory_mutator, brutalizer_value_mutator,
     delete_expression_mutator, elim_delegate_mutator, require_mutator, unary_op_mutator,
 };
 
@@ -31,21 +30,6 @@ impl MutatorRegistry {
                 }
                 MutatorType::BinaryOp => {
                     registry.mutators.push(Box::new(binary_op_mutator::BinaryOpMutator));
-                }
-                MutatorType::BrutalizerFmp => {
-                    registry
-                        .mutators
-                        .push(Box::new(brutalizer_fmp_mutator::BrutalizerFmpMutator));
-                }
-                MutatorType::BrutalizerMemory => {
-                    registry
-                        .mutators
-                        .push(Box::new(brutalizer_memory_mutator::BrutalizerMemoryMutator));
-                }
-                MutatorType::BrutalizerValue => {
-                    registry
-                        .mutators
-                        .push(Box::new(brutalizer_value_mutator::BrutalizerValueMutator));
                 }
                 MutatorType::DeleteExpression => {
                     registry
