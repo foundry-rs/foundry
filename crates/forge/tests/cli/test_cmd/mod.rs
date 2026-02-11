@@ -126,6 +126,7 @@ No tests found in project! Forge looks for functions that start with `test`
 
 // Test that `--decode-external-storage` decodes storage layouts of external contracts
 // fetched from Etherscan when using state diff recording on a fork.
+// Uses 1inch token (non-proxy, Solidity 0.6.12) which supports storageLayout output.
 forgetest_init!(decode_external_storage_on_fork, |prj, cmd| {
     let endpoint = rpc::next_http_archive_rpc_url();
     let etherscan_api_key = next_etherscan_api_key();
@@ -135,24 +136,28 @@ forgetest_init!(decode_external_storage_on_fork, |prj, cmd| {
         &r#"
 import {Test} from "forge-std/Test.sol";
 
-interface IWETH {
-    function deposit() external payable;
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
 }
 
 contract DecodeExternalStorageTest is Test {
-    // WETH on mainnet
-    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    // 1inch token on mainnet (non-proxy, compiled with Solidity 0.6.12)
+    address constant ONE_INCH = 0x111111111117dC0aa78b770fA6A738034120C302;
+    // A large 1inch holder
+    address constant WHALE = 0xF977814e90dA44bFA03b6295A0616a897441aceC;
 
     function test_externalStorageDecoding() public {
         vm.createSelectFork("<url>");
 
+        vm.prank(WHALE);
+
         vm.startStateDiffRecording();
-        IWETH(WETH).deposit{value: 1 ether}();
+        IERC20(ONE_INCH).transfer(address(this), 1 ether);
         string memory diff = vm.getStateDiffJson();
 
         // When external storage decoding is enabled, the JSON should contain
-        // the decoded mapping label "balanceOf" from WETH's storage layout.
-        assertTrue(vm.contains(diff, "balanceOf"), "expected decoded 'balanceOf' label in state diff");
+        // the decoded mapping label "_balances" from the 1inch token's storage layout.
+        assertTrue(vm.contains(diff, "_balances"), "expected decoded '_balances' label in state diff");
     }
 }
    "#
@@ -188,7 +193,7 @@ interface IUSDC {
 }
 
 contract DecodeExternalStorageProxyTest is Test {
-    // USDC on mainnet (EIP-1967 proxy -> FiatTokenV2_1 implementation)
+    // USDC on mainnet (EIP-1967 proxy -> FiatTokenV2_2 implementation)
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     // A large USDC holder (Circle/Centre)
     address constant USDC_WHALE = 0x55FE002aefF02F77364de339a1292923A15844B8;
@@ -203,10 +208,10 @@ contract DecodeExternalStorageProxyTest is Test {
         IUSDC(USDC).transfer(address(this), 1_000_000); // 1 USDC (6 decimals)
         string memory diff = vm.getStateDiffJson();
 
-        // The implementation contract (FiatTokenV2_1) has a `balances` mapping.
-        // If proxy resolution works, the decoded JSON should contain "balances"
+        // The implementation contract (FiatTokenV2_2) has a `balanceAndBlacklistStates` mapping.
+        // If proxy resolution works, the decoded JSON should contain the label
         // from the implementation's storage layout, not raw hex slots.
-        assertTrue(vm.contains(diff, "balances"), "expected decoded 'balances' label from implementation storage layout");
+        assertTrue(vm.contains(diff, "balanceAndBlacklistStates"), "expected decoded 'balanceAndBlacklistStates' label from implementation storage layout");
     }
 }
    "#
