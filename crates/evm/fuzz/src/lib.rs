@@ -323,6 +323,13 @@ pub struct FuzzCase {
     pub stipend: u64,
 }
 
+impl FuzzCase {
+    /// Removes the calldata from the fuzz case to save memory.
+    pub fn prune_calldata(&mut self) {
+        self.calldata = Bytes::new();
+    }
+}
+
 /// Container type for all successful test cases
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -390,6 +397,13 @@ impl FuzzedCases {
     /// Returns the lowest amount of gas spent on a fuzz case
     pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
+    }
+
+    /// Prunes calldata from all fuzz cases.
+    pub fn prune_calldata(&mut self) {
+        for case in &mut self.cases {
+            case.prune_calldata();
+        }
     }
 }
 
