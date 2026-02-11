@@ -392,7 +392,15 @@ impl SlotIdentifier {
 
         for storage in &self.storage_layout.storage {
             let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
-            let dyn_type = Some(parse_sol_type(&storage_type.label));
+            // Only parse as a concrete type for labels that aren't mappings or structs,
+            // which have their own handling paths below.
+            let dyn_type = if storage_type.label.starts_with("mapping(")
+                || storage_type.label.starts_with("struct ")
+            {
+                None
+            } else {
+                Some(parse_sol_type(&storage_type.label))
+            };
 
             // Check if we're able to match on a slot from the layout i.e any of the base slots.
             // This will always be the case for primitive types that fit in a single slot.
