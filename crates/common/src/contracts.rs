@@ -638,20 +638,24 @@ pub fn find_matching_contract_artifact(
 /// Fetches verified source code from Etherscan for the given address, compiles it with
 /// `storageLayout` output, and returns the contract name and storage layout.
 ///
+/// For proxy contracts, automatically follows the implementation address to fetch the
+/// implementation's storage layout (since proxies use `delegatecall`).
+///
 /// Returns `None` if the contract is not verified, is Vyper, or compilation fails.
 pub fn fetch_external_storage_layout(
     address: Address,
     etherscan_config: &foundry_config::ResolvedEtherscanConfig,
 ) -> Option<(String, Arc<StorageLayout>)> {
-    use crate::compile::{ProjectCompiler, add_storage_layout_output, etherscan_project};
+    use crate::{
+        abi::find_source,
+        compile::{ProjectCompiler, add_storage_layout_output, etherscan_project},
+    };
 
     let client = etherscan_config.clone().into_client().ok()?;
 
-    let metadata = crate::block_on(async { client.contract_source_code(address).await })
-        .ok()?
-        .items
-        .into_iter()
-        .next()?;
+    // Use find_source which automatically resolves proxy → implementation
+    let source = crate::block_on(async { find_source(client, address).await }).ok()?;
+    let metadata = source.items.into_iter().next()?;
 
     if metadata.is_vyper() {
         trace!(target: "cheatcodes", %address, "skipping vyper contract for storage layout fetch");
