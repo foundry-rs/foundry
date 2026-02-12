@@ -1605,30 +1605,38 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
-            && self.etherscan.contains_key(maybe_alias)
-        {
-            return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
-        }
-
-        // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain
-            .or(self.chain)
-            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
-        {
-            match (res, self.etherscan_api_key.as_ref()) {
-                (Ok(mut config), Some(key)) => {
-                    // we update the key, because if an etherscan_api_key is set, it should take
-                    // precedence over the entry, since this is usually set via env var or CLI args.
-                    config.key.clone_from(key);
-                    return Ok(Some(config));
-                }
-                (Ok(config), None) => return Ok(Some(config)),
-                (Err(err), None) => return Err(err),
-                (Err(_), Some(_)) => {
-                    // use the etherscan key as fallback
-                }
+        let handle_resolved = |res| match (res, self.etherscan_api_key.as_ref()) {
+            (Ok(mut config), Some(key)) => {
+                // we update the key, because if an etherscan_api_key is set, it should take
+                // precedence over the entry, since this is usually set via env var or CLI args.
+                config.key.clone_from(key);
+                Ok(Some(config))
             }
+            (Ok(config), None) => Ok(Some(config)),
+            (Err(err), None) => Err(err),
+            (Err(_), Some(_)) => {
+                // use the etherscan key as fallback
+                Ok(None)
+            }
+        };
+
+        let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref());
+        let chain = chain.or(self.chain);
+
+        if let Some(maybe_alias) = maybe_alias {
+            let mut resolved = self.etherscan.clone().resolved();
+            if resolved.contains_key(maybe_alias) {
+                return resolved.remove(maybe_alias).transpose();
+            }
+            
+            // try to find by comparing chain IDs after resolving
+            if let Some(res) = chain.and_then(|chain| resolved.find_chain(chain)) {
+                return handle_resolved(res);
+            }
+        } else if let Some(res) =
+            chain.and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
+        {
+            return handle_resolved(res);
         }
 
         // etherscan fallback via API key
