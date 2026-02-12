@@ -5,6 +5,7 @@ use alloy_primitives::{
     Address, TxHash,
     map::{HashMap, HashSet},
 };
+use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use anvil_core::eth::transaction::PendingTransaction;
 use foundry_primitives::FoundryTxEnvelope;
 use parking_lot::RwLock;
@@ -78,6 +79,8 @@ pub struct PoolTransaction {
     pub provides: Vec<TxMarker>,
     /// priority of the transaction
     pub priority: TransactionPriority,
+    /// Optional conditions (ERC-7796) that must be met for the transaction to be included.
+    pub conditions: Option<TransactionConditional>,
 }
 
 // == impl PoolTransaction ==
@@ -89,6 +92,7 @@ impl PoolTransaction {
             requires: vec![],
             provides: vec![],
             priority: TransactionPriority(0),
+            conditions: None,
         }
     }
     /// Returns the hash of this transaction
@@ -129,6 +133,7 @@ impl TryFrom<AnyRpcTransaction> for PoolTransaction {
             requires: vec![],
             provides: vec![],
             priority: TransactionPriority(0),
+            conditions: None,
         })
     }
 }
