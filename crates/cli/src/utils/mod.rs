@@ -289,7 +289,7 @@ impl CommandUtils for Command {
             };
             if !msg.is_empty() {
                 err.push(':');
-                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push(if msg.lines().count() == 1 { ' ' } else { '\n' });
                 err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
