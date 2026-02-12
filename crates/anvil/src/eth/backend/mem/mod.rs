@@ -35,6 +35,7 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TrieAccount, TxEnvelope, Typed2718,
+    conditional::BlockConditionalAttributes,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -228,6 +229,8 @@ pub struct Backend {
     mining: Arc<tokio::sync::Mutex<()>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
+    /// Maximum time (in seconds) into a slot at which a transaction can still be included.
+    max_tx_inclusion_time_in_slot: Option<u64>,
 }
 
 impl Backend {
@@ -297,9 +300,19 @@ impl Backend {
             states = states.disk_path(cache_path);
         }
 
-        let (slots_in_an_epoch, precompile_factory, disable_pool_balance_checks) = {
+        let (
+            slots_in_an_epoch,
+            precompile_factory,
+            disable_pool_balance_checks,
+            max_tx_inclusion_time_in_slot,
+        ) = {
             let cfg = node_config.read().await;
-            (cfg.slots_in_an_epoch, cfg.precompile_factory.clone(), cfg.disable_pool_balance_checks)
+            (
+                cfg.slots_in_an_epoch,
+                cfg.precompile_factory.clone(),
+                cfg.disable_pool_balance_checks,
+                cfg.max_tx_inclusion_time_in_slot,
+            )
         };
 
         let backend = Self {
@@ -325,6 +338,7 @@ impl Backend {
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
             disable_pool_balance_checks,
+            max_tx_inclusion_time_in_slot,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -652,6 +666,11 @@ impl Backend {
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> u64 {
         self.blockchain.storage.read().best_number
+    }
+
+    /// Returns the configured max tx inclusion time in slot, if any.
+    pub fn max_tx_inclusion_time_in_slot(&self) -> Option<u64> {
+        self.max_tx_inclusion_time_in_slot
     }
 
     /// Sets the block number
@@ -1310,6 +1329,18 @@ impl Backend {
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
                 env.evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
+
+                // Filter out transactions whose conditions are not met for this block.
+                let block_timestamp: u64 = env.evm_env.block_env.timestamp.to();
+                let block_attrs = BlockConditionalAttributes::new(block_number, block_timestamp);
+                let pool_transactions: Vec<_> = pool_transactions
+                    .into_iter()
+                    .filter(|tx| {
+                        tx.conditions
+                            .as_ref()
+                            .map_or(true, |c| c.matches_block_attributes(&block_attrs))
+                    })
+                    .collect();
 
                 let executor = TransactionExecutor {
                     db: &mut **db,
@@ -2678,6 +2709,7 @@ impl Backend {
                     requires: vec![],
                     provides: vec![],
                     priority: crate::eth::pool::transactions::TransactionPriority(0),
+                    conditions: None,
                 })
             })
             .collect();

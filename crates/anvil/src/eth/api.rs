@@ -61,6 +61,7 @@ use alloy_rpc_types::{
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
 use alloy_rpc_types_eth::FillTransaction;
+use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
@@ -1169,6 +1170,7 @@ impl EthApi {
             provides: vec![to_marker(nonce, *pending_transaction.sender())],
             pending_transaction,
             priority,
+            conditions: self.compute_tx_conditions(),
         };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
@@ -3437,11 +3439,35 @@ impl EthApi {
     ) -> Result<TxHash> {
         let from = *pending_transaction.sender();
         let priority = self.transaction_priority(&pending_transaction.transaction);
-        let pool_transaction =
-            PoolTransaction { requires, provides, pending_transaction, priority };
+        let pool_transaction = PoolTransaction {
+            requires,
+            provides,
+            pending_transaction,
+            priority,
+            conditions: self.compute_tx_conditions(),
+        };
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Computes optional `TransactionConditional` based on the `max_tx_inclusion_time_in_slot`
+    /// setting. If the transaction arrives after `last_block_timestamp + max_time`, it is too
+    /// late for the next block, so we set `block_number_min = current_block + 2`.
+    fn compute_tx_conditions(&self) -> Option<TransactionConditional> {
+        let max_time = self.backend.max_tx_inclusion_time_in_slot()?;
+        let current_time = self.backend.time().current_time();
+        let current_block = self.backend.best_number();
+        let last_block_ts = self.backend.time().last_timestamp();
+
+        if current_time > last_block_ts.saturating_add(max_time) {
+            Some(TransactionConditional {
+                block_number_min: Some(current_block + 2),
+                ..Default::default()
+            })
+        } else {
+            None
+        }
     }
 
     /// Returns the current state root

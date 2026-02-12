@@ -88,6 +88,19 @@ pub struct NodeArgs {
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
     pub block_time: Option<Duration>,
 
+    /// Maximum time (in seconds) into a slot at which a transaction can still be included.
+    ///
+    /// When interval mining is active, simulates a validator cutoff: transactions submitted after
+    /// `slot_start + max_tx_inclusion_time_in_slot` are excluded from the current block and
+    /// reconsidered in the next one.
+    #[arg(
+        long,
+        visible_alias = "maxTxInclusionTimeInSlot",
+        value_name = "SECONDS",
+        requires = "block_time"
+    )]
+    pub max_tx_inclusion_time_in_slot: Option<u64>,
+
     /// Slots in an epoch
     #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
     pub slots_in_an_epoch: u64,
@@ -287,6 +300,7 @@ impl NodeArgs {
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
+            .with_max_tx_inclusion_time_in_slot(self.max_tx_inclusion_time_in_slot)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path))
     }

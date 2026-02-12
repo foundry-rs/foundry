@@ -50,6 +50,11 @@ impl TimeManager {
         *self.offset.read()
     }
 
+    /// Returns the timestamp of the last mined block.
+    pub fn last_timestamp(&self) -> u64 {
+        *self.last_timestamp.read()
+    }
+
     /// Adds the given `offset` to the already tracked offset and returns the result
     fn add_offset(&self, offset: i128) -> i128 {
         let mut current = self.offset.write();
@@ -135,6 +140,11 @@ impl TimeManager {
     pub fn current_call_timestamp(&self) -> u64 {
         let (next_timestamp, _) = self.compute_next_timestamp();
         next_timestamp
+    }
+
+    /// Returns the current blockchain-adjusted wall clock time (not the next block's timestamp).
+    pub fn current_time(&self) -> u64 {
+        (duration_since_unix_epoch().as_secs() as i128 + self.offset()) as u64
     }
 }
 

@@ -5,10 +5,12 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, bytes, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{BlockId, BlockTransactions, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolCall;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -229,4 +231,166 @@ async fn test_fake_signature_transaction() {
     let result = pending.get_receipt().await;
 
     assert!(result.is_ok(), "ecrecover failed: {:?}", result.err());
+}
+
+// Tests that transactions submitted within the inclusion window are included in the block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_max_tx_inclusion_time_in_slot_includes_early_tx() {
+    let max_inclusion = 4u64;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_blocktime(Some(Duration::from_secs(12)))
+            .with_max_tx_inclusion_time_in_slot(Some(max_inclusion)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    // Disable automine to control mining manually.
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    // Submit tx immediately — current_time ≈ last_block.timestamp, within max_inclusion window.
+    // No conditions will be set, so the tx is eligible for immediate inclusion.
+    let tx = TransactionRequest::default().to(to).value(U256::from(100)).from(from);
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let tx_hash = *pending.tx_hash();
+
+    // Mine one block.
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let BlockTransactions::Hashes(hashes) = &block.transactions else {
+        panic!("expected hashes");
+    };
+    assert!(hashes.contains(&tx_hash), "transaction should be included in the block");
+}
+
+// Tests that transactions submitted after the inclusion cutoff are excluded from the block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_max_tx_inclusion_time_in_slot_excludes_late_tx() {
+    let max_inclusion = 4u64;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_blocktime(Some(Duration::from_secs(12)))
+            .with_max_tx_inclusion_time_in_slot(Some(max_inclusion)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    // Disable automine.
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    // Advance time past the inclusion window before submitting.
+    // current_time will be > last_block_ts + max_inclusion, so the tx gets
+    // block_number_min = best_number + 2 = 0 + 2 = 2.
+    api.evm_increase_time(U256::from(max_inclusion + 1)).await.unwrap();
+
+    // Send a transaction — it will have conditions: block_number_min = 2.
+    let tx = TransactionRequest::default().to(to).value(U256::from(100)).from(from);
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let tx_hash = *pending.tx_hash();
+
+    // Mine one block (block 1). The tx requires block >= 2, so it is excluded.
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let BlockTransactions::Hashes(hashes) = &block.transactions else {
+        panic!("expected hashes");
+    };
+    assert!(
+        !hashes.contains(&tx_hash),
+        "transaction should NOT be included (submitted too late in slot)"
+    );
+
+    // The tx should still be pending in the pool.
+    let pending_block = provider.get_block(BlockId::pending()).await.unwrap().unwrap();
+    let BlockTransactions::Hashes(pending_hashes) = &pending_block.transactions else {
+        panic!("expected hashes");
+    };
+    assert!(pending_hashes.contains(&tx_hash), "excluded tx should remain in the pool");
+}
+
+// Tests that excluded transactions get included in a subsequent block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_max_tx_inclusion_time_in_slot_excluded_tx_included_next_block() {
+    let max_inclusion = 4u64;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_blocktime(Some(Duration::from_secs(12)))
+            .with_max_tx_inclusion_time_in_slot(Some(max_inclusion)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    // Advance time past the inclusion window before submitting.
+    // The tx will get block_number_min = best_number + 2 = 0 + 2 = 2.
+    api.evm_increase_time(U256::from(max_inclusion + 1)).await.unwrap();
+
+    let tx = TransactionRequest::default().to(to).value(U256::from(100)).from(from);
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let tx_hash = *pending.tx_hash();
+
+    // First block (block 1): tx requires block >= 2, so it's excluded.
+    api.mine_one().await;
+
+    let block1 = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let BlockTransactions::Hashes(hashes1) = &block1.transactions else {
+        panic!("expected hashes");
+    };
+    assert!(!hashes1.contains(&tx_hash), "should be excluded from first block");
+
+    // Second block (block 2): tx requires block >= 2, and this is block 2, so it's included.
+    api.mine_one().await;
+
+    let block2 = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let BlockTransactions::Hashes(hashes2) = &block2.transactions else {
+        panic!("expected hashes");
+    };
+    assert!(hashes2.contains(&tx_hash), "should be included in the second block");
+}
+
+// Tests that without max_tx_inclusion_time_in_slot, all transactions are included regardless of
+// timing (default behavior preserved).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_no_max_tx_inclusion_time_includes_all() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(12)))).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    // Advance time significantly — without the feature this should have no effect.
+    api.evm_increase_time(U256::from(100)).await.unwrap();
+
+    let tx = TransactionRequest::default().to(to).value(U256::from(100)).from(from);
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let tx_hash = *pending.tx_hash();
+
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let BlockTransactions::Hashes(hashes) = &block.transactions else {
+        panic!("expected hashes");
+    };
+    assert!(hashes.contains(&tx_hash), "without the feature, all txs should be included");
 }
