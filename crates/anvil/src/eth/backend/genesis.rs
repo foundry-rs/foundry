@@ -44,13 +44,14 @@ impl GenesisConfig {
         mut db: RwLockWriteGuard<'_, Box<dyn Db>>,
     ) -> DatabaseResult<()> {
         if let Some(ref genesis) = self.genesis_init {
-            for (addr, mut acc) in genesis.alloc.clone() {
-                let storage = std::mem::take(&mut acc.storage);
+            for (addr, acc) in &genesis.alloc {
                 // insert all accounts
-                db.insert_account(addr, self.genesis_to_account_info(&acc));
+                db.insert_account(*addr, self.genesis_to_account_info(acc));
                 // insert all storage values
-                for (k, v) in &storage.unwrap_or_default() {
-                    db.set_storage_at(addr, *k, *v)?;
+                if let Some(storage) = &acc.storage {
+                    for (k, v) in storage {
+                        db.set_storage_at(*addr, *k, *v)?;
+                    }
                 }
             }
         }
@@ -59,11 +60,10 @@ impl GenesisConfig {
 
     /// Converts a [`GenesisAccount`] to an [`AccountInfo`]
     fn genesis_to_account_info(&self, acc: &GenesisAccount) -> AccountInfo {
-        let GenesisAccount { code, balance, nonce, .. } = acc.clone();
-        let code = code.map(Bytecode::new_raw);
+        let code = acc.code.clone().map(Bytecode::new_raw);
         AccountInfo {
-            balance,
-            nonce: nonce.unwrap_or_default(),
+            balance: acc.balance,
+            nonce: acc.nonce.unwrap_or_default(),
             code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,
             account_id: None,
