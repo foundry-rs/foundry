@@ -111,7 +111,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
     cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-0.8.33:
+0.8.33 [[..]]:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -129,6 +129,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
   "Solidity": [
     {
       "version": "0.8.33",
+      "compiler_path": "[..]",
       "paths": [
         "src/ContractC.sol",
         "src/ContractD.sol"
@@ -199,6 +200,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
   "Solidity": [
     {
       "version": "0.8.33",
+      "compiler_path": "[..]",
       "paths": [
         "src/ContractD.sol"
       ]
@@ -230,13 +232,13 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
     cmd.args(["compiler", "resolve", "-vv"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-0.8.4 (<= istanbul):
+0.8.4 (<= istanbul) [[..]]:
 └── src/ContractA.sol
 
-0.8.11 (<= london):
+0.8.11 (<= london) [[..]]:
 └── src/ContractB.sol
 
-0.8.33 (<= prague):
+0.8.33 (<= prague) [[..]]:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -264,6 +266,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
   "Solidity": [
     {
       "version": "0.8.4",
+      "compiler_path": "[..]",
       "evm_version": "Istanbul",
       "paths": [
         "src/ContractA.sol"
@@ -271,6 +274,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
     },
     {
       "version": "0.8.11",
+      "compiler_path": "[..]",
       "evm_version": "London",
       "paths": [
         "src/ContractB.sol"
@@ -278,6 +282,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
     },
     {
       "version": "0.8.33",
+      "compiler_path": "[..]",
       "evm_version": "[..]",
       "paths": [
         "src/ContractC.sol",

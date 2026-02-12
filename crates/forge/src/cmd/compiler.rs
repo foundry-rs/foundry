@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_common::shell;
-use foundry_compilers::{Graph, artifacts::EvmVersion};
+use foundry_compilers::{Graph, artifacts::EvmVersion, compilers::solc::Solc};
 use foundry_config::Config;
 use semver::Version;
 use serde::Serialize;
@@ -34,6 +34,9 @@ pub enum CompilerSubcommands {
 struct ResolvedCompiler {
     /// Compiler version.
     version: Version,
+    /// Path to the compiler binary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compiler_path: Option<String>,
     /// Max supported EVM version of compiler.
     #[serde(skip_serializing_if = "Option::is_none")]
     evm_version: Option<EvmVersion>,
@@ -102,7 +105,17 @@ impl ResolveArgs {
                         None
                     };
 
-                    ResolvedCompiler { version: version.clone(), evm_version, paths }
+                    let compiler_path =
+                        if shell::verbosity() > 0 && language.to_string() == "Solidity" {
+                            Solc::find_svm_installed_version(version)
+                                .ok()
+                                .flatten()
+                                .map(|solc| solc.solc.display().to_string())
+                        } else {
+                            None
+                        };
+
+                    ResolvedCompiler { version: version.clone(), compiler_path, evm_version, paths }
                 })
                 .filter(|version| !version.paths.is_empty())
                 .collect();
@@ -138,10 +151,14 @@ impl ResolveArgs {
                 match shell::verbosity() {
                     0 => sh_println!("- {version}")?,
                     _ => {
+                        let path_suffix = match &resolved_compiler.compiler_path {
+                            Some(path) => format!(" [{path}]"),
+                            None => String::new(),
+                        };
                         if let Some(evm) = &resolved_compiler.evm_version {
-                            sh_println!("{version} (<= {evm}):")?
+                            sh_println!("{version} (<= {evm}){path_suffix}:")?
                         } else {
-                            sh_println!("{version}:")?
+                            sh_println!("{version}{path_suffix}:")?
                         }
                     }
                 }
