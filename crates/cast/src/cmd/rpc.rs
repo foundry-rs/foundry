@@ -53,7 +53,7 @@ impl RpcArgs {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
 
-        let provider = utils::get_provider_with_curl(&config, rpc.curl)?;
+        let provider = utils::get_provider(&config)?;
         let result = Cast::new(provider).rpc(&method, params).await?;
         if shell::is_json() {
             let result: serde_json::Value = serde_json::from_str(&result)?;
