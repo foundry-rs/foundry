@@ -91,11 +91,14 @@ sol! {
 #[derive(Clone, Debug)]
 pub struct Executor {
     /// The underlying `revm::Database` that contains the EVM storage.
+    ///
+    /// Wrapped in `Arc` for efficient cloning during parallel fuzzing. Use [`Arc::make_mut`]
+    /// for copy-on-write semantics when mutation is needed.
     // Note: We do not store an EVM here, since we are really
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    backend: Backend,
+    backend: Arc<Backend>,
     /// The EVM environment.
     env: Env,
     /// The Revm inspector stack.
@@ -107,12 +110,6 @@ pub struct Executor {
 }
 
 impl Executor {
-    /// Creates a new `ExecutorBuilder`.
-    #[inline]
-    pub fn builder() -> ExecutorBuilder {
-        ExecutorBuilder::new()
-    }
-
     /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
@@ -135,7 +132,7 @@ impl Executor {
             },
         );
 
-        Self { backend, env, inspector, gas_limit, legacy_assertions }
+        Self { backend: Arc::new(backend), env, inspector, gas_limit, legacy_assertions }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
@@ -145,7 +142,13 @@ impl Executor {
             self.env.tx.clone(),
             self.spec_id(),
         );
-        Self::new(backend, env, self.inspector().clone(), self.gas_limit, self.legacy_assertions)
+        Self {
+            backend: Arc::new(backend),
+            env,
+            inspector: self.inspector().clone(),
+            gas_limit: self.gas_limit,
+            legacy_assertions: self.legacy_assertions,
+        }
     }
 
     /// Returns a reference to the EVM backend.
@@ -154,8 +157,11 @@ impl Executor {
     }
 
     /// Returns a mutable reference to the EVM backend.
+    ///
+    /// Uses copy-on-write semantics: if other clones of this executor share the backend,
+    /// this will clone the backend first.
     pub fn backend_mut(&mut self) -> &mut Backend {
-        &mut self.backend
+        Arc::make_mut(&mut self.backend)
     }
 
     /// Returns a reference to the EVM environment.
@@ -1028,16 +1034,14 @@ fn convert_executed_result(
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
-        ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
-            (reason.into(), gas_refunded, gas_used, Some(output), logs)
+        ExecutionResult::Success { reason, gas, output, logs, .. } => {
+            (reason.into(), gas.inner_refunded(), gas.used(), Some(output), logs)
         }
-        ExecutionResult::Revert { gas_used, output } => {
+        ExecutionResult::Revert { gas, output } => {
             // Need to fetch the unused gas
-            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)), vec![])
+            (InstructionResult::Revert, 0_u64, gas.used(), Some(Output::Call(output)), vec![])
         }
-        ExecutionResult::Halt { reason, gas_used } => {
-            (reason.into(), 0_u64, gas_used, None, vec![])
-        }
+        ExecutionResult::Halt { reason, gas } => (reason.into(), 0_u64, gas.used(), None, vec![]),
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas(
         env.evm_env.cfg_env.spec,

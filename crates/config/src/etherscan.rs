@@ -350,22 +350,6 @@ pub enum EtherscanApiKey {
 }
 
 impl EtherscanApiKey {
-    /// Returns the key variant
-    pub fn as_key(&self) -> Option<&str> {
-        match self {
-            Self::Key(url) => Some(url),
-            Self::Env(_) => None,
-        }
-    }
-
-    /// Returns the env variant
-    pub fn as_env(&self) -> Option<&str> {
-        match self {
-            Self::Env(val) => Some(val),
-            Self::Key(_) => None,
-        }
-    }
-
     /// Returns the key this type holds
     ///
     /// # Error

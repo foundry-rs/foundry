@@ -163,6 +163,7 @@ impl<N: Network> ProviderBuilder<N> {
         let mut builder = Self::new(url.as_ref());
 
         builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
+        builder = builder.curl_mode(config.eth_rpc_curl);
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
             builder = builder.chain(chain);
@@ -451,7 +452,11 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
     {
         return Ok(path.to_path_buf());
     }
-    Err(())
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        std::env::current_dir().map(|d| d.join(path)).map_err(drop)
+    }
 }
 
 #[cfg(test)]

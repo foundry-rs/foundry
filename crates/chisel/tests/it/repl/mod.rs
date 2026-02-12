@@ -264,3 +264,13 @@ repl_test!(uninitialized_variables, |repl| {
     repl.sendln("y");
     repl.expect("Data: 0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF");
 });
+
+repl_test!(chisel_can_run_with_live_logs_flag, "--live-logs", init = true, |repl| {
+    repl.sendln("import {console} from 'forge-std/Script.sol';");
+    repl.sendln("console.log('Hello, World!');");
+    repl.expect("Hello, World!");
+
+    repl.sendln("console.log('Goodbye, World!');");
+    repl.expect("Hello, World!"); // old log is also printed
+    repl.expect("Goodbye, World!");
+});

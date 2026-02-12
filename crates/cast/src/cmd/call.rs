@@ -16,7 +16,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{LoadConfig, TraceResult, get_provider_with_curl, parse_ether_value},
+    utils::{LoadConfig, TraceResult, get_provider, parse_ether_value},
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -247,7 +247,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = get_provider_with_curl(&config, false)?;
+        let provider = get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 

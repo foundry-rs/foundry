@@ -150,7 +150,6 @@ ruint.opt-level = 3
 
 sha2.opt-level = 3
 sha3.opt-level = 3
-tiny-keccak.opt-level = 3
 keccak.opt-level = 3
 
 # Fuzzing.
@@ -280,7 +279,7 @@ foundry-compilers = { version = "0.19.14", default-features = false, features = 
     "rustls",
     "svm-solc",
 ] }
-foundry-fork-db = "0.22"
+foundry-fork-db = "0.23"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
@@ -442,6 +441,7 @@ ethereum_ssz = "0.10"
 
 # Tempo
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", tag = "v1.0.0", default-features = false, features = ["serde"] }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", tag = "v1.0.0", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -496,24 +496,24 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "80e6a436ecade2b9bd950fd70bd0d6a45ef0a43e" }
-alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "80e6a436ecade2b9bd950fd70bd0d6a45ef0a43e" }
+alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "742dc14749ea0279c03ca27b1c26f26ac19fbefb" }
+alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "742dc14749ea0279c03ca27b1c26f26ac19fbefb" }
 
 ## revm
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-bytecode = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-context = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-context-interface = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-database = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-database-interface = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-handler = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-inspector = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-state = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "6aa06829d2caa2aa38606ed22b83354a7a7ff98e" }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "cc4f62d8c107b3d2dc42a220690a079cdfc8dfb1" }
+revm = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-bytecode = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-context = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-context-interface = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-database = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-database-interface = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-handler = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-inspector = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-state = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "33330a285e621b9170c30a21cfea9ab32e2a2169" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "e80e2eab72dfa18011e6a99abd37027290a46e83" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
