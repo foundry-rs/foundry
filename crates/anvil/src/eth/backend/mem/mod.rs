@@ -33,7 +33,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EMPTY_OMMER_ROOT_HASH, EnvKzgSettings, Header, Signed,
+    Blob, BlockHeader, EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH, EnvKzgSettings, Header, Signed,
     Transaction as TransactionTrait, TrieAccount, TxEnvelope, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -1462,11 +1462,7 @@ impl Backend {
         // for all empty blocks since no state transitions occur.
         let cached_state_root = {
             let storage = self.blockchain.storage.read();
-            storage
-                .blocks
-                .get(&storage.best_hash)
-                .map(|b| b.header.state_root)
-                .unwrap_or_default()
+            storage.blocks.get(&storage.best_hash).map(|b| b.header.state_root).unwrap_or_default()
         };
 
         // Snapshot spec-level flags once (constant for the batch).
@@ -1526,8 +1522,8 @@ impl Backend {
                 ommers_hash: EMPTY_OMMER_ROOT_HASH,
                 beneficiary,
                 state_root: cached_state_root,
-                transactions_root: Default::default(),
-                receipts_root: Default::default(),
+                transactions_root: EMPTY_ROOT_HASH,
+                receipts_root: EMPTY_ROOT_HASH,
                 logs_bloom: Bloom::default(),
                 difficulty: U256::ZERO,
                 number: block_number,
@@ -1546,8 +1542,7 @@ impl Backend {
             };
 
             // Create block with empty transaction list.
-            let block =
-                create_block(header, std::iter::empty::<MaybeImpersonatedTransaction>());
+            let block = create_block(header, std::iter::empty::<MaybeImpersonatedTransaction>());
             let block_hash = block.header.hash_slow();
             let header = block.header.clone();
 
@@ -1570,8 +1565,8 @@ impl Backend {
                 if let Some(keeper) = self.transaction_block_keeper
                     && storage.blocks.len() > keeper
                 {
-                    let to_clear = block_number
-                        .saturating_sub(keeper.try_into().unwrap_or(u64::MAX));
+                    let to_clear =
+                        block_number.saturating_sub(keeper.try_into().unwrap_or(u64::MAX));
                     storage.remove_block_transactions_by_number(to_clear);
                 }
             }
@@ -1611,11 +1606,7 @@ impl Backend {
             // Notify listeners.
             self.notify_on_new_block(header, block_hash);
 
-            outcomes.push(MinedBlockOutcome {
-                block_number,
-                included: vec![],
-                invalid: vec![],
-            });
+            outcomes.push(MinedBlockOutcome { block_number, included: vec![], invalid: vec![] });
         }
 
         outcomes

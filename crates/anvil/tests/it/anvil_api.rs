@@ -1145,6 +1145,22 @@ async fn test_mine_empty_blocks_base_fee_decay() {
     assert!(final_base_fee <= init_base_fee);
 }
 
+// Verify that batch mining 1000 empty blocks completes quickly.
+// Before the optimization this took ~276s (issue #5499).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_empty_blocks_throughput() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let start = std::time::Instant::now();
+    let _ = api.anvil_mine(Some(U256::from(1000)), None).await;
+    let elapsed = start.elapsed();
+
+    assert!(elapsed.as_secs() < 10, "anvil_mine(1000) took {elapsed:?}, expected < 10s");
+
+    let latest = api.block_number().unwrap().to::<u64>();
+    assert_eq!(latest, 1000); // genesis (0) + 1000 mined
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_non_fork() {
     let (api, handle) = spawn(NodeConfig::test()).await;

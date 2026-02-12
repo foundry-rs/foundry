@@ -2102,8 +2102,7 @@ impl EthApi {
             if !has_pending && num_blocks > 1 {
                 // Fast path: pool is empty, batch mine all empty blocks at once.
                 // This avoids redundant state root recomputation per block.
-                let outcomes =
-                    this.backend.mine_empty_blocks(num_blocks, interval).await;
+                let outcomes = this.backend.mine_empty_blocks(num_blocks, interval).await;
                 for outcome in outcomes {
                     this.pool.on_mined_block(outcome);
                 }
