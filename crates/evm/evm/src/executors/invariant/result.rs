@@ -6,7 +6,7 @@ use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::I256;
 use eyre::Result;
-use foundry_common::sh_println;
+use foundry_common::sh_eprintln;
 use foundry_config::InvariantConfig;
 use foundry_evm_core::utils::StateChangeset;
 use foundry_evm_coverage::HitMaps;
@@ -15,7 +15,11 @@ use foundry_evm_fuzz::{
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
 use revm_inspectors::tracing::CallTraceArena;
-use std::{borrow::Cow, collections::HashMap, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// The outcome of an invariant fuzz test
 #[derive(Debug)]
@@ -92,7 +96,7 @@ pub(crate) fn assert_invariants(
                 call_result,
                 &inner_sequence,
             );
-            
+
             // Log broken invariant as soon as it is found (for benchmarking purposes)
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -104,14 +108,14 @@ pub(crate) fn assert_invariants(
             } else {
                 case_data.revert_reason.clone()
             };
-            let _ = sh_println!(
+            let _ = sh_eprintln!(
                 "[INVARIANT BROKEN] timestamp={:.6} invariant={} reason={} sequence_length={}",
                 timestamp,
                 invariant_name,
                 revert_reason,
                 calldata.len()
             );
-            
+
             invariant_failures.error = Some(InvariantFuzzError::BrokenInvariant(case_data));
             return Ok(None);
         }
@@ -194,7 +198,7 @@ pub(crate) fn can_continue(
                 call_result,
                 &[],
             );
-            
+
             // Log broken invariant (revert) as soon as it is found (for benchmarking purposes)
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -206,14 +210,14 @@ pub(crate) fn can_continue(
             } else {
                 case_data.revert_reason.clone()
             };
-            let _ = sh_println!(
+            let _ = sh_eprintln!(
                 "[INVARIANT BROKEN] timestamp={:.6} invariant={} reason={} sequence_length={}",
                 timestamp,
                 invariant_name,
                 revert_reason,
                 invariant_run.inputs.len()
             );
-            
+
             invariant_data.failures.revert_reason = Some(case_data.revert_reason.clone());
             invariant_data.failures.error = Some(InvariantFuzzError::Revert(case_data));
 
@@ -248,26 +252,25 @@ pub(crate) fn assert_after_invariant(
             call_result,
             &[],
         );
-        
-        // Log broken invariant (afterInvariant failure) as soon as it is found (for benchmarking purposes)
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
+
+        // Log broken invariant (afterInvariant failure) as soon as it is found (for benchmarking
+        // purposes)
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
         let invariant_name = &invariant_contract.invariant_function.name;
         let revert_reason = if case_data.revert_reason.is_empty() {
             "afterInvariant failure".to_string()
         } else {
             case_data.revert_reason.clone()
         };
-        let _ = sh_println!(
+        let _ = sh_eprintln!(
             "[INVARIANT BROKEN] timestamp={:.6} invariant={} reason={} sequence_length={}",
             timestamp,
             invariant_name,
             revert_reason,
             invariant_run.inputs.len()
         );
-        
+
         invariant_test.set_error(InvariantFuzzError::BrokenInvariant(case_data));
     }
     Ok(success)
