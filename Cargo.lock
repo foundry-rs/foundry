@@ -4499,6 +4499,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-fuzz",
  "foundry-evm-traces",
+ "foundry-primitives",
  "foundry-wallets",
  "itertools 0.14.0",
  "jsonpath_lib",
