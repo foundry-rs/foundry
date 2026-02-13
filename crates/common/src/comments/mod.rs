@@ -352,7 +352,7 @@ fn first_non_whitespace(s: &str) -> Option<usize> {
     let mut len = 0;
     for (i, ch) in s.char_indices() {
         if ch.is_whitespace() {
-            len = ch.len_utf8()
+            len += ch.len_utf8();
         } else {
             return if i == 0 { Some(0) } else { Some(i + 1 - len) };
         }
