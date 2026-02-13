@@ -2327,8 +2327,8 @@ impl Config {
             figment = figment.merge(("evm_version", version));
         }
 
-        // Normalize `deny` based on the provided `deny_warnings` version.
-        if self.deny_warnings
+        // Normalize `deny` based on the provided `deny_warnings` value.
+        if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
             && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
