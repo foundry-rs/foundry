@@ -733,10 +733,8 @@ impl Cheatcode for accessListCall {
 impl Cheatcode for noAccessListCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        // Set to empty option in order to override previous applied access list.
-        if state.access_list.is_some() {
-            state.access_list = Some(alloy_rpc_types::AccessList::default());
-        }
+        // Clear previously applied access list.
+        state.access_list = None;
         Ok(Default::default())
     }
 }
