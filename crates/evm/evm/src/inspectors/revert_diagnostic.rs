@@ -68,6 +68,8 @@ pub struct RevertDiagnostic {
     non_contract_size_check: Option<(Address, usize)>,
     /// Whether the step opcode is EXTCODESIZE or not.
     is_extcodesize_step: bool,
+    /// Cached diagnostic data that was set via set_action, to ensure it's available in call_end.
+    cached_diagnostic: Option<Bytes>,
 }
 
 impl RevertDiagnostic {
@@ -98,11 +100,17 @@ impl RevertDiagnostic {
     }
 
     /// Injects the revert diagnostic into the debug traces. Should only be called after a revert.
-    fn broadcast_diagnostic(&self, interpreter: &mut Interpreter) {
+    fn broadcast_diagnostic(&mut self, interpreter: &mut Interpreter) {
         if let Some(reason) = self.reason() {
+            // Encode the diagnostic message as plain bytes (not ABI-encoded) to match
+            // what `abi.encodePacked` produces in Solidity tests.
+            // This ensures that `expectRevert(abi.encodePacked(...))` matches correctly.
+            let diagnostic_bytes = Bytes::from(reason.to_string().into_bytes());
+            // Cache the diagnostic bytes so we can use them in call_end if needed
+            self.cached_diagnostic = Some(diagnostic_bytes.clone());
             interpreter.bytecode.set_action(InterpreterAction::new_return(
                 InstructionResult::Revert,
-                Bytes::from(reason.to_string().into_bytes()),
+                diagnostic_bytes,
                 interpreter.gas,
             ));
         }
@@ -219,5 +227,22 @@ where
         if self.is_extcodesize_step {
             self.handle_extcodesize_output(interp);
         }
+    }
+
+    fn call_end(&mut self, _ctx: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {
+        // If we have cached diagnostic data and the outcome is a revert with empty data,
+        // ensure the diagnostic data is set in the outcome. This ensures that expectRevert
+        // can properly match the diagnostic message.
+        if let Some(ref diagnostic_bytes) = self.cached_diagnostic
+            && outcome.result.result == InstructionResult::Revert
+            && outcome.result.output.is_empty()
+        {
+            outcome.result.output = diagnostic_bytes.clone();
+        }
+        // Clear the cached diagnostic after use
+        self.cached_diagnostic = None;
+        // Clear tracking state after call ends
+        self.non_contract_call = None;
+        self.non_contract_size_check = None;
     }
 }
