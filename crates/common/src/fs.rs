@@ -62,11 +62,7 @@ pub fn read_json_gzip_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
 /// Reads the entire contents of a locked shared file into a string.
 pub fn locked_read_to_string(path: impl AsRef<Path>) -> Result<String> {
     let path = path.as_ref();
-    let mut file =
-        fs::OpenOptions::new().read(true).open(path).map_err(|err| FsPathError::open(err, path))?;
-    file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
-    let contents = read_inner(path, &mut file)?;
-    file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
+    let contents = locked_read(path)?;
     String::from_utf8(contents).map_err(|err| FsPathError::read(std::io::Error::other(err), path))
 }
 
