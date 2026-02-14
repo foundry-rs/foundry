@@ -230,19 +230,20 @@ where
     }
 
     fn call_end(&mut self, _ctx: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {
-        // If we have cached diagnostic data and the outcome is a revert with empty data,
+        // If we have cached diagnostic data and the outcome is a revert,
         // ensure the diagnostic data is set in the outcome. This ensures that expectRevert
         // can properly match the diagnostic message.
+        // We set it even if output is not empty, as set_action might not have propagated
+        // the data correctly to outcome.result.output.
         if let Some(ref diagnostic_bytes) = self.cached_diagnostic
             && outcome.result.result == InstructionResult::Revert
-            && outcome.result.output.is_empty()
         {
             outcome.result.output = diagnostic_bytes.clone();
+            // Clear the cached diagnostic after use
+            self.cached_diagnostic = None;
         }
-        // Clear the cached diagnostic after use
-        self.cached_diagnostic = None;
-        // Clear tracking state after call ends
-        self.non_contract_call = None;
-        self.non_contract_size_check = None;
+        // Note: We don't clear non_contract_call and non_contract_size_check here
+        // as they are used for tracking state across calls and are cleared in handle_revert
+        // when they are no longer needed.
     }
 }
