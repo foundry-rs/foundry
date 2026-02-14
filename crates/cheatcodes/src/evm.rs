@@ -1446,6 +1446,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
     // Look up contract names and storage layouts for all addresses
     let mut contract_names = HashMap::new();
     let mut storage_layouts = HashMap::new();
+    let mut unknown_contracts = Vec::new();
     for address in addresses_to_lookup {
         if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
             contract_names.insert(address, artifact_id.identifier());
@@ -1454,6 +1455,35 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
             if let Some(storage_layout) = &contract_data.storage_layout {
                 storage_layouts.insert(address, storage_layout.clone());
             }
+        } else {
+            unknown_contracts.push(address);
+        }
+    }
+
+    // For contracts not found locally, try fetching from Etherscan if configured.
+    // Resolve the etherscan config lazily using the runtime chain ID so it works
+    // with forks selected via vm.createSelectFork().
+    if let Some(etherscan_config) = ccx.state.config.get_etherscan_config(ccx.ecx.cfg.chain_id) {
+        for address in unknown_contracts {
+            // Check in-memory cache first
+            if let Some(cached) = ccx.state.external_storage_layouts.get(&address) {
+                if let Some((name, layout)) = cached {
+                    contract_names.insert(address, name.clone());
+                    storage_layouts.insert(address, layout.clone());
+                }
+                continue;
+            }
+
+            // Fetch, compile, and cache
+            let result = foundry_common::contracts::fetch_external_storage_layout(
+                address,
+                &etherscan_config,
+            );
+            if let Some((ref name, ref layout)) = result {
+                contract_names.insert(address, name.clone());
+                storage_layouts.insert(address, layout.clone());
+            }
+            ccx.state.external_storage_layouts.insert(address, result);
         }
     }
 

@@ -193,6 +193,11 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options")]
     pub disable_labels: bool,
 
+    /// Fetch and decode external contracts' storage layouts in state diffs by
+    /// fetching verified source code from Etherscan.
+    #[arg(long)]
+    pub decode_external_storage: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -303,6 +308,11 @@ impl TestArgs {
             // Do not collect gas report traces if gas report is not enabled.
             config.fuzz.gas_report_samples = 0;
             config.invariant.gas_report_samples = 0;
+        }
+
+        // Enable external storage layout decoding if requested.
+        if self.decode_external_storage {
+            config.decode_external_storage = true;
         }
 
         // Generate a random fuzz seed if none provided, for reproducibility.
