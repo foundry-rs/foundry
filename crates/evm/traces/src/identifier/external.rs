@@ -416,8 +416,6 @@ impl ExternalFetcherT for SourcifyFetcher {
         let url = format!("{url}/{address}?fields=abi,compilation", url = self.url);
         let response = self.client.get(url).send().await?;
         let code = response.status();
-        let response: SourcifyResponse = response.json().await?;
-        trace!(target: "evm::traces::external", "Sourcify response for {address}: {response:#?}");
         match code.as_u16() {
             // Not verified.
             404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
@@ -425,6 +423,8 @@ impl ExternalFetcherT for SourcifyFetcher {
             429 => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
+        let response: SourcifyResponse = response.json().await?;
+        trace!(target: "evm::traces::external", "Sourcify response for {address}: {response:#?}");
         match response {
             SourcifyResponse::Success(metadata) => Ok(Some(metadata.into())),
             SourcifyResponse::Error(error) => Err(EtherscanError::Unknown(format!("{error:#?}"))),
@@ -493,3 +493,64 @@ impl From<SourcifyMetadata> for Metadata {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    fn spawn_one_shot_http_server(status_line: &str, body: &str, content_type: &str) -> String {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let body = body.to_owned();
+        let status_line = status_line.to_owned();
+        let content_type = content_type.to_owned();
+
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).expect("write response");
+            let _ = stream.flush();
+        });
+
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn sourcify_fetch_returns_not_verified_for_404_without_json_parsing() {
+        let base_url = spawn_one_shot_http_server("404 Not Found", "not json", "text/plain");
+        let fetcher = SourcifyFetcher {
+            client: reqwest::Client::new(),
+            url: base_url,
+            invalid_api_key: AtomicBool::new(false),
+        };
+
+        let err = fetcher.fetch(Address::ZERO).await.unwrap_err();
+        assert!(matches!(err, EtherscanError::ContractCodeNotVerified(_)));
+    }
+
+    #[tokio::test]
+    async fn sourcify_fetch_returns_rate_limited_for_429_without_json_parsing() {
+        let base_url =
+            spawn_one_shot_http_server("429 Too Many Requests", "still not json", "text/plain");
+        let fetcher = SourcifyFetcher {
+            client: reqwest::Client::new(),
+            url: base_url,
+            invalid_api_key: AtomicBool::new(false),
+        };
+
+        let err = fetcher.fetch(Address::ZERO).await.unwrap_err();
+        assert!(matches!(err, EtherscanError::RateLimitExceeded));
+    }
+}
+
