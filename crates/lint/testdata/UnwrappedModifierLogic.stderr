@@ -1,27 +1,3 @@
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
-   |
-LL | library Lib {
-   |         ^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
-
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
-   |
-LL | contract C {
-   |          ^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
-
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
-   |
-LL | contract UnwrappedModifierLogicTest {
-   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
-
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    ╭▸ ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    │
