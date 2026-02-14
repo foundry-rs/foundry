@@ -76,14 +76,18 @@ pub struct LintSpecificConfig {
 impl Default for LintSpecificConfig {
     fn default() -> Self {
         Self {
-            mixed_case_exceptions: vec!["ERC".to_string(), "URI".to_string(),  "ID".to_string(),
+            mixed_case_exceptions: vec![
+                "ERC".to_string(),
+                "URI".to_string(),
+                "ID".to_string(),
                 "URL".to_string(),
                 "API".to_string(),
                 "JSON".to_string(),
                 "XML".to_string(),
                 "HTML".to_string(),
                 "HTTP".to_string(),
-                "HTTPS".to_string()],
+                "HTTPS".to_string(),
+            ],
             multi_contract_file_exceptions: Vec::new(),
         }
     }
