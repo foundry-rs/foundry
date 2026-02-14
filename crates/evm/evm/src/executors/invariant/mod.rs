@@ -446,7 +446,7 @@ impl<'a> InvariantExecutor<'a> {
                     // inconsistencies whenever proptest tries to use the input case after test
                     // execution.
                     // See <https://github.com/foundry-rs/foundry/issues/9764>.
-                    let mut state_changeset = call_result.state_changeset.clone();
+                    let mut state_changeset = std::mem::take(&mut call_result.state_changeset);
                     if !call_result.reverted {
                         collect_data(
                             &invariant_test,

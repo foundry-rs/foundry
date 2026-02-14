@@ -356,7 +356,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = rpc.load_config()?;
-            let provider = utils::get_provider_with_curl(&config, rpc.curl)?;
+            let provider = utils::get_provider(&config)?;
             let number = match block {
                 Some(id) => {
                     provider
@@ -377,7 +377,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::ChainId { rpc } => {
             let config = rpc.load_config()?;
-            let provider = utils::get_provider_with_curl(&config, rpc.curl)?;
+            let provider = utils::get_provider(&config)?;
             sh_println!("{}", Cast::new(provider).chain_id().await?)?
         }
         CastSubcommand::Client { rpc } => {
@@ -449,7 +449,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::FindBlock(cmd) => cmd.run().await?,
         CastSubcommand::GasPrice { rpc } => {
             let config = rpc.load_config()?;
-            let provider = utils::get_provider_with_curl(&config, rpc.curl)?;
+            let provider = utils::get_provider(&config)?;
             sh_println!("{}", Cast::new(provider).gas_price().await?)?;
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
