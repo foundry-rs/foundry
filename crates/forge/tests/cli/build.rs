@@ -455,23 +455,6 @@ warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
   │
 ...
 
-note[multi-contract-file]: prefer having only one contract, interface or library per file
- [FILE]:4:10
-  |
-4 | contract ContractA {
-  |          ^^^^^^^^^
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
-
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-  [FILE]:12:10
-   |
-12 | contract ContractB {
-   |          ^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
-
-
 "#
     ]]);
 });
