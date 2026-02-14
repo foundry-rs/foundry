@@ -428,7 +428,11 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                sh_println!("{}", decimals)?
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&decimals)?)?
+                } else {
+                    sh_println!("{}", decimals)?
+                }
             }
             Self::TotalSupply { token, block, .. } => {
                 let provider = get_provider(&config)?;
