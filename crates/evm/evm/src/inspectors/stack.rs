@@ -5,7 +5,7 @@ use super::{
 use alloy_evm::{Evm, eth::EthEvmContext};
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, AddressMap},
 };
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_common::compile::Analysis;
@@ -348,7 +348,7 @@ pub struct InspectorStackInner {
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
-    pub top_frame_journal: HashMap<Address, Account>,
+    pub top_frame_journal: AddressMap<Account>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
 }
@@ -763,21 +763,21 @@ impl InspectorStackRefMut<'_> {
         }
 
         let (result, address, output) = match res.result {
-            ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
-                gas.set_refund(gas_refunded as i64);
-                let _ = gas.record_cost(gas_used);
+            ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
+                gas.set_refund(result_gas.inner_refunded() as i64);
+                let _ = gas.record_cost(result_gas.used());
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
                 };
                 (reason.into(), address, output.into_data())
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                let _ = gas.record_cost(gas_used);
+            ExecutionResult::Halt { reason, gas: result_gas } => {
+                let _ = gas.record_cost(result_gas.used());
                 (reason.into(), None, Bytes::new())
             }
-            ExecutionResult::Revert { gas_used, output } => {
-                let _ = gas.record_cost(gas_used);
+            ExecutionResult::Revert { gas: result_gas, output } => {
+                let _ = gas.record_cost(result_gas.used());
                 (InstructionResult::Revert, None, output)
             }
         };

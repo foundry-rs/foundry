@@ -440,14 +440,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         inspector.print_logs();
 
         let (exit_reason, gas_used, out, logs) = match exec_result {
-            ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
-                (reason.into(), gas_used, Some(output), Some(logs))
+            ExecutionResult::Success { reason, gas, logs, output, .. } => {
+                (reason.into(), gas.used(), Some(output), Some(logs))
             }
-            ExecutionResult::Revert { gas_used, output } => {
-                (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
+            ExecutionResult::Revert { gas, output } => {
+                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (op_haltreason_to_instruction_result(reason), gas_used, None, None)
+            ExecutionResult::Halt { reason, gas } => {
+                (op_haltreason_to_instruction_result(reason), gas.used(), None, None)
             }
         };
 

@@ -2,7 +2,7 @@ use super::JournaledState;
 use crate::Env;
 use alloy_primitives::{
     B256, U256,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, U256Map},
 };
 use revm::state::AccountInfo;
 use serde::{Deserialize, Serialize};
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub accounts: AddressHashMap<AccountInfo>,
-    pub storage: AddressHashMap<HashMap<U256, U256>>,
-    pub block_hashes: HashMap<U256, B256>,
+    pub storage: AddressHashMap<U256Map<U256>>,
+    pub block_hashes: U256Map<B256>,
 }
 
 /// Represents a state snapshot taken during evm execution
