@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
 use foundry_evm_core::{
     backend::DatabaseError,
@@ -102,7 +102,7 @@ impl RevertDiagnostic {
         if let Some(reason) = self.reason() {
             interpreter.bytecode.set_action(InterpreterAction::new_return(
                 InstructionResult::Revert,
-                reason.to_string().abi_encode().into(),
+                Bytes::from(reason.to_string().into_bytes()),
                 interpreter.gas,
             ));
         }
