@@ -606,9 +606,9 @@ impl InspectorStackRefMut<'_> {
             [
                 &mut self.fuzzer,
                 &mut self.tracer,
+                &mut self.revert_diag,
                 &mut self.cheatcodes,
                 &mut self.printer,
-                &mut self.revert_diag
             ],
             |inspector| {
                 let previous_outcome = outcome.clone();
