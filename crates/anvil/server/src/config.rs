@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::str::FromStr;
 
 /// Additional server options.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "clap", derive(clap::Parser), command(next_help_heading = "Server options"))]
 pub struct ServerConfig {
     /// The cors `allow_origin` header
@@ -19,10 +19,46 @@ pub struct ServerConfig {
     pub no_request_size_limit: bool,
 }
 
+impl<'de> Deserialize<'de> for ServerConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ServerConfigHelper {
+            allow_origin: HeaderValueWrapper,
+            no_cors: bool,
+            no_request_size_limit: bool,
+        }
+
+        let helper = ServerConfigHelper::deserialize(deserializer)?;
+
+        // Validate that allow_origin and no_cors are not conflicting
+        // If no_cors is true, allow_origin should be ignored (default value "*")
+        if helper.no_cors
+            && let Ok(origin_str) = helper.allow_origin.to_str()
+            && origin_str != "*"
+        {
+            return Err(serde::de::Error::custom(
+                "cannot set allow_origin when no_cors is enabled",
+            ));
+        }
+
+        Ok(Self {
+            allow_origin: helper.allow_origin,
+            no_cors: helper.no_cors,
+            no_request_size_limit: helper.no_request_size_limit,
+        })
+    }
+}
+
 impl ServerConfig {
     /// Sets the "allow origin" header for CORS.
+    ///
+    /// This automatically enables CORS by setting `no_cors` to `false`.
     pub fn with_allow_origin(mut self, allow_origin: impl Into<HeaderValueWrapper>) -> Self {
         self.allow_origin = allow_origin.into();
+        self.no_cors = false;
         self
     }
 
