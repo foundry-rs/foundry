@@ -87,7 +87,14 @@ pub fn subscriber() {
     let registry = tracing_subscriber::Registry::default().with(env_filter());
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
-    registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init()
+    let subscriber =
+        registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
+    // NOTE: we use `set_global_default` instead of `init()` to avoid installing a `LogTracer`.
+    // `init()` calls `tracing_log::LogTracer::init()` which claims the global `log` backend,
+    // preventing downstream libraries (e.g. soldeer) from initializing their own `log` backend
+    // (e.g. `env_logger`).
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("failed to set global tracing subscriber");
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
