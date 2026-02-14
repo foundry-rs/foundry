@@ -273,7 +273,16 @@ forgetest!(multi_contract_file_no_exceptions, |prj, cmd| {
 
     // Without exceptions, should flag all 8 contract-like items
     prj.update_config(|config| {
-        config.lint = LinterConfig { lint_on_build: true, ..Default::default() };
+        config.lint = LinterConfig {
+            lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
+            ..Default::default()
+        };
     });
 
     let output = cmd.arg("lint").assert_success();
@@ -301,6 +310,12 @@ forgetest!(multi_contract_file_interface_exception, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
             exclude_lints: vec!["interface-naming".into()],
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![ContractException::Interface],
@@ -331,6 +346,12 @@ forgetest!(multi_contract_file_library_exception, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![ContractException::Library],
                 ..Default::default()
@@ -359,6 +380,12 @@ forgetest!(multi_contract_file_abstract_exception, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![ContractException::AbstractContract],
                 ..Default::default()
@@ -388,6 +415,12 @@ forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
             exclude_lints: vec!["interface-naming".into()],
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![
@@ -422,6 +455,12 @@ forgetest!(multi_contract_file_all_exceptions, |prj, cmd| {
     prj.update_config(|config| {
         config.lint = LinterConfig {
             lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
             lint_specific: LintSpecificConfig {
                 multi_contract_file_exceptions: vec![
                     ContractException::Interface,
@@ -489,6 +528,7 @@ libs = ["lib"]
 
 [profile.default.lint]
 lint_on_build = true
+severity = ["high", "medium", "low", "info"]
 
 [profile.default.lint.lint_specific]
 multi_contract_file_exceptions = ["interface", "library", "abstract_contract"]
