@@ -99,7 +99,7 @@ impl Cheatcode for addToCorpusCall {
         
         // Get the current fuzz input
         let Some(ref input) = state.current_fuzz_input else {
-            return Err(Error::from_str(
+            return Err(Error::from(
                 "addToCorpus can only be called during fuzz test execution"
             ));
         };
