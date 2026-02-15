@@ -1212,7 +1212,7 @@ impl NodeConfig {
         eth_rpc_url: String,
         env: &mut Env,
         fees: &FeeManager,
-    ) -> Result<(ForkedDatabase, ClientForkConfig)> {
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)

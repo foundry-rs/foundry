@@ -2,6 +2,7 @@ use crate::eth::backend::db::{
     Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
     SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
 };
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
@@ -16,7 +17,7 @@ use revm::{
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 
-impl Db for ForkedDatabase {
+impl<N: Network> Db for ForkedDatabase<N> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.database_mut().insert_account(address, account)
     }
@@ -86,7 +87,7 @@ impl Db for ForkedDatabase {
     }
 }
 
-impl MaybeFullDatabase for ForkedDatabase {
+impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.database().cache.accounts)
     }
@@ -121,7 +122,7 @@ impl MaybeFullDatabase for ForkedDatabase {
     }
 }
 
-impl MaybeFullDatabase for ForkDbStateSnapshot {
+impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.local.cache.accounts)
     }
@@ -154,7 +155,7 @@ impl MaybeFullDatabase for ForkDbStateSnapshot {
     }
 }
 
-impl MaybeForkedDatabase for ForkedDatabase {
+impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
     fn maybe_reset(&mut self, url: Option<String>, block_number: BlockId) -> Result<(), String> {
         self.reset(url, block_number)
     }

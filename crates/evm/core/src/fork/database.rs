@@ -4,6 +4,7 @@ use crate::{
     backend::{RevertStateSnapshotAction, StateSnapshot},
     state_snapshot::StateSnapshots,
 };
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
@@ -23,28 +24,28 @@ use std::sync::Arc;
 /// This database uses the `backend` for read and the `db` for write operations. But note the
 /// `backend` will also write (missing) data to the `db` in the background
 #[derive(Clone, Debug)]
-pub struct ForkedDatabase {
+pub struct ForkedDatabase<N: Network> {
     /// Responsible for fetching missing data.
     ///
     /// This is responsible for getting data.
-    backend: SharedBackend,
+    backend: SharedBackend<N>,
     /// Cached Database layer, ensures that changes are not written to the database that
     /// exclusively stores the state of the remote client.
     ///
     /// This separates Read/Write operations
     ///   - reads from the `SharedBackend as DatabaseRef` writes to the internal cache storage.
-    cache_db: CacheDB<SharedBackend>,
+    cache_db: CacheDB<SharedBackend<N>>,
     /// Contains all the data already fetched.
     ///
     /// This exclusively stores the _unchanged_ remote client state.
     db: BlockchainDb,
     /// Holds the state snapshots of a blockchain.
-    state_snapshots: Arc<Mutex<StateSnapshots<ForkDbStateSnapshot>>>,
+    state_snapshots: Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N>>>>,
 }
 
-impl ForkedDatabase {
+impl<N: Network> ForkedDatabase<N> {
     /// Creates a new instance of this DB
-    pub fn new(backend: SharedBackend, db: BlockchainDb) -> Self {
+    pub fn new(backend: SharedBackend<N>, db: BlockchainDb) -> Self {
         Self {
             cache_db: CacheDB::new(backend.clone()),
             backend,
@@ -53,15 +54,15 @@ impl ForkedDatabase {
         }
     }
 
-    pub fn database(&self) -> &CacheDB<SharedBackend> {
+    pub fn database(&self) -> &CacheDB<SharedBackend<N>> {
         &self.cache_db
     }
 
-    pub fn database_mut(&mut self) -> &mut CacheDB<SharedBackend> {
+    pub fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N>> {
         &mut self.cache_db
     }
 
-    pub fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot>>> {
+    pub fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N>>>> {
         &self.state_snapshots
     }
 
@@ -93,7 +94,7 @@ impl ForkedDatabase {
         &self.db
     }
 
-    pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot {
+    pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot<N> {
         let db = self.db.db();
         let state_snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
@@ -150,7 +151,7 @@ impl ForkedDatabase {
     }
 }
 
-impl Database for ForkedDatabase {
+impl<N: Network> Database for ForkedDatabase<N> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -173,7 +174,7 @@ impl Database for ForkedDatabase {
     }
 }
 
-impl DatabaseRef for ForkedDatabase {
+impl<N: Network> DatabaseRef for ForkedDatabase<N> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -193,7 +194,7 @@ impl DatabaseRef for ForkedDatabase {
     }
 }
 
-impl DatabaseCommit for ForkedDatabase {
+impl<N: Network> DatabaseCommit for ForkedDatabase<N> {
     fn commit(&mut self, changes: HashMap<Address, Account>) {
         self.database_mut().commit(changes)
     }
@@ -203,12 +204,12 @@ impl DatabaseCommit for ForkedDatabase {
 ///
 /// This mimics `revm::CacheDB`
 #[derive(Clone, Debug)]
-pub struct ForkDbStateSnapshot {
-    pub local: CacheDB<SharedBackend>,
+pub struct ForkDbStateSnapshot<N: Network> {
+    pub local: CacheDB<SharedBackend<N>>,
     pub state_snapshot: StateSnapshot,
 }
 
-impl ForkDbStateSnapshot {
+impl<N: Network> ForkDbStateSnapshot<N> {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
         self.local
             .cache
@@ -222,7 +223,7 @@ impl ForkDbStateSnapshot {
 // This `DatabaseRef` implementation works similar to `CacheDB` which prioritizes modified elements,
 // and uses another db as fallback
 // We prioritize stored changed accounts/storage
-impl DatabaseRef for ForkDbStateSnapshot {
+impl<N: Network> DatabaseRef for ForkDbStateSnapshot<N> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {

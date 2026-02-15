@@ -4,14 +4,11 @@ use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{CreateFork, configure_env},
 };
-use alloy_network::Network;
+use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{Provider, network::AnyRpcBlock};
+use alloy_provider::{Provider, RootProvider, network::AnyRpcBlock};
 use eyre::WrapErr;
-use foundry_common::{
-    ALCHEMY_FREE_TIER_CUPS,
-    provider::{ProviderBuilder, RetryProvider},
-};
+use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
 use foundry_config::{Chain, Config, GasLimit};
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{BlockEnv, TxEnv};
@@ -116,8 +113,12 @@ impl Default for EvmOpts {
 }
 
 impl EvmOpts {
-    /// Returns a `RetryProvider` for the given fork URL configured with options in `self`.
-    pub fn fork_provider_with_url(&self, fork_url: &str) -> eyre::Result<RetryProvider> {
+    /// Returns a `RootProvider` for the given fork URL configured with options in `self` and
+    /// annoted Network type.
+    pub fn fork_provider_with_url<N: Network>(
+        &self,
+        fork_url: &str,
+    ) -> eyre::Result<RootProvider<N>> {
         ProviderBuilder::new(fork_url)
             .maybe_max_retry(self.fork_retries)
             .maybe_initial_backoff(self.fork_retry_backoff)
@@ -141,7 +142,7 @@ impl EvmOpts {
     /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint,
     /// and the block that was used to configure the environment.
     pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, AnyRpcBlock)> {
-        let provider = self.fork_provider_with_url(fork_url)?;
+        let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
         self.fork_evm_env_with_provider(fork_url, &provider).await
     }
 
@@ -257,7 +258,7 @@ impl EvmOpts {
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(url) = &self.fork_url
-            && let Ok(provider) = self.fork_provider_with_url(url)
+            && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(url)
         {
             trace!(?url, "retrieving chain via eth_chainId");
 
