@@ -237,7 +237,7 @@ impl FuzzedExecutor {
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
         &self,
-        executor: &Executor,
+        executor: &mut Executor,
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
@@ -543,7 +543,7 @@ impl FuzzedExecutor {
             };
 
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            match self.single_fuzz(&executor, address, input, &mut corpus) {
+            match self.single_fuzz(&mut executor, address, input, &mut corpus) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
                         let total_runs = inc_runs();
