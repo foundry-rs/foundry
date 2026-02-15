@@ -984,6 +984,12 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assume(bool condition) external pure;
 
+    /// Permanently add the current fuzz input to the in-memory corpus for mutation.
+    /// The hash parameter allows users to define how interesting a state is (as fine-or-coarse grained as you please).
+    /// Similar to IJON (<https://github.com/RUB-SysSec/ijon>).
+    #[cheatcode(group = Testing, safety = Safe)]
+    function addToCorpus(bytes32 hash) external;
+
     /// Discard this run's fuzz inputs and generate new ones if next call reverted.
     #[cheatcode(group = Testing, safety = Safe)]
     function assumeNoRevert() external pure;
