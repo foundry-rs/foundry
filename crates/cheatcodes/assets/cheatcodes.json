@@ -3782,6 +3782,26 @@
     },
     {
       "func": {
+        "id": "createEd25519Key",
+        "description": "Generates an Ed25519 key pair from a deterministic salt.\nReturns (publicKey, privateKey) as 32-byte values.",
+        "declaration": "function createEd25519Key(bytes32 salt) external pure returns (bytes32 publicKey, bytes32 privateKey);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "createEd25519Key(bytes32)",
+        "selector": "0x1ef3f27a",
+        "selectorBytes": [
+          30,
+          243,
+          242,
+          122
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "createFork_0",
         "description": "Creates a new fork with the given endpoint and the _latest_ block and returns the identifier of the fork.",
         "declaration": "function createFork(string calldata urlOrAlias) external returns (uint256 forkId);",
@@ -8428,6 +8448,26 @@
     },
     {
       "func": {
+        "id": "publicKeyEd25519",
+        "description": "Derives the Ed25519 public key from a private key.",
+        "declaration": "function publicKeyEd25519(bytes32 privateKey) external pure returns (bytes32 publicKey);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "publicKeyEd25519(bytes32)",
+        "selector": "0x27f44236",
+        "selectorBytes": [
+          39,
+          244,
+          66,
+          54
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "publicKeyP256",
         "description": "Derives secp256r1 public key from the provided `privateKey`.",
         "declaration": "function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);",
@@ -10152,6 +10192,26 @@
     },
     {
       "func": {
+        "id": "signEd25519",
+        "description": "Signs a message with namespace using Ed25519.\nThe signature covers namespace || message for domain separation.\nReturns a 64-byte Ed25519 signature.",
+        "declaration": "function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signEd25519(bytes,bytes,bytes32)",
+        "selector": "0xef609c65",
+        "selectorBytes": [
+          239,
+          96,
+          156,
+          101
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signP256",
         "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
         "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",
@@ -11329,6 +11389,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "verifyEd25519",
+        "description": "Verifies an Ed25519 signature over namespace || message.\nReturns true if signature is valid, false otherwise.",
+        "declaration": "function verifyEd25519(bytes calldata signature, bytes calldata namespace, bytes calldata message, bytes32 publicKey) external pure returns (bool valid);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "verifyEd25519(bytes,bytes,bytes,bytes32)",
+        "selector": "0xd08c2888",
+        "selectorBytes": [
+          208,
+          140,
+          40,
+          136
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
