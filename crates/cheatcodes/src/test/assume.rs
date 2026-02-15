@@ -2,7 +2,7 @@ use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
 use spec::Vm::{
-    PotentialRevert, assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
+    PotentialRevert, addToCorpusCall, assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
 };
 use std::fmt::Debug;
 
@@ -91,4 +91,23 @@ fn assume_no_revert(
     state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: parameters, reverted_by: None });
 
     Ok(Default::default())
+}
+
+impl Cheatcode for addToCorpusCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { hash: _hash } = self;
+        
+        // Get the current fuzz input
+        let Some(ref input) = state.current_fuzz_input else {
+            return Err(Error::from_str(
+                "addToCorpus can only be called during fuzz test execution"
+            ));
+        };
+
+        // Mark this input to be added to corpus unconditionally
+        // The fuzzer will check this after the call and add it to the corpus
+        state.input_to_add_to_corpus = Some(input.clone());
+
+        Ok(Default::default())
+    }
 }
