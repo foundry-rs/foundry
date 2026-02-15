@@ -114,7 +114,7 @@ impl Default for EvmOpts {
 
 impl EvmOpts {
     /// Returns a `RootProvider` for the given fork URL configured with options in `self` and
-    /// annoted Network type.
+    /// annotated `Network` type.
     pub fn fork_provider_with_url<N: Network>(
         &self,
         fork_url: &str,
