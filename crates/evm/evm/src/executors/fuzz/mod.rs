@@ -242,6 +242,19 @@ impl FuzzedExecutor {
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
     ) -> Result<FuzzOutcome, TestCaseError> {
+        // Set up the current fuzz input in cheatcodes
+        let current_input = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: self.sender,
+            call_details: CallDetails { target: address, calldata: calldata.clone() },
+        };
+        
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+            cheats.current_fuzz_input = Some(current_input.clone());
+            cheats.input_to_add_to_corpus = None; // Clear any previous value
+        }
+        
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
@@ -255,6 +268,13 @@ impl FuzzedExecutor {
             }],
             new_coverage,
         );
+
+        // Check if addToCorpus was called and add the input unconditionally
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+            if let Some(input) = cheats.input_to_add_to_corpus.take() {
+                coverage_metrics.add_input_unconditionally(&input);
+            }
+        }
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
