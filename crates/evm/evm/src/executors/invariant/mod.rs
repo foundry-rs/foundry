@@ -411,9 +411,22 @@ impl<'a> InvariantExecutor<'a> {
                     .last()
                     .ok_or_else(|| eyre!("no input generated to call fuzzed target."))?;
 
+                // Set up the current fuzz input in cheatcodes for addToCorpus support
+                if let Some(cheats) = current_run.executor.inspector_mut().cheatcodes.as_mut() {
+                    cheats.current_fuzz_input = Some(tx.clone());
+                    cheats.input_to_add_to_corpus = None; // Clear any previous value
+                }
+
                 // Execute call from the randomly generated sequence without committing state.
                 // State is committed only if call is not a magic assume.
                 let mut call_result = execute_tx(&mut current_run.executor, tx)?;
+
+                // Check if addToCorpus was called and add the input unconditionally
+                if let Some(cheats) = current_run.executor.inspector_mut().cheatcodes.as_mut() {
+                    if let Some(input) = cheats.input_to_add_to_corpus.take() {
+                        corpus_manager.add_input_unconditionally(&input);
+                    }
+                }
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
                     invariant_test.record_metrics(tx, call_result.reverted, discarded);
