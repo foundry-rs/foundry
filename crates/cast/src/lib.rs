@@ -885,6 +885,12 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     where
         P: Clone + Unpin,
     {
+        let (from_block, to_block) = Self::extract_block_range(filter);
+        if from_block.is_none() || to_block.is_none() {
+            // No concrete numeric range to chunk: make a single request and return its result.
+            return self.provider.get_logs(filter).await.map_err(Into::into);
+        }
+
         // Try the full range first
         if let Ok(logs) = self.provider.get_logs(filter).await {
             return Ok(logs);
@@ -915,14 +921,15 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             return Ok(vec![]);
         }
 
-        // Create chunk ranges using iterator
-        let chunk_ranges: Vec<(u64, u64)> = (from..to)
-            .step_by(chunk_size as usize)
-            .map(|chunk_start| (chunk_start, (chunk_start + chunk_size).min(to)))
-            .collect();
+        // Process chunks with controlled concurrency using buffered stream without
+        // materializing all chunk ranges in memory first.
+        let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(
+            (from..=to).step_by(chunk_size as usize).map(|chunk_start| {
+                let chunk_end = chunk_start.saturating_add(chunk_size.saturating_sub(1)).min(to);
+                (chunk_start, chunk_end)
 
-        // Process chunks with controlled concurrency using buffered stream
-        let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
+        }),
+        )
             .map(|(start_block, chunk_end)| {
                 let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end - 1);
                 let provider = self.provider.clone();
@@ -955,7 +962,8 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         // Sort once at the end by block number and flatten
         all_results.sort_by_key(|(block_num, _)| *block_num);
 
-        let mut all_logs = Vec::new();
+        let total_logs = all_results.iter().map(|(_, logs)| logs.len()).sum();
+        let mut all_logs = Vec::with_capacity(total_logs);
         for (_, logs) in all_results {
             all_logs.extend(logs);
         }
