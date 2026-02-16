@@ -766,6 +766,13 @@ impl Cheatcodes {
             return None;
         }
 
+        // `expectRevert`: track max call depth. This is also done in `initialize_interp`, but
+        // precompile calls don't create an interpreter frame so we must also track it here.
+        // The callee executes at `curr_depth + 1`.
+        if let Some(expected) = &mut self.expected_revert {
+            expected.max_depth = max(curr_depth + 1, expected.max_depth);
+        }
+
         // Handle expected calls
 
         // Grab the different calldatas expected.

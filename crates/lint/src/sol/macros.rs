@@ -23,10 +23,6 @@ macro_rules! declare_forge_lint {
             help: concat!("https://book.getfoundry.sh/reference/forge/forge-lint#", $str_id),
         };
     };
-
-    ($id:ident, $severity:expr, $str_id:expr, $desc:expr) => {
-        $crate::declare_forge_lint!($id, $severity, $str_id, $desc, "");
-    };
 }
 
 /// Registers Solidity linter passes that can have both early and late variants.
