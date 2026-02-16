@@ -553,4 +553,3 @@ mod tests {
         assert!(matches!(err, EtherscanError::RateLimitExceeded));
     }
 }
-
