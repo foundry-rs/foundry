@@ -56,6 +56,7 @@ jsonpath_lib.workspace = true
 k256.workspace = true
 memchr.workspace = true
 p256 = "0.13"
+ed25519-consensus = "2.1"
 ecdsa = "0.16"
 rand.workspace = true
 revm.workspace = true
