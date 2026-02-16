@@ -563,6 +563,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
 
+    /// Executes an RLP-encoded signed transaction with full EVM semantics (like `--isolate` mode).
+    /// The transaction is decoded from EIP-2718 format (type byte prefix + RLP payload) or legacy RLP.
+    /// Returns the execution output bytes.
+    ///
+    /// This cheatcode is not allowed in `forge script` contexts.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+
     // -------- Account State --------
 
     /// Sets an address' balance.

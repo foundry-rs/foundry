@@ -5086,6 +5086,26 @@
     },
     {
       "func": {
+        "id": "executeTransaction",
+        "description": "Executes an RLP-encoded signed transaction with full EVM semantics (like `--isolate` mode).\nThe transaction is decoded from EIP-2718 format (type byte prefix + RLP payload) or legacy RLP.\nReturns the execution output bytes.\nThis cheatcode is not allowed in `forge script` contexts.",
+        "declaration": "function executeTransaction(bytes calldata rawTx) external returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "executeTransaction(bytes)",
+        "selector": "0x943d7209",
+        "selectorBytes": [
+          148,
+          61,
+          114,
+          9
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "exists",
         "description": "Returns true if the given path points to an existing entity, else returns false.",
         "declaration": "function exists(string calldata path) external view returns (bool result);",

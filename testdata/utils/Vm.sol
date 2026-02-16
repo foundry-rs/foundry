@@ -247,6 +247,7 @@ interface Vm {
     function envUint(string calldata name, string calldata delim) external view returns (uint256[] memory value);
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
     function exists(string calldata path) external view returns (bool result);
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data, uint64 count) external;
