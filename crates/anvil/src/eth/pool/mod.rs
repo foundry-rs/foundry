@@ -108,12 +108,7 @@ impl Pool {
         debug!(target: "txpool", ?block_number, "pruning transactions");
         let res = self.inner.write().prune_markers(markers);
         for tx in &res.promoted {
-            if let AddedTransaction::Ready(ready) = tx {
-                self.notify_listener(ready.hash);
-                for promoted in ready.promoted.iter().copied() {
-                    self.notify_listener(promoted);
-                }
-            }
+            self.notify_ready(tx);
         }
         res
     }
@@ -121,13 +116,7 @@ impl Pool {
     /// Adds a new transaction to the pool
     pub fn add_transaction(&self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         let added = self.inner.write().add_transaction(tx)?;
-        if let AddedTransaction::Ready(ref ready) = added {
-            self.notify_listener(ready.hash);
-            // also notify promoted transactions
-            for promoted in ready.promoted.iter().copied() {
-                self.notify_listener(promoted);
-            }
-        }
+        self.notify_ready(&added);
         Ok(added)
     }
 
@@ -179,6 +168,16 @@ impl Pool {
     pub fn clear(&self) {
         let mut pool = self.inner.write();
         pool.clear();
+    }
+
+    /// Notifies listeners if the transaction was added to the ready queue.
+    fn notify_ready(&self, tx: &AddedTransaction) {
+        if let AddedTransaction::Ready(ready) = tx {
+            self.notify_listener(ready.hash);
+            for promoted in ready.promoted.iter().copied() {
+                self.notify_listener(promoted);
+            }
+        }
     }
 
     /// notifies all listeners about the transaction
