@@ -56,7 +56,7 @@ contract Ed25519Test is Test {
         bytes memory signature = vm.signEd25519(namespace, "correct message", privateKey);
 
         bool valid = vm.verifyEd25519(signature, namespace, "wrong message", publicKey);
-        assertFalse(valid, "signature should not verify with wrong message");
+        vm.assertFalse(valid, "signature should not verify with wrong message");
     }
 
     function testVerifyEd25519NamespaceSeparation() public {
@@ -67,7 +67,7 @@ contract Ed25519Test is Test {
         bytes memory signature = vm.signEd25519("namespace.a", message, privateKey);
 
         bool valid = vm.verifyEd25519(signature, "namespace.b", message, publicKey);
-        assertFalse(valid, "signature should not verify with different namespace");
+        vm.assertFalse(valid, "signature should not verify with different namespace");
 
         valid = vm.verifyEd25519(signature, "namespace.a", message, publicKey);
         assertTrue(valid, "signature should verify with correct namespace");
@@ -79,7 +79,7 @@ contract Ed25519Test is Test {
 
         bytes memory invalidSig = new bytes(64);
         bool valid = vm.verifyEd25519(invalidSig, "ns", "msg", publicKey);
-        assertFalse(valid, "zero signature should not verify");
+        vm.assertFalse(valid, "zero signature should not verify");
     }
 
     function testVerifyEd25519WrongSignatureLength() public {
@@ -88,7 +88,7 @@ contract Ed25519Test is Test {
 
         bytes memory shortSig = new bytes(32);
         bool valid = vm.verifyEd25519(shortSig, "ns", "msg", publicKey);
-        assertFalse(valid, "short signature should not verify");
+        vm.assertFalse(valid, "short signature should not verify");
     }
 
     function testSignEd25519Deterministic() public {
