@@ -372,7 +372,7 @@ impl TraceMode {
             3..=4 => std::cmp::max(self, Self::Call),
             // Enable step recording for backtraces when verbosity is 5 or higher.
             // We need to ensure we're recording JUMP AND JUMPDEST steps.
-            _ => std::cmp::min(self, Self::Steps),
+            _ => std::cmp::max(self, Self::Steps),
         }
     }
 
