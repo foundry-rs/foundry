@@ -106,7 +106,16 @@ impl Pool {
         markers: impl IntoIterator<Item = TxMarker>,
     ) -> PruneResult {
         debug!(target: "txpool", ?block_number, "pruning transactions");
-        self.inner.write().prune_markers(markers)
+        let res = self.inner.write().prune_markers(markers);
+        for tx in &res.promoted {
+            if let AddedTransaction::Ready(ready) = tx {
+                self.notify_listener(ready.hash);
+                for promoted in ready.promoted.iter().copied() {
+                    self.notify_listener(promoted);
+                }
+            }
+        }
+        res
     }
 
     /// Adds a new transaction to the pool
