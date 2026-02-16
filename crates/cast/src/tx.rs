@@ -1,6 +1,7 @@
 use crate::traces::identifier::SignaturesIdentifier;
 use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
+use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
@@ -225,12 +226,26 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
     }
 
     /// Sends a raw RLP-encoded transaction via `eth_sendRawTransaction`.
-    ///
-    /// Used for transaction types that the standard Alloy network stack doesn't understand
-    /// (e.g., Tempo transactions).
     pub async fn send_raw(&self, raw_tx: &[u8]) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         let res = self.provider.send_raw_transaction(raw_tx).await?;
         Ok(res)
+    }
+
+    /// Signs a [`FoundryTransactionRequest`] with the given wallet and sends it as a raw
+    /// transaction via `eth_sendRawTransaction`.
+    ///
+    /// This works for all transaction types (legacy, EIP-1559, EIP-4844, EIP-7702, Tempo, etc.)
+    /// because [`FoundryTransactionRequest`] routes to the correct variant automatically and
+    /// [`EthereumWallet`] implements `NetworkWallet<FoundryNetwork>`.
+    pub async fn sign_and_send(
+        &self,
+        tx: FoundryTransactionRequest,
+        wallet: &alloy_network::EthereumWallet,
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+        let signed_tx = tx.build(wallet).await?;
+        let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
+        signed_tx.encode_2718(&mut raw_tx);
+        self.send_raw(&raw_tx).await
     }
 
     /// # Example
