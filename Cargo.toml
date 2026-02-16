@@ -279,7 +279,7 @@ foundry-compilers = { version = "0.19.14", default-features = false, features = 
     "rustls",
     "svm-solc",
 ] }
-foundry-fork-db = "0.22"
+foundry-fork-db = "0.23"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
