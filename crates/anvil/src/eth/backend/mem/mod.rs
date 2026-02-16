@@ -3685,6 +3685,14 @@ impl TransactionValidator for Backend {
             }
         }
 
+        // EIP-3860 initcode size validation
+        if env.evm_env.cfg_env.spec >= SpecId::SHANGHAI
+            && tx.kind() == TxKind::Create
+            && tx.input().len() > revm::primitives::eip3860::MAX_INITCODE_SIZE
+        {
+            return Err(InvalidTransactionError::MaxInitCodeSizeExceeded);
+        }
+
         // Balance and fee related checks
         if !self.disable_pool_balance_checks {
             // Gas limit validation
