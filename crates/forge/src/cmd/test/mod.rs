@@ -755,7 +755,7 @@ impl TestArgs {
                         |mut found, (group, snapshots)| {
                             // If the snapshot file doesn't exist, we can't compare so we skip.
                             if !&config.snapshots.join(format!("{group}.json")).exists() {
-                                return false;
+                                return found;
                             }
 
                             let previous_snapshots: BTreeMap<String, String> =
