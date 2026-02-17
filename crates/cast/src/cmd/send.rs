@@ -11,7 +11,7 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, get_provider_with_curl},
+    utils::{LoadConfig, get_provider},
 };
 use foundry_wallets::WalletSigner;
 
@@ -120,7 +120,7 @@ impl SendTxArgs {
         };
 
         let config = send_tx.eth.load_config()?;
-        let provider = get_provider_with_curl(&config, send_tx.eth.rpc.curl)?;
+        let provider = get_provider(&config)?;
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
@@ -236,18 +236,6 @@ impl SendTxArgs {
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;
-                } else if send_tx.sync {
-                    // For sync mode, we already have the hash, just wait for receipt
-                    let receipt = cast
-                        .receipt(
-                            format!("{tx_hash:#x}"),
-                            None,
-                            send_tx.confirmations,
-                            Some(timeout),
-                            false,
-                        )
-                        .await?;
-                    sh_println!("{receipt}")?;
                 } else {
                     let receipt = cast
                         .receipt(

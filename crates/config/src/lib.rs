@@ -304,6 +304,8 @@ pub struct Config {
     /// You can also the ETH_RPC_HEADERS env variable like so:
     /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
     pub eth_rpc_headers: Option<Vec<String>>,
+    /// Print the equivalent curl command instead of making the RPC request.
+    pub eth_rpc_curl: bool,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -352,6 +354,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Whether to show `console.log` outputs in realtime during script/test execution
+    pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
@@ -1863,11 +1867,6 @@ impl Config {
             src: paths.sources.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            remappings: paths
-                .remappings
-                .into_iter()
-                .map(|r| RelativeRemapping::new(r, root))
-                .collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Self::default()
         }
@@ -2328,8 +2327,8 @@ impl Config {
             figment = figment.merge(("evm_version", version));
         }
 
-        // Normalize `deny` based on the provided `deny_warnings` version.
-        if self.deny_warnings
+        // Normalize `deny` based on the provided `deny_warnings` value.
+        if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
             && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
@@ -2570,6 +2569,7 @@ impl Default for Config {
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
+            live_logs: false,
             allow_internal_expect_revert: false,
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,
@@ -2596,6 +2596,7 @@ impl Default for Config {
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
+            eth_rpc_curl: false,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],

@@ -129,6 +129,9 @@ impl RpcOpts {
         if self.no_proxy {
             dict.insert("eth_rpc_no_proxy".into(), true.into());
         }
+        if self.curl {
+            dict.insert("eth_rpc_curl".into(), true.into());
+        }
         dict
     }
 

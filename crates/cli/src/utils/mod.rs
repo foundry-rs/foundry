@@ -101,22 +101,14 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
 
 /// Returns a [RetryProvider] instantiated using [Config]'s RPC settings.
 pub fn get_provider(config: &Config) -> Result<RetryProvider> {
-    get_provider_builder(config, false)?.build()
-}
-
-/// Returns a [RetryProvider] with curl mode option.
-///
-/// When `curl_mode` is true, the provider will print equivalent curl commands
-/// to stdout instead of executing RPC requests.
-pub fn get_provider_with_curl(config: &Config, curl_mode: bool) -> Result<RetryProvider> {
-    get_provider_builder(config, curl_mode)?.build()
+    get_provider_builder(config)?.build()
 }
 
 /// Returns a [ProviderBuilder] instantiated using [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider_builder(config: &Config, curl_mode: bool) -> Result<ProviderBuilder> {
-    ProviderBuilder::from_config(config).map(|builder| builder.curl_mode(curl_mode))
+pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
+    ProviderBuilder::from_config(config)
 }
 
 pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
@@ -289,7 +281,7 @@ impl CommandUtils for Command {
             };
             if !msg.is_empty() {
                 err.push(':');
-                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push(if msg.lines().count() == 1 { ' ' } else { '\n' });
                 err.push_str(&msg);
             }
             Err(eyre::eyre!(err))

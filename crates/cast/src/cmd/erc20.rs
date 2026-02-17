@@ -3,7 +3,7 @@ use std::str::FromStr;
 use crate::{
     cmd::send::cast_send,
     format_uint_exp,
-    tx::{CastTxSender, SendTxOpts, signing_provider_with_curl},
+    tx::{CastTxSender, SendTxOpts, get_provider_with_wallet},
 };
 use alloy_eips::{BlockId, Encodable2718};
 use alloy_ens::NameOrAddress;
@@ -16,7 +16,7 @@ use alloy_sol_types::sol;
 use clap::{Args, Parser};
 use foundry_cli::{
     opts::{RpcOpts, TempoOpts},
-    utils::{LoadConfig, get_chain, get_provider_with_curl},
+    utils::{LoadConfig, get_chain, get_provider},
 };
 use foundry_common::shell;
 #[doc(hidden)]
@@ -352,8 +352,8 @@ impl Erc20Subcommand {
 
         match self {
             // Read-only
-            Self::Allowance { token, owner, spender, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
+            Self::Allowance { token, owner, spender, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
                 let spender = spender.resolve(&provider).await?;
@@ -370,8 +370,8 @@ impl Erc20Subcommand {
                     sh_println!("{}", format_uint_exp(allowance))?
                 }
             }
-            Self::Balance { token, owner, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
+            Self::Balance { token, owner, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
 
@@ -387,8 +387,8 @@ impl Erc20Subcommand {
                     sh_println!("{}", format_uint_exp(balance))?
                 }
             }
-            Self::Name { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
+            Self::Name { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let name = IERC20::new(token, &provider)
@@ -403,8 +403,8 @@ impl Erc20Subcommand {
                     sh_println!("{}", name)?
                 }
             }
-            Self::Symbol { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
+            Self::Symbol { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let symbol = IERC20::new(token, &provider)
@@ -419,8 +419,8 @@ impl Erc20Subcommand {
                     sh_println!("{}", symbol)?
                 }
             }
-            Self::Decimals { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
+            Self::Decimals { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let decimals = IERC20::new(token, &provider)
@@ -428,10 +428,14 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                sh_println!("{}", decimals)?
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&decimals)?)?
+                } else {
+                    sh_println!("{}", decimals)?
+                }
             }
-            Self::TotalSupply { token, block, rpc, .. } => {
-                let provider = get_provider_with_curl(&config, rpc.curl)?;
+            Self::TotalSupply { token, block, .. } => {
+                let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
 
                 let total_supply = IERC20::new(token, &provider)
@@ -448,7 +452,7 @@ impl Erc20Subcommand {
             }
             // State-changing
             Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
+                let provider = get_provider_with_wallet(&send_tx).await?;
                 let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
@@ -469,7 +473,7 @@ impl Erc20Subcommand {
                 .await?
             }
             Self::Approve { token, spender, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
+                let provider = get_provider_with_wallet(&send_tx).await?;
                 let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
@@ -490,7 +494,7 @@ impl Erc20Subcommand {
                 .await?
             }
             Self::Mint { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
+                let provider = get_provider_with_wallet(&send_tx).await?;
                 let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
@@ -511,7 +515,7 @@ impl Erc20Subcommand {
                 .await?
             }
             Self::Burn { token, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = signing_provider_with_curl(&send_tx, send_tx.eth.rpc.curl).await?;
+                let provider = get_provider_with_wallet(&send_tx).await?;
                 let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                     .burn(U256::from_str(&amount)?)
                     .into_transaction_request();
