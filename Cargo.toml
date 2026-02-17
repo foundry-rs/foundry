@@ -291,7 +291,7 @@ op-alloy-flz = "0.13.1"
 ## alloy-evm
 alloy-evm = "0.26.3"
 alloy-op-evm = "0.26.3"
-alloy-monad-evm = "0.1.0"
+alloy-monad-evm = "0.1.1"
 
 # revm
 revm = { version = "34.0.0", default-features = false }
@@ -444,7 +444,7 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 ## alloy-evm
 # alloy-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
 # alloy-op-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
-# alloy-monad-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
+# alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", branch = "main" }
 
 ## revm
 # revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
