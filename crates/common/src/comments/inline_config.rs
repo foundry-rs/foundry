@@ -262,6 +262,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                         *depth = depth.saturating_sub(1);
 
                         if *depth == 0 {
+                            let lo = *lo;
                             let (id, (_, _, hi)) = entry.remove_entry();
 
                             self.disable(id, DisabledRange { lo, hi });
