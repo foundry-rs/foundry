@@ -209,6 +209,12 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    /// Timeout in seconds for RPC requests (e.g. eth_sendTransaction).
+    ///
+    /// Overrides the default 45s timeout. Useful with slow signers (e.g. MPC, Fireblocks).
+    #[arg(long, env = "ETH_RPC_TIMEOUT", value_name = "SECONDS")]
+    pub rpc_timeout: Option<u64>,
+
     #[command(flatten)]
     pub build: BuildOpts,
 
@@ -517,6 +523,10 @@ impl Provider for ScriptArgs {
 
         if let Some(timeout) = self.timeout {
             dict.insert("transaction_timeout".to_string(), timeout.into());
+        }
+
+        if let Some(rpc_timeout) = self.rpc_timeout {
+            dict.insert("eth_rpc_timeout".to_string(), rpc_timeout.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

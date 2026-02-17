@@ -69,6 +69,24 @@ Script ran successfully.
 "#]]);
 });
 
+// Tests that --rpc-timeout is accepted and script runs (configurable RPC timeout for broadcast
+// path)
+forgetest!(can_run_script_with_rpc_timeout, |prj, cmd| {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    event log_string(string);
+    function run() external {
+        emit log_string("script ran");
+    }
+}
+   "#,
+    );
+
+    cmd.arg("script").arg(script).args(["--rpc-timeout", "60"]).assert_success();
+});
+
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj.add_source(
