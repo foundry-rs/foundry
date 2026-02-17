@@ -2184,7 +2184,7 @@ impl EthApi {
     pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_addBalance");
         let current_balance = self.backend.get_balance(address, None).await?;
-        self.backend.set_balance(address, current_balance + balance).await?;
+        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
         Ok(())
     }
 
