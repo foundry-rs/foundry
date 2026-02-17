@@ -38,8 +38,12 @@ forgetest!(testdata, |_prj, cmd| {
 
     let mut args = vec!["test"];
     if cfg!(feature = "isolate-by-default") {
+        // ExecuteTransactionTest: vm.executeTransaction already performs its own isolated
+        // execution (creates a fresh EVM, clones state, merges back). In isolation mode, the
+        // inspector's transact_inner intercepts CALLs at depth==1 inside the cheatcode's
+        // inner EVM, causing double-isolation that results in "transaction reverted: 0x".
         args.push(
-            "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount)",
+            "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount|ExecuteTransactionTest)",
         );
     }
 
