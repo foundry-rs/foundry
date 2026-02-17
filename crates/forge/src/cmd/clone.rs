@@ -1090,7 +1090,8 @@ mod tests {
 
     /// Run the clone command with the specified contract address and assert the compilation.
     async fn one_test_case(address: Address, check_compilation_result: bool) {
-        let mut project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut project_root = temp_dir.path().to_path_buf();
         let client = mock_etherscan(address);
         let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default())
@@ -1115,7 +1116,6 @@ mod tests {
                 pick_creation_info(&address.to_string()).expect("creation code not found");
             assert_compilation_result(rv, contract_name, stripped_creation_code);
         }
-        std::fs::remove_dir_all(project_root).unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
