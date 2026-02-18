@@ -17,7 +17,6 @@ use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap},
 };
-use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint};
@@ -231,7 +230,7 @@ impl ScriptArgs {
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
-        if let Some(sender) = self.maybe_load_private_key()? {
+        if let Some(sender) = self.maybe_load_sender(&script_wallets)? {
             evm_opts.sender = sender;
         }
 
@@ -340,19 +339,14 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// In case the user has loaded *only* one private-key or a single remote signer (e.g.,
-    /// Turnkey), we can assume that they're using it as the `--sender`.
-    fn maybe_load_private_key(&self) -> Result<Option<Address>> {
-        if let Some(turnkey_address) = self.wallets.turnkey_address() {
-            return Ok(Some(turnkey_address));
+    /// In case the user has loaded exactly one signer (private key, keystore, ledger, trezor,
+    /// AWS KMS, GCP KMS, Turnkey, etc.), we can assume that they're using it as the `--sender`.
+    fn maybe_load_sender(&self, wallets: &Wallets) -> Result<Option<Address>> {
+        let signers = wallets.signers().map_err(|e| eyre::eyre!("{e}"))?;
+        if signers.len() == 1 {
+            return Ok(Some(signers[0]));
         }
-
-        let maybe_sender = self
-            .wallets
-            .private_keys()?
-            .filter(|pks| pks.len() == 1)
-            .map(|pks| pks.first().unwrap().address());
-        Ok(maybe_sender)
+        Ok(None)
     }
 
     /// Returns the Function and calldata based on the signature

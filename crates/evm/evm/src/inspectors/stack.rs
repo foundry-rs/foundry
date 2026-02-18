@@ -409,6 +409,16 @@ impl InspectorStack {
         self.analysis = Some(analysis);
     }
 
+    /// Set the script execution inspector and propagate the script address to cheatcodes.
+    #[inline]
+    pub fn script(&mut self, script_address: Address) {
+        self.inner.script_execution_inspector.get_or_insert_with(Default::default).script_address =
+            script_address;
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.script_address = Some(script_address);
+        }
+    }
+
     /// Set variables from an environment for the relevant inspectors.
     #[inline]
     pub fn set_env(&mut self, env: &Env) {
@@ -513,13 +523,6 @@ impl InspectorStack {
         } else {
             self.tracer = None;
         }
-    }
-
-    /// Set whether to enable script execution inspector.
-    #[inline]
-    pub fn script(&mut self, script_address: Address) {
-        self.script_execution_inspector.get_or_insert_with(Default::default).script_address =
-            script_address;
     }
 
     #[inline(always)]

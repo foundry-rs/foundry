@@ -4372,7 +4372,6 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types",
  "alloy-serde",
- "alloy-signer",
  "clap",
  "dialoguer",
  "dunce",
