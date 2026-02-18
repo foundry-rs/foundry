@@ -16,10 +16,10 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
-    sync::LazyLock,
+    sync::{LazyLock, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, prelude::*, reload};
 
 mod cmd;
 pub use cmd::*;
@@ -52,6 +52,10 @@ pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> =
 pub static SUBMODULE_STATUS_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$").unwrap());
 
+/// Handle to reload the tracing `EnvFilter` at runtime.
+static FILTER_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
+    OnceLock::new();
+
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
     /// Returns true if the [`Path`] ends with `.t.sol`
@@ -82,12 +86,31 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
     }
 }
 
-/// Initializes a tracing Subscriber for logging
+/// Initializes a tracing Subscriber for logging.
+///
+/// The `EnvFilter` is wrapped in a [`reload::Layer`] so it can be reconfigured at runtime via
+/// [`update_tracing_filter`].
 pub fn subscriber() {
-    let registry = tracing_subscriber::Registry::default().with(env_filter());
+    let (filter_layer, reload_handle) = reload::Layer::new(env_filter());
+    let registry = tracing_subscriber::Registry::default().with(filter_layer);
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
-    registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init()
+    registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init();
+    let _ = FILTER_RELOAD_HANDLE.set(reload_handle);
+}
+
+/// Replaces the active tracing `EnvFilter` at runtime.
+///
+/// `directives` is parsed as an [`EnvFilter`] (e.g. `"info"`, `"debug,hyper=off"`).
+/// This is a no-op if [`subscriber`] has not been called yet.
+pub fn update_tracing_filter(directives: &str) {
+    let Some(handle) = FILTER_RELOAD_HANDLE.get() else {
+        return;
+    };
+    let Ok(new_filter) = directives.parse::<EnvFilter>() else {
+        return;
+    };
+    let _ = handle.reload(new_filter);
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
