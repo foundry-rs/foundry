@@ -3,7 +3,8 @@ use alloy_primitives::{Address, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use parking_lot::Mutex;
-use std::{collections::BTreeMap, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 mod call_override;
 pub use call_override::RandomCallGenerator;
@@ -285,5 +286,126 @@ impl<'a> InvariantContract<'a> {
     /// Returns true if this is an optimization mode invariant (returns int256).
     pub fn is_optimization(&self) -> bool {
         is_optimization_invariant(self.invariant_function)
+    }
+}
+
+/// Settings that determine the validity of a persisted invariant counterexample.
+///
+/// When a counterexample is replayed, it's only valid if the same contracts, selectors,
+/// senders, and fail_on_revert settings are used. Changes to unrelated code (e.g., adding
+/// a log statement) should not invalidate the counterexample.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvariantSettings {
+    /// Target contracts with their addresses and identifiers.
+    pub target_contracts: BTreeMap<Address, String>,
+    /// Target selectors per contract address.
+    pub target_selectors: BTreeMap<Address, Vec<Selector>>,
+    /// Target senders for the invariant test.
+    pub target_senders: Vec<Address>,
+    /// Excluded senders for the invariant test.
+    pub excluded_senders: Vec<Address>,
+    /// Whether the test should fail on any revert.
+    pub fail_on_revert: bool,
+}
+
+impl InvariantSettings {
+    /// Creates new invariant settings from the given components.
+    pub fn new(
+        targeted_contracts: &TargetedContracts,
+        sender_filters: &SenderFilters,
+        fail_on_revert: bool,
+    ) -> Self {
+        let target_contracts = targeted_contracts
+            .inner
+            .iter()
+            .map(|(addr, contract)| (*addr, contract.identifier.clone()))
+            .collect();
+
+        let target_selectors = targeted_contracts
+            .inner
+            .iter()
+            .map(|(addr, contract)| {
+                let selectors: Vec<Selector> =
+                    contract.abi_fuzzed_functions().map(|f| f.selector()).collect();
+                (*addr, selectors)
+            })
+            .collect();
+
+        let mut target_senders = sender_filters.targeted.clone();
+        target_senders.sort();
+
+        let mut excluded_senders = sender_filters.excluded.clone();
+        excluded_senders.sort();
+
+        Self {
+            target_contracts,
+            target_selectors,
+            target_senders,
+            excluded_senders,
+            fail_on_revert,
+        }
+    }
+
+    /// Compares these settings with another and returns a description of what changed.
+    /// Returns `None` if the settings are equivalent.
+    pub fn diff(&self, other: &Self) -> Option<String> {
+        let mut changes = Vec::new();
+
+        if self.target_contracts != other.target_contracts {
+            let added: Vec<_> = other
+                .target_contracts
+                .iter()
+                .filter(|(addr, _)| !self.target_contracts.contains_key(*addr))
+                .map(|(_, name)| name.as_str())
+                .collect();
+            let removed: Vec<_> = self
+                .target_contracts
+                .iter()
+                .filter(|(addr, _)| !other.target_contracts.contains_key(*addr))
+                .map(|(_, name)| name.as_str())
+                .collect();
+
+            if !added.is_empty() {
+                changes.push(format!("added target contracts: {}", added.join(", ")));
+            }
+            if !removed.is_empty() {
+                changes.push(format!("removed target contracts: {}", removed.join(", ")));
+            }
+        }
+
+        if self.target_selectors != other.target_selectors {
+            changes.push("target selectors changed".to_string());
+        }
+
+        if self.target_senders != other.target_senders {
+            changes.push("target senders changed".to_string());
+        }
+
+        if self.excluded_senders != other.excluded_senders {
+            changes.push("excluded senders changed".to_string());
+        }
+
+        if self.fail_on_revert != other.fail_on_revert {
+            changes.push(format!(
+                "fail_on_revert changed from {} to {}",
+                self.fail_on_revert, other.fail_on_revert
+            ));
+        }
+
+        if changes.is_empty() { None } else { Some(changes.join(", ")) }
+    }
+}
+
+impl fmt::Display for InvariantSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "targets: {}, selectors: {}, senders: {}, excluded: {}, fail_on_revert: {}",
+            self.target_contracts.len(),
+            self.target_selectors.values().map(|v| v.len()).sum::<usize>(),
+            self.target_senders.len(),
+            self.excluded_senders.len(),
+            self.fail_on_revert
+        )
     }
 }
