@@ -189,6 +189,65 @@ impl<'a> CommentsRef<'a> {
         })
     }
 
+    pub fn storage_location_pairs(&self) -> Vec<(String, String)> {
+        self.iter()
+            .filter_map(|c| match &c.tag {
+                CommentTag::Custom(name) if name == "storage-location" => Some(c.value.as_str()),
+                _ => None,
+            })
+            .flat_map(Self::split_erc_storage_pairs)
+            .collect()
+    }
+
+    fn split_erc_storage_pairs(line: &str) -> Vec<(String, String)> {
+        // Lowercase copy for case-insensitive matching of "erc"
+        let lower = line.to_ascii_lowercase();
+
+        // Find every starting index of the substring "erc7201"
+        let mut starts: Vec<usize> = lower.match_indices("erc7201").map(|(i, _)| i).collect();
+        if starts.is_empty() {
+            return Vec::new();
+        }
+        // Add sentinel to mark the end of the final slice
+        starts.push(line.len());
+
+        let mut out = Vec::new();
+
+        for window in starts.windows(2) {
+            let (a, b) = (window[0], window[1]);
+            let slice = line[a..b].trim().trim_matches(|c: char| c.is_whitespace() || c == ',');
+            if slice.is_empty() {
+                continue;
+            }
+
+            // Attempt to split once at ':' or first whitespace
+            let (left, right) = if let Some((l, r)) = slice.split_once(':') {
+                (l.trim(), r.trim())
+            } else if let Some((l, r)) =
+                slice.split_once(char::is_whitespace).map(|(l, r)| (l.trim(), r.trim()))
+            {
+                (l, r)
+            } else {
+                continue;
+            };
+
+            // Basic sanity check: left must start with "erc" (case-insensitive)
+            let left_lc = left.to_ascii_lowercase();
+            if !left_lc.starts_with("erc") {
+                continue;
+            }
+
+            // Require at least one digit after "erc"
+            if left_lc.chars().skip(3).next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                && !right.is_empty()
+            {
+                out.push((left.to_string(), right.to_string()));
+            }
+        }
+
+        out
+    }
+
     /// Find an [CommentTag::Inheritdoc] comment and extract the base.
     fn find_inheritdoc_base(&self) -> Option<&'a str> {
         self.iter()
