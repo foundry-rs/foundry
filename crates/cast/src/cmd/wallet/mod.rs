@@ -13,7 +13,7 @@ use eyre::{Context, Result};
 use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
-use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
+use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner, utils::find_keystore_by_name};
 use rand_08::thread_rng;
 use serde_json::json;
 use std::path::Path;
@@ -359,25 +359,37 @@ impl WalletSubcommands {
                                 password.clone(),
                                 account_name_ref.as_deref(),
                             )?;
+
+                            // Rename the keystore file to include the address
                             let identifier = account_name_ref.as_deref().unwrap_or(&uuid);
+                            let old_path = path.join(identifier);
+                            let path_with_address = path.join(format!(
+                                "{}_{}",
+                                identifier,
+                                wallet.address().to_checksum(None)
+                            ));
+
+                            if old_path.exists() && old_path != path_with_address {
+                                std::fs::rename(&old_path, &path_with_address)?;
+                            }
 
                             if let Some(json) = json_values.as_mut() {
                                 json.push(if shell::verbosity() > 0 {
                                 json!({
                                     "address": wallet.address().to_checksum(None),
                                     "public_key": format!("0x{}", hex::encode(wallet.public_key())),
-                                    "path": format!("{}", path.join(identifier).display()),
+                                    "path": format!("{}", path_with_address.display()),
                                 })
                             } else {
                                 json!({
                                     "address": wallet.address().to_checksum(None),
-                                    "path": format!("{}", path.join(identifier).display()),
+                                    "path": format!("{}", path_with_address.display()),
                                 })
                             });
                             } else {
                                 sh_println!(
                                     "Created new encrypted keystore file: {}",
-                                    path.join(identifier).display()
+                                    path_with_address.display()
                                 )?;
                                 sh_println!("Address:    {}", wallet.address().to_checksum(None))?;
                                 if shell::verbosity() > 0 {
@@ -698,10 +710,9 @@ impl WalletSubcommands {
 
                 fs::create_dir_all(&dir)?;
 
-                // check if account exists already
-                let keystore_path = Path::new(&dir).join(&account_name);
-                if keystore_path.exists() {
-                    eyre::bail!("Keystore file already exists at {}", keystore_path.display());
+                // Check if account exists already (using shared utility)
+                if find_keystore_by_name(&dir, &account_name).is_some() {
+                    eyre::bail!("Keystore file already exists for account '{}'", account_name);
                 }
 
                 // get wallet
@@ -731,13 +742,23 @@ flag to set your key via:
 
                 let mut rng = thread_rng();
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
-                    dir,
+                    dir.clone(),
                     &mut rng,
                     private_key,
                     password,
                     Some(&account_name),
                 )?;
                 let address = wallet.address();
+
+                // Rename the file to include the address in the new format
+                let old_path = dir.join(&account_name);
+                let path_with_address =
+                    dir.join(format!("{}_{}", account_name, address.to_checksum(None)));
+
+                if old_path.exists() && old_path != path_with_address {
+                    std::fs::rename(&old_path, &path_with_address)?;
+                }
+
                 let success_message = format!(
                     "`{}` keystore was saved successfully. Address: {:?}",
                     &account_name, address,
@@ -756,7 +777,13 @@ flag to set your key via:
                     })?
                 };
 
-                let keystore_path = Path::new(&dir).join(&name);
+                // Use shared utility for keystore lookup
+                let keystore_path = if let Some(found_path) = find_keystore_by_name(&dir, &name) {
+                    found_path
+                } else {
+                    dir.join(&name) // Fallback to direct path for error message
+                };
+
                 if !keystore_path.exists() {
                     eyre::bail!("Keystore file does not exist at {}", keystore_path.display());
                 }
@@ -829,7 +856,12 @@ flag to set your key via:
                     })?
                 };
 
-                let keypath = dir.join(&account_name);
+                // Use shared utility for keystore lookup
+                let keypath = if let Some(found_path) = find_keystore_by_name(&dir, &account_name) {
+                    found_path
+                } else {
+                    dir.join(&account_name) // Fallback to direct path for error message
+                };
 
                 if !keypath.exists() {
                     eyre::bail!("Keystore file does not exist at {}", keypath.display());
@@ -866,7 +898,12 @@ flag to set your key via:
                     })?
                 };
 
-                let keypath = dir.join(&account_name);
+                // Use shared utility for keystore lookup
+                let keypath = if let Some(found_path) = find_keystore_by_name(&dir, &account_name) {
+                    found_path
+                } else {
+                    dir.join(&account_name) // Fallback to direct path for error message
+                };
 
                 if !keypath.exists() {
                     eyre::bail!("Keystore file does not exist at {}", keypath.display());
@@ -898,12 +935,24 @@ flag to set your key via:
                 let private_key = wallet.credential().to_bytes();
                 let mut rng = thread_rng();
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
-                    dir,
+                    dir.clone(),
                     &mut rng,
                     private_key,
                     new_password,
                     Some(&account_name),
                 )?;
+
+                // Remove the old keystore file
+                std::fs::remove_file(&keypath)?;
+
+                // Rename the new file to include the address
+                let old_path = dir.join(&account_name);
+                let path_with_address =
+                    dir.join(format!("{}_{}", account_name, wallet.address().to_checksum(None)));
+
+                if old_path.exists() && old_path != path_with_address {
+                    std::fs::rename(&old_path, &path_with_address)?;
+                }
 
                 let success_message = format!(
                     "Password for keystore `{}` was changed successfully. Address: {:?}",

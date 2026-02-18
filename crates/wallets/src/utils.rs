@@ -1,5 +1,5 @@
 use crate::{PendingSigner, WalletSigner, error::PrivateKeyError};
-use alloy_primitives::{B256, hex::FromHex};
+use alloy_primitives::{Address, B256, hex::FromHex};
 use alloy_signer_ledger::HDPath as LedgerHDPath;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_signer_trezor::HDPath as TrezorHDPath;
@@ -93,9 +93,48 @@ pub fn maybe_get_keystore_path(
 ) -> Result<Option<PathBuf>> {
     let default_keystore_dir = Config::foundry_keystores_dir()
         .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
-    Ok(maybe_path
-        .map(PathBuf::from)
-        .or_else(|| maybe_name.map(|name| default_keystore_dir.join(name))))
+
+    if let Some(path) = maybe_path {
+        return Ok(Some(PathBuf::from(path)));
+    }
+
+    if let Some(name) = maybe_name {
+        if let Some(found_path) = find_keystore_by_name(&default_keystore_dir, name) {
+            return Ok(Some(found_path));
+        }
+
+        // Return the direct path even if it doesn't exist (for better error messages)
+        return Ok(Some(default_keystore_dir.join(name)));
+    }
+
+    Ok(None)
+}
+
+/// Finds a keystore file by account name, supporting both old and new filename formats
+/// Returns the path if found, or None if not found
+pub fn find_keystore_by_name(
+    keystore_dir: &std::path::Path,
+    account_name: &str,
+) -> Option<std::path::PathBuf> {
+    // Try exact match first (old format or exact filename)
+    let direct_path = keystore_dir.join(account_name);
+    if direct_path.exists() {
+        return Some(direct_path);
+    }
+
+    // Try finding with address suffix (new format: account_name_0x<address>)
+    if let Ok(entries) = std::fs::read_dir(keystore_dir) {
+        let search_prefix = format!("{account_name}_");
+        for entry in entries.flatten() {
+            if let Some(file_name) = entry.file_name().to_str()
+                && file_name.starts_with(&search_prefix)
+                && Address::parse_checksummed(&file_name[search_prefix.len()..], None).is_ok()
+            {
+                return Some(entry.path());
+            }
+        }
+    }
+    None
 }
 
 /// Creates keystore signer from given parameters.
