@@ -39,7 +39,8 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
+    cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
+    && sccache --show-stats || true
 
 # `dev` profile outputs to the `target/debug` directory.
 RUN ln -s /app/target/debug /app/target/dev \
@@ -50,8 +51,6 @@ RUN ln -s /app/target/debug /app/target/dev \
     /app/target/${RUST_PROFILE}/anvil \
     /app/target/${RUST_PROFILE}/chisel \
     /app/output/
-
-RUN sccache --show-stats || true
 
 FROM ubuntu:22.04 AS runtime
 
