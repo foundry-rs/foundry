@@ -223,6 +223,23 @@ pub struct RecordDebugStepInfo {
     pub original_tracer_config: TracingInspectorConfig,
 }
 
+/// Environment overrides for isolation mode.
+///
+/// In isolation mode, the transaction environment is zeroed for fee-accounting purposes,
+/// but contracts may still need to read cheatcode-overridden values via opcodes like
+/// `BASEFEE`, `GASPRICE`, and `BLOBHASH`. These overrides are applied at the opcode level.
+#[derive(Clone, Debug, Default)]
+pub struct EnvOverrides {
+    /// Override for the `BASEFEE` opcode (set via `vm.fee`).
+    pub basefee: Option<u64>,
+    /// Override for the `GASPRICE` opcode (set via `vm.txGasPrice`).
+    pub gas_price: Option<u128>,
+    /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
+    pub blob_hashes: Option<Vec<B256>>,
+    /// Pending index for `BLOBHASH` opcode, captured in `step` for use in `step_end`.
+    pending_blobhash_index: Option<u64>,
+}
+
 /// Holds gas metering state.
 #[derive(Clone, Debug, Default)]
 pub struct GasMetering {
@@ -516,6 +533,18 @@ pub struct Cheatcodes {
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
     pub execution_evm_version: Option<SpecId>,
+
+    /// Environment overrides for isolation mode.
+    ///
+    /// These are set by cheatcodes and read at the opcode level when in isolation context.
+    pub env_overrides: EnvOverrides,
+
+    /// Whether we are currently in an isolation context (inner transaction).
+    ///
+    /// When true, cheatcodes that modify the transaction environment should only update
+    /// `env_overrides` instead of the actual environment, since the environment is zeroed
+    /// for fee-accounting purposes.
+    pub in_isolation_context: bool,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -574,6 +603,8 @@ impl Cheatcodes {
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
             execution_evm_version: None,
+            env_overrides: Default::default(),
+            in_isolation_context: false,
         }
     }
 
@@ -1191,6 +1222,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if self.gas_metering.recording {
             self.meter_gas_record(interpreter, ecx);
         }
+
+        // Capture BLOBHASH index before execution for use in step_end.
+        if self.env_overrides.blob_hashes.is_some()
+            && interpreter.bytecode.opcode() == op::BLOBHASH
+            && let Ok(index) = interpreter.stack.peek(0)
+        {
+            self.env_overrides.pending_blobhash_index = index.try_into().ok();
+        }
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
@@ -1206,6 +1245,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if self.arbitrary_storage.is_some() {
             self.arbitrary_storage_end(interpreter, ecx);
         }
+
+        // Apply environment overrides for isolation mode.
+        // In isolation mode, the transaction environment is zeroed for fee-accounting purposes,
+        // but contracts may still need to read cheatcode-overridden values.
+        self.apply_env_overrides(interpreter);
     }
 
     fn log(&mut self, _ecx: Ecx, log: Log) {
@@ -2035,6 +2079,45 @@ impl Cheatcodes {
                     arbitrary_value,
                 );
             }
+        }
+    }
+
+    /// Applies environment overrides for opcodes like `BASEFEE`, `GASPRICE`, and `BLOBHASH`.
+    ///
+    /// In isolation mode, the transaction environment is zeroed for fee-accounting purposes,
+    /// but contracts may still need to read cheatcode-overridden values. This method intercepts
+    /// these opcodes after execution and replaces the stack value with the override.
+    #[cold]
+    fn apply_env_overrides(&mut self, interpreter: &mut Interpreter) {
+        match interpreter.bytecode.opcode() {
+            op::BASEFEE => {
+                if let Some(basefee) = self.env_overrides.basefee {
+                    // SAFETY: BASEFEE pushes one value onto the stack, so we can safely pop and
+                    // push.
+                    let _ = interpreter.stack.pop();
+                    let _ = interpreter.stack.push(U256::from(basefee));
+                }
+            }
+            op::GASPRICE => {
+                if let Some(gas_price) = self.env_overrides.gas_price {
+                    // SAFETY: GASPRICE pushes one value onto the stack, so we can safely pop and
+                    // push.
+                    let _ = interpreter.stack.pop();
+                    let _ = interpreter.stack.push(U256::from(gas_price));
+                }
+            }
+            op::BLOBHASH => {
+                if let Some(ref blob_hashes) = self.env_overrides.blob_hashes
+                    && let Some(index) = self.env_overrides.pending_blobhash_index.take()
+                {
+                    // SAFETY: BLOBHASH pops an index and pushes a hash, so we can safely pop
+                    // and push.
+                    let _ = interpreter.stack.pop();
+                    let hash = blob_hashes.get(index as usize).copied().unwrap_or_default();
+                    let _ = interpreter.stack.push(hash.into());
+                }
+            }
+            _ => {}
         }
     }
 
