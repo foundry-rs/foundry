@@ -1861,9 +1861,17 @@ impl Default for BackendInner {
 
 /// This updates the currently used env with the fork's environment
 pub(crate) fn update_current_env_with_fork_env(current: &mut EnvMut<'_>, fork: Env) {
+    // Preserve the current spec_id (evm_version) - users configure this explicitly
+    // and it should not be overwritten when switching forks.
+    // See: https://github.com/foundry-rs/foundry/issues/13040
+    let spec = current.cfg.spec;
+
     *current.block = fork.evm_env.block_env;
     *current.cfg = fork.evm_env.cfg_env;
     current.tx.chain_id = fork.tx.chain_id;
+
+    // Restore the original spec_id
+    current.cfg.spec = spec;
 }
 
 /// Clones the data of the given `accounts` from the `active` database into the `fork_db`
