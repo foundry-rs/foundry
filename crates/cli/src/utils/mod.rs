@@ -113,9 +113,9 @@ pub fn update_tracing_filter(directives: &str) {
     let _ = handle.reload(new_filter);
 }
 
-fn env_filter() -> tracing_subscriber::EnvFilter {
+fn env_filter() -> EnvFilter {
     const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
-    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    let mut filter = EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
     }
