@@ -341,7 +341,7 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput) -> Result<()> {
             }));
         }
     }
-    signatures.save(&path);
+    signatures.save_result(&path)?;
     Ok(())
 }
 
@@ -359,7 +359,7 @@ pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
         .filter_map(|content| serde_json::from_str::<JsonAbi>(&content).ok())
         .for_each(|json_abi| signatures.extend_from_abi(&json_abi));
 
-    signatures.save(&path);
+    signatures.save_result(&path)?;
     Ok(())
 }
 
