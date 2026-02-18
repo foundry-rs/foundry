@@ -31,7 +31,7 @@ use foundry_evm::{
     utils::configure_tx_env,
 };
 use futures::TryFutureExt;
-use revm::DatabaseRef;
+use revm::{DatabaseRef, primitives::hardfork::SpecId};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -183,6 +183,8 @@ impl RunArgs {
         env.evm_env.cfg_env.limit_contract_code_size = None;
         env.evm_env.block_env.number = U256::from(tx_block_number);
 
+        let mut parent_beacon_block_root = None;
+
         if let Some(block) = &block {
             env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
             env.evm_env.block_env.beneficiary = block.header.beneficiary;
@@ -190,6 +192,10 @@ impl RunArgs {
             env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
             env.evm_env.block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
             env.evm_env.block_env.gas_limit = block.header.gas_limit;
+
+            if env.evm_env.cfg_env.spec >= SpecId::CANCUN {
+                parent_beacon_block_root = block.header.parent_beacon_block_root;
+            }
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains
@@ -223,6 +229,12 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
+
+        if let Some(parent_beacon_block_root) = parent_beacon_block_root {
+            let timestamp: u64 = env.evm_env.block_env.timestamp.try_into().unwrap_or(0);
+            executor.process_beacon_block_root(timestamp, parent_beacon_block_root)?;
+        }
+
         let mut env = Env::new_with_spec_id(
             env.evm_env.cfg_env.clone(),
             env.evm_env.block_env.clone(),
