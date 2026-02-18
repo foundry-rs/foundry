@@ -128,6 +128,8 @@ pub(super) struct State<'sess, 'ast> {
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
     var_init: bool,
+    // Whether inside an if condition expression, or not.
+    in_if_condition: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -222,6 +224,7 @@ impl<'sess> State<'sess, '_> {
             return_bin_expr: false,
             emit_or_revert: false,
             var_init: false,
+            in_if_condition: false,
             block_depth: 0,
             call_stack: CallStack::default(),
         }
