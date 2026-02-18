@@ -3,11 +3,12 @@ use std::sync::Arc;
 use axum::{
     Router,
     extract::{Request, State},
-    http::{HeaderValue, Method, StatusCode, header},
+    http::{HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::Response,
     routing::{get, post},
 };
+use std::str::FromStr;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, set_header::SetResponseHeaderLayer};
 
@@ -28,7 +29,7 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
 
     // Allow default port of 5173 in development mode.
     if state.is_development() {
-        origins.push("https://localhost:5173".to_string().parse().unwrap());
+        origins.push("http://localhost:5173".to_string().parse().unwrap());
     }
 
     let security_headers = ServiceBuilder::new()
@@ -61,7 +62,10 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
             CorsLayer::new()
                 .allow_origin(origins)
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-                .allow_headers([header::CONTENT_TYPE])
+                .allow_headers([
+                    header::CONTENT_TYPE,
+                    HeaderName::from_str("x-session-token").unwrap(),
+                ])
                 .allow_credentials(false),
         );
 
