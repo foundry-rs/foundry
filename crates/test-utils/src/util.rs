@@ -3,7 +3,7 @@ use foundry_config::Config;
 use std::{
     env,
     fs::{self, File},
-    io::{IsTerminal, Read, Seek, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::LazyLock,
@@ -18,9 +18,6 @@ pub use crate::{ext::*, prj::*};
 
 /// The commit of forge-std to use.
 pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
-
-/// Stores whether `stdout` is a tty / terminal.
-pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
 
 /// Global default template path. Contains the global template project from which all other
 /// temp projects are initialized. See [`initialize()`] for more info.
