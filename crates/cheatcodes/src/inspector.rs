@@ -121,6 +121,11 @@ pub trait CheatcodesExecutor {
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         None
     }
+
+    /// Marks that the next EVM frame is an "inner context" so that isolation mode does not
+    /// trigger a nested `transact_inner`. `original_origin` is stored for the existing
+    /// inner-context adjustment logic that restores `tx.origin`.
+    fn set_in_inner_context(&mut self, _enabled: bool, _original_origin: Option<Address>) {}
 }
 
 /// Constructs [FoundryEvm] and runs a given closure with it.
