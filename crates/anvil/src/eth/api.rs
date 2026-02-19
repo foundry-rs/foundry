@@ -3462,7 +3462,7 @@ impl EthApi {
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             // TODO(onbjerg): we should impl support for Tempo transactions
             FoundryTxEnvelope::Tempo(_) => {
-                return Err(BlockchainError::FailedToDecodeTransaction);
+                return Err(BlockchainError::UnknownTransactionType);
             }
         }
     }
