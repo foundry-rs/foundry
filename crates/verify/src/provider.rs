@@ -189,6 +189,7 @@ impl VerificationProviderType {
         if self.is_etherscan() {
             if let Some(chain) = chain
                 && chain.etherscan_urls().is_none()
+                && !has_url
             {
                 eyre::bail!(EtherscanConfigError::UnknownChain(
                     "when using Etherscan verifier".to_string(),
@@ -227,5 +228,29 @@ impl VerificationProviderType {
 
     pub fn is_etherscan(&self) -> bool {
         matches!(self, Self::Etherscan)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn etherscan_allows_unknown_chain_with_verifier_url() {
+        let chain = Chain::from(3658348u64);
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), true);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn etherscan_rejects_unknown_chain_without_verifier_url() {
+        let chain = Chain::from(3658348u64);
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), false);
+        match res {
+            Ok(_) => panic!("expected unknown-chain error"),
+            Err(err) => {
+                assert!(err.to_string().contains("No known Etherscan API URL"));
+            }
+        }
     }
 }
