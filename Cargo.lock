@@ -5097,6 +5097,7 @@ name = "foundry-primitives"
 version = "1.6.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-evm",
  "alloy-network",
  "alloy-primitives",
