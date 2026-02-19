@@ -3388,7 +3388,7 @@ impl EthApi {
             ),
             // TODO(onbjerg): we should impl support for Tempo transactions
             FoundryTypedTx::Tempo(_) => {
-                panic!("Tempo transactions not supported yet")
+                todo!()
             }
         }
     }
