@@ -958,6 +958,40 @@ impl UIfmtSignatureExt for FoundryTxEnvelope {
     }
 }
 
+pub trait UIfmtReceiptExt {
+    fn logs_pretty(&self) -> String;
+    fn logs_bloom_pretty(&self) -> String;
+    fn tx_type_pretty(&self) -> String;
+}
+
+impl UIfmtReceiptExt for AnyTransactionReceipt {
+    fn logs_pretty(&self) -> String {
+        serde_json::to_string(&self.inner.inner.inner.receipt.logs).unwrap_or_default()
+    }
+
+    fn logs_bloom_pretty(&self) -> String {
+        self.inner.inner.inner.logs_bloom.pretty()
+    }
+
+    fn tx_type_pretty(&self) -> String {
+        self.inner.inner.r#type.to_string()
+    }
+}
+
+impl UIfmtReceiptExt for FoundryTxReceipt {
+    fn logs_pretty(&self) -> String {
+        serde_json::to_string(self.0.inner.inner.logs()).unwrap_or_default()
+    }
+
+    fn logs_bloom_pretty(&self) -> String {
+        self.0.inner.inner.logs_bloom().pretty()
+    }
+
+    fn tx_type_pretty(&self) -> String {
+        (self.0.inner.inner.tx_type() as u8).to_string()
+    }
+}
+
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr<N>(transaction: &N::TransactionResponse, attr: &str) -> Option<String>
 where
@@ -1028,6 +1062,33 @@ where
             }
             None
         }
+    }
+}
+
+pub fn get_pretty_receipt_attr<N>(receipt: &N::ReceiptResponse, attr: &str) -> Option<String>
+where
+    N: Network,
+    N::ReceiptResponse: ReceiptResponse + UIfmtReceiptExt,
+{
+    match attr {
+        "blockHash" | "block_hash" => Some(receipt.block_hash().pretty()),
+        "blockNumber" | "block_number" => Some(receipt.block_number().pretty()),
+        "contractAddress" | "contract_address" => Some(receipt.contract_address().pretty()),
+        "cumulativeGasUsed" | "cumulative_gas_used" => Some(receipt.cumulative_gas_used().pretty()),
+        "effectiveGasPrice" | "effective_gas_price" => Some(receipt.effective_gas_price().pretty()),
+        "from" => Some(receipt.from().pretty()),
+        "gasUsed" | "gas_used" => Some(receipt.gas_used().pretty()),
+        "logs" => Some(receipt.logs_pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.logs_bloom_pretty()),
+        "root" | "stateRoot" | "state_root" => Some(receipt.state_root().pretty()),
+        "status" | "statusCode" | "status_code" => Some(receipt.status().pretty()),
+        "transactionHash" | "transaction_hash" => Some(receipt.transaction_hash().pretty()),
+        "transactionIndex" | "transaction_index" => Some(receipt.transaction_index().pretty()),
+        "to" => Some(receipt.to().pretty()),
+        "type" | "transaction_type" => Some(receipt.tx_type_pretty()),
+        "blobGasPrice" | "blob_gas_price" => Some(receipt.blob_gas_price().pretty()),
+        "blobGasUsed" | "blob_gas_used" => Some(receipt.blob_gas_used().pretty()),
+        _ => None,
     }
 }
 
@@ -1787,5 +1848,59 @@ validBefore          null
 
         // Verify status is pretty printed correctly (boolean true for successful transaction)
         assert!(pretty_output.contains("true"));
+    }
+
+    #[test]
+    fn test_get_pretty_receipt_attr() {
+        let receipt_json = serde_json::json!({
+            "type": "0x2",
+            "status": "0x1",
+            "cumulativeGasUsed": "0x5208",
+            "logs": [],
+            "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "transactionHash": "0x1234567890123456789012345678901234567890123456789012345678901234",
+            "transactionIndex": "0x0",
+            "blockHash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "blockNumber": "0x1",
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x3b9aca00",
+            "from": "0x1234567890123456789012345678901234567890",
+            "to": "0x0987654321098765432109876543210987654321",
+            "contractAddress": null
+        });
+
+        let receipt: <FoundryNetwork as Network>::ReceiptResponse =
+            serde_json::from_value(receipt_json).unwrap();
+
+        // Test basic receipt attributes
+        assert_eq!(
+            Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string()),
+            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "blockHash")
+        );
+        assert_eq!(
+            Some("1".to_string()),
+            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "blockNumber")
+        );
+        assert_eq!(
+            Some("0x1234567890123456789012345678901234567890123456789012345678901234".to_string()),
+            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "transactionHash")
+        );
+        assert_eq!(
+            Some("21000".to_string()),
+            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "gasUsed")
+        );
+        assert_eq!(
+            Some("true".to_string()),
+            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "status")
+        );
+        assert_eq!(
+            Some("2".to_string()),
+            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "type")
+        );
+        assert_eq!(
+            Some("[]".to_string()),
+            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "logs")
+        );
+        assert!(get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "logsBloom").is_some());
     }
 }
