@@ -183,14 +183,38 @@ impl InMemoryBlockStates {
 
     /// Returns on-disk state for the given `hash` if present
     pub fn get_on_disk_state(&mut self, hash: &B256) -> Option<&StateDb> {
-        if let Some(state) = self.on_disk_states.get_mut(hash)
-            && let Some(cached) = self.disk_cache.read(*hash)
-        {
-            state.init_from_state_snapshot(cached);
-            return Some(state);
+        // Check if hash exists in on_disk_states index
+        if !self.on_disk_states.contains_key(hash) {
+            return None;
         }
 
-        None
+        // Try to read from disk cache first
+        match self.disk_cache.read(*hash) {
+            Some(cached) => {
+                // Successfully read from disk, init state and return
+                if let Some(state) = self.on_disk_states.get_mut(hash) {
+                    state.init_from_state_snapshot(cached);
+                    return Some(state);
+                }
+                None
+            }
+            None => {
+                // Disk cache is corrupted or missing, clean up inconsistent index
+                warn!(
+                    target: "backend",
+                    ?hash,
+                    "Detected inconsistent state: on_disk_states index points to missing or \
+                     corrupted disk cache. Cleaning up index."
+                );
+                self.on_disk_states.remove(hash);
+                // Also remove from oldest_on_disk queue
+                if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == hash) {
+                    self.oldest_on_disk.remove(pos);
+                }
+                // Note: on-disk states are not in present queue (removed when evicted)
+                None
+            }
+        }
     }
 
     /// Sets the maximum number of stats we keep in memory
@@ -217,12 +241,37 @@ impl InMemoryBlockStates {
             .map(|(hash, state)| (*hash, state.serialize_state()))
             .collect::<Vec<_>>();
 
-        // Get on-disk state snapshots
-        self.on_disk_states.iter().for_each(|(hash, _)| {
-            if let Some(state_snapshot) = self.disk_cache.read(*hash) {
-                states.push((*hash, state_snapshot));
+        // Get on-disk state snapshots and clean up corrupted entries
+        let corrupted_hashes: Vec<B256> = self
+            .on_disk_states
+            .iter()
+            .filter_map(|(hash, _)| {
+                match self.disk_cache.read(*hash) {
+                    Some(state_snapshot) => {
+                        states.push((*hash, state_snapshot));
+                        None
+                    }
+                    None => {
+                        // Mark for cleanup
+                        warn!(
+                            target: "backend",
+                            ?hash,
+                            "Detected corrupted disk cache during serialization. Cleaning up index."
+                        );
+                        Some(*hash)
+                    }
+                }
+            })
+            .collect();
+
+        // Clean up corrupted entries from indexes
+        for hash in corrupted_hashes {
+            self.on_disk_states.remove(&hash);
+            if let Some(pos) = self.oldest_on_disk.iter().position(|h| h == &hash) {
+                self.oldest_on_disk.remove(pos);
             }
-        });
+            // Note: on-disk states are not in present queue (removed when evicted)
+        }
 
         SerializableHistoricalStates::new(states)
     }
@@ -689,6 +738,68 @@ mod tests {
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleans_up_corrupted_disk_cache_index() {
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
+        let one = B256::from(U256::from(1));
+        let two = B256::from(U256::from(2));
+        let three = B256::from(U256::from(3));
+
+        // Insert states - first two will be evicted to disk
+        storage.insert(one, StateDb::new(MemDb::default()));
+        storage.insert(two, StateDb::new(MemDb::default()));
+        storage.insert(three, StateDb::new(MemDb::default()));
+
+        // Wait for disk writes
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        // Verify initial state: two on disk, one in memory
+        assert_eq!(storage.on_disk_states.len(), 2);
+        assert_eq!(storage.oldest_on_disk.len(), 2);
+        assert_eq!(storage.present.len(), 1); // Only 'three' is in memory
+
+        // Simulate disk cache corruption by removing the cache files manually
+        storage.disk_cache.remove(one);
+        storage.disk_cache.remove(two);
+
+        // Try to access corrupted state - should trigger cleanup
+        let result = storage.get_on_disk_state(&one);
+        assert!(result.is_none(), "Should return None for corrupted cache");
+
+        // Verify cleanup happened for hash 'one'
+        assert!(!storage.on_disk_states.contains_key(&one), "Should remove from on_disk_states");
+        assert!(!storage.oldest_on_disk.contains(&one), "Should remove from oldest_on_disk");
+
+        // Hash 'two' should still be in indexes (not accessed yet)
+        assert!(storage.on_disk_states.contains_key(&two));
+        assert_eq!(storage.on_disk_states.len(), 1);
+
+        // Access hash 'two' - should also cleanup
+        let result = storage.get_on_disk_state(&two);
+        assert!(result.is_none());
+        assert!(!storage.on_disk_states.contains_key(&two));
+
+        // Final state: all disk states cleaned up, memory state unchanged
+        assert_eq!(storage.on_disk_states.len(), 0);
+        assert_eq!(storage.oldest_on_disk.len(), 0);
+        assert_eq!(storage.present.len(), 1); // 'three' still in memory
+    }
+
+    #[test]
+    fn normal_cache_miss_does_not_cleanup() {
+        let mut storage = InMemoryBlockStates::new(10, MAX_ON_DISK_HISTORY_LIMIT);
+        let nonexistent = B256::from(U256::from(999));
+
+        // Normal cache miss - hash never existed
+        let result = storage.get_on_disk_state(&nonexistent);
+        assert!(result.is_none());
+
+        // Should be fast O(1) path, no cleanup operations
+        assert_eq!(storage.on_disk_states.len(), 0);
+        assert_eq!(storage.oldest_on_disk.len(), 0);
+        assert_eq!(storage.present.len(), 0);
     }
 
     // verifies that blocks and transactions in BlockchainStorage remain the same when dumped and
