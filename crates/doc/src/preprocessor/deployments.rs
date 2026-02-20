@@ -64,9 +64,11 @@ impl Preprocessor for Deployments {
 
             let mut item_path_json = document.item_path.clone();
             item_path_json.set_extension("json");
-            let deployment_file = PathBuf::from(item_path_json.file_name().ok_or_else(|| {
-                eyre::eyre!("Failed to extract file name from item path")
-            })?);
+            let deployment_file = PathBuf::from(
+                item_path_json
+                    .file_name()
+                    .ok_or_else(|| eyre::eyre!("Failed to extract file name from item path"))?,
+            );
 
             // Iterate over all networks and check if there is a deployment for the given contract.
             for network in &networks {
