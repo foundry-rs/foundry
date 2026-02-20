@@ -165,10 +165,13 @@ impl ChiselDispatcher {
             )?)
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_external(
-            &session_config.foundry_config,
-            session_config.evm_opts.get_remote_chain_id().await,
-        )?;
+        let remote_chain = session_config.evm_opts.get_remote_chain_id().await;
+        let mut identifier = TraceIdentifiers::new();
+        // Only use external identifiers when connected to a remote chain to avoid unnecessary
+        // network requests that significantly slow down local REPL execution.
+        if let Some(chain) = remote_chain {
+            identifier = identifier.with_external(&session_config.foundry_config, Some(chain))?;
+        }
         if !identifier.is_empty() {
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &mut identifier);
