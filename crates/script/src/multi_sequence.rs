@@ -6,9 +6,7 @@ use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
-use std::{
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 /// Holds the sequences of multiple chain deployments.
 #[derive(Clone, Default, Serialize, Deserialize)]
