@@ -1301,6 +1301,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
+    "max_deal": null,
     "check_interval": 1
   },
   "ffi": false,

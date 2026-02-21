@@ -1,4 +1,4 @@
-use super::{fuzz_calldata, fuzz_param_from_state};
+use super::{fuzz_calldata, fuzz_msg_value, fuzz_param_from_state};
 use crate::{
     BasicTxDetails, CallDetails, FuzzFixtures,
     invariant::{FuzzRunIdentifiedContracts, SenderFilters},
@@ -77,8 +77,8 @@ pub fn invariant_strat(
     let senders = Rc::new(senders);
     let dictionary_weight = config.dictionary.dictionary_weight;
 
-    // Strategy to generate values for tx warp and roll.
-    let warp_roll_strat = |cond: bool| {
+    // Strategy to generate optional U256 values for tx warp, roll, and deal.
+    let optional_u256_strat = |cond: bool| {
         if cond { any::<U256>().prop_map(Some).boxed() } else { Just(None).boxed() }
     };
 
@@ -97,17 +97,19 @@ pub fn invariant_strat(
                 target_function.clone(),
             );
 
-            let warp = warp_roll_strat(config.max_time_delay.is_some());
-            let roll = warp_roll_strat(config.max_block_delay.is_some());
+            let warp = optional_u256_strat(config.max_time_delay.is_some());
+            let roll = optional_u256_strat(config.max_block_delay.is_some());
+            let deal = optional_u256_strat(config.max_deal.is_some());
 
-            (warp, roll, sender, call_details)
+            (warp, roll, deal, sender, call_details)
         })
-        .prop_map(move |(warp, roll, sender, call_details)| {
+        .prop_map(move |(warp, roll, deal, sender, call_details)| {
             let warp =
                 warp.map(|time| time % U256::from(config.max_time_delay.unwrap_or_default()));
             let roll =
                 roll.map(|block| block % U256::from(config.max_block_delay.unwrap_or_default()));
-            BasicTxDetails { warp, roll, sender, call_details }
+            let deal = deal.map(|amount| amount % U256::from(config.max_deal.unwrap_or_default()));
+            BasicTxDetails { warp, roll, deal, sender, call_details }
         })
 }
 
@@ -153,15 +155,21 @@ pub fn fuzz_contract_with_calldata(
     target: Address,
     func: Function,
 ) -> impl Strategy<Value = CallDetails> + use<> {
+    let is_payable = func.state_mutability == alloy_json_abi::StateMutability::Payable;
+
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
-    prop_oneof![
+    let calldata_strategy = prop_oneof![
         60 => fuzz_calldata(func.clone(), fuzz_fixtures),
         40 => fuzz_calldata_from_state(func, fuzz_state),
-    ]
-    .prop_map(move |calldata| {
-        trace!(input=?calldata);
-        CallDetails { target, calldata }
+    ];
+
+    // For payable functions, generate random value using shared strategy.
+    let value_strategy = if is_payable { fuzz_msg_value().boxed() } else { Just(None).boxed() };
+
+    (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| {
+        trace!(input=?calldata, ?value);
+        CallDetails { target, calldata, value }
     })
 }
