@@ -12,7 +12,7 @@ mod filters;
 use crate::BasicTxDetails;
 pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::utils::{StateChangeset, get_function};
+use foundry_evm_core::utils::StateChangeset;
 
 /// Returns true if the function returns `int256`, indicating optimization mode.
 /// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
@@ -77,12 +77,15 @@ impl FuzzRunIdentifiedContracts {
                 continue;
             };
             created_contracts.push(*address);
+            let abi = contract.abi.clone();
+            let selector_map = TargetedContract::build_selector_map(&abi);
             let contract = TargetedContract {
                 identifier: artifact.name.clone(),
-                abi: contract.abi.clone(),
+                abi,
                 targeted_functions: functions,
                 excluded_functions: Vec::new(),
                 storage_layout: contract.storage_layout.as_ref().map(Arc::clone),
+                selector_map,
             };
             targets.insert(*address, contract);
         }
@@ -118,10 +121,14 @@ impl TargetedContracts {
     /// Used to decode return values and logs in order to add values into fuzz dictionary.
     pub fn fuzzed_artifacts(&self, tx: &BasicTxDetails) -> (Option<&JsonAbi>, Option<&Function>) {
         match self.inner.get(&tx.call_details.target) {
-            Some(c) => (
-                Some(&c.abi),
-                c.abi.functions().find(|f| f.selector() == tx.call_details.calldata[..4]),
-            ),
+            Some(c) => {
+                let func = tx
+                    .call_details
+                    .calldata
+                    .first_chunk::<4>()
+                    .and_then(|s| c.selector_map.get(&Selector::from(s)));
+                (Some(&c.abi), func)
+            }
             None => (None, None),
         }
     }
@@ -138,7 +145,11 @@ impl TargetedContracts {
     /// Returns whether the given transaction can be replayed or not with known contracts.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
         match self.inner.get(&tx.call_details.target) {
-            Some(c) => c.abi.functions().any(|f| f.selector() == tx.call_details.calldata[..4]),
+            Some(c) => tx
+                .call_details
+                .calldata
+                .first_chunk::<4>()
+                .is_some_and(|s| c.selector_map.contains_key(&Selector::from(s))),
             None => false,
         }
     }
@@ -147,11 +158,11 @@ impl TargetedContracts {
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
         self.inner.get(&tx.call_details.target).and_then(|contract| {
-            contract
-                .abi
-                .functions()
-                .find(|f| f.selector() == tx.call_details.calldata[..4])
-                .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
+            tx.call_details
+                .calldata
+                .first_chunk::<4>()
+                .and_then(|s| contract.selector_map.get(&Selector::from(s)))
+                .map(|function| format!("{}.{}", contract.identifier, function.name))
         })
     }
 
@@ -193,17 +204,27 @@ pub struct TargetedContract {
     pub excluded_functions: Vec<Function>,
     /// The contract's storage layout, if available.
     pub storage_layout: Option<Arc<StorageLayout>>,
+    /// Pre-computed selector-to-function map for O(1) lookups.
+    /// Avoids recomputing keccak256 on every selector comparison in hot fuzz loops.
+    selector_map: HashMap<Selector, Function>,
 }
 
 impl TargetedContract {
+    /// Builds the selector-to-function lookup map from an ABI.
+    fn build_selector_map(abi: &JsonAbi) -> HashMap<Selector, Function> {
+        abi.functions().map(|f| (f.selector(), f.clone())).collect()
+    }
+
     /// Returns a new `TargetedContract` instance.
     pub fn new(identifier: String, abi: JsonAbi) -> Self {
+        let selector_map = Self::build_selector_map(&abi);
         Self {
             identifier,
             abi,
             targeted_functions: Vec::new(),
             excluded_functions: Vec::new(),
             storage_layout: None,
+            selector_map,
         }
     }
 
@@ -238,7 +259,12 @@ impl TargetedContract {
 
     /// Returns the function for the given selector.
     pub fn get_function(&self, selector: Selector) -> eyre::Result<&Function> {
-        get_function(&self.identifier, selector, &self.abi)
+        self.selector_map.get(&selector).ok_or_else(|| {
+            eyre::eyre!(
+                "no function with selector `{selector}` found in contract `{}`",
+                self.identifier
+            )
+        })
     }
 
     /// Adds the specified selectors to the targeted functions.
