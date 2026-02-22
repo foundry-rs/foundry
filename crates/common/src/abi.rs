@@ -143,8 +143,17 @@ pub async fn get_func_etherscan(
     args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
+    etherscan_api_url: Option<&str>,
 ) -> Result<Function> {
-    let client = Client::new(chain, etherscan_api_key)?;
+    let mut builder = Client::builder();
+    builder = if let Some(api_url) = etherscan_api_url {
+        let api_url = api_url.trim_end_matches('/');
+        builder.with_api_url(api_url)?.with_url(api_url)?
+    } else {
+        builder.chain(chain)?
+    };
+
+    let client = builder.with_api_key(etherscan_api_key).build()?;
     let source = find_source(client, contract).await?;
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
