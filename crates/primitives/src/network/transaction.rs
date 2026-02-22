@@ -15,20 +15,20 @@ use tempo_alloy::TempoNetwork;
 /// By default, all methods have no-op implementations, so this can be implemented for any Network.
 ///
 /// If the Network supports Eip4844 blob transactions implement these methods:
-/// - [`max_fee_per_blob_gas`]
-/// - [`set_max_fee_per_blob_gas`]
-/// - [`blob_versioned_hashes`]
-/// - [`set_blob_versioned_hashes`]
-/// - [`blob_sidecar`]
-/// - [`set_blob_sidecar`]
+/// - [`FoundryTransactionBuilder::max_fee_per_blob_gas`]
+/// - [`FoundryTransactionBuilder::set_max_fee_per_blob_gas`]
+/// - [`FoundryTransactionBuilder::blob_versioned_hashes`]
+/// - [`FoundryTransactionBuilder::set_blob_versioned_hashes`]
+/// - [`FoundryTransactionBuilder::blob_sidecar`]
+/// - [`FoundryTransactionBuilder::set_blob_sidecar`]
 ///
 /// If the Network supports EIP-7702 authorization lists, implement these methods:
-/// - [`authorization_list`]
-/// - [`set_authorization_list`]
+/// - [`FoundryTransactionBuilder::authorization_list`]
+/// - [`FoundryTransactionBuilder::set_authorization_list`]
 ///
 /// If the Network supports Tempo transactions, implement these methods:
-/// - [`set_fee_token`]
-/// - [`set_tempo_sequence_key`]
+/// - [`FoundryTransactionBuilder::set_fee_token`]
+/// - [`FoundryTransactionBuilder::set_nonce_key`]
 pub trait FoundryTransactionBuilder<N: Network>:
     TransactionBuilder<N> + Default + Sized + Send + Sync + 'static
 {
@@ -69,6 +69,9 @@ pub trait FoundryTransactionBuilder<N: Network>:
     }
 
     /// Sets the blob sidecar (either EIP-4844 or EIP-7594 variant) of the transaction.
+    ///
+    /// Note: This will also set the versioned blob hashes accordingly:
+    /// [BlobTransactionSidecarVariant::versioned_hashes]
     fn set_blob_sidecar(&mut self, _sidecar: BlobTransactionSidecarVariant) {}
 
     /// Builder-pattern method for setting the blob sidecar of the transaction.
@@ -83,9 +86,6 @@ pub trait FoundryTransactionBuilder<N: Network>:
     }
 
     /// Sets the EIP-4844 blob sidecar of the transaction.
-    ///
-    /// Note: This will also set the versioned blob hashes accordingly:
-    /// [BlobTransactionSidecar::versioned_hashes]
     fn set_blob_sidecar_4844(&mut self, sidecar: BlobTransactionSidecar) {
         self.set_blob_sidecar(BlobTransactionSidecarVariant::Eip4844(sidecar));
     }
@@ -138,7 +138,7 @@ pub trait FoundryTransactionBuilder<N: Network>:
     /// Set the 2D nonce key for the Tempo transaction.
     fn set_nonce_key(&mut self, _nonce_key: U256) {}
 
-    /// Builder-pattern method for setting a 2D nonce key for a [`TempoTransaction`].
+    /// Builder-pattern method for setting a 2D nonce key for a Tempo transaction.
     fn with_nonce_key(mut self, nonce_key: U256) -> Self {
         self.set_nonce_key(nonce_key);
         self
