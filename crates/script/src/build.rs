@@ -8,7 +8,9 @@ use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_common::{
-    ContractData, ContractsByArtifact, compile::ProjectCompiler, provider::try_get_http_provider,
+    ContractData, ContractsByArtifact,
+    compile::ProjectCompiler,
+    provider::{try_get_http_provider, try_get_http_provider_with_timeout},
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -260,7 +262,10 @@ impl CompiledState {
             None
         } else {
             let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
-            let provider = Arc::new(try_get_http_provider(fork_url)?);
+            let provider = Arc::new(try_get_http_provider_with_timeout(
+                fork_url.as_str(),
+                self.script_config.config.eth_rpc_timeout,
+            )?);
             Some(provider.get_chain_id().await?)
         };
 
