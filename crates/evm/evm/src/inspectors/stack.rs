@@ -610,8 +610,13 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
-    ) -> CallOutcome {
+    ) {
         let result = outcome.result.result;
+        // Cache the output before iterating inspectors to avoid cloning on each iteration.
+        // We only need to compare outputs when the result is a revert.
+        let previous_output =
+            if result == InstructionResult::Revert { Some(outcome.output().clone()) } else { None };
+
         call_inspectors!(
             #[ret]
             [
@@ -622,15 +627,14 @@ impl InspectorStackRefMut<'_> {
                 &mut self.revert_diag
             ],
             |inspector| {
-                let previous_outcome = outcome.clone();
                 inspector.call_end(ecx, inputs, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
-                different.then_some(outcome.clone())
+                        && previous_output.as_ref() != Some(outcome.output()));
+                different.then_some(())
             },
         );
 
@@ -638,8 +642,6 @@ impl InspectorStackRefMut<'_> {
         if result.is_revert() && self.reverter.is_none() {
             self.reverter = Some(inputs.target_address);
         }
-
-        outcome.clone()
     }
 
     fn do_create_end(
@@ -647,25 +649,27 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
+    ) {
         let result = outcome.result.result;
+        // Cache the output before iterating inspectors to avoid cloning on each iteration.
+        // We only need to compare outputs when the result is a revert.
+        let previous_output =
+            if result == InstructionResult::Revert { Some(outcome.output().clone()) } else { None };
+
         call_inspectors!(
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let previous_outcome = outcome.clone();
                 inspector.create_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
-                different.then_some(outcome.clone())
+                        && previous_output.as_ref() != Some(outcome.output()));
+                different.then_some(())
             },
         );
-
-        outcome.clone()
     }
 
     fn transact_inner(
