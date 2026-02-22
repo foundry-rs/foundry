@@ -3172,16 +3172,18 @@ Error: script failed: call to non-contract address [..]
 "#]]);
 });
 
-// Test that --verify without --broadcast fails with a clear error message
-forgetest!(verify_without_broadcast_fails, |prj, cmd| {
+// Test that --verify without --broadcast still shows console logs
+// <https://github.com/foundry-rs/foundry/issues/11009>
+forgetest!(verify_without_broadcast_shows_logs, |prj, cmd| {
     let script = prj.add_source(
         "Counter",
         r#"
 import "forge-std/Script.sol";
+import "forge-std/console.sol";
 
 contract CounterScript is Script {
     function run() external {
-        // Simple script that does nothing
+        console.log("hello from verify");
     }
 }
    "#,
@@ -3191,17 +3193,17 @@ contract CounterScript is Script {
         "script",
         script.to_str().unwrap(),
         "--verify",
-        "--rpc-url",
-        "https://sepolia.infura.io/v3/test",
     ])
-    .assert_failure()
-    .stderr_eq(str![[r#"
-error: the following required arguments were not provided:
-  --broadcast
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
 
-Usage: [..] script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...
-
-For more information, try '--help'.
+== Logs ==
+  hello from verify
 
 "#]]);
 });
