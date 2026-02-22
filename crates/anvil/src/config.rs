@@ -197,6 +197,8 @@ pub struct NodeConfig {
     pub disable_pool_balance_checks: bool,
     /// Slots in an epoch
     pub slots_in_an_epoch: u64,
+    /// Maximum time (in seconds) into a slot at which a transaction can still be included.
+    pub max_tx_inclusion_time_in_slot: Option<u64>,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
@@ -496,6 +498,7 @@ impl Default for NodeConfig {
             disable_default_create2_deployer: false,
             disable_pool_balance_checks: false,
             slots_in_an_epoch: 32,
+            max_tx_inclusion_time_in_slot: None,
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
@@ -799,6 +802,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: u64) -> Self {
         self.slots_in_an_epoch = slots_in_an_epoch;
+        self
+    }
+
+    /// Sets the maximum time (in seconds) into a slot at which a transaction can still be included.
+    #[must_use]
+    pub fn with_max_tx_inclusion_time_in_slot(mut self, v: Option<u64>) -> Self {
+        self.max_tx_inclusion_time_in_slot = v;
         self
     }
 
