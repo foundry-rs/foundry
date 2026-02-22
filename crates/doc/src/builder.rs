@@ -98,8 +98,11 @@ impl DocBuilder {
         fs::create_dir_all(self.root.join(&self.config.out))
             .wrap_err("failed to create output directory")?;
 
-        // Expand ignore globs
-        let ignored = expand_globs(&self.root, self.config.ignore.iter())?;
+        // Expand ignore globs and canonicalize from the get go
+        let ignored = expand_globs(&self.root, self.config.ignore.iter())?
+            .iter()
+            .flat_map(foundry_common::fs::canonicalize_path)
+            .collect::<Vec<_>>();
 
         // Collect and parse source files
         let sources = source_files_iter(&self.sources, SOLC_EXTENSIONS)
