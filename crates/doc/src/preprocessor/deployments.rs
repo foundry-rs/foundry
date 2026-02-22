@@ -54,21 +54,26 @@ impl Preprocessor for Deployments {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        if networks.is_empty() {
+            return Ok(documents);
+        }
+
         // Iterate over all documents to find any deployments.
         for document in &documents {
             let mut deployments = Vec::default();
 
+            let mut item_path_json = document.item_path.clone();
+            item_path_json.set_extension("json");
+            let deployment_file = PathBuf::from(
+                item_path_json
+                    .file_name()
+                    .ok_or_else(|| eyre::eyre!("Failed to extract file name from item path"))?,
+            );
+
             // Iterate over all networks and check if there is a deployment for the given contract.
             for network in &networks {
-                // Clone the item path of the document and change it from ".sol" -> ".json"
-                let mut item_path_clone = document.item_path.clone();
-                item_path_clone.set_extension("json");
-
                 // Determine the path of the deployment artifact relative to the root directory.
-                let deployment_path =
-                    deployments_dir.join(network).join(item_path_clone.file_name().ok_or_else(
-                        || eyre::eyre!("Failed to extract file name from item path"),
-                    )?);
+                let deployment_path = deployments_dir.join(network).join(&deployment_file);
 
                 // If the deployment file for the given contract is found, add the deployment
                 // address to the document context.
