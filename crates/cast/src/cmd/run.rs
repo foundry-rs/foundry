@@ -5,8 +5,11 @@ use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
 };
-use alloy_provider::Provider;
-use alloy_rpc_types::BlockTransactions;
+use alloy_provider::{Provider, ext::DebugApi};
+use alloy_rpc_types::{
+    BlockTransactions,
+    trace::geth::{GethDebugTracingOptions, PreStateConfig},
+};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -68,6 +71,14 @@ pub struct RunArgs {
     /// Disables the labels in the traces.
     #[arg(long, default_value_t = false)]
     disable_labels: bool,
+
+    /// Disable using debug_traceTransaction to fetch prestate.
+    ///
+    /// By default, cast will try to use the debug_traceTransaction RPC to fetch the
+    /// prestate for the transaction. If the RPC doesn't support this method, it will
+    /// fall back to replaying the block. Use this flag to skip the debug API entirely.
+    #[arg(long, default_value_t = false)]
+    no_prestate_tracer: bool,
 
     /// Label addresses in the trace.
     ///
@@ -230,8 +241,37 @@ impl RunArgs {
             executor.spec_id(),
         );
 
-        // Set the state to the moment right before the transaction
-        if !self.quick {
+        // Set the state to the moment right before the transaction.
+        // First try to use debug_traceTransaction to fetch prestate directly (faster),
+        // if that fails, fall back to replaying previous transactions in the block.
+        let mut prestate_applied = false;
+        if !self.quick && !self.no_prestate_tracer {
+            trace!(?tx_hash, "attempting to fetch prestate via debug_traceTransaction");
+            match provider
+                .debug_trace_transaction(
+                    tx_hash,
+                    GethDebugTracingOptions::prestate_tracer(PreStateConfig::default()),
+                )
+                .await
+            {
+                Ok(trace) => match trace.try_into_pre_state_frame() {
+                    Ok(pre_state_frame) => {
+                        executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
+                        prestate_applied = true;
+                        trace!("prestate trace applied successfully, skipping block replay");
+                    }
+                    Err(err) => {
+                        trace!(%err, "failed to parse prestate trace response");
+                    }
+                },
+                Err(err) => {
+                    trace!(?err, "debug_traceTransaction failed, falling back to block replay");
+                }
+            }
+        }
+
+        // Fall back to replaying previous transactions if prestate trace wasn't available
+        if !self.quick && !prestate_applied {
             if !shell::is_json() {
                 sh_println!("Executing previous transactions from the block.")?;
             }

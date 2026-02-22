@@ -3075,8 +3075,16 @@ contract LocalProjectScript is Script {
         .tx_hash();
 
     // Assert cast with local artifacts from outside the project.
+    // Use --no-prestate-tracer to force block replay (Anvil supports debug API).
     cmd.cast_fuse()
-        .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args([
+            "run",
+            "--la",
+            "--no-prestate-tracer",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
@@ -3089,8 +3097,15 @@ Nothing to compile
     cmd.cast_fuse().set_current_dir(prj.root());
 
     // Assert cast without local artifacts cannot decode traces.
+    // Use --no-prestate-tracer to force block replay (Anvil supports debug API).
     cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args([
+            "run",
+            "--no-prestate-tracer",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
@@ -3107,8 +3122,16 @@ Transaction successfully executed.
 "#]]);
 
     // Assert cast with local artifacts can decode traces.
+    // Use --no-prestate-tracer to force block replay (Anvil supports debug API).
     cmd.cast_fuse()
-        .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .args([
+            "run",
+            "--la",
+            "--no-prestate-tracer",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
@@ -3124,6 +3147,66 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+});
+
+// tests cast run uses prestate tracer when available (Anvil supports debug_traceTransaction)
+forgetest_async!(cast_run_prestate_tracer, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Send tx to change counter storage value.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "setNumber(uint256)",
+            "111",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Assert cast run uses prestate tracer (no "Executing previous transactions" message).
+    // Anvil supports debug_traceTransaction, so prestate tracer should be used.
+    let output = cmd
+        .cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Should NOT contain the block replay message when prestate tracer is used
+    assert!(
+        !output.contains("Executing previous transactions from the block"),
+        "Expected prestate tracer to be used, but block replay message was found"
+    );
+
+    // Should still show traces
+    assert!(output.contains("Traces:"), "Expected traces to be shown");
+    assert!(output.contains("setNumber"), "Expected setNumber call in traces");
 });
 
 // tests cast can decode traces when running with verbosity level > 4
@@ -3166,9 +3249,11 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         .tx_hash();
 
     // Assert cast with verbosity displays storage changes.
+    // Use --no-prestate-tracer to force block replay (Anvil supports debug API).
     cmd.cast_fuse()
         .args([
             "run",
+            "--no-prestate-tracer",
             format!("{tx_hash}").as_str(),
             "-vvvvv",
             "--rpc-url",
@@ -4677,9 +4762,11 @@ forgetest_async!(cast_send_with_data, |prj, cmd| {
         .unwrap()
         .tx_hash();
 
+    // Use --no-prestate-tracer to force block replay (Anvil supports debug API).
     cmd.cast_fuse()
         .args([
             "run",
+            "--no-prestate-tracer",
             format!("{tx_hash}").as_str(),
             "-vvvvv",
             "--rpc-url",
