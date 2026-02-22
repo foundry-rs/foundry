@@ -2092,14 +2092,27 @@ impl EthApi {
             return Ok(());
         }
 
+        let num_blocks = blocks.to::<u64>();
+
         self.on_blocking_task(|this| async move {
-            // mine all the blocks
-            for _ in 0..blocks.to::<u64>() {
-                // If we have an interval, jump forwards in time to the "next" timestamp
-                if let Some(interval) = interval {
-                    this.backend.time().increase_time(interval);
+            // Check if pool has any ready transactions.
+            let has_pending = this.pool.ready_transactions().next().is_some();
+
+            if !has_pending && num_blocks > 1 {
+                // Fast path: pool is empty, batch mine all empty blocks at once.
+                // This avoids redundant state root recomputation per block.
+                let outcomes = this.backend.mine_empty_blocks(num_blocks, interval).await;
+                for outcome in outcomes {
+                    this.pool.on_mined_block(outcome);
                 }
-                this.mine_one().await;
+            } else {
+                // Slow path: mine blocks one by one (original behavior).
+                for _ in 0..num_blocks {
+                    if let Some(interval) = interval {
+                        this.backend.time().increase_time(interval);
+                    }
+                    this.mine_one().await;
+                }
             }
             Ok(())
         })
