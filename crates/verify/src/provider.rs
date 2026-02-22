@@ -8,11 +8,8 @@ use async_trait::async_trait;
 use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
-    Graph, Project,
-    artifacts::{Metadata, Source, output_selection::OutputSelection},
-    compilers::solc::SolcCompiler,
-    multi::{MultiCompilerParser, MultiCompilerSettings},
-    solc::Solc,
+    Project, artifacts::output_selection::OutputSelection, compilers::solc::SolcCompiler,
+    multi::MultiCompilerSettings, solc::Solc,
 };
 use foundry_config::{Chain, Config, EtherscanConfigError};
 use semver::Version;
@@ -50,7 +47,7 @@ impl VerificationContext {
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
         project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection(["abi".to_string()])
+            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
         });
 
         let output = ProjectCompiler::new()
@@ -63,34 +60,6 @@ impl VerificationContext {
             .ok_or_eyre("failed to find target artifact when compiling for abi")?;
 
         artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
-    }
-
-    /// Compiles target file requesting only metadata and returns it.
-    pub fn get_target_metadata(&self) -> Result<Metadata> {
-        let mut project = self.project.clone();
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
-        });
-
-        let output = ProjectCompiler::new()
-            .quiet(true)
-            .files([self.target_path.clone()])
-            .compile(&project)?;
-
-        let artifact = output
-            .find(&self.target_path, &self.target_name)
-            .ok_or_eyre("failed to find target artifact when compiling for metadata")?;
-
-        artifact.metadata.clone().ok_or_eyre("target artifact does not have metadata")
-    }
-
-    /// Returns [Vec] containing imports of the target file.
-    pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
-        let mut sources = self.project.paths.read_input_files()?;
-        sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph = Graph::<MultiCompilerParser>::resolve_sources(&self.project.paths, sources)?;
-
-        Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }
 }
 
