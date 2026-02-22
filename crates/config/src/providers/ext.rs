@@ -419,7 +419,8 @@ impl Provider for DappEnvCompatProvider {
         use std::env;
 
         let mut dict = Dict::new();
-        if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+        let test_number = env::var("DAPP_TEST_NUMBER").ok();
+        if let Some(val) = &test_number {
             dict.insert(
                 "block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
@@ -433,7 +434,7 @@ impl Provider for DappEnvCompatProvider {
                 "fork_block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
-        } else if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+        } else if let Some(val) = &test_number {
             dict.insert(
                 "fork_block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
