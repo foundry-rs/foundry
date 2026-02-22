@@ -521,6 +521,14 @@ pub struct Cheatcodes {
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
     pub execution_evm_version: Option<SpecId>,
+
+    /// Current fuzz input being executed, if any.
+    /// Set by the fuzzer before each fuzz call.
+    pub current_fuzz_input: Option<foundry_evm_fuzz::BasicTxDetails>,
+
+    /// Input that should be added to corpus unconditionally.
+    /// Set by the addToCorpus cheatcode, checked by the fuzzer after each call.
+    pub input_to_add_to_corpus: Option<foundry_evm_fuzz::BasicTxDetails>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -564,6 +572,8 @@ impl Cheatcodes {
             access_list: Default::default(),
             test_context: Default::default(),
             serialized_jsons: Default::default(),
+            current_fuzz_input: Default::default(),
+            input_to_add_to_corpus: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
