@@ -11,7 +11,7 @@ use foundry_evm::{
 };
 use revm::{
     context::BlockEnv,
-    database::{Database, DbAccount},
+    database::{Database, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
 
@@ -40,7 +40,6 @@ impl<N: Network> Db for ForkedDatabase<N> {
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
-        let mut db = self.database().clone();
         let accounts = self
             .database()
             .cache
@@ -51,7 +50,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    db.code_by_hash(v.info.code_hash)?
+                    self.database().code_by_hash_ref(v.info.code_hash)?
                 };
                 Ok((
                     k,
