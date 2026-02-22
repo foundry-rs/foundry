@@ -253,16 +253,6 @@ impl Shell {
         self.output_mode.is_quiet()
     }
 
-    /// Returns `true` if the `needs_clear` flag is set.
-    pub fn needs_clear(&self) -> bool {
-        self.needs_clear.load(Ordering::Relaxed)
-    }
-
-    /// Returns `true` if the `needs_clear` flag is unset.
-    pub fn is_cleared(&self) -> bool {
-        !self.needs_clear()
-    }
-
     /// Gets the output format of the shell.
     pub fn output_format(&self) -> OutputFormat {
         self.output_format
