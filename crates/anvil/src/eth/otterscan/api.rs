@@ -416,26 +416,30 @@ impl EthApi {
             .collect::<Result<Vec<_>>>()?;
 
         let receipt_futs = hashes.iter().map(|hash| self.transaction_receipt(*hash));
+        let raw_receipts = join_all(receipt_futs).await;
 
-        let receipts = join_all(receipt_futs.map(|r| async {
-            if let Ok(Some(r)) = r.await {
-                // Try to get timestamp from receipt's other fields first (set by mined receipts),
-                // fallback to block lookup for fork receipts that may not have it
-                let timestamp = if let Some(ts) = r.block_timestamp() {
+        let mut timestamp_cache = std::collections::HashMap::<u64, u64>::new();
+        let mut receipts = Vec::with_capacity(raw_receipts.len());
+        for r in raw_receipts {
+            let r = r?.ok_or(BlockchainError::BlockNotFound)?;
+            // Try to get timestamp from receipt first (set by mined receipts),
+            // fallback to cached block lookup for fork receipts that may not have it
+            let timestamp = if let Some(ts) = r.block_timestamp() {
+                ts
+            } else {
+                let block_num = r.block_number().unwrap();
+                if let Some(&ts) = timestamp_cache.get(&block_num) {
                     ts
                 } else {
-                    let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                    block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp
-                };
-                let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
-                Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
-            } else {
-                Err(BlockchainError::BlockNotFound)
-            }
-        }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
+                    let block = self.block_by_number(block_num.into()).await?;
+                    let ts = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+                    timestamp_cache.insert(block_num, ts);
+                    ts
+                }
+            };
+            let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
+            receipts.push(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) });
+        }
 
         Ok(TransactionsWithReceipts { txs, receipts, first_page, last_page })
     }
