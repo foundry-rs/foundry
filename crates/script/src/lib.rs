@@ -347,6 +347,10 @@ impl ScriptArgs {
             return Ok(Some(turnkey_address));
         }
 
+        if let Some(keystore_address) = self.wallets.keystore_address() {
+            return Ok(Some(keystore_address));
+        }
+
         let maybe_sender = self
             .wallets
             .private_keys()?
