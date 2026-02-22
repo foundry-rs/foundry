@@ -9,8 +9,8 @@ use tempo_alloy::TempoNetwork;
 /// Composite transaction builder trait for Foundry transactions.
 ///
 /// This extends the base `TransactionBuilder` trait with the same methods as
-/// [`TransactionBuilder4844`] for handling blob transaction sidecars, and
-/// [`TransactionBuilder7702`] for handling EIP-7702 authorization lists.
+/// [`alloy_network::TransactionBuilder4844`] for handling blob transaction sidecars, and
+/// [`alloy_network::TransactionBuilder7702`] for handling EIP-7702 authorization lists.
 ///
 /// By default, all methods have no-op implementations, so this can be implemented for any Network.
 ///
