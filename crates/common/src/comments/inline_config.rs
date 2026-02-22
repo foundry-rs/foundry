@@ -263,9 +263,9 @@ impl<I: ItemIdIterator> InlineConfig<I> {
 
                         if *depth == 0 {
                             let lo = *lo;
-                            let (id, _) = entry.remove_entry();
+                            let (id, (_, _, hi)) = entry.remove_entry();
 
-                            self.disable(id, DisabledRange { lo, hi: span.hi() });
+                            self.disable(id, DisabledRange { lo, hi });
                         }
                     }
                 }
