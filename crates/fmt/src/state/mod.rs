@@ -86,10 +86,17 @@ impl CallStack {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    /// Returns true if any chained call in the stack has its own indentation.
+    /// Returns true if the direct parent chain has its own indentation.
     /// Used to determine if commasep should skip its own indentation (to avoid double indent).
-    pub(crate) fn has_chain_with_indent(&self) -> bool {
-        self.stack.iter().any(|call| call.is_chained() && call.has_indent)
+    ///
+    /// Only suppresses indent when named args belong directly to the chained call itself
+    /// (stack ends with `[Chained(has_indent), Nested]`), not when they are nested deeper
+    /// inside another function call (e.g. `.initialize(PoolKey({...}))`).
+    pub(crate) fn has_indented_parent_chain(&self) -> bool {
+        matches!(
+            self.stack.as_slice(),
+            [.., parent, last] if last.is_nested() && parent.is_chained() && parent.has_indent
+        )
     }
 }
 
