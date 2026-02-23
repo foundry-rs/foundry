@@ -441,7 +441,8 @@ mod tests {
 
     #[test]
     fn test_maybe_predeploy_contract_empty_result_ok_is_predeploy() {
-        let err = EtherscanError::EmptyResult { status: "1".to_string(), message: "OK".to_string() };
+        let err =
+            EtherscanError::EmptyResult { status: "1".to_string(), message: "OK".to_string() };
         let (data, is_predeploy) = maybe_predeploy_contract(Err(err)).unwrap();
         assert!(data.is_none());
         assert!(is_predeploy);
