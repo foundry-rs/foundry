@@ -134,6 +134,15 @@ impl Executor {
                 ..Default::default()
             },
         );
+        // Same for the Monad cheatcode address.
+        backend.insert_account_info(
+            foundry_cheatcodes::monad::MONAD_CHEATCODE_ADDRESS,
+            revm::state::AccountInfo {
+                code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
+                code_hash: CHEATCODE_CONTRACT_HASH,
+                ..Default::default()
+            },
+        );
 
         Self { backend, env, inspector, gas_limit, legacy_assertions }
     }

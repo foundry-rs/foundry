@@ -761,6 +761,41 @@ impl Cheatcodes {
             };
         }
 
+        if call.target_address == crate::monad::MONAD_CHEATCODE_ADDRESS {
+            let input = call.input.bytes(ecx);
+            let result = crate::monad::apply_monad_cheatcode(
+                &mut CheatsCtxt {
+                    state: self,
+                    ecx,
+                    gas_limit: call.gas_limit,
+                    caller: call.caller,
+                },
+                &input,
+            );
+            return match result {
+                Ok(retdata) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Return,
+                        output: retdata.into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: true,
+                    precompile_call_logs: vec![],
+                }),
+                Err(err) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: err.abi_encode().into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: false,
+                    precompile_call_logs: vec![],
+                }),
+            };
+        }
+
         if call.target_address == HARDHAT_CONSOLE_ADDRESS {
             return None;
         }

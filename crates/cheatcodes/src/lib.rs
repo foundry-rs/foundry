@@ -63,6 +63,8 @@ mod toml;
 
 mod utils;
 
+pub mod monad;
+
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     /// Applies this cheatcode to the given state.
