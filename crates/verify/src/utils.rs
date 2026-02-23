@@ -205,20 +205,17 @@ fn find_mismatch_in_settings(
 pub fn maybe_predeploy_contract(
     creation_data: Result<ContractCreationData, EtherscanError>,
 ) -> Result<(Option<ContractCreationData>, bool), eyre::ErrReport> {
-    let mut maybe_predeploy = false;
     match creation_data {
-        Ok(creation_data) => Ok((Some(creation_data), maybe_predeploy)),
+        Ok(creation_data) => Ok((Some(creation_data), false)),
         // Ref: https://explorer.mode.network/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010
         Err(EtherscanError::EmptyResult { status, message })
             if status == "1" && message == "OK" =>
         {
-            maybe_predeploy = true;
-            Ok((None, maybe_predeploy))
+            Ok((None, true))
         }
         // Ref: https://api.basescan.org/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010&apiKey=YourAPIKey
         Err(EtherscanError::Serde { error: _, content }) if content.contains("GENESIS") => {
-            maybe_predeploy = true;
-            Ok((None, maybe_predeploy))
+            Ok((None, true))
         }
         Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
     }
@@ -419,11 +416,44 @@ pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::TxHash;
+    use serde_json::Value;
 
     #[test]
     fn test_host_only() {
         assert!(!is_host_only(&Url::parse("https://blockscout.net/api").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net/").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net").unwrap()));
+    }
+
+    #[test]
+    fn test_maybe_predeploy_contract_ok_is_not_predeploy() {
+        let creation_data = ContractCreationData {
+            contract_address: Address::ZERO,
+            contract_creator: Address::ZERO,
+            transaction_hash: TxHash::ZERO,
+        };
+
+        let (data, is_predeploy) = maybe_predeploy_contract(Ok(creation_data)).unwrap();
+        assert_eq!(data, Some(creation_data));
+        assert!(!is_predeploy);
+    }
+
+    #[test]
+    fn test_maybe_predeploy_contract_empty_result_ok_is_predeploy() {
+        let err = EtherscanError::EmptyResult { status: "1".to_string(), message: "OK".to_string() };
+        let (data, is_predeploy) = maybe_predeploy_contract(Err(err)).unwrap();
+        assert!(data.is_none());
+        assert!(is_predeploy);
+    }
+
+    #[test]
+    fn test_maybe_predeploy_contract_genesis_serde_is_predeploy() {
+        let json_err = serde_json::from_str::<Value>("{").unwrap_err();
+        let err =
+            EtherscanError::Serde { error: json_err, content: "GENESIS: something".to_string() };
+        let (data, is_predeploy) = maybe_predeploy_contract(Err(err)).unwrap();
+        assert!(data.is_none());
+        assert!(is_predeploy);
     }
 }
