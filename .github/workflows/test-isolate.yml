@@ -37,7 +37,7 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@cfdb446e391c69574ebc316dfb7d7849ec12b940 # v2
+      - uses: taiki-e/install-action@7f491e26f71f4ec2e6902c7c95c73043f209ab79 # v2
         with:
           tool: nextest
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
