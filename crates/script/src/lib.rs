@@ -237,10 +237,10 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender and there's exactly one signer
             // (e.g. from --account or --keystore), use that signer's address as the sender.
             // This makes --account behave consistently with --private-key.
-            if let Ok(signers) = script_wallets.signers() {
-                if signers.len() == 1 {
-                    evm_opts.sender = signers[0];
-                }
+            if let Ok(signers) = script_wallets.signers()
+                && signers.len() == 1
+            {
+                evm_opts.sender = signers[0];
             }
         }
 
