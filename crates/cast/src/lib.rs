@@ -43,15 +43,17 @@ use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, future::Either};
 
 use rayon::prelude::*;
+use similar::TextDiff;
 use std::{
     borrow::Cow,
     fmt::Write,
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
+use walkdir::WalkDir;
 
 pub use foundry_evm::*;
 
@@ -2330,6 +2332,60 @@ pub(crate) fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
+/// Produces a unified diff (patch) between two directories. Walks both trees, compares
+/// text files as UTF-8, and returns a single patch string with a/ and b/ path prefixes.
+/// Skips binary / non-UTF-8 files.
+pub(crate) fn directory_unified_diff(dir_a: &Path, dir_b: &Path) -> Result<String> {
+    let mut all_paths = std::collections::BTreeSet::new();
+    for entry in WalkDir::new(dir_a).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if let Ok(rel) = entry.path().strip_prefix(dir_a) {
+                if rel.as_os_str().as_encoded_bytes().iter().all(|&b| b != 0) {
+                    all_paths.insert(rel.to_path_buf());
+                }
+            }
+        }
+    }
+    for entry in WalkDir::new(dir_b).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if let Ok(rel) = entry.path().strip_prefix(dir_b) {
+                if rel.as_os_str().as_encoded_bytes().iter().all(|&b| b != 0) {
+                    all_paths.insert(rel.to_path_buf());
+                }
+            }
+        }
+    }
+
+    let mut out = String::new();
+    for rel in all_paths {
+        let path_a = dir_a.join(&rel);
+        let path_b = dir_b.join(&rel);
+        let rel_slash = rel.to_string_lossy().replace('\\', "/");
+        let header_old = format!("a/{rel_slash}");
+        let header_new = format!("b/{rel_slash}");
+
+        let (old_content, new_content) =
+            match (std::fs::read_to_string(&path_a), std::fs::read_to_string(&path_b)) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Ok(a), Err(_)) => (a, String::new()), // only in a -> removed
+                (Err(_), Ok(b)) => (String::new(), b), // only in b -> added
+                (Err(_), Err(_)) => continue,          // skip unreadable/binary
+            };
+
+        let text_diff = TextDiff::from_lines(&old_content, &new_content);
+        let diff_str =
+            text_diff.unified_diff().context_radius(3).header(&header_old, &header_new).to_string();
+        if diff_str.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&diff_str);
+    }
+    Ok(out)
+}
+
 fn explorer_client(
     chain: Chain,
     api_key: Option<String>,
@@ -2359,8 +2415,28 @@ fn explorer_client(
 
 #[cfg(test)]
 mod tests {
-    use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
+    use super::{DynSolValue, SimpleCast as Cast, directory_unified_diff, serialize_value_as_json};
     use alloy_primitives::hex;
+
+    #[test]
+    fn directory_unified_diff_produces_patch() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let a_path = dir_a.path().join("foo.sol");
+        let b_path = dir_b.path().join("foo.sol");
+        std::fs::write(&a_path, "contract Foo { uint x = 1; }\n").unwrap();
+        std::fs::write(&b_path, "contract Foo { uint x = 2; }\n").unwrap();
+        std::fs::write(dir_a.path().join("only_in_a.sol"), "// only a\n").unwrap();
+        std::fs::write(dir_b.path().join("only_in_b.sol"), "// only b\n").unwrap();
+
+        let patch = directory_unified_diff(dir_a.path(), dir_b.path()).unwrap();
+        assert!(patch.contains("--- a/foo.sol"), "patch should contain --- a/foo.sol");
+        assert!(patch.contains("+++ b/foo.sol"), "patch should contain +++ b/foo.sol");
+        assert!(patch.contains("x = 1"), "patch should show old line");
+        assert!(patch.contains("x = 2"), "patch should show new line");
+        assert!(patch.contains("only_in_a.sol"), "patch should mention file only in a");
+        assert!(patch.contains("only_in_b.sol"), "patch should mention file only in b");
+    }
 
     #[test]
     fn simple_selector() {

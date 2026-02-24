@@ -731,6 +731,52 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
             }
         }
+        CastSubcommand::SourceDiff {
+            address1,
+            address2,
+            output,
+            etherscan,
+            explorer_api_url,
+            explorer_url,
+            second_chain,
+            second_explorer_api_url,
+            second_explorer_url,
+        } => {
+            let config = etherscan.load_config()?;
+            let chain = config.chain.unwrap_or_default();
+            let chain2 = second_chain.unwrap_or(chain);
+            let api_key1 = config.get_etherscan_api_key(Some(chain));
+            let api_key2 = config.get_etherscan_api_key(Some(chain2));
+            let dir1 = tempfile::tempdir()?;
+            let dir2 = tempfile::tempdir()?;
+            SimpleCast::expand_etherscan_source_to_directory(
+                chain,
+                address1.clone(),
+                api_key1,
+                dir1.path().to_path_buf(),
+                explorer_api_url.clone(),
+                explorer_url.clone(),
+            )
+            .await?;
+            SimpleCast::expand_etherscan_source_to_directory(
+                chain2,
+                address2.clone(),
+                api_key2,
+                dir2.path().to_path_buf(),
+                second_explorer_api_url.or(explorer_api_url),
+                second_explorer_url.or(explorer_url),
+            )
+            .await?;
+            let patch = crate::directory_unified_diff(dir1.path(), dir2.path())?;
+            if let Some(path) = output {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, patch)?;
+            } else {
+                sh_println!("{patch}")?;
+            }
+        }
         CastSubcommand::Create2(cmd) => {
             cmd.run()?;
         }

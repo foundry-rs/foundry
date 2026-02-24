@@ -11,8 +11,9 @@ use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_rpc_types::BlockId;
 use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
+use foundry_cli::opts::{ChainValueParser, EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
+use foundry_config::Chain;
 use std::{path::PathBuf, str::FromStr};
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
@@ -1025,6 +1026,43 @@ pub enum CastSubcommand {
         explorer_url: Option<String>,
     },
 
+    /// Generate a unified diff (patch) between the verified source trees of two contracts.
+    #[command(visible_aliases = &["srcd"])]
+    SourceDiff {
+        /// First contract address.
+        address1: String,
+
+        /// Second contract address.
+        address2: String,
+
+        /// Write patch to this file instead of stdout.
+        #[arg(short, long, value_hint = ValueHint::FilePath)]
+        output: Option<PathBuf>,
+
+        #[command(flatten)]
+        etherscan: EtherscanOpts,
+
+        /// Explorer API URL for the first contract. If not provided, defaults to Etherscan.
+        #[arg(long, env = "EXPLORER_API_URL")]
+        explorer_api_url: Option<String>,
+
+        /// Explorer browser URL for the first contract.
+        #[arg(long, env = "EXPLORER_URL")]
+        explorer_url: Option<String>,
+
+        /// Chain for the second contract (if different from first).
+        #[arg(long, value_parser = ChainValueParser::default())]
+        second_chain: Option<Chain>,
+
+        /// Explorer API URL for the second contract.
+        #[arg(long)]
+        second_explorer_api_url: Option<String>,
+
+        /// Explorer browser URL for the second contract.
+        #[arg(long)]
+        second_explorer_url: Option<String>,
+    },
+
     /// Wallet management utilities.
     #[command(visible_alias = "w")]
     Wallet {
@@ -1239,6 +1277,19 @@ mod tests {
             }
             _ => unreachable!(),
         };
+    }
+
+    #[test]
+    fn parse_source_diff() {
+        let args: Cast = Cast::parse_from(["cast", "source-diff", "0xaaa", "0xbbb"]);
+        match &args.cmd {
+            CastSubcommand::SourceDiff { address1, address2, output, .. } => {
+                assert_eq!(address1, "0xaaa");
+                assert_eq!(address2, "0xbbb");
+                assert!(output.is_none());
+            }
+            _ => unreachable!(),
+        }
     }
 
     // <https://github.com/foundry-rs/book/issues/1019>

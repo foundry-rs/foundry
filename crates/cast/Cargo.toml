@@ -81,8 +81,10 @@ itertools.workspace = true
 regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
+similar = { version = "2", features = ["inline"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
+walkdir.workspace = true
 tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true

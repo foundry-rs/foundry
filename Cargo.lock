@@ -2640,9 +2640,11 @@ dependencies = [
  "semver 1.0.27",
  "serde",
  "serde_json",
+ "similar",
  "tempfile",
  "tokio",
  "tracing",
+ "walkdir",
  "yansi",
 ]
 
