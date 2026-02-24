@@ -18,9 +18,21 @@ Monad is a Layer-1 blockchain delivering high performance, true decentralization
 - Monad-specific [opcode and precompile gas costs](https://docs.monad.xyz/developer-essentials/opcode-pricing), no gas refunds, increased bytecode limits (128KB code, 256KB initcode), and no EIP-4844 blob transactions. See [Monad EVM differences](https://docs.monad.xyz/developer-essentials/differences) for full details.
 
 ### Staking Precompile (address `0x1000`)
-- Full support for all staking [view functions](https://docs.monad.xyz/developer-essentials/staking/staking-precompile): `getEpoch`, `getProposerValId`, `getValidator`, `getDelegator`, `getWithdrawalRequest`, `getConsensusValidatorSet`, `getSnapshotValidatorSet`, `getExecutionValidatorSet`, `getDelegations`, `getDelegators`.
+- Full support for Monad staking precompile execution in tests/scripts via the Monad EVM stack.
+- Support for staking view functions (`getEpoch`, `getProposerValId`, `getValidator`, `getDelegator`, `getWithdrawalRequest`, `getConsensusValidatorSet`, `getSnapshotValidatorSet`, `getExecutionValidatorSet`, `getDelegations`, `getDelegators`) and state-changing functions (`addValidator`, `delegate`, `undelegate`, `withdraw`, `compound`, `claimRewards`, `changeCommission`, `externalReward`).
+- Full staking behavior is implemented in [`monad-revm`](https://github.com/category-labs/monad-revm) and consumed through [`alloy-monad-evm`](https://github.com/category-labs/alloy-monad-evm). See the monad-revm README for design/lifecycle details.
 - Human-readable ABI decoding in `forge test -vvvv` traces for all staking functions and events.
 - Address `0x1000` labeled as "Staking" in trace output.
+
+### Monad Staking Cheatcodes
+- Monad staking cheatcodes are exposed from a separate cheatcode address:
+  - `0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA`
+- Current implemented cheatcodes:
+  - Direct state controls: `setEpoch(uint64,bool)`, `setProposer(uint64)`, `setAccumulator(uint64,uint256)`
+  - Syscall wrappers: `blockReward(address,uint256)`, `epochSnapshot()`, `epochChange(uint64)`, `epochBoundary(uint64)`
+- These cheatcodes are helper controls around lifecycle/state setup. Core staking operations (delegate/undelegate/claim/withdraw/etc.) still execute through the real staking precompile at `0x1000`.
+- Solidity interface path in this repository: `testdata/utils/MonadVm.sol`
+- End-to-end tests for current coverage: `testdata/default/cheats/MonadStaking.t.sol`
 
 ### Forge
 - `forge test` and `forge script` execute with Monad EVM by default.

@@ -60,11 +60,7 @@ contract MonadStakingTest is Test {
 
     /// @dev Build addValidator payload.
     /// Layout: secp_pubkey(33) + bls_pubkey(48) + auth_address(20) + stake(32) + commission(32) = 165 bytes.
-    function _buildPayload(address auth, uint256 stake, uint256 commission)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function _buildPayload(address auth, uint256 stake, uint256 commission) internal pure returns (bytes memory) {
         bytes memory secp = new bytes(33);
         bytes memory bls = new bytes(48);
         // Use auth address bytes in BLS pubkey to ensure uniqueness per validator.
@@ -76,10 +72,7 @@ contract MonadStakingTest is Test {
 
     /// @dev Create a validator via the real addValidator precompile function.
     /// Deals balance and returns the assigned validator ID.
-    function _createValidator(address auth, uint256 stake, uint256 commission)
-        internal
-        returns (uint64)
-    {
+    function _createValidator(address auth, uint256 stake, uint256 commission) internal returns (uint64) {
         bytes memory payload = _buildPayload(auth, stake, commission);
         bytes memory dummySig64 = new bytes(64);
         bytes memory dummySig96 = new bytes(96);
@@ -326,13 +319,10 @@ contract MonadStakingTest is Test {
         _createValidator(address(this), 10_000_000 ether, 0);
         monad.epochBoundary(2);
 
-        (bool ok, bytes memory ret) = address(monad).call(
-            abi.encodeWithSelector(MonadVm.blockReward.selector, address(0xDEAD), 10 ether)
-        );
+        (bool ok, bytes memory ret) =
+            address(monad).call(abi.encodeWithSelector(MonadVm.blockReward.selector, address(0xDEAD), 10 ether));
         assertTrue(!ok, "unknown author should revert");
-        assertTrue(
-            _contains(ret, bytes("blockReward failed: not in validator set")), "revert reason mismatch"
-        );
+        assertTrue(_contains(ret, bytes("blockReward failed: not in validator set")), "revert reason mismatch");
     }
 
     /// @dev Full E2E: create validator, epoch lifecycle, block reward, verify accumulator math.
