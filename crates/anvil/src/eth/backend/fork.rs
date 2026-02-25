@@ -6,7 +6,7 @@ use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, StorageValue, U256,
-    map::{FbHashMap, HashMap},
+    map::{FbHashMap, HashMap, HashSet},
 };
 use alloy_provider::{
     Provider,
@@ -19,7 +19,7 @@ use alloy_rpc_types::{
     simulate::{SimulatePayload, SimulatedBlock},
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
-        parity::LocalizedTransactionTrace as Trace,
+        parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
     },
 };
 use alloy_serde::WithOtherFields;
@@ -419,6 +419,16 @@ impl ClientFork {
         Ok(traces)
     }
 
+    pub async fn trace_replay_block_transactions(
+        &self,
+        number: u64,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<Vec<TraceResultsWithTransactionHash>, TransportError> {
+        // Forward to upstream provider for historical blocks
+        let params = (number, trace_types.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>());
+        self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -675,7 +685,7 @@ impl ClientForkConfig {
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()
-                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?, // .interval(interval),
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?, /* .interval(interval), */
         );
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;

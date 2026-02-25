@@ -175,7 +175,7 @@ impl TestFunctionKind {
                 Self::InvariantTest
             }
             _ if name.starts_with("table") => Self::TableTest,
-            _ if name.eq_ignore_ascii_case("setup") => Self::Setup,
+            _ if name.eq_ignore_ascii_case("setup") && !has_inputs => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
             _ if name.starts_with("fixture") => Self::Fixture,
             _ => Self::Unknown,
@@ -283,5 +283,20 @@ pub trait ErrorExt: std::error::Error {
 impl<T: std::error::Error> ErrorExt for T {
     fn abi_encode_revert(&self) -> Bytes {
         alloy_sol_types::Revert::from(self.to_string()).abi_encode().into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_setup_classification() {
+        // setUp() with no params should be classified as Setup
+        assert_eq!(TestFunctionKind::classify("setUp", false), TestFunctionKind::Setup);
+
+        // setUp(bytes memory) with params should NOT be classified as Setup
+        // This is common in Gnosis Safe/Zodiac modules
+        assert_eq!(TestFunctionKind::classify("setUp", true), TestFunctionKind::Unknown);
     }
 }

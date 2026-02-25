@@ -14,7 +14,6 @@ workspace = true
 
 [dependencies]
 foundry-config.workspace = true
-foundry-primitives.workspace = true
 
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
@@ -25,8 +24,6 @@ alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-dyn-abi.workspace = true
-
-tempo-primitives.workspace = true
 
 # browser wallet
 alloy-rpc-types.workspace = true

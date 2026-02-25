@@ -43,6 +43,12 @@ impl BroadcastReader {
         self
     }
 
+    fn matches_filters(&self, tx: &TransactionWithMetadata) -> bool {
+        let name_filter = tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
+        let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
+        name_filter && type_filter
+    }
+
     /// Read all broadcast files in the broadcast directory.
     ///
     /// Example structure:
@@ -113,19 +119,12 @@ impl BroadcastReader {
                     return false;
                 }
 
-                broadcast.transactions.iter().any(move |tx| {
-                    let name_filter =
-                        tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
-
-                    let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
-
-                    name_filter && type_filter
-                })
+                broadcast.transactions.iter().any(|tx| self.matches_filters(tx))
             })
             .collect::<Vec<_>>();
 
         // Sort by descending timestamp
-        seqs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        seqs.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
 
         seqs
     }
@@ -146,13 +145,7 @@ impl BroadcastReader {
         let ScriptSequence { transactions, receipts, .. } = broadcast;
 
         let mut targets = Vec::new();
-        for tx in transactions.into_iter().filter(|tx| {
-            let name_filter = tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
-
-            let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
-
-            name_filter && type_filter
-        }) {
+        for tx in transactions.into_iter().filter(|tx| self.matches_filters(tx)) {
             let maybe_receipt = receipts
                 .iter()
                 .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
@@ -163,7 +156,7 @@ impl BroadcastReader {
         }
 
         // Sort by descending block number
-        targets.sort_by(|a, b| b.1.block_number.cmp(&a.1.block_number));
+        targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number));
 
         targets
     }

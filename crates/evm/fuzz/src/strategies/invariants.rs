@@ -29,20 +29,30 @@ pub fn override_call_strat(
         let fuzz_state = fuzz_state.clone();
         let fuzz_fixtures = fuzz_fixtures.clone();
 
-        let func = {
+        let (actual_target, func) = {
             let contracts = contracts.targets.lock();
-            let contract = contracts.get(&target_address).unwrap_or_else(|| {
-                // Choose a random contract if target selected by lazy strategy is not in fuzz run
-                // identified contracts. This can happen when contract is created in `setUp` call
-                // but is not included in targetContracts.
-                contracts.values().choose(&mut rand::rng()).unwrap()
-            });
+            // If the target address is in the contracts map, use it directly.
+            // Otherwise, fall back to a random contract from the targeted contracts.
+            // This can happen when call_override sets target_reference to a contract
+            // that is not in targetContracts (e.g., the protocol contract during reentrancy).
+            let (actual_target, contract) =
+                contracts.get(&target_address).map(|c| (target_address, c)).unwrap_or_else(|| {
+                    let entry = contracts
+                        .iter()
+                        .choose(&mut rand::rng())
+                        .expect("at least one target contract");
+                    (*entry.0, entry.1)
+                });
             let fuzzed_functions: Vec<_> = contract.abi_fuzzed_functions().cloned().collect();
-            any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
+            (
+                actual_target,
+                any::<prop::sample::Index>()
+                    .prop_map(move |index| index.get(&fuzzed_functions).clone()),
+            )
         };
 
         func.prop_flat_map(move |func| {
-            fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, target_address, func)
+            fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, actual_target, func)
         })
     })
 }

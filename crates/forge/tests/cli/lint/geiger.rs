@@ -16,12 +16,12 @@ forgetest_init!(call, |prj, cmd| {
     cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
- [FILE]:9:20
-  |
-9 |                 vm.ffi(inputs);
-  |                    ^^^
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+  [FILE]:9:20
+  │
+9 │                 vm.ffi(inputs);
+  │                    ━━━
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
 Error: aborting due to 1 linter note(s)
 ...
@@ -47,12 +47,12 @@ forgetest_init!(assignment, |prj, cmd| {
     cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
- [FILE]:9:41
-  |
-9 |                 bytes memory stuff = vm.ffi(inputs);
-  |                                         ^^^
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+  [FILE]:9:41
+  │
+9 │                 bytes memory stuff = vm.ffi(inputs);
+  │                                         ━━━
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
 Error: aborting due to 1 linter note(s)
 ...
@@ -79,28 +79,28 @@ forgetest_init!(exit_code, |prj, cmd| {
     cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
- [FILE]:9:20
-  |
-9 |                 vm.ffi(inputs);
-  |                    ^^^
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+  [FILE]:9:20
+  │
+9 │                 vm.ffi(inputs);
+  │                    ━━━
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
-  [FILE]:10:20
-   |
-10 |                 vm.ffi(inputs);
-   |                    ^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+   [FILE]:10:20
+   │
+10 │                 vm.ffi(inputs);
+   │                    ━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
-  [FILE]:11:20
-   |
-11 |                 vm.ffi(inputs);
-   |                    ^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+   [FILE]:11:20
+   │
+11 │                 vm.ffi(inputs);
+   │                    ━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
 Error: aborting due to 3 linter note(s)
 ...

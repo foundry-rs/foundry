@@ -134,7 +134,7 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
     #[arg(
         long,
-        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws"],
+        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws", "browser"],
     )]
     pub unlocked: bool,
 
@@ -340,9 +340,13 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
-    /// `--sender`
+    /// In case the user has loaded *only* one private-key or a single remote signer (e.g.,
+    /// Turnkey), we can assume that they're using it as the `--sender`.
     fn maybe_load_private_key(&self) -> Result<Option<Address>> {
+        if let Some(turnkey_address) = self.wallets.turnkey_address() {
+            return Ok(Some(turnkey_address));
+        }
+
         let maybe_sender = self
             .wallets
             .private_keys()?
@@ -646,6 +650,7 @@ impl ScriptConfig {
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
+                    .logs(self.config.live_logs)
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)

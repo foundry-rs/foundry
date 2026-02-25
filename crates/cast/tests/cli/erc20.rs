@@ -363,3 +363,246 @@ forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
     let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
     assert_eq!(balance, transfer_amount); // 2nd transfer failed
 });
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 balance
+casttest!(curl_erc20_balance, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+    let owner = "0xbeef000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "balance", token, owner, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 name
+casttest!(curl_erc20_name, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "name", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 decimals
+casttest!(curl_erc20_decimals, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "decimals", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for cast erc20 total-supply
+casttest!(curl_erc20_total_supply, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "total-supply", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 balance
+casttest!(erc20_curl_balance, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+    let owner = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["erc20", "balance", token, owner, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 name
+casttest!(erc20_curl_name, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+
+    let output = cmd
+        .args(["erc20", "name", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 decimals
+casttest!(erc20_curl_decimals, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+
+    let output = cmd
+        .args(["erc20", "decimals", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that the --curl flag outputs a valid curl command for erc20 total-supply
+casttest!(erc20_curl_total_supply, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
+
+    let output = cmd
+        .args(["erc20", "total-supply", token, "--rpc-url", rpc, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains(rpc));
+});
+
+// tests that `balance` command works correctly with --json flag
+forgetest_async!(erc20_balance_json, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    let output = cmd
+        .cast_fuse()
+        .args(["--json", "erc20", "balance", &token, anvil_const::ADDR1, "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let balance_str: String = serde_json::from_str(&output).expect("valid json string");
+    let balance: U256 = balance_str.parse().unwrap();
+    assert_eq!(balance, U256::from(1_000_000_000_000_000_000_000u128));
+});
+
+// tests that `allowance` command works correctly with --json flag
+forgetest_async!(erc20_allowance_json, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    // First approve some tokens
+    let approve_amount = U256::from(50_000_000_000_000_000_000u128);
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "approve",
+            &token,
+            anvil_const::ADDR2,
+            &approve_amount.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+        ])
+        .assert_success();
+
+    // Check allowance with JSON flag
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "--json",
+            "erc20",
+            "allowance",
+            &token,
+            anvil_const::ADDR1,
+            anvil_const::ADDR2,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let allowance_str: String = serde_json::from_str(&output).expect("valid json string");
+    let allowance: U256 = allowance_str.parse().unwrap();
+    assert_eq!(allowance, approve_amount);
+});
+
+// tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly with --json
+// flag
+forgetest_async!(erc20_metadata_json, |prj, cmd| {
+    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+
+    // Test name with --json
+    let output = cmd
+        .cast_fuse()
+        .args(["--json", "erc20", "name", &token, "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let name: String = serde_json::from_str(&output).expect("valid json string");
+    assert_eq!(name, "Test Token");
+
+    // Test symbol with --json
+    let output = cmd
+        .cast_fuse()
+        .args(["--json", "erc20", "symbol", &token, "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let symbol: String = serde_json::from_str(&output).expect("valid json string");
+    assert_eq!(symbol, "TEST");
+
+    // Test decimals with --json
+    let output = cmd
+        .cast_fuse()
+        .args(["--json", "erc20", "decimals", &token, "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let decimals: u8 = output.trim().parse().expect("valid number");
+    assert_eq!(decimals, 18);
+
+    // Test totalSupply with --json
+    let output = cmd
+        .cast_fuse()
+        .args(["--json", "erc20", "total-supply", &token, "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let total_supply_str: String = serde_json::from_str(&output).expect("valid json string");
+    let total_supply: U256 = total_supply_str.parse().unwrap();
+    assert_eq!(total_supply, U256::from(1_000_000_000_000_000_000_000u128));
+});

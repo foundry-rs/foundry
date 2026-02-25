@@ -1,7 +1,10 @@
 use super::{call_after_invariant_function, call_invariant_function, execute_tx};
-use crate::executors::{EarlyExit, Executor, invariant::shrink::shrink_sequence};
+use crate::executors::{
+    EarlyExit, Executor,
+    invariant::shrink::{shrink_sequence, shrink_sequence_value},
+};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Log, map::HashMap};
+use alloy_primitives::{I256, Log, map::HashMap};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
@@ -87,13 +90,17 @@ pub fn replay_run(
     Ok(counterexample_sequence)
 }
 
-/// Replays the error case, shrinks the failing sequence and collects all necessary traces.
+/// Replays and shrinks a call sequence, collecting logs and traces.
+///
+/// For check mode (target_value=None): shrinks to find shortest failing sequence.
+/// For optimization mode (target_value=Some): shrinks to find shortest sequence producing target.
 #[expect(clippy::too_many_arguments)]
 pub fn replay_error(
     config: InvariantConfig,
     mut executor: Executor,
     calls: &[BasicTxDetails],
     inner_sequence: Option<Vec<Option<BasicTxDetails>>>,
+    target_value: Option<I256>,
     invariant_contract: &InvariantContract<'_>,
     known_contracts: &ContractsByArtifact,
     ided_contracts: ContractsByAddress,
@@ -104,15 +111,24 @@ pub fn replay_error(
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
 ) -> Result<Vec<BaseCounterExample>> {
-    // Shrink sequence of failed calls.
-    let calls =
-        shrink_sequence(&config, invariant_contract, calls, &executor, progress, early_exit)?;
+    let calls = if let Some(target) = target_value {
+        shrink_sequence_value(
+            &config,
+            invariant_contract,
+            calls,
+            &executor,
+            target,
+            progress,
+            early_exit,
+        )?
+    } else {
+        shrink_sequence(&config, invariant_contract, calls, &executor, progress, early_exit)?
+    };
 
     if let Some(sequence) = inner_sequence {
         set_up_inner_replay(&mut executor, &sequence);
     }
 
-    // Replay calls to get the counterexample and to collect logs, traces and coverage.
     replay_run(
         invariant_contract,
         executor,

@@ -284,8 +284,7 @@ contract Eip712Test is DSTest {
         [r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for src/Eip712Cheat.sol:Eip712Test
 [PASS] testEip712HashType() ([GAS])
 Logs:

@@ -286,6 +286,11 @@ pub struct Config {
     pub eth_rpc_url: Option<String>,
     /// Whether to accept invalid certificates for the rpc server.
     pub eth_rpc_accept_invalid_certs: bool,
+    /// Whether to disable automatic proxy detection for the rpc server.
+    ///
+    /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
+    /// where system proxy detection via SCDynamicStore causes crashes.
+    pub eth_rpc_no_proxy: bool,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
@@ -299,6 +304,8 @@ pub struct Config {
     /// You can also the ETH_RPC_HEADERS env variable like so:
     /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
     pub eth_rpc_headers: Option<Vec<String>>,
+    /// Print the equivalent curl command instead of making the RPC request.
+    pub eth_rpc_curl: bool,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -347,6 +354,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Whether to show `console.log` outputs in realtime during script/test execution
+    pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
@@ -747,6 +756,18 @@ impl Config {
         Self::from_provider(Self::figment_with_root(root.as_ref()))
     }
 
+    /// Loads the `Config` from the given root directory, allowing profile fallback.
+    ///
+    /// Unlike [`load_with_root`](Self::load_with_root), if the selected profile (via
+    /// `FOUNDRY_PROFILE`) does not exist in the config, this falls back to the default profile
+    /// instead of returning an error. This is useful for loading nested lib/dependency configs
+    /// that may not define all profiles the main project uses.
+    #[track_caller]
+    pub fn load_with_root_and_fallback(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
+        let figment = Self::figment_with_root(root.as_ref());
+        Self::from_figment_fallback(Figment::from(figment))
+    }
+
     /// Attempts to extract a `Config` from `provider`, returning the result.
     ///
     /// # Example
@@ -774,25 +795,49 @@ impl Config {
     }
 
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
+        Self::from_figment_inner(figment, true)
+    }
+
+    /// Same as `from_figment` but allows unknown profiles, falling back to default profile.
+    /// Used when loading nested lib configs that may not define all profiles.
+    fn from_figment_fallback(figment: Figment) -> Result<Self, ExtractConfigError> {
+        Self::from_figment_inner(figment, false)
+    }
+
+    fn from_figment_inner(
+        figment: Figment,
+        strict_profile: bool,
+    ) -> Result<Self, ExtractConfigError> {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
-        config.profile = figment.profile().clone();
+        let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
-        let mut add_profile = |profile: &Profile| {
-            if !config.profiles.contains(profile) {
-                config.profiles.push(profile.clone());
+        fn add_profile(profiles: &mut Vec<Profile>, profile: &Profile) {
+            if !profiles.contains(profile) {
+                profiles.push(profile.clone());
             }
-        };
+        }
         let figment = figment.select(Self::PROFILE_SECTION);
         if let Ok(data) = figment.data()
             && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
         {
             for profile in profiles.keys() {
-                add_profile(&Profile::new(profile));
+                add_profile(&mut config.profiles, &Profile::new(profile));
             }
         }
-        add_profile(&Self::DEFAULT_PROFILE);
-        add_profile(&config.profile);
+        add_profile(&mut config.profiles, &Self::DEFAULT_PROFILE);
+
+        // Check if the selected profile exists.
+        if config.profiles.contains(&selected_profile) {
+            config.profile = selected_profile;
+        } else if strict_profile {
+            return Err(ExtractConfigError::new(Error::from(format!(
+                "selected profile `{selected_profile}` does not exist"
+            ))));
+        } else {
+            // Fall back to default profile for nested lib configs.
+            config.profile = Self::DEFAULT_PROFILE;
+        }
 
         config.normalize_optimizer_settings();
 
@@ -1822,11 +1867,6 @@ impl Config {
             src: paths.sources.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            remappings: paths
-                .remappings
-                .into_iter()
-                .map(|r| RelativeRemapping::new(r, root))
-                .collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Self::default()
         }
@@ -2287,8 +2327,8 @@ impl Config {
             figment = figment.merge(("evm_version", version));
         }
 
-        // Normalize `deny` based on the provided `deny_warnings` version.
-        if self.deny_warnings
+        // Normalize `deny` based on the provided `deny_warnings` value.
+        if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
             && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
@@ -2499,7 +2539,7 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Prague,
+            evm_version: EvmVersion::Osaka,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             gas_reports_include_tests: false,
@@ -2529,6 +2569,7 @@ impl Default for Config {
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
+            live_logs: false,
             allow_internal_expect_revert: false,
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,
@@ -2551,9 +2592,11 @@ impl Default for Config {
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_accept_invalid_certs: false,
+            eth_rpc_no_proxy: false,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
+            eth_rpc_curl: false,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
@@ -2564,6 +2607,8 @@ impl Default for Config {
                 SolidityErrorCode::ContractExceeds24576Bytes,
                 SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
                 SolidityErrorCode::TransientStorageUsed,
+                SolidityErrorCode::TransferDeprecated,
+                SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
             ],
             ignored_file_paths: vec![],
             deny: DenyLevel::Never,
@@ -4626,6 +4671,48 @@ mod tests {
     }
 
     #[test]
+    fn test_model_checker_settings_with_bool_flags() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+
+                [profile.default.model_checker]
+                engine = 'chc'
+                show_unproved = true
+                show_unsupported = true
+                show_proved_safe = false
+                div_mod_with_slacks = true
+            ",
+            )?;
+            let mut loaded = Config::load().unwrap();
+            clear_warning(&mut loaded);
+
+            let mc = loaded.model_checker.as_ref().unwrap();
+            assert_eq!(mc.show_unproved, Some(true));
+            assert_eq!(mc.show_unsupported, Some(true));
+            assert_eq!(mc.show_proved_safe, Some(false));
+            assert_eq!(mc.div_mod_with_slacks, Some(true));
+
+            // Test round-trip: serialize and reload
+            let s = loaded.to_string_pretty().unwrap();
+            jail.create_file("foundry.toml", &s)?;
+
+            let mut reloaded = Config::load().unwrap();
+            clear_warning(&mut reloaded);
+
+            let mc_reloaded = reloaded.model_checker.as_ref().unwrap();
+            assert_eq!(mc_reloaded.show_unproved, Some(true));
+            assert_eq!(mc_reloaded.show_unsupported, Some(true));
+            assert_eq!(mc_reloaded.show_proved_safe, Some(false));
+            assert_eq!(mc_reloaded.div_mod_with_slacks, Some(true));
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_model_checker_settings_relative_paths() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -6462,6 +6549,645 @@ mod tests {
 
             let config = Config::load().expect("should accept explicit version requirements");
             assert_eq!(config.compilation_restrictions.len(), 2);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_unknown_keys_in_all_config_sections() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                unknown_profile_key = "should_warn"
+
+                # Standalone sections with unknown keys
+                [fmt]
+                line_length = 120
+                unknown_fmt_key = "should_warn"
+
+                [lint]
+                severity = ["high"]
+                unknown_lint_key = "should_warn"
+
+                [doc]
+                out = "docs"
+                unknown_doc_key = "should_warn"
+
+                [fuzz]
+                runs = 256
+                unknown_fuzz_key = "should_warn"
+
+                [invariant]
+                runs = 256
+                unknown_invariant_key = "should_warn"
+
+                [vyper]
+                unknown_vyper_key = "should_warn"
+
+                [bind_json]
+                out = "bindings.sol"
+                unknown_bind_json_key = "should_warn"
+
+                # Nested profile sections with unknown keys
+                [profile.default.fmt]
+                line_length = 100
+                unknown_nested_fmt_key = "should_warn"
+
+                [profile.default.lint]
+                severity = ["low"]
+                unknown_nested_lint_key = "should_warn"
+
+                [profile.default.doc]
+                out = "documentation"
+                unknown_nested_doc_key = "should_warn"
+
+                [profile.default.fuzz]
+                runs = 512
+                unknown_nested_fuzz_key = "should_warn"
+
+                [profile.default.invariant]
+                runs = 512
+                unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.vyper]
+                unknown_nested_vyper_key = "should_warn"
+
+                [profile.default.bind_json]
+                out = "nested_bindings.sol"
+                unknown_nested_bind_json_key = "should_warn"
+
+                # Array sections with unknown keys
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                unknown_compilation_key = "should_warn"
+
+                [[profile.default.additional_compiler_profiles]]
+                name = "via-ir"
+                via_ir = true
+                unknown_compiler_profile_key = "should_warn"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+
+            // Expected warnings for profile-level unknown key
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownKey { key, .. } if key == "unknown_profile_key"
+                )),
+                "Expected warning for 'unknown_profile_key' in profile, got: {:?}",
+                cfg.warnings
+            );
+
+            // Expected warnings for standalone sections
+            let standalone_expected = [
+                ("unknown_fmt_key", "fmt"),
+                ("unknown_lint_key", "lint"),
+                ("unknown_doc_key", "doc"),
+                ("unknown_fuzz_key", "fuzz"),
+                ("unknown_invariant_key", "invariant"),
+                ("unknown_vyper_key", "vyper"),
+                ("unknown_bind_json_key", "bind_json"),
+            ];
+
+            for (expected_key, expected_section) in standalone_expected {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in standalone section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Expected warnings for nested profile sections
+            let nested_expected = [
+                ("unknown_nested_fmt_key", "fmt"),
+                ("unknown_nested_lint_key", "lint"),
+                ("unknown_nested_doc_key", "doc"),
+                ("unknown_nested_fuzz_key", "fuzz"),
+                ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_vyper_key", "vyper"),
+                ("unknown_nested_bind_json_key", "bind_json"),
+            ];
+
+            for (expected_key, expected_section) in nested_expected {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in nested section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Expected warnings for array item sections
+            let array_expected = [
+                ("unknown_compilation_key", "compilation_restrictions"),
+                ("unknown_compiler_profile_key", "additional_compiler_profiles"),
+            ];
+
+            for (expected_key, expected_section) in array_expected {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in array section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Verify total count of unknown key warnings
+            let unknown_key_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(w, crate::Warning::UnknownKey { .. })
+                        || matches!(w, crate::Warning::UnknownSectionKey { .. })
+                })
+                .collect();
+
+            // 1 profile key + 7 standalone + 7 nested + 2 array = 17 total
+            assert_eq!(
+                unknown_key_warnings.len(),
+                17,
+                "Expected 17 unknown key warnings (1 profile + 7 standalone + 7 nested + 2 array), got {}: {:?}",
+                unknown_key_warnings.len(),
+                unknown_key_warnings
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_unknown_keys_in_extended_config() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with unknown keys
+            jail.create_file(
+                "base.toml",
+                r#"
+                [profile.default]
+                optimizer_runs = 800
+                unknown_base_profile_key = "should_warn"
+
+                [lint]
+                severity = ["high"]
+                unknown_base_lint_key = "should_warn"
+
+                [fmt]
+                line_length = 100
+                unknown_base_fmt_key = "should_warn"
+                "#,
+            )?;
+
+            // Create local config that extends base with its own unknown keys
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                extends = "base.toml"
+                src = "src"
+                unknown_local_profile_key = "should_warn"
+
+                [lint]
+                unknown_local_lint_key = "should_warn"
+
+                [fuzz]
+                runs = 512
+                unknown_local_fuzz_key = "should_warn"
+
+                [[profile.default.compilation_restrictions]]
+                paths = "src/*.sol"
+                unknown_local_restriction_key = "should_warn"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+
+            // Verify base config values are inherited
+            assert_eq!(cfg.optimizer_runs, Some(800));
+
+            // Unknown keys from both base and local configs should be detected.
+            // Note: Due to how figment merges configs before validation, the source
+            // will show the local config file for all warnings. This is a known
+            // limitation - proper source attribution for extended configs would
+            // require validating each file before the merge.
+
+            // Verify all expected unknown keys are detected
+            let expected_unknown_keys = ["unknown_base_profile_key", "unknown_local_profile_key"];
+            for expected_key in expected_unknown_keys {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownKey { key, .. } if key == expected_key
+                    )),
+                    "Expected warning for '{}', got: {:?}",
+                    expected_key,
+                    cfg.warnings
+                );
+            }
+
+            let expected_section_keys = [
+                ("unknown_base_lint_key", "lint"),
+                ("unknown_base_fmt_key", "fmt"),
+                ("unknown_local_lint_key", "lint"),
+                ("unknown_local_fuzz_key", "fuzz"),
+                ("unknown_local_restriction_key", "compilation_restrictions"),
+            ];
+            for (expected_key, expected_section) in expected_section_keys {
+                assert!(
+                    cfg.warnings.iter().any(|w| matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == expected_key && section == expected_section
+                    )),
+                    "Expected warning for '{}' in section '{}', got: {:?}",
+                    expected_key,
+                    expected_section,
+                    cfg.warnings
+                );
+            }
+
+            // Verify total: 2 profile keys + 5 section keys = 7 warnings
+            let unknown_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(w, crate::Warning::UnknownKey { .. })
+                        || matches!(w, crate::Warning::UnknownSectionKey { .. })
+                })
+                .collect();
+            assert_eq!(
+                unknown_warnings.len(),
+                7,
+                "Expected 7 unknown key warnings, got {}: {:?}",
+                unknown_warnings.len(),
+                unknown_warnings
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
+    #[test]
+    fn fails_on_unknown_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_PROFILE", "nonexistent");
+            let err = Config::load().expect_err("expected unknown profile to fail");
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("selected profile `nonexistent` does not exist"),
+                "Expected error about nonexistent profile, got: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: vyper config keys should not trigger unknown key warnings
+    #[test]
+    fn no_false_warnings_for_vyper_config_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [vyper]
+                optimize = "gas"
+                path = "/usr/bin/vyper"
+                experimental_codegen = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            // None of the valid vyper keys should trigger warnings
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
+                .collect();
+
+            assert!(
+                vyper_warnings.is_empty(),
+                "Valid vyper keys should not trigger warnings, got: {vyper_warnings:?}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: vyper config in profile should not trigger false warnings
+    #[test]
+    fn no_false_warnings_for_nested_vyper_config_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.default.vyper]
+                optimize = "codesize"
+                path = "/opt/vyper/bin/vyper"
+                experimental_codegen = false
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            // None of the valid vyper keys should trigger warnings
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
+                .collect();
+
+            assert!(
+                vyper_warnings.is_empty(),
+                "Valid nested vyper keys should not trigger warnings, got: {vyper_warnings:?}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: inline vyper config format should not trigger false warnings
+    // This matches the exact format used in https://github.com/pcaversaccio/snekmate
+    #[test]
+    fn no_false_warnings_for_inline_vyper_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                vyper = { optimize = "gas" }
+
+                [profile.default-venom]
+                vyper = { experimental_codegen = true }
+
+                [profile.ci-venom]
+                vyper = { experimental_codegen = true }
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
+                .collect();
+
+            assert!(
+                vyper_warnings.is_empty(),
+                "Valid inline vyper config should not trigger warnings, got: {vyper_warnings:?}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: unknown vyper keys should still warn
+    #[test]
+    fn warns_on_unknown_vyper_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [vyper]
+                optimize = "gas"
+                unknown_vyper_option = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownSectionKey { key, section, .. }
+                    if key == "unknown_vyper_option" && section == "vyper"
+                )),
+                "Unknown vyper key should trigger warning, got: {:?}",
+                cfg.warnings
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12844: known profile should work
+    #[test]
+    fn succeeds_on_known_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci]
+                src = "src"
+                fuzz = { runs = 10000 }
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().expect("known profile should work");
+            assert_eq!(config.profile.as_str(), "ci");
+            assert_eq!(config.fuzz.runs, 10000);
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12963: nested lib configs should fallback to default profile
+    // when they don't define the requested profile
+    #[test]
+    fn nested_lib_config_falls_back_to_default_profile() {
+        figment::Jail::expect_with(|jail| {
+            // Create a lib directory with only default profile
+            let lib_path = jail.directory().join("lib/mylib");
+            std::fs::create_dir_all(&lib_path).unwrap();
+            jail.create_file(
+                "lib/mylib/foundry.toml",
+                r#"
+                [profile.default]
+                src = "contracts"
+                "#,
+            )?;
+
+            // Set a profile that doesn't exist in the lib
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            // load_with_root_and_fallback should succeed and fall back to default
+            let config = Config::load_with_root_and_fallback(&lib_path)
+                .expect("lib config should load with fallback");
+            assert_eq!(config.profile, Config::DEFAULT_PROFILE);
+            assert_eq!(config.src.as_os_str(), "contracts");
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #12963: nested lib configs should use requested profile if it exists
+    #[test]
+    fn nested_lib_config_uses_profile_if_exists() {
+        figment::Jail::expect_with(|jail| {
+            // Create a lib directory with both default and ci profiles
+            let lib_path = jail.directory().join("lib/mylib");
+            std::fs::create_dir_all(&lib_path).unwrap();
+            jail.create_file(
+                "lib/mylib/foundry.toml",
+                r#"
+                [profile.default]
+                src = "contracts"
+
+                [profile.ci]
+                src = "contracts"
+                fuzz = { runs = 5000 }
+                "#,
+            )?;
+
+            // Set a profile that exists in the lib
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+
+            // load_with_root_and_fallback should use the ci profile
+            let config = Config::load_with_root_and_fallback(&lib_path)
+                .expect("lib config should load with profile");
+            assert_eq!(config.profile.as_str(), "ci");
+            assert_eq!(config.fuzz.runs, 5000);
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13170: profile names with hyphens should work correctly
+    #[test]
+    fn succeeds_on_hyphenated_profile_name() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci-venom]
+                src = "src"
+                fuzz = { runs = 7500 }
+
+                [profile.default-venom]
+                src = "src"
+                fuzz = { runs = 8000 }
+                "#,
+            )?;
+
+            // Test ci-venom profile
+            jail.set_env("FOUNDRY_PROFILE", "ci-venom");
+            let config = Config::load().expect("hyphenated profile should work");
+            assert_eq!(config.profile.as_str(), "ci-venom");
+            assert_eq!(config.fuzz.runs, 7500);
+
+            // Test default-venom profile
+            jail.set_env("FOUNDRY_PROFILE", "default-venom");
+            let config = Config::load().expect("hyphenated profile should work");
+            assert_eq!(config.profile.as_str(), "default-venom");
+            assert_eq!(config.fuzz.runs, 8000);
+
+            // Verify the profiles list contains hyphenated names
+            assert!(
+                config.profiles.iter().any(|p| p.as_str() == "ci-venom"),
+                "profiles should contain 'ci-venom', got: {:?}",
+                config.profiles
+            );
+            assert!(
+                config.profiles.iter().any(|p| p.as_str() == "default-venom"),
+                "profiles should contain 'default-venom', got: {:?}",
+                config.profiles
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13170: hyphenated profile with nested config keys
+    #[test]
+    fn hyphenated_profile_with_nested_sections() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci-venom]
+                src = "src"
+                optimizer_runs = 500
+
+                [profile.ci-venom.fuzz]
+                runs = 10000
+                max_test_rejects = 350000
+
+                [profile.ci-venom.invariant]
+                runs = 375
+                depth = 500
+                "#,
+            )?;
+
+            jail.set_env("FOUNDRY_PROFILE", "ci-venom");
+            let config =
+                Config::load().expect("hyphenated profile with nested sections should work");
+            assert_eq!(config.profile.as_str(), "ci-venom");
+            assert_eq!(config.optimizer_runs, Some(500));
+            assert_eq!(config.fuzz.runs, 10000);
+            assert_eq!(config.fuzz.max_test_rejects, 350000);
+            assert_eq!(config.invariant.runs, 375);
+            assert_eq!(config.invariant.depth, 500);
 
             Ok(())
         });

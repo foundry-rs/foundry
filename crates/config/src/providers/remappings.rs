@@ -258,8 +258,9 @@ impl RemappingsProvider<'_> {
     }
 
     fn nested_foundry_remappings(&self, lib: &Path) -> Vec<Remapping> {
-        // load config, of the nested lib if it exists
-        let Ok(config) = Config::load_with_root(lib) else { return vec![] };
+        // load config of the nested lib if it exists, using fallback mode since libs may not
+        // define all profiles the main project uses
+        let Ok(config) = Config::load_with_root_and_fallback(lib) else { return vec![] };
         let config = config.sanitized();
 
         // if the configured _src_ directory is set to something that

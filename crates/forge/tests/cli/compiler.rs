@@ -18,14 +18,14 @@ contract ContractB {}
 
 const CONTRACT_C: &str = r#"
 // SPDX-license-identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.33;
 
 contract ContractC {}
 "#;
 
 const CONTRACT_D: &str = r#"
 // SPDX-license-identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.33;
 
 contract ContractD {}
 "#;
@@ -111,7 +111,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
     cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-0.8.30:
+0.8.33:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -128,7 +128,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
 {
   "Solidity": [
     {
-      "version": "0.8.30",
+      "version": "0.8.33",
       "paths": [
         "src/ContractC.sol",
         "src/ContractD.sol"
@@ -153,7 +153,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions, |prj, cmd| {
 Solidity:
 - 0.8.4
 - 0.8.11
-- 0.8.30
+- 0.8.33
 
 Vyper:
 - 0.4.3
@@ -198,7 +198,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
 {
   "Solidity": [
     {
-      "version": "0.8.30",
+      "version": "0.8.33",
       "paths": [
         "src/ContractD.sol"
       ]
@@ -236,7 +236,7 @@ Solidity:
 0.8.11 (<= london):
 └── src/ContractB.sol
 
-0.8.30 (<= prague):
+0.8.33 (<= prague):
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -277,7 +277,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
       ]
     },
     {
-      "version": "0.8.30",
+      "version": "0.8.33",
       "evm_version": "[..]",
       "paths": [
         "src/ContractC.sol",

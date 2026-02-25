@@ -286,6 +286,6 @@ where
 /// Maps [`EvmEnv<OpSpecId>`] to [`EvmEnv`].
 fn map_env(env: EvmEnv<OpSpecId>) -> EvmEnv {
     let eth_spec_id = env.spec_id().into_eth_spec();
-    let cfg = env.cfg_env.with_spec(eth_spec_id);
+    let cfg = env.cfg_env.with_spec_and_mainnet_gas_params(eth_spec_id);
     EvmEnv { cfg_env: cfg, block_env: env.block_env }
 }

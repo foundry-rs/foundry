@@ -14,6 +14,7 @@ extern crate tracing;
 #[macro_use]
 mod macros;
 
+pub mod etherscan;
 pub mod rpc;
 
 pub mod fd_lock;

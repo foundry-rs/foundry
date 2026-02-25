@@ -77,11 +77,18 @@ pub struct TransactionOpts {
     #[arg(long)]
     pub legacy: bool,
 
-    /// Send a EIP-4844 blob transaction.
+    /// Send a blob transaction using EIP-7594 (PeerDAS) format.
+    ///
+    /// Note: Use with `--eip4844` for the legacy EIP-4844 format.
     #[arg(long, conflicts_with = "legacy")]
     pub blob: bool,
 
-    /// Gas price for EIP-4844 blob transaction.
+    /// Send a blob transaction using EIP-4844 (legacy) format instead of EIP-7594. Must be used
+    /// with `--blob`.
+    #[arg(long, conflicts_with = "legacy", requires = "blob")]
+    pub eip4844: bool,
+
+    /// Gas price for EIP-7594/EIP-4844 blob transaction.
     #[arg(long, conflicts_with = "legacy", value_parser = parse_ether_value, env = "ETH_BLOB_GAS_PRICE", value_name = "BLOB_PRICE")]
     pub blob_gas_price: Option<U256>,
 

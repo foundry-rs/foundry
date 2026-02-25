@@ -3,6 +3,7 @@ use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
 use eyre::{Result, eyre};
+use forge_script_sequence::ScriptSequence;
 use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
 
@@ -89,34 +90,67 @@ pub async fn check_tx_status(
 }
 
 /// Prints parts of the receipt to stdout
-pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
+pub fn format_receipt(
+    chain: Chain,
+    receipt: &AnyTransactionReceipt,
+    sequence: Option<&ScriptSequence>,
+) -> String {
     let gas_used = receipt.gas_used;
     let gas_price = receipt.effective_gas_price;
     let block_number = receipt.block_number.unwrap_or_default();
     let success = receipt.inner.inner.inner.receipt.status.coerce_status();
 
+    let (contract_name, function) = sequence
+        .and_then(|seq| {
+            seq.transactions
+                .iter()
+                .find(|tx| tx.hash == Some(receipt.transaction_hash))
+                .map(|tx| (tx.contract_name.clone(), tx.function.clone()))
+        })
+        .unwrap_or((None, None));
+
     if shell::is_json() {
-        let _ = sh_println!(
-            "{}",
-            serde_json::json!({
-                "chain": chain,
-                "status": if success {
-                    "success"
-                } else {
-                    "failed"
-                },
-                "tx_hash": receipt.transaction_hash,
-                "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
-                "block_number": block_number,
-                "gas_used": gas_used,
-                "gas_price": gas_price,
-            })
-        );
+        let mut json = serde_json::json!({
+            "chain": chain,
+            "status": if success {
+                "success"
+            } else {
+                "failed"
+            },
+            "tx_hash": receipt.transaction_hash,
+            "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
+            "block_number": block_number,
+            "gas_used": gas_used,
+            "gas_price": gas_price,
+        });
+
+        if let Some(name) = &contract_name
+            && !name.is_empty()
+        {
+            json["contract_name"] = serde_json::Value::String(name.clone());
+        }
+        if let Some(func) = &function
+            && !func.is_empty()
+        {
+            json["function"] = serde_json::Value::String(func.clone());
+        }
+
+        let _ = sh_println!("{}", json);
 
         String::new()
     } else {
+        let contract_info = match &contract_name {
+            Some(name) if !name.is_empty() => format!("\nContract: {name}"),
+            _ => String::new(),
+        };
+
+        let function_info = match &function {
+            Some(func) if !func.is_empty() => format!("\nFunction: {func}"),
+            _ => String::new(),
+        };
+
         format!(
-            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
+            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_info}{function_info}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
             status = if success { "✅  [Success]" } else { "❌  [Failed]" },
             tx_hash = receipt.transaction_hash,
             contract_address = if let Some(addr) = &receipt.contract_address {
@@ -143,5 +177,94 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
                 )
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B256;
+    use std::collections::VecDeque;
+
+    fn mock_receipt(tx_hash: B256, success: bool) -> AnyTransactionReceipt {
+        serde_json::from_value(serde_json::json!({
+            "type": "0x02", "status": if success { "0x1" } else { "0x0" },
+            "cumulativeGasUsed": "0x5208", "logs": [], "transactionHash": tx_hash,
+            "logsBloom": format!("0x{}", "0".repeat(512)),
+            "transactionIndex": "0x0", "blockHash": B256::ZERO, "blockNumber": "0x3039",
+            "gasUsed": "0x5208", "effectiveGasPrice": "0x4a817c800",
+            "from": "0x0000000000000000000000000000000000000000",
+            "to": "0x0000000000000000000000000000000000000000", "contractAddress": null
+        }))
+        .unwrap()
+    }
+
+    fn mock_sequence(tx_hash: B256, contract: Option<&str>, func: Option<&str>) -> ScriptSequence {
+        let tx = serde_json::from_value(serde_json::json!({
+            "hash": tx_hash, "transactionType": "CALL",
+            "contractName": contract, "contractAddress": null, "function": func,
+            "arguments": null, "additionalContracts": [], "isFixedGasLimit": false,
+            "transaction": {
+                "type": "0x02", "chainId": "0x1", "nonce": "0x0", "gas": "0x5208",
+                "maxFeePerGas": "0x4a817c800", "maxPriorityFeePerGas": "0x3b9aca00",
+                "to": "0x0000000000000000000000000000000000000000",
+                "value": "0x0", "input": "0x", "accessList": []
+            },
+        }))
+        .unwrap();
+        ScriptSequence { transactions: VecDeque::from([tx]), chain: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn format_receipt_displays_contract_and_function() {
+        let hash = B256::repeat_byte(0x42);
+        let seq = mock_sequence(hash, Some("MyContract"), Some("init(address)"));
+        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, true), Some(&seq));
+
+        assert!(out.contains("Contract: MyContract"));
+        assert!(out.contains("Function: init(address)"));
+        assert!(out.contains("✅  [Success]"));
+    }
+
+    #[test]
+    fn format_receipt_without_sequence_omits_metadata() {
+        let hash = B256::repeat_byte(0x42);
+        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, true), None);
+
+        assert!(!out.contains("Contract:"));
+        assert!(!out.contains("Function:"));
+    }
+
+    #[test]
+    fn format_receipt_skips_empty_contract_name() {
+        let hash = B256::repeat_byte(0x42);
+        let seq = mock_sequence(hash, Some(""), Some("transfer(address)"));
+        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, true), Some(&seq));
+
+        assert!(!out.contains("Contract:"));
+        assert!(out.contains("Function: transfer(address)"));
+    }
+
+    #[test]
+    fn format_receipt_handles_missing_tx_in_sequence() {
+        let seq = mock_sequence(B256::repeat_byte(0x99), Some("Other"), Some("other()"));
+        let out = format_receipt(
+            Chain::mainnet(),
+            &mock_receipt(B256::repeat_byte(0x42), true),
+            Some(&seq),
+        );
+
+        assert!(!out.contains("Contract:"));
+        assert!(!out.contains("Function:"));
+    }
+
+    #[test]
+    fn format_receipt_shows_contract_on_failure() {
+        let hash = B256::repeat_byte(0x42);
+        let seq = mock_sequence(hash, Some("FailContract"), Some("fail()"));
+        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, false), Some(&seq));
+
+        assert!(out.contains("❌  [Failed]"));
+        assert!(out.contains("Contract: FailContract"));
     }
 }

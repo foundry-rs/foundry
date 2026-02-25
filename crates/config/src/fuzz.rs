@@ -12,11 +12,8 @@ pub struct FuzzConfig {
     pub runs: u32,
     /// Fails the fuzzed test if a revert occurs.
     pub fail_on_revert: bool,
-    /// The maximum number of test case rejections allowed by proptest, to be
-    /// encountered during usage of `vm.assume` cheatcode. This will be used
-    /// to set the `max_global_rejects` value in proptest test runner config.
-    /// `max_local_rejects` option isn't exposed here since we're not using
-    /// `prop_filter`.
+    /// The maximum number of test case rejections allowed,
+    /// encountered during usage of `vm.assume` cheatcode.
     pub max_test_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
     pub seed: Option<U256>,

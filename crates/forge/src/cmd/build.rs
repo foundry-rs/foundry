@@ -4,7 +4,7 @@ use eyre::{Context, Result};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
-    utils::{LoadConfig, cache_local_signatures},
+    utils::{Git, LoadConfig, cache_local_signatures},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
@@ -79,6 +79,9 @@ impl BuildArgs {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
+
+        self.check_soldeer_lock_consistency(&config).await;
+        self.check_foundry_lock_consistency(&config);
 
         let project = config.project()?;
 
@@ -227,6 +230,97 @@ impl BuildArgs {
             let foundry_toml: PathBuf = config.root.join(Config::FILE_NAME);
             Ok([config.src, config.test, config.script, foundry_toml])
         })
+    }
+
+    /// Check soldeer.lock file consistency using soldeer_core APIs
+    async fn check_soldeer_lock_consistency(&self, config: &Config) {
+        let soldeer_lock_path = config.root.join("soldeer.lock");
+        if !soldeer_lock_path.exists() {
+            return;
+        }
+
+        // Note: read_lockfile returns Ok with empty entries for malformed files
+        let Ok(lockfile) = soldeer_core::lock::read_lockfile(&soldeer_lock_path) else {
+            return;
+        };
+
+        let deps_dir = config.root.join("dependencies");
+        for entry in &lockfile.entries {
+            let dep_name = entry.name();
+
+            // Use soldeer_core's integrity check
+            match soldeer_core::install::check_dependency_integrity(entry, &deps_dir).await {
+                Ok(status) => {
+                    use soldeer_core::install::DependencyStatus;
+                    // Check if status indicates a problem
+                    if matches!(
+                        status,
+                        DependencyStatus::Missing | DependencyStatus::FailedIntegrity
+                    ) {
+                        sh_warn!("Dependency '{}' integrity check failed: {:?}", dep_name, status)
+                            .ok();
+                    }
+                }
+                Err(e) => {
+                    sh_warn!("Dependency '{}' integrity check error: {}", dep_name, e).ok();
+                }
+            }
+        }
+    }
+
+    /// Check foundry.lock file consistency with git submodules
+    fn check_foundry_lock_consistency(&self, config: &Config) {
+        use crate::lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
+
+        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
+        if !foundry_lock_path.exists() {
+            return;
+        }
+
+        let git = Git::new(&config.root);
+
+        let mut lockfile = Lockfile::new(&config.root).with_git(&git);
+        if let Err(e) = lockfile.read() {
+            if !e.to_string().contains("Lockfile not found") {
+                sh_warn!("Failed to parse foundry.lock: {}", e).ok();
+            }
+            return;
+        }
+
+        for (dep_path, dep_identifier) in lockfile.iter() {
+            let full_path = config.root.join(dep_path);
+
+            if !full_path.exists() {
+                sh_warn!("Dependency '{}' not found at expected path", dep_path.display()).ok();
+                continue;
+            }
+
+            let actual_rev = match git.get_rev("HEAD", &full_path) {
+                Ok(rev) => rev,
+                Err(_) => {
+                    sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display())
+                        .ok();
+                    continue;
+                }
+            };
+
+            // Compare with the expected revision from lockfile
+            let expected_rev = match dep_identifier {
+                DepIdentifier::Branch { rev, .. }
+                | DepIdentifier::Tag { rev, .. }
+                | DepIdentifier::Rev { rev, .. } => rev.clone(),
+            };
+
+            if actual_rev != expected_rev {
+                sh_warn!(
+                    "Dependency '{}' revision mismatch: expected '{}', found '{}'",
+                    dep_path.display(),
+                    expected_rev,
+                    actual_rev
+                )
+                .ok();
+            }
+        }
     }
 }
 

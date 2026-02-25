@@ -15,4 +15,7 @@ mod exp;
 pub use exp::{format_int_exp, format_uint_exp, to_exp_notation};
 
 mod ui;
-pub use ui::{EthValue, UIfmt, get_pretty_block_attr, get_pretty_tx_attr};
+pub use ui::{
+    EthValue, UIfmt, UIfmtReceiptExt, get_pretty_block_attr, get_pretty_receipt_attr,
+    get_pretty_tx_attr,
+};

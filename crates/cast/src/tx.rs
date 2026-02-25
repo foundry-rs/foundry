@@ -4,7 +4,7 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
+    AnyNetwork, TransactionBuilder, TransactionBuilder7594, TransactionBuilder7702,
 };
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
@@ -19,7 +19,7 @@ use foundry_cli::{
     utils::{self, LoadConfig, get_provider_builder, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_tx_receipt_attr,
+    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr,
     provider::RetryProviderWithSigner, shell,
 };
 use foundry_config::{Chain, Config};
@@ -172,7 +172,7 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
 
     /// Sends a transaction and waits for receipt synchronously
     pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
-        let mut receipt: TransactionReceiptWithRevertReason =
+        let mut receipt: TransactionReceiptWithRevertReason<AnyNetwork> =
             self.provider.send_transaction_sync(tx).await?.into();
 
         // Allow to fail silently
@@ -259,7 +259,7 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        let mut receipt: TransactionReceiptWithRevertReason =
+        let mut receipt: TransactionReceiptWithRevertReason<AnyNetwork> =
             match self.provider.get_transaction_receipt(tx_hash).await? {
                 Some(r) => r,
                 None => {
@@ -287,11 +287,11 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
     /// Helper method to format transaction receipts consistently
     fn format_receipt(
         &self,
-        receipt: TransactionReceiptWithRevertReason,
+        receipt: TransactionReceiptWithRevertReason<AnyNetwork>,
         field: Option<String>,
     ) -> Result<String> {
         Ok(if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt, field)
+            get_pretty_receipt_w_reason_attr(&receipt, field)
                 .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
@@ -313,6 +313,8 @@ pub struct CastTxBuilder<P, S> {
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
+    /// Whether the blob transaction should use EIP-4844 (legacy) format instead of EIP-7594.
+    eip4844: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -373,6 +375,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx,
             legacy,
             blob: tx_opts.blob,
+            eip4844: tx_opts.eip4844,
             chain,
             etherscan_api_key,
             auth: tx_opts.auth,
@@ -389,6 +392,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -445,6 +449,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
+            eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -668,10 +673,14 @@ where
 
         let mut coder = SidecarBuilder::<SimpleCoder>::default();
         coder.ingest(&blob_data);
-        let sidecar = coder.build()?;
 
-        self.tx.set_blob_sidecar(sidecar);
-        self.tx.populate_blob_hashes();
+        if self.eip4844 {
+            let sidecar = coder.build()?;
+            alloy_network::TransactionBuilder4844::set_blob_sidecar(&mut self.tx, sidecar);
+        } else {
+            let sidecar = coder.build_7594()?;
+            self.tx.set_blob_sidecar_7594(sidecar);
+        }
 
         Ok(self)
     }
@@ -696,7 +705,7 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 }
 
 /// Creates a provider with wallet for signing transactions locally.
-pub(crate) async fn signing_provider(
+pub(crate) async fn get_provider_with_wallet(
     tx_opts: &SendTxOpts,
 ) -> eyre::Result<RetryProviderWithSigner> {
     let config = tx_opts.eth.load_config()?;

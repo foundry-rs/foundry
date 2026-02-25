@@ -33,6 +33,8 @@ use std::time::Instant;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
+
     let args = CastArgs::parse();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))

@@ -20,8 +20,13 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, executors::TracingExecutor,
-    opts::EvmOpts, traces::TraceMode, utils::apply_chain_and_block_specific_env_changes,
+    Env, EnvMut,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    core::{AsEnvMut, decode::RevertDecoder},
+    executors::TracingExecutor,
+    opts::EvmOpts,
+    traces::TraceMode,
+    utils::apply_chain_and_block_specific_env_changes,
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
@@ -320,9 +325,28 @@ pub fn deploy_contract(
         let result = executor.transact_with_env(env)?;
 
         trace!(transact_result = ?result.exit_reason);
+
+        if result.reverted {
+            let decoded_reason = if result.result.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", RevertDecoder::default().decode(&result.result, result.exit_reason))
+            };
+            eyre::bail!(
+                "Failed to deploy contract via CREATE2 on fork at block{decoded_reason}.\n\
+                This typically happens when your local bytecode differs from what was actually deployed.\n\
+                Common causes:\n\
+                - Your contract source is not at the same commit used during deployment\n\
+                - Cached build artifacts are stale (try `forge clean && forge build`)\n\
+                - Compiler settings (optimizer, evm_version, via_ir) don't match the deployment"
+            );
+        }
+
         if result.result.len() != 20 {
             eyre::bail!(
-                "Failed to deploy contract on fork at block: call result is not exactly 20 bytes"
+                "Failed to deploy contract via CREATE2 on fork at block: deployer returned {} bytes instead of 20.\n\
+                This may indicate a bytecode mismatch - ensure your source code matches the deployed contract.",
+                result.result.len()
             );
         }
 
