@@ -606,7 +606,7 @@ async fn test_fork_timestamp() {
     let tx =
         TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
-    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap(); // FIXME: Awaits endlessly here.
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;

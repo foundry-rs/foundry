@@ -2152,6 +2152,8 @@ impl EthApi {
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         self.reset_instance_id();
         node_info!("anvil_reset");
+        // Clear pending transactions to avoid stale state after reset
+        self.pool.clear();
         if let Some(forking) = forking {
             // if we're resetting the fork we need to reset the instance id
             self.backend.reset_fork(forking).await
