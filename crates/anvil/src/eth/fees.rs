@@ -7,10 +7,7 @@ use std::{
 };
 
 use alloy_consensus::{Header, Transaction};
-use alloy_eips::{
-    calc_next_block_base_fee, eip1559::BaseFeeParams, eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA,
-    eip7840::BlobParams,
-};
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_primitives::B256;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -276,8 +273,12 @@ impl FeeHistoryService {
             let gas_used = block.header.gas_used as f64;
             let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
             item.gas_used_ratio = gas_used / block.header.gas_limit as f64;
-            item.blob_gas_used_ratio =
-                blob_gas_used.map(|g| g / MAX_BLOBS_PER_BLOCK_ELECTRA as f64).unwrap_or(0 as f64);
+            item.blob_gas_used_ratio = blob_gas_used
+                .map(|g| {
+                    let max = self.blob_params.max_blob_gas_per_block() as f64;
+                    if max == 0.0 { 0.0 } else { g / max }
+                })
+                .unwrap_or(0.0);
 
             // extract useful tx info (gas_used, effective_reward)
             let mut transactions: Vec<(_, _)> = receipts

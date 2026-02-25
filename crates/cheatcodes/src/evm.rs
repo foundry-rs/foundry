@@ -1117,55 +1117,69 @@ impl Cheatcode for executeTransactionCall {
         // Build TxEnv from the recovered transaction.
         let tx_env = <TxEnv as FromRecoveredTx<FoundryTxEnvelope>>::from_recovered_tx(&tx, sender);
 
-        let mut inspector = executor.get_inspector(ccx.state);
+        // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
+        // when the inner EVM executes calls at depth == 1.
+        executor.set_in_inner_context(true, Some(sender));
 
         let res = {
-            let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
-            let cached_env =
-                foundry_evm_core::Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone());
+            let mut inspector = executor.get_inspector(ccx.state);
 
-            // Override env for isolated execution.
-            env.block.basefee = 0;
-            *env.tx = tx_env;
-            env.tx.gas_price = 0;
-            env.tx.gas_priority_fee = None;
+            let res = {
+                let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
+                let cached_env =
+                    foundry_evm_core::Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone());
 
-            // Enable nonce checks for realistic simulation.
-            env.cfg.disable_nonce_check = false;
+                // Override env for isolated execution.
+                env.block.basefee = 0;
+                *env.tx = tx_env;
+                env.tx.gas_price = 0;
+                env.tx.gas_priority_fee = None;
 
-            // EIP-3860: enforce initcode size limit.
-            env.cfg.limit_contract_initcode_size =
-                Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+                // Enable nonce checks for realistic simulation.
+                env.cfg.disable_nonce_check = false;
 
-            // Create a new EVM instance with the inspector.
-            let mut evm = new_evm_with_inspector(db, env.to_owned(), &mut *inspector);
+                // EIP-3860: enforce initcode size limit.
+                env.cfg.limit_contract_initcode_size =
+                    Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
 
-            // Clone journaled state and mark all accounts/slots cold.
-            evm.journaled_state.state = {
-                let mut state = journal.state.clone();
-                for (addr, acc_mut) in &mut state {
-                    if journal.warm_addresses.is_cold(addr) {
-                        acc_mut.mark_cold();
+                // Create a new EVM instance with the inspector.
+                let mut evm = new_evm_with_inspector(db, env.to_owned(), &mut *inspector);
+
+                // Clone journaled state and mark all accounts/slots cold.
+                evm.journaled_state.state = {
+                    let mut state = journal.state.clone();
+                    for (addr, acc_mut) in &mut state {
+                        if journal.warm_addresses.is_cold(addr) {
+                            acc_mut.mark_cold();
+                        }
+                        for slot_mut in acc_mut.storage.values_mut() {
+                            slot_mut.is_cold = true;
+                            slot_mut.original_value = slot_mut.present_value;
+                        }
                     }
-                    for slot_mut in acc_mut.storage.values_mut() {
-                        slot_mut.is_cold = true;
-                        slot_mut.original_value = slot_mut.present_value;
-                    }
-                }
-                state
+                    state
+                };
+
+                // Set depth to 1 for proper trace collection.
+                evm.journaled_state.depth = 1;
+
+                let res = evm.transact(env.tx.clone());
+
+                // Restore the original environment.
+                *env.tx = cached_env.tx;
+                *env.cfg = cached_env.evm_env.cfg_env;
+                env.block.basefee = cached_env.evm_env.block_env.basefee;
+
+                res
             };
 
-            // Set depth to 1 for proper trace collection.
-            evm.journaled_state.depth = 1;
-
-            let res = evm.transact(env.tx.clone());
-
-            // Restore the original environment.
-            *env.tx = cached_env.tx;
-            env.block.basefee = cached_env.evm_env.block_env.basefee;
-
+            // Inspector must be dropped before we can call set_in_inner_context again.
+            drop(inspector);
             res
         };
+
+        // Reset inner context flag.
+        executor.set_in_inner_context(false, None);
 
         let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
