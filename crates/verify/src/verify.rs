@@ -422,7 +422,7 @@ impl VerifyArgs {
                 &project.settings
             } else {
                 eyre::bail!(
-                    "If cache is disabled, compilation profile must be provided with `--compiler-version` option or set in foundry.toml"
+                    "If cache is disabled, compilation profile must be provided with `--compilation-profile` option or set in foundry.toml"
                 )
             };
 
