@@ -662,6 +662,15 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the max number of transactions in a block
+    #[must_use]
+    pub fn with_max_transactions(mut self, max_transactions: Option<usize>) -> Self {
+        if let Some(max_transactions) = max_transactions {
+            self.max_transactions = max_transactions;
+        }
+        self
+    }
+
     /// Sets max number of blocks with transactions to keep in memory
     #[must_use]
     pub fn with_transaction_block_keeper<U: Into<usize>>(
