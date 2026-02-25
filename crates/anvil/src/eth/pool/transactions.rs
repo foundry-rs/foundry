@@ -80,7 +80,7 @@ pub struct PoolTransaction {
     /// priority of the transaction
     pub priority: TransactionPriority,
     /// Optional conditions (ERC-7796) that must be met for the transaction to be included.
-    pub conditions: Option<TransactionConditional>,
+    pub conditions: Option<Box<TransactionConditional>>,
 }
 
 // == impl PoolTransaction ==
