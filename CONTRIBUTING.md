@@ -223,7 +223,7 @@ Releases are automatically done by the release workflow when a tag is pushed, ho
 
 [rust-coc]: https://www.rust-lang.org/policies/code-of-conduct
 [dev-tg]: https://t.me/foundry_rs
-[foundry-book]: https://github.com/foundry-rs/foundry-book
+[foundry-book]: https://book.getfoundry.sh
 [support-tg]: https://t.me/foundry_support
 [mcve]: https://stackoverflow.com/help/mcve
 [hiding-a-comment]: https://docs.github.com/en/communities/moderating-comments-and-conversations/managing-disruptive-comments
