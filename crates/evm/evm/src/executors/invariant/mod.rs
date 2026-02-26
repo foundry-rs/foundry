@@ -26,8 +26,8 @@ use foundry_evm_core::{
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzCase, FuzzFixtures, FuzzedCases,
     invariant::{
-        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
-        SenderFilters, TargetedContract, TargetedContracts,
+        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
+        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{EvmFuzzState, invariant_strat, override_call_strat},
 };
@@ -1030,6 +1030,18 @@ impl<'a> InvariantExecutor<'a> {
         };
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
+    }
+
+    /// Computes the current invariant settings for the given invariant contract address.
+    ///
+    /// This extracts the target contracts, selectors, senders, and fail_on_revert setting
+    /// that are used to determine if a persisted counterexample is still valid.
+    pub fn compute_settings(&mut self, invariant_address: Address) -> Result<InvariantSettings> {
+        self.select_contract_artifacts(invariant_address)?;
+        let (sender_filters, targeted_contracts) =
+            self.select_contracts_and_senders(invariant_address)?;
+        let targets = targeted_contracts.targets.lock();
+        Ok(InvariantSettings::new(&targets, &sender_filters, self.config.fail_on_revert))
     }
 }
 
