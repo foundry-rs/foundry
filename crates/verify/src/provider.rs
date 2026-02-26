@@ -46,7 +46,6 @@ impl VerificationContext {
         Ok(Self { config, project, target_name, target_path, compiler_version, compiler_settings })
     }
 
-    /// Returns the standard JSON input for Solidity verification.
     pub fn get_standard_json_input(&self) -> Result<StandardJsonCompilerInput> {
         let mut input: StandardJsonCompilerInput = self
             .project
