@@ -285,7 +285,7 @@ impl BindJsonArgs {
             }
         }
 
-        for (s, fn_name) in structs_to_write.iter_mut().zip(fn_names.into_iter()) {
+        for (s, fn_name) in structs_to_write.iter_mut().zip(fn_names) {
             s.name_in_fns = fn_name.unwrap_or(s.name.clone());
         }
     }

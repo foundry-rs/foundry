@@ -776,7 +776,7 @@ async fn ensure_lint_rule_docs() {
     }
 
     let Some((source, content)) = fetched else {
-        eprintln!(
+        test_debug!(
             "Skipping lint docs validation; unable to fetch lint docs from any source:\n{}",
             fetch_errors.join("\n")
         );

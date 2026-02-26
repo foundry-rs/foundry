@@ -150,10 +150,10 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
                 }
             }
             // Check multi-variable declarations: `(bool success, ) = target.call(data);`
-            StmtKind::DeclMulti(vars, expr) => {
-                if is_low_level_call(expr) && vars.first().is_none_or(|v| v.is_none()) {
-                    self.ctx.emit(&UNCHECKED_CALL, stmt.span);
-                }
+            StmtKind::DeclMulti(vars, expr)
+                if is_low_level_call(expr) && vars.first().is_none_or(|v| v.is_none()) =>
+            {
+                self.ctx.emit(&UNCHECKED_CALL, stmt.span);
             }
             _ => {}
         }

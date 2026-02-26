@@ -436,11 +436,10 @@ pub fn line_with_tabs(
                 (num_tabs, num_spaces) = (num_tabs + 1, 0);
             }
         }
-        Some(Consolidation::WithoutSpaces) => {
-            if num_spaces != 0 {
-                (num_tabs, num_spaces) = (num_tabs + 1, 0);
-            }
+        Some(Consolidation::WithoutSpaces) if num_spaces != 0 => {
+            (num_tabs, num_spaces) = (num_tabs + 1, 0);
         }
+        Some(Consolidation::WithoutSpaces) => (),
         None => (),
     };
 

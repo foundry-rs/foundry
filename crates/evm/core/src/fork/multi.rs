@@ -278,9 +278,8 @@ impl MultiForkHandler {
     /// Returns the list of additional senders of a matching task for the given id, if any.
     fn find_in_progress_task(&mut self, id: &ForkId) -> Option<&mut Vec<CreateSender>> {
         for task in &mut self.pending_tasks {
-            if let ForkTask::Create(_, in_progress, _, additional) = task
-                && in_progress == id
-            {
+            let ForkTask::Create(_, in_progress, _, additional) = task;
+            if in_progress == id {
                 return Some(additional);
             }
         }

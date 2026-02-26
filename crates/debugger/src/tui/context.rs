@@ -196,11 +196,11 @@ impl TUIContext<'_> {
             }
 
             // Go to next call
-            KeyCode::Char('C') => {
-                if self.debug_arena().len() > self.draw_memory.inner_call_index + 1 {
-                    self.draw_memory.inner_call_index += 1;
-                    self.current_step = 0;
-                }
+            KeyCode::Char('C')
+                if self.debug_arena().len() > self.draw_memory.inner_call_index + 1 =>
+            {
+                self.draw_memory.inner_call_index += 1;
+                self.current_step = 0;
             }
 
             // Step forward

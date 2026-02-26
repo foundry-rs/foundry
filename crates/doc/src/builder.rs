@@ -183,7 +183,7 @@ impl DocBuilder {
                             HashMap<String, Vec<ParseItem>>,
                             HashMap<String, Vec<ParseItem>>,
                         ) = funcs.into_iter().partition(|(_, v)| v.len() == 1);
-                        remaining.extend(items.into_iter().flat_map(|(_, v)| v));
+                        remaining.extend(items.into_values().flatten());
 
                         // Each regular item will be written into its own file.
                         files = remaining

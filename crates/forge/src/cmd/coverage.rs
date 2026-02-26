@@ -255,7 +255,7 @@ impl CoverageArgs {
         let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
 
         // Add hit data to the coverage report
-        let data = outcome.results.iter().flat_map(|(_, suite)| {
+        let data = outcome.results.values().flat_map(|suite| {
             let mut hits = Vec::new();
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
