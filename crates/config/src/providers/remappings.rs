@@ -174,6 +174,7 @@ impl RemappingsProvider<'_> {
                 Entry::Vacant(e) => {
                     e.insert(path);
                 }
+                _ => {}
             }
         }
 
