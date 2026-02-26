@@ -60,11 +60,10 @@ impl ListArgs {
         {
             match self.list_local_senders() {
                 Ok(()) => {}
-                Err(e) => {
-                    if !self.all {
-                        sh_err!("{}", e)?;
-                    }
+                Err(e) if !self.all => {
+                    sh_err!("{}", e)?;
                 }
+                _ => {}
             }
         }
 
@@ -100,11 +99,10 @@ impl ListArgs {
                                 })
                         }
                     }
-                    Err(e) => {
-                        if !self.all {
-                            sh_err!("{}", e)?;
-                        }
+                    Err(e) if !self.all => {
+                        sh_err!("{}", e)?;
                     }
+                    _ => {}
                 }
             };
         }

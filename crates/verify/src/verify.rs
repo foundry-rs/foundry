@@ -285,18 +285,17 @@ impl VerifyArgs {
         self.verifier.verifier.client(self.etherscan.key().as_deref(), self.etherscan.chain, self.verifier.verifier_url.is_some())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
-                    Ok(url) => {
-                        if is_host_only(&url) {
-                            return err.wrap_err(format!(
-                                "Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"
-                            ))
-                        }
+                    Ok(url) if is_host_only(&url) => {
+                        return err.wrap_err(format!(
+                            "Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"
+                        ))
                     }
                     Err(url_err) => {
                         return err.wrap_err(format!(
                             "Invalid URL {verifier_url} provided: {url_err}"
                         ))
                     }
+                    _ => {}
                 }
             }
 

@@ -308,6 +308,7 @@ impl ClientFork {
         index: usize,
     ) -> Result<Option<AnyRpcTransaction>, TransportError> {
         if let Some(block) = self.block_by_number(number).await? {
+            #[allow(clippy::collapsible_match)]
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {
@@ -332,6 +333,7 @@ impl ClientFork {
         index: usize,
     ) -> Result<Option<AnyRpcTransaction>, TransportError> {
         if let Some(block) = self.block_by_hash(hash).await? {
+            #[allow(clippy::collapsible_match)]
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {

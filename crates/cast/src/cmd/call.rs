@@ -524,13 +524,12 @@ impl CallArgs {
 
         // Parse and apply state overrides
         for (addr, entries) in parse_state_overrides(&self.state_overrides)? {
-            state_overrides_builder = state_overrides_builder.with_state(addr, entries.into_iter());
+            state_overrides_builder = state_overrides_builder.with_state(addr, entries);
         }
 
         // Parse and apply state diff overrides
         for (addr, entries) in parse_state_overrides(&self.state_diff_overrides)? {
-            state_overrides_builder =
-                state_overrides_builder.with_state_diff(addr, entries.into_iter())
+            state_overrides_builder = state_overrides_builder.with_state_diff(addr, entries)
         }
 
         Ok(Some(state_overrides_builder.build()))
