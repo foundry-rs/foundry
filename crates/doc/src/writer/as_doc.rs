@@ -176,10 +176,12 @@ impl AsDoc for Document {
                         if let Some(all_vars) = item.variables() {
                             let (constants, state_vars): (Vec<_>, Vec<_>) =
                                 all_vars.into_iter().partition(|(item, _, _)| {
-                                    item.attrs.iter().any(|attr| match attr {
-                                        VariableAttribute::Constant(_) => true,
-                                        VariableAttribute::Immutable(_) => true,
-                                        _ => false,
+                                    item.attrs.iter().any(|attr| {
+                                        matches!(
+                                            attr,
+                                            VariableAttribute::Constant(_)
+                                                | VariableAttribute::Immutable(_)
+                                        )
                                     })
                                 });
 
