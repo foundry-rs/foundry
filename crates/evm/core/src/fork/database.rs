@@ -211,11 +211,7 @@ pub struct ForkDbStateSnapshot<N: Network> {
 
 impl<N: Network> ForkDbStateSnapshot<N> {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
-        self.state_snapshot
-            .storage
-            .get(&address)
-            .and_then(|storage| storage.get(&index))
-            .copied()
+        self.state_snapshot.storage.get(&address).and_then(|storage| storage.get(&index)).copied()
     }
 }
 
