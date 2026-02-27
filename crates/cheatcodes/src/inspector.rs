@@ -121,6 +121,11 @@ pub trait CheatcodesExecutor {
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         None
     }
+
+    /// Marks that the next EVM frame is an "inner context" so that isolation mode does not
+    /// trigger a nested `transact_inner`. `original_origin` is stored for the existing
+    /// inner-context adjustment logic that restores `tx.origin`.
+    fn set_in_inner_context(&mut self, _enabled: bool, _original_origin: Option<Address>) {}
 }
 
 /// Constructs [FoundryEvm] and runs a given closure with it.
@@ -764,6 +769,13 @@ impl Cheatcodes {
 
         if call.target_address == HARDHAT_CONSOLE_ADDRESS {
             return None;
+        }
+
+        // `expectRevert`: track max call depth. This is also done in `initialize_interp`, but
+        // precompile calls don't create an interpreter frame so we must also track it here.
+        // The callee executes at `curr_depth + 1`.
+        if let Some(expected) = &mut self.expected_revert {
+            expected.max_depth = max(curr_depth + 1, expected.max_depth);
         }
 
         // Handle expected calls

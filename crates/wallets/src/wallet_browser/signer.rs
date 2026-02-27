@@ -5,9 +5,8 @@ use std::{
 
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
-use alloy_network::TxSigner;
+use alloy_network::{Ethereum, Network, TransactionBuilder, TxSigner};
 use alloy_primitives::{Address, B256, ChainId, hex};
-use alloy_rpc_types::TransactionRequest;
 use alloy_signer::{Result, Signature, Signer, SignerSync};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
@@ -20,13 +19,13 @@ use crate::wallet_browser::{
 };
 
 #[derive(Clone, Debug)]
-pub struct BrowserSigner {
-    server: Arc<Mutex<BrowserWalletServer>>,
+pub struct BrowserSigner<N: Network = Ethereum> {
+    server: Arc<Mutex<BrowserWalletServer<N>>>,
     address: Address,
     chain_id: ChainId,
 }
 
-impl BrowserSigner {
+impl<N: Network> BrowserSigner<N> {
     pub async fn new(
         port: u16,
         open_browser: bool,
@@ -62,9 +61,9 @@ impl BrowserSigner {
     /// Send a transaction through the browser wallet.
     pub async fn send_transaction_via_browser(
         &self,
-        tx_request: TransactionRequest,
+        tx_request: N::TransactionRequest,
     ) -> Result<B256> {
-        if let Some(from) = tx_request.from
+        if let Some(from) = tx_request.from()
             && from != self.address
         {
             return Err(alloy_signer::Error::other(
@@ -72,7 +71,7 @@ impl BrowserSigner {
             ));
         }
 
-        if let Some(chain_id) = tx_request.chain_id
+        if let Some(chain_id) = tx_request.chain_id()
             && chain_id != self.chain_id
         {
             return Err(alloy_signer::Error::other(
@@ -92,7 +91,7 @@ impl BrowserSigner {
     }
 }
 
-impl SignerSync for BrowserSigner {
+impl<N: Network> SignerSync for BrowserSigner<N> {
     fn sign_hash_sync(&self, _hash: &B256) -> Result<Signature> {
         Err(alloy_signer::Error::other(
             "Browser wallets cannot sign raw hashes. Use sign_message or send_transaction instead.",
@@ -111,7 +110,7 @@ impl SignerSync for BrowserSigner {
 }
 
 #[async_trait]
-impl Signer for BrowserSigner {
+impl<N: Network> Signer for BrowserSigner<N> {
     async fn sign_hash(&self, _hash: &B256) -> Result<Signature> {
         Err(alloy_signer::Error::other(
             "Browser wallets sign and send transactions in one step. Use eth_sendTransaction instead.",
@@ -175,7 +174,7 @@ impl Signer for BrowserSigner {
 }
 
 #[async_trait]
-impl TxSigner<Signature> for BrowserSigner {
+impl<N: Network> TxSigner<Signature> for BrowserSigner<N> {
     fn address(&self) -> Address {
         Signer::address(self)
     }
@@ -188,7 +187,7 @@ impl TxSigner<Signature> for BrowserSigner {
     }
 }
 
-impl Drop for BrowserSigner {
+impl<N: Network> Drop for BrowserSigner<N> {
     fn drop(&mut self) {
         let server = self.server.clone();
 

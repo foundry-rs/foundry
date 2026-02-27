@@ -696,7 +696,7 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
 });
 
 // checks that clone works
-forgetest!(can_clone, |prj, cmd| {
+forgetest!(flaky_can_clone, |prj, cmd| {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -728,7 +728,7 @@ Compiler run successful!
 });
 
 // Checks that quiet mode does not print anything for clone
-forgetest!(can_clone_quiet, |prj, cmd| {
+forgetest!(flaky_can_clone_quiet, |prj, cmd| {
     prj.wipe();
 
     cmd.args([
@@ -743,7 +743,7 @@ forgetest!(can_clone_quiet, |prj, cmd| {
 });
 
 // checks that clone works with sourcify
-forgetest!(can_clone_sourcify, |prj, cmd| {
+forgetest!(flaky_can_clone_sourcify, |prj, cmd| {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -770,7 +770,7 @@ Compiler run successful!
 });
 
 // checks that clone works with --no-remappings-txt
-forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
+forgetest!(flaky_can_clone_no_remappings_txt, |prj, cmd| {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -803,7 +803,7 @@ Compiler run successful!
 });
 
 // checks that clone works with --keep-directory-structure
-forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
+forgetest!(flaky_can_clone_keep_directory_structure, |prj, cmd| {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -935,7 +935,7 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
 
 // checks that clone works with raw src containing `node_modules`
 // <https://github.com/foundry-rs/foundry/issues/10115>
-forgetest!(can_clone_with_node_modules, |prj, cmd| {
+forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);

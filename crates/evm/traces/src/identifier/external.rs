@@ -2,7 +2,7 @@ use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
 use alloy_primitives::{
     Address,
-    map::{Entry, HashMap},
+    map::{Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
@@ -61,7 +61,14 @@ impl ExternalIdentifier {
         }
         if let Some(config) = config {
             debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            fetchers.push(Arc::new(EtherscanFetcher::new(config.into_client()?)));
+            match config.into_client() {
+                Ok(client) => {
+                    fetchers.push(Arc::new(EtherscanFetcher::new(client)));
+                }
+                Err(err) => {
+                    warn!(target: "evm::traces::external", ?err, "failed to create etherscan client");
+                }
+            }
         }
         if fetchers.is_empty() {
             debug!(target: "evm::traces::external", "no fetchers enabled");
@@ -151,7 +158,7 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
-        let mut to_fetch = Vec::new();
+        let mut to_fetch = HashSet::new();
 
         // Check cache first.
         for &node in nodes {
@@ -163,7 +170,7 @@ impl TraceIdentifier for ExternalIdentifier {
                     // Do nothing. We know that this contract was not verified.
                 }
             } else {
-                to_fetch.push(address);
+                to_fetch.insert(address);
             }
         }
 
@@ -172,6 +179,7 @@ impl TraceIdentifier for ExternalIdentifier {
         }
         trace!(target: "evm::traces::external", "fetching {} addresses", to_fetch.len());
 
+        let to_fetch = to_fetch.into_iter().collect::<Vec<_>>();
         let fetchers =
             self.fetchers.iter().map(|fetcher| ExternalFetcher::new(fetcher.clone(), &to_fetch));
         let fetched_identities = foundry_common::block_on(
@@ -408,8 +416,6 @@ impl ExternalFetcherT for SourcifyFetcher {
         let url = format!("{url}/{address}?fields=abi,compilation", url = self.url);
         let response = self.client.get(url).send().await?;
         let code = response.status();
-        let response: SourcifyResponse = response.json().await?;
-        trace!(target: "evm::traces::external", "Sourcify response for {address}: {response:#?}");
         match code.as_u16() {
             // Not verified.
             404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
@@ -417,6 +423,8 @@ impl ExternalFetcherT for SourcifyFetcher {
             429 => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
+        let response: SourcifyResponse = response.json().await?;
+        trace!(target: "evm::traces::external", "Sourcify response for {address}: {response:#?}");
         match response {
             SourcifyResponse::Success(metadata) => Ok(Some(metadata.into())),
             SourcifyResponse::Error(error) => Err(EtherscanError::Unknown(format!("{error:#?}"))),

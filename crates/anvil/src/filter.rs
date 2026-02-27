@@ -7,7 +7,10 @@ use crate::{
 use alloy_primitives::{TxHash, map::HashMap};
 use alloy_rpc_types::{Filter, FilteredParams, Log};
 use anvil_core::eth::subscription::SubscriptionId;
-use anvil_rpc::response::ResponseResult;
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use futures::{Stream, StreamExt, channel::mpsc::Receiver};
 use std::{
     pin::Pin,
@@ -55,7 +58,11 @@ impl Filters {
             }
         }
         warn!(target: "node::filter", "No filter found for {}", id);
-        ResponseResult::success(Vec::<()>::new())
+        ResponseResult::error(RpcError {
+            code: ErrorCode::ServerError(-32000),
+            message: "filter not found".into(),
+            data: None,
+        })
     }
 
     /// Returns the original `Filter` of an `eth_newFilter`
