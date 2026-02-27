@@ -1874,7 +1874,7 @@ impl SimpleCast {
         let mut topics = vec![event.selector()];
         let mut data_tokens: Vec<u8> = Vec::new();
 
-        for (input, token) in event.inputs.iter().zip(tokens.into_iter()) {
+        for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
                 let ty = DynSolType::parse(&input.ty)?;
                 if matches!(

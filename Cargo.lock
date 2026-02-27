@@ -5166,7 +5166,6 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-network",
  "alloy-primitives",
- "alloy-rpc-types",
  "alloy-signer",
  "alloy-signer-aws",
  "alloy-signer-gcp",

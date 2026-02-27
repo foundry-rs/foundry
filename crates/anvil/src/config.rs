@@ -828,12 +828,6 @@ impl NodeConfig {
         self
     }
 
-    /// Disables storage caching
-    #[must_use]
-    pub fn no_storage_caching(self) -> Self {
-        self.with_storage_caching(true)
-    }
-
     #[must_use]
     pub fn with_storage_caching(mut self, storage_caching: bool) -> Self {
         self.no_storage_caching = storage_caching;

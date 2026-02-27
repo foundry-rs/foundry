@@ -382,11 +382,8 @@ pub async fn get_runtime_codes(
             )
         })?;
 
-    let onchain_runtime_code = if let Some(block) = block {
-        provider.get_code_at(address).block_id(BlockId::number(block)).await?
-    } else {
-        provider.get_code_at(address).await?
-    };
+    let block_id = block.map_or_else(BlockId::latest, BlockId::number);
+    let onchain_runtime_code = provider.get_code_at(address).block_id(block_id).await?;
 
     Ok((fork_runtime_code, onchain_runtime_code))
 }

@@ -177,7 +177,7 @@ impl InspectArgs {
 
 fn parse_errors(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
-    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+    for er in abi.errors.values().flatten() {
         let types = get_ty_sig(&er.inputs);
         let sig = format!("{:x}", er.selector());
         let sig_trimmed = &sig[0..8];
@@ -188,7 +188,7 @@ fn parse_errors(abi: &JsonAbi) -> Map<String, Value> {
 
 fn parse_events(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
-    for ev in abi.events.iter().flat_map(|(_, events)| events) {
+    for ev in abi.events.values().flatten() {
         let types = parse_event_params(&ev.inputs);
         let topic = hex::encode(keccak256(ev.signature()));
         out.insert(format!("{}({})", ev.name, types), format!("0x{topic}").into());
@@ -219,14 +219,14 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
         headers,
         |table| {
             // Print events
-            for ev in abi.events.iter().flat_map(|(_, events)| events) {
+            for ev in abi.events.values().flatten() {
                 let types = parse_event_params(&ev.inputs);
                 let selector = ev.selector().to_string();
                 table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
             }
 
             // Print errors
-            for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+            for er in abi.errors.values().flatten() {
                 let selector = er.selector().to_string();
                 table.add_row([
                     "error",
@@ -236,7 +236,7 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
             }
 
             // Print functions
-            for func in abi.functions.iter().flat_map(|(_, f)| f) {
+            for func in abi.functions.values().flatten() {
                 let selector = func.selector().to_string();
                 let state_mut = func.state_mutability.as_json_str();
                 let func_sig = if !func.outputs.is_empty() {
