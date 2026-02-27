@@ -829,8 +829,8 @@ impl NodeConfig {
     }
 
     #[must_use]
-    pub fn with_storage_caching(mut self, storage_caching: bool) -> Self {
-        self.no_storage_caching = storage_caching;
+    pub fn with_no_storage_caching(mut self, no_storage_caching: bool) -> Self {
+        self.no_storage_caching = no_storage_caching;
         self
     }
 
