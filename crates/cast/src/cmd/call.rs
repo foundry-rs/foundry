@@ -16,7 +16,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{LoadConfig, TraceResult, get_provider_with_curl, parse_ether_value},
+    utils::{LoadConfig, TraceResult, get_provider, parse_ether_value},
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -247,7 +247,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = get_provider_with_curl(&config, false)?;
+        let provider = get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -524,13 +524,12 @@ impl CallArgs {
 
         // Parse and apply state overrides
         for (addr, entries) in parse_state_overrides(&self.state_overrides)? {
-            state_overrides_builder = state_overrides_builder.with_state(addr, entries.into_iter());
+            state_overrides_builder = state_overrides_builder.with_state(addr, entries);
         }
 
         // Parse and apply state diff overrides
         for (addr, entries) in parse_state_overrides(&self.state_diff_overrides)? {
-            state_overrides_builder =
-                state_overrides_builder.with_state_diff(addr, entries.into_iter())
+            state_overrides_builder = state_overrides_builder.with_state_diff(addr, entries)
         }
 
         Ok(Some(state_overrides_builder.build()))

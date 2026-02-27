@@ -29,8 +29,8 @@ impl TracingExecutor {
         state_overrides: Option<StateOverride>,
     ) -> eyre::Result<Self> {
         let db = Backend::spawn(Some(fork))?;
-        // configures a bare version of the evm executor: no cheatcode inspector is enabled,
-        // tracing will be enabled only for the targeted transaction
+        // configures a bare version of the evm executor: no cheatcode and log_collector inspector
+        // is enabled, tracing will be enabled only for the targeted transaction
         let mut executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)

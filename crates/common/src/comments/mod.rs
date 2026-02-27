@@ -195,6 +195,7 @@ impl<'ast> CommentGatherer<'ast> {
             self.disabled_block_depth -= 1;
         }
 
+        #[allow(clippy::collapsible_match)]
         match token.kind {
             TokenKind::Whitespace => {
                 if let Some(mut idx) = token_text.find('\n') {
@@ -436,12 +437,10 @@ pub fn line_with_tabs(
                 (num_tabs, num_spaces) = (num_tabs + 1, 0);
             }
         }
-        Some(Consolidation::WithoutSpaces) => {
-            if num_spaces != 0 {
-                (num_tabs, num_spaces) = (num_tabs + 1, 0);
-            }
+        Some(Consolidation::WithoutSpaces) if num_spaces != 0 => {
+            (num_tabs, num_spaces) = (num_tabs + 1, 0);
         }
-        None => (),
+        _ => (),
     };
 
     // Append the normalized indentation and the rest of the line to the output

@@ -650,6 +650,7 @@ impl ScriptConfig {
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
+                    .logs(self.config.live_logs)
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)

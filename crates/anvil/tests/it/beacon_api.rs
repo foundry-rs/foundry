@@ -66,8 +66,7 @@ async fn test_beacon_api_get_blobs() {
             .with_blob_sidecar(sidecar)
             .value(U256::from(100));
 
-        let mut tx = WithOtherFields::new(tx);
-        tx.populate_blob_hashes();
+        let tx = WithOtherFields::new(tx);
 
         let pending = provider.send_transaction(tx).await.unwrap();
         pending_txs.push(pending);
