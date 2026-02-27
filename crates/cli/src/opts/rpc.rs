@@ -175,14 +175,18 @@ impl figment::Provider for EtherscanOpts {
 }
 
 impl EtherscanOpts {
+    fn key_str(&self) -> Option<&str> {
+        self.key.as_deref().filter(|key| !key.trim().is_empty())
+    }
+
     /// Returns true if the Etherscan API key is set.
     pub fn has_key(&self) -> bool {
-        self.key.as_ref().filter(|key| !key.trim().is_empty()).is_some()
+        self.key_str().is_some()
     }
 
     /// Returns the Etherscan API key.
     pub fn key(&self) -> Option<String> {
-        self.key.as_ref().filter(|key| !key.trim().is_empty()).cloned()
+        self.key_str().map(str::to_owned)
     }
 
     pub fn dict(&self) -> Dict {
