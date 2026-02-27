@@ -18,13 +18,24 @@
           };
 
           lib = pkgs.lib;
-          toolchain = fenix.packages.${system}.stable.toolchain;
+          toolchain = fenix.packages.${system}.stable.withComponents [
+            "rustc"
+            "cargo"
+            "rust-std"
+            "clippy-preview"
+            "rust-analyzer-preview"
+            "rust-src"
+          ];
+          nightlyToolchain = fenix.packages.${system}.latest.withComponents [
+            "rustfmt-preview"
+          ];
         in
         {
           default = pkgs.mkShell {
             nativeBuildInputs = with pkgs; [
               pkg-config
               toolchain
+              nightlyToolchain
 
               # test dependencies
               solc

@@ -476,7 +476,7 @@ impl<'a> Git<'a> {
     }
 
     pub fn is_repo_root(self) -> Result<bool> {
-        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
+        self.cmd().args(["rev-parse", "--show-cdup"]).get_stdout_lossy().map(|s| s.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {

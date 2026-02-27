@@ -61,8 +61,8 @@ test-doc: ## Run doc tests.
 
 .PHONY: test
 test: ## Run all tests.
-	make test-unit && \
-	make test-doc
+	$(MAKE) test-unit && \
+	$(MAKE) test-doc
 
 ##@ Linting
 
@@ -79,6 +79,17 @@ lint-clippy: ## Run clippy on the codebase.
 	--all-features \
 	-- -D warnings
 
+.PHONY: lint-clippy-fix
+lint-clippy-fix: ## Run clippy on the codebase and fix warnings.
+	cargo +nightly clippy \
+	--workspace \
+	--all-targets \
+	--all-features \
+	--fix \
+	--allow-dirty \
+	--allow-staged \
+	-- -D warnings
+
 .PHONY: lint-typos
 lint-typos: ## Run typos on the codebase.
 	@command -v typos >/dev/null || { \
@@ -89,9 +100,9 @@ lint-typos: ## Run typos on the codebase.
 
 .PHONY: lint
 lint: ## Run all linters.
-	make fmt && \
-	make lint-clippy && \
-	make lint-typos
+	$(MAKE) fmt && \
+	$(MAKE) lint-clippy && \
+	$(MAKE) lint-typos
 
 ##@ Other
 
@@ -105,9 +116,9 @@ deny: ## Perform a `cargo` deny check.
 
 .PHONY: pr
 pr: ## Run all checks and tests.
-	make deny && \
-	make lint && \
-	make test
+	$(MAKE) deny && \
+	$(MAKE) lint && \
+	$(MAKE) test
 
 # dprint formatting commands
 .PHONY: dprint-fmt

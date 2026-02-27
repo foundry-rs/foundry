@@ -1167,8 +1167,7 @@ impl Backend {
         );
 
         if env.networks.is_optimism() {
-            env.tx.enveloped_tx =
-                Some(alloy_rlp::encode(tx.pending_transaction.transaction.as_ref()).into());
+            env.tx.enveloped_tx = Some(tx.pending_transaction.transaction.encoded_2718().into());
         }
 
         let db = self.db.read().await;

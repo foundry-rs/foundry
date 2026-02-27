@@ -515,8 +515,8 @@ impl MultiContractRunnerBuilder {
         // Build revert decoder from ABIs of all artifacts.
         let abis = linker
             .contracts
-            .iter()
-            .filter_map(|(_, contract)| contract.abi.as_ref().map(|abi| abi.borrow()));
+            .values()
+            .filter_map(|contract| contract.abi.as_ref().map(|abi| abi.borrow()));
         let revert_decoder = RevertDecoder::new().with_abis(abis);
 
         let LinkOutput { libraries, libs_to_deploy } = linker.link_with_nonce_or_address(

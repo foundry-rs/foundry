@@ -662,6 +662,15 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the max number of transactions in a block
+    #[must_use]
+    pub fn with_max_transactions(mut self, max_transactions: Option<usize>) -> Self {
+        if let Some(max_transactions) = max_transactions {
+            self.max_transactions = max_transactions;
+        }
+        self
+    }
+
     /// Sets max number of blocks with transactions to keep in memory
     #[must_use]
     pub fn with_transaction_block_keeper<U: Into<usize>>(
@@ -817,12 +826,6 @@ impl NodeConfig {
     pub fn set_config_out(mut self, config_out: Option<PathBuf>) -> Self {
         self.config_out = config_out;
         self
-    }
-
-    /// Disables storage caching
-    #[must_use]
-    pub fn no_storage_caching(self) -> Self {
-        self.with_storage_caching(true)
     }
 
     #[must_use]
@@ -1212,7 +1215,7 @@ impl NodeConfig {
         eth_rpc_url: String,
         env: &mut Env,
         fees: &FeeManager,
-    ) -> Result<(ForkedDatabase, ClientForkConfig)> {
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)

@@ -19,7 +19,7 @@ use foundry_cli::{
     utils::{self, LoadConfig, get_provider_builder, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_tx_receipt_attr,
+    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr,
     provider::RetryProviderWithSigner, shell,
 };
 use foundry_config::{Chain, Config};
@@ -172,7 +172,7 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
 
     /// Sends a transaction and waits for receipt synchronously
     pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
-        let mut receipt: TransactionReceiptWithRevertReason =
+        let mut receipt: TransactionReceiptWithRevertReason<AnyNetwork> =
             self.provider.send_transaction_sync(tx).await?.into();
 
         // Allow to fail silently
@@ -259,7 +259,7 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        let mut receipt: TransactionReceiptWithRevertReason =
+        let mut receipt: TransactionReceiptWithRevertReason<AnyNetwork> =
             match self.provider.get_transaction_receipt(tx_hash).await? {
                 Some(r) => r,
                 None => {
@@ -287,11 +287,11 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
     /// Helper method to format transaction receipts consistently
     fn format_receipt(
         &self,
-        receipt: TransactionReceiptWithRevertReason,
+        receipt: TransactionReceiptWithRevertReason<AnyNetwork>,
         field: Option<String>,
     ) -> Result<String> {
         Ok(if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt, field)
+            get_pretty_receipt_w_reason_attr(&receipt, field)
                 .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
         } else if shell::is_json() {
             // to_value first to sort json object keys

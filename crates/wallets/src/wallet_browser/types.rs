@@ -1,6 +1,6 @@
 use alloy_dyn_abi::TypedData;
+use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, ChainId, TxHash};
-use alloy_rpc_types::TransactionRequest;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -37,11 +37,11 @@ impl<T> BrowserApiResponse<T> {
 /// Represents a transaction request sent to the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BrowserTransactionRequest {
+pub struct BrowserTransactionRequest<N: Network> {
     /// The unique identifier for the transaction.
     pub id: Uuid,
     /// The transaction request details.
-    pub request: TransactionRequest,
+    pub request: N::TransactionRequest,
 }
 
 /// Represents a transaction response sent from the browser wallet.

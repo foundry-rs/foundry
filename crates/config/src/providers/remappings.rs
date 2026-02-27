@@ -166,14 +166,15 @@ impl RemappingsProvider<'_> {
         ) {
             let context_mappings = mappings.entry(context).or_default();
             match context_mappings.entry(key) {
-                Entry::Occupied(mut e) => {
-                    if e.get().components().count() > path.components().count() {
-                        e.insert(path);
-                    }
+                Entry::Occupied(mut e)
+                    if e.get().components().count() > path.components().count() =>
+                {
+                    e.insert(path);
                 }
                 Entry::Vacant(e) => {
                     e.insert(path);
                 }
+                _ => {}
             }
         }
 

@@ -55,11 +55,10 @@ impl<'a> Lockfile<'a> {
     pub fn sync(&mut self, lib: &Path) -> Result<Option<DepMap>> {
         match self.read() {
             Ok(_) => {}
-            Err(e) => {
-                if !e.to_string().contains("Lockfile not found") {
-                    return Err(e);
-                }
+            Err(e) if !e.to_string().contains("Lockfile not found") => {
+                return Err(e);
             }
+            _ => {}
         }
 
         if let Some(git) = &self.git {
@@ -81,10 +80,8 @@ impl<'a> Lockfile<'a> {
                 let entry = self.deps.entry(rel_path.to_path_buf());
 
                 match entry {
-                    Entry::Occupied(e) => {
-                        if e.get().rev() != rev {
-                            out_of_sync.insert(rel_path.to_path_buf(), e.get().clone());
-                        }
+                    Entry::Occupied(e) if e.get().rev() != rev => {
+                        out_of_sync.insert(rel_path.to_path_buf(), e.get().clone());
                     }
                     Entry::Vacant(e) => {
                         // Check if there is branch specified for the submodule at rel_path in
@@ -108,6 +105,7 @@ impl<'a> Lockfile<'a> {
                         e.insert(dep_id.clone());
                         out_of_sync.insert(rel_path.to_path_buf(), dep_id);
                     }
+                    _ => {}
                 }
             }
 

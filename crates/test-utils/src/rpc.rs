@@ -137,12 +137,12 @@ pub fn next_ws_endpoint(chain: NamedChain) -> String {
     next_url(true, chain)
 }
 
-/// Returns a websocket URL that has access to archive state
+/// Returns an HTTP URL that has access to archive state
 pub fn next_http_archive_rpc_url() -> String {
     next_archive_url(false)
 }
 
-/// Returns an HTTP URL that has access to archive state
+/// Returns a websocket URL that has access to archive state
 pub fn next_ws_archive_rpc_url() -> String {
     next_archive_url(true)
 }

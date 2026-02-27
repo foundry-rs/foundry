@@ -308,6 +308,7 @@ impl ClientFork {
         index: usize,
     ) -> Result<Option<AnyRpcTransaction>, TransportError> {
         if let Some(block) = self.block_by_number(number).await? {
+            #[allow(clippy::collapsible_match)]
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {
@@ -332,6 +333,7 @@ impl ClientFork {
         index: usize,
     ) -> Result<Option<AnyRpcTransaction>, TransportError> {
         if let Some(block) = self.block_by_hash(hash).await? {
+            #[allow(clippy::collapsible_match)]
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {
@@ -685,7 +687,7 @@ impl ClientForkConfig {
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()
-                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?, // .interval(interval),
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?, /* .interval(interval), */
         );
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;
