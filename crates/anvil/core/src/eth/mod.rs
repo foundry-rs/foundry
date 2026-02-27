@@ -586,11 +586,6 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendUnsignedTransaction", with = "sequence")]
     EthSendUnsignedTransaction(Box<WithOtherFields<TransactionRequest>>),
 
-    /// Turn on call traces for transactions that are returned to the user when they execute a
-    /// transaction (instead of just txhash/receipt)
-    #[serde(rename = "anvil_enableTraces", with = "empty_params")]
-    EnableTraces(()),
-
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
     /// well as the ones that are being scheduled for future execution only.
     /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status>

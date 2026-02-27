@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
+use alloy_network::Network;
 use uuid::Uuid;
 
 use crate::wallet_browser::types::{BrowserSignRequest, BrowserTransactionRequest};
@@ -69,7 +70,7 @@ pub(crate) trait HasId {
     fn id(&self) -> &Uuid;
 }
 
-impl HasId for BrowserTransactionRequest {
+impl<N: Network> HasId for BrowserTransactionRequest<N> {
     fn id(&self) -> &Uuid {
         &self.id
     }

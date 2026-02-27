@@ -18,6 +18,7 @@ use alloy_consensus::{
     proofs::calculate_receipt_root, transaction::Either,
 };
 use alloy_eips::{
+    Encodable2718,
     eip7685::EMPTY_REQUESTS_HASH,
     eip7702::{RecoveredAuthority, RecoveredAuthorization},
     eip7840::BlobParams,
@@ -305,7 +306,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         }
 
         if self.networks.is_optimism() {
-            tx_env.enveloped_tx = Some(alloy_rlp::encode(tx.transaction.as_ref()).into());
+            tx_env.enveloped_tx = Some(tx.transaction.encoded_2718().into());
         }
 
         Env::new(self.evm_env.clone(), tx_env, self.networks)
