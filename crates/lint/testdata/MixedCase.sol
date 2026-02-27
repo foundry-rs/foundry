@@ -72,6 +72,19 @@ contract MixedCaseTest {
     function ERC20_DoSomething() public {} // invalid because of the underscore
     //~^NOTE: function names should use mixedCase
 
+    // Common abbreviations are allowed by default: ID, URL, URI, API, JSON, XML, HTML, HTTP, HTTPS
+    uint256 marketID;
+    uint256 userID;
+    uint256 optionID;
+    uint256 apiURL;
+    uint256 baseURL;
+    function parseJSON() public {}
+    function fetchAPIData() public {}
+    function processHTML() public {}
+    function sendHTTPRequest() public {}
+    function handleHTTPSConnection() public {}
+    function getXMLData() public {}
+
     // SCREAMING_SNAKE_CASE is allowed for functions that are most likely constant getters
     function MAX_NUMBER() external view returns (uint256) {}
     function CUSTOM_TYPE_RETURN() external view returns (IERC20) {}

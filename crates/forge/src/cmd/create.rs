@@ -455,6 +455,14 @@ impl CreateArgs {
         constructor: &Constructor,
         constructor_args: &[String],
     ) -> Result<Vec<DynSolValue>> {
+        if constructor.inputs.len() != constructor_args.len() {
+            eyre::bail!(
+                "Constructor argument count mismatch: expected {} but got {}",
+                constructor.inputs.len(),
+                constructor_args.len()
+            );
+        }
+
         let mut params = Vec::with_capacity(constructor.inputs.len());
         for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
             // resolve the input type directly

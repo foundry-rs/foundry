@@ -93,6 +93,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub ffi: bool,
 
+    /// Whether to show `console.log` outputs in realtime during script/test execution
+    #[arg(long)]
+    #[serde(skip)]
+    pub live_logs: bool,
+
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     #[arg(long)]
     #[serde(skip)]
@@ -155,6 +160,10 @@ impl Provider for EvmArgs {
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
+        if self.live_logs {
+            dict.insert("live_logs".to_string(), self.live_logs.into());
         }
 
         if self.isolate {

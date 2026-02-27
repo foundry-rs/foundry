@@ -134,7 +134,7 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
     #[arg(
         long,
-        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws"],
+        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws", "browser"],
     )]
     pub unlocked: bool,
 
@@ -650,6 +650,7 @@ impl ScriptConfig {
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
+                    .logs(self.config.live_logs)
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)

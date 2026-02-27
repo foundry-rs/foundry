@@ -208,7 +208,7 @@ impl<'a> Linker<'a> {
             .filter(|id| {
                 // Filter out already provided libraries.
                 let (file, name) = self.convert_artifact_id_to_lib_path(id);
-                !libraries.libs.contains_key(&file) || !libraries.libs[&file].contains_key(&name)
+                libraries.libs.get(&file).is_none_or(|lib| !lib.contains_key(&name))
             })
             .map(|id| {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).

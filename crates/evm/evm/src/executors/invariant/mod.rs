@@ -446,7 +446,7 @@ impl<'a> InvariantExecutor<'a> {
                     // inconsistencies whenever proptest tries to use the input case after test
                     // execution.
                     // See <https://github.com/foundry-rs/foundry/issues/9764>.
-                    let mut state_changeset = call_result.state_changeset.clone();
+                    let mut state_changeset = std::mem::take(&mut call_result.state_changeset);
                     if !call_result.reverted {
                         collect_data(
                             &invariant_test,
@@ -470,11 +470,9 @@ impl<'a> InvariantExecutor<'a> {
                     {
                         warn!(target: "forge::test", "{error}");
                     }
-                    current_run.fuzz_runs.push(FuzzCase {
-                        calldata: tx.call_details.calldata.clone(),
-                        gas: call_result.gas_used,
-                        stipend: call_result.stipend,
-                    });
+                    current_run
+                        .fuzz_runs
+                        .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.

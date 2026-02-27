@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
-        parity::LocalizedTransactionTrace,
+        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
@@ -69,7 +69,6 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
-        wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
 };
@@ -345,6 +344,9 @@ impl EthApi {
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
+            EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
+                self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
+            }
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -455,7 +457,6 @@ impl EthApi {
             EthRequest::EthSendUnsignedTransaction(tx) => {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
-            EthRequest::EnableTraces(_) => self.anvil_enable_traces().await.to_rpc_result(),
             EthRequest::EthNewFilter(filter) => self.new_filter(filter).await.to_rpc_result(),
             EthRequest::EthGetFilterChanges(id) => self.get_filter_changes(&id).await,
             EthRequest::EthNewBlockFilter(_) => self.new_block_filter().await.to_rpc_result(),
@@ -512,11 +513,6 @@ impl EthApi {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
-            EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
-            EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
-            EthRequest::AnvilSetExecutor(executor_pk) => {
-                self.anvil_set_executor(executor_pk).to_rpc_result()
-            }
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -1865,7 +1861,7 @@ impl EthApi {
         if let Some(filter) = self.filters.get_log_filter(id).await {
             self.backend.logs(filter).await
         } else {
-            Ok(Vec::new())
+            Err(BlockchainError::FilterNotFound)
         }
     }
 
@@ -1995,6 +1991,18 @@ impl EthApi {
     ) -> Result<Vec<LocalizedTransactionTrace>> {
         node_info!("trace_filter");
         self.backend.trace_filter(filter).await
+    }
+
+    /// Replays all transactions in a block returning the requested traces for each transaction
+    ///
+    /// Handler for RPC call: `trace_replayBlockTransactions`
+    pub async fn trace_replay_block_transactions(
+        &self,
+        block: BlockNumber,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<Vec<TraceResultsWithTransactionHash>> {
+        node_info!("trace_replayBlockTransactions");
+        self.backend.trace_replay_block_transactions(block, trace_types).await
     }
 }
 
@@ -2146,12 +2154,14 @@ impl EthApi {
         node_info!("anvil_reset");
         if let Some(forking) = forking {
             // if we're resetting the fork we need to reset the instance id
-            self.backend.reset_fork(forking).await
+            self.backend.reset_fork(forking).await?;
         } else {
             // Reset to a fresh in-memory state
-
-            self.backend.reset_to_in_mem().await
+            self.backend.reset_to_in_mem().await?;
         }
+        // Clear pending transactions since they reference the old chain state.
+        self.pool.clear();
+        Ok(())
     }
 
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
@@ -2175,7 +2185,7 @@ impl EthApi {
     pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_addBalance");
         let current_balance = self.backend.get_balance(address, None).await?;
-        self.backend.set_balance(address, current_balance + balance).await?;
+        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
         Ok(())
     }
 
@@ -2806,15 +2816,6 @@ impl EthApi {
         Ok(())
     }
 
-    /// Turn on call traces for transactions that are returned to the user when they execute a
-    /// transaction (instead of just txhash/receipt)
-    ///
-    /// Handler for ETH RPC call: `anvil_enableTraces`
-    pub async fn anvil_enable_traces(&self) -> Result<()> {
-        node_info!("anvil_enableTraces");
-        Err(BlockchainError::RpcUnimplemented)
-    }
-
     /// Execute a transaction regardless of signature status
     ///
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
@@ -2936,33 +2937,6 @@ impl EthApi {
         }
 
         Ok(content)
-    }
-}
-
-// ===== impl Wallet endpoints =====
-impl EthApi {
-    /// Get the capabilities of the wallet.
-    ///
-    /// See also [EIP-5792][eip-5792].
-    ///
-    /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
-    pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
-        node_info!("wallet_getCapabilities");
-        Ok(self.backend.get_capabilities())
-    }
-
-    /// Add an address to the delegation capability of wallet.
-    ///
-    /// This entails that the executor will now be able to sponsor transactions to this address.
-    pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
-        node_info!("anvil_addCapability");
-        self.backend.add_capability(address);
-        Ok(())
-    }
-
-    pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
-        node_info!("anvil_setExecutor");
-        self.backend.set_executor(executor_pk)
     }
 }
 
@@ -3328,10 +3302,14 @@ impl EthApi {
         request.kind().is_none().then(|| request.set_kind(TxKind::default()));
         if request.gas_limit().is_none() {
             request.set_gas_limit(
-                self.do_estimate_gas(request.as_ref().clone(), None, EvmOverrides::default())
-                    .await
-                    .map(|v| v as u64)
-                    .unwrap_or(self.backend.gas_limit()),
+                self.do_estimate_gas(
+                    request.as_ref().clone().into(),
+                    None,
+                    EvmOverrides::default(),
+                )
+                .await
+                .map(|v| v as u64)
+                .unwrap_or(self.backend.gas_limit()),
             );
         }
 

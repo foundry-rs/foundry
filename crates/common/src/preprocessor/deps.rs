@@ -182,6 +182,7 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        #[allow(clippy::collapsible_match)]
         match &expr.kind {
             ExprKind::Call(call_expr, call_args, named_args) => {
                 if let Some(dependency) = handle_call_expr(

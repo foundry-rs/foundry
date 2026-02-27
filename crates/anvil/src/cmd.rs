@@ -188,6 +188,10 @@ pub struct NodeArgs {
     #[arg(long)]
     pub transaction_block_keeper: Option<usize>,
 
+    /// Maximum number of transactions in a block.
+    #[arg(long)]
+    pub max_transactions: Option<usize>,
+
     #[command(flatten)]
     pub evm: AnvilEvmArgs,
 
@@ -234,6 +238,7 @@ impl NodeArgs {
         Ok(NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
+            .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
@@ -281,6 +286,7 @@ impl NodeArgs {
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
+            .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
             .with_networks(self.evm.networks)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
@@ -543,6 +549,10 @@ pub struct AnvilEvmArgs {
         conflicts_with = "gas_limit"
     )]
     pub disable_block_gas_limit: bool,
+
+    /// Enable the transaction gas limit check as imposed by EIP-7825 (Osaka hardfork).
+    #[arg(long, visible_alias = "tx-gas-limit", help_heading = "Environment config")]
+    pub enable_tx_gas_limit: bool,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. To
     /// disable entirely, use `--disable-code-size-limit`. By default, it is 0x6000 (~25kb).
@@ -893,6 +903,16 @@ mod tests {
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
         assert!(args.is_err());
+    }
+
+    #[test]
+    fn can_parse_enable_tx_gas_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--enable-tx-gas-limit"]);
+        assert!(args.evm.enable_tx_gas_limit);
+
+        // Also test the alias
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--tx-gas-limit"]);
+        assert!(args.evm.enable_tx_gas_limit);
     }
 
     #[test]

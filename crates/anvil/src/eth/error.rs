@@ -123,6 +123,8 @@ pub enum BlockchainError {
     },
     #[error("Invalid transaction request: {0}")]
     InvalidTransactionRequest(String),
+    #[error("filter not found")]
+    FilterNotFound,
 }
 
 impl From<eyre::Report> for BlockchainError {
@@ -577,6 +579,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::RecoveryError(_) => {
                     RpcError::invalid_params(err.to_string())
                 }
+                BlockchainError::FilterNotFound => RpcError {
+                    code: ErrorCode::ServerError(-32000),
+                    message: "filter not found".into(),
+                    data: None,
+                },
             }
             .into(),
         }

@@ -98,6 +98,8 @@ Encountered a total of 2 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -174,6 +176,8 @@ Encountered 1 failing test in test/InvariantAssume.t.sol:InvariantAssume
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -304,6 +308,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -372,6 +378,8 @@ Encountered 1 failing test in test/InvariantCustomError.t.sol:InvariantCustomErr
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -538,6 +546,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -624,6 +634,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -695,6 +707,8 @@ Encountered 1 failing test in test/InvariantHandlerFailure.t.sol:InvariantHandle
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -778,6 +792,8 @@ Encountered 1 failing test in test/InvariantInnerContract.t.sol:InvariantInnerCo
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 
@@ -888,6 +904,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -979,6 +997,8 @@ Encountered 1 failing test in test/InvariantReentrancy.t.sol:InvariantReentrancy
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -1092,6 +1112,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -1191,6 +1213,8 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -1289,6 +1313,8 @@ Encountered 1 failing test in test/InvariantScrapeValues.t.sol:FindFromReturnVal
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -1588,6 +1614,8 @@ Encountered 2 failing tests in test/InvariantTest1.t.sol:InvariantTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
