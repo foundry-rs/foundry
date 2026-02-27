@@ -55,11 +55,6 @@ main() {
     esac; shift
   done
 
-  # Tempo only distributes a subset of the binaries
-  if [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
-    BINS=(forge cast)
-  fi
-
   CARGO_BUILD_ARGS=(--release)
 
   if [ -n "$FOUNDRYUP_JOBS" ]; then

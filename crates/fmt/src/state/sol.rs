@@ -407,7 +407,9 @@ impl<'ast> State<'_, 'ast> {
             self.block_depth -= 1;
         } else {
             if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                self.zerobreak();
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                self.s.offset(-self.ind);
             } else if self.config.bracket_spacing {
                 self.nbsp();
             };
@@ -2431,20 +2433,19 @@ impl<'ast> State<'_, 'ast> {
 
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve => {
-                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
-                {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Preserve
+                if self.is_stmt_in_new_line(cond, then)
+                    || self.is_multiline_block_stmt(then, true) =>
+            {
+                return Decision { outcome: false, is_cached: false };
             }
-            config::SingleLineBlockStyle::Single => {
-                if self.is_multiline_block_stmt(then, true) {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Single if self.is_multiline_block_stmt(then, true) => {
+                return Decision { outcome: false, is_cached: false };
             }
             config::SingleLineBlockStyle::Multi => {
                 return Decision { outcome: false, is_cached: false };
             }
+            _ => {}
         };
 
         // If no decision was made, estimate the length to be formatted.

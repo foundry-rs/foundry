@@ -13,8 +13,8 @@ mod types;
 mod tests {
     use std::time::Duration;
 
+    use alloy_network::{Ethereum, Network, TransactionBuilder};
     use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, address};
-    use alloy_rpc_types::TransactionRequest;
     use axum::http::{HeaderMap, HeaderValue};
     use tokio::task::JoinHandle;
     use uuid::Uuid;
@@ -36,7 +36,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_server() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
 
         // Check initial state
@@ -56,7 +56,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_disconnect_wallet() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
 
@@ -93,7 +93,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_switch_wallet() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
 
@@ -116,7 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_response_both_hash_and_error_rejected() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -151,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_response_neither_hash_nor_error_rejected() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -181,7 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_response_zero_hash_rejected() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -216,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_client_accept() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -252,7 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_client_not_requested() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -288,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_invalid_response_format() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -314,7 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_client_reject() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -356,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_multiple_transaction_requests() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -377,8 +377,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            let BrowserApiResponse::Ok(pending_tx) =
-                resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
+            let BrowserApiResponse::Ok(pending_tx) = resp
+                .json::<BrowserApiResponse<BrowserTransactionRequest<Ethereum>>>()
+                .await
+                .unwrap()
             else {
                 panic!("expected BrowserApiResponse::Ok with a pending transaction");
             };
@@ -421,8 +423,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            let BrowserApiResponse::Ok(pending_tx) =
-                resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
+            let BrowserApiResponse::Ok(pending_tx) = resp
+                .json::<BrowserApiResponse<BrowserTransactionRequest<Ethereum>>>()
+                .await
+                .unwrap()
             else {
                 panic!("expected BrowserApiResponse::Ok with a pending transaction");
             };
@@ -467,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_sign_response_both_signature_and_error_rejected() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -501,7 +505,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_sign_response_neither_hash_nor_error_rejected() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -531,7 +535,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_sign_client_accept() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -567,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_sign_client_not_requested() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -603,7 +607,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_sign_invalid_response_format() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -629,7 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_sign_client_reject() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -666,7 +670,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_multiple_sign_requests() {
-        let mut server = create_server();
+        let mut server = create_server::<Ethereum>();
         let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
@@ -770,21 +774,21 @@ mod tests {
     }
 
     /// Helper to create a default browser wallet server.
-    fn create_server() -> BrowserWalletServer {
+    fn create_server<N: Network>() -> BrowserWalletServer<N> {
         BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT, DEFAULT_DEVELOPMENT)
     }
 
     /// Helper to create a reqwest client with the session token header.
-    fn client_with_token(server: &BrowserWalletServer) -> reqwest::Client {
+    fn client_with_token<N: Network>(server: &BrowserWalletServer<N>) -> reqwest::Client {
         let mut headers = HeaderMap::new();
         headers.insert("X-Session-Token", HeaderValue::from_str(server.session_token()).unwrap());
         reqwest::Client::builder().default_headers(headers).build().unwrap()
     }
 
     /// Helper to connect a wallet to the server.
-    async fn connect_wallet(
+    async fn connect_wallet<N: Network>(
         client: &reqwest::Client,
-        server: &BrowserWalletServer,
+        server: &BrowserWalletServer<N>,
         connection: Connection,
     ) {
         let resp = client
@@ -795,7 +799,10 @@ mod tests {
     }
 
     /// Helper to disconnect a wallet from the server.
-    async fn disconnect_wallet(client: &reqwest::Client, server: &BrowserWalletServer) {
+    async fn disconnect_wallet<N: Network>(
+        client: &reqwest::Client,
+        server: &BrowserWalletServer<N>,
+    ) {
         let resp = client
             .post(format!("http://localhost:{}/api/connection", server.port()))
             .json(&Option::<Connection>::None)
@@ -804,9 +811,9 @@ mod tests {
     }
 
     /// Spawn the transaction signing flow in the background and return the join handle.
-    async fn wait_for_transaction_signing(
-        server: &BrowserWalletServer,
-        tx_request: BrowserTransactionRequest,
+    async fn wait_for_transaction_signing<N: Network>(
+        server: &BrowserWalletServer<N>,
+        tx_request: BrowserTransactionRequest<N>,
     ) -> JoinHandle<Result<TxHash, BrowserWalletError>> {
         // Spawn the signing flow in the background
         let browser_server = server.clone();
@@ -819,8 +826,8 @@ mod tests {
     }
 
     /// Spawn the message signing flow in the background and return the join handle.
-    async fn wait_for_message_signing(
-        server: &BrowserWalletServer,
+    async fn wait_for_message_signing<N: Network>(
+        server: &BrowserWalletServer<N>,
         sign_request: BrowserSignRequest,
     ) -> JoinHandle<Result<Bytes, BrowserWalletError>> {
         // Spawn the signing flow in the background
@@ -834,32 +841,25 @@ mod tests {
     }
 
     /// Create a simple browser transaction request.
-    fn create_browser_transaction_request() -> (Uuid, BrowserTransactionRequest) {
+    fn create_browser_transaction_request<N: Network>() -> (Uuid, BrowserTransactionRequest<N>) {
         let id = Uuid::new_v4();
-        let tx = BrowserTransactionRequest {
-            id,
-            request: TransactionRequest {
-                from: Some(ALICE),
-                to: Some(TxKind::Call(BOB)),
-                value: Some(U256::from(1000)),
-                ..Default::default()
-            },
-        };
+        let request = N::TransactionRequest::default()
+            .with_from(ALICE)
+            .with_to(BOB)
+            .with_value(U256::from(1000));
+        let tx = BrowserTransactionRequest { id, request };
         (id, tx)
     }
 
     /// Create a different browser transaction request (from the first one).
-    fn create_different_browser_transaction_request() -> (Uuid, BrowserTransactionRequest) {
+    fn create_different_browser_transaction_request<N: Network>()
+    -> (Uuid, BrowserTransactionRequest<N>) {
         let id = Uuid::new_v4();
-        let tx = BrowserTransactionRequest {
-            id,
-            request: TransactionRequest {
-                from: Some(BOB),
-                to: Some(TxKind::Call(ALICE)),
-                value: Some(U256::from(2000)),
-                ..Default::default()
-            },
-        };
+        let request = N::TransactionRequest::default()
+            .with_from(BOB)
+            .with_to(ALICE)
+            .with_value(U256::from(2000));
+        let tx = BrowserTransactionRequest { id, request };
         (id, tx)
     }
 
@@ -886,9 +886,9 @@ mod tests {
     }
 
     /// Check that the transaction request queue is empty, if not panic.
-    async fn check_transaction_request_queue_empty(
+    async fn check_transaction_request_queue_empty<N: Network>(
         client: &reqwest::Client,
-        server: &BrowserWalletServer,
+        server: &BrowserWalletServer<N>,
     ) {
         let resp = client
             .get(format!("http://localhost:{}/api/transaction/request", server.port()))
@@ -897,7 +897,7 @@ mod tests {
             .unwrap();
 
         let BrowserApiResponse::Error { message } =
-            resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
+            resp.json::<BrowserApiResponse<BrowserTransactionRequest<N>>>().await.unwrap()
         else {
             panic!("expected BrowserApiResponse::Error (no pending transaction), but got Ok");
         };
@@ -906,9 +906,9 @@ mod tests {
     }
 
     /// Check that the transaction request matches the expected request ID and fields.
-    async fn check_transaction_request_content(
+    async fn check_transaction_request_content<N: Network>(
         client: &reqwest::Client,
-        server: &BrowserWalletServer,
+        server: &BrowserWalletServer<N>,
         tx_request_id: Uuid,
     ) {
         let resp = client
@@ -918,21 +918,21 @@ mod tests {
             .unwrap();
 
         let BrowserApiResponse::Ok(pending_tx) =
-            resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
+            resp.json::<BrowserApiResponse<BrowserTransactionRequest<N>>>().await.unwrap()
         else {
             panic!("expected BrowserApiResponse::Ok with a pending transaction");
         };
 
         assert_eq!(pending_tx.id, tx_request_id);
-        assert_eq!(pending_tx.request.from, Some(ALICE));
-        assert_eq!(pending_tx.request.to, Some(TxKind::Call(BOB)));
-        assert_eq!(pending_tx.request.value, Some(U256::from(1000)));
+        assert_eq!(pending_tx.request.from(), Some(ALICE));
+        assert_eq!(pending_tx.request.kind(), Some(TxKind::Call(BOB)));
+        assert_eq!(pending_tx.request.value(), Some(U256::from(1000)));
     }
 
     /// Check that the sign request queue is empty, if not panic.
-    async fn check_sign_request_queue_empty(
+    async fn check_sign_request_queue_empty<N: Network>(
         client: &reqwest::Client,
-        server: &BrowserWalletServer,
+        server: &BrowserWalletServer<N>,
     ) {
         let resp = client
             .get(format!("http://localhost:{}/api/signing/request", server.port()))
@@ -950,9 +950,9 @@ mod tests {
     }
 
     /// Check that the sign request matches the expected request ID and fields.
-    async fn check_sign_request_content(
+    async fn check_sign_request_content<N: Network>(
         client: &reqwest::Client,
-        server: &BrowserWalletServer,
+        server: &BrowserWalletServer<N>,
         sign_request_id: Uuid,
     ) {
         let resp = client

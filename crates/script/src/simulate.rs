@@ -60,7 +60,7 @@ impl PreSimulationState {
             .map(|tx| {
                 let rpc = tx.rpc.expect("missing broadcastable tx rpc url");
                 let sender = tx.transaction.from().expect("all transactions should have a sender");
-                let nonce = tx.transaction.nonce().expect("all transactions should have a sender");
+                let nonce = tx.transaction.nonce().expect("all transactions should have a nonce");
                 let to = tx.transaction.to();
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);

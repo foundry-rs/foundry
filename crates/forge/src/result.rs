@@ -6,7 +6,7 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    Address, I256, Log,
+    Address, I256, Log, U256,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
@@ -46,6 +46,8 @@ pub struct TestOutcome {
     pub gas_report: Option<GasReport>,
     /// The runner used to execute the tests.
     pub runner: Option<MultiContractRunner>,
+    /// The fuzz seed used for the test run.
+    pub fuzz_seed: Option<U256>,
 }
 
 impl TestOutcome {
@@ -54,13 +56,14 @@ impl TestOutcome {
         runner: Option<MultiContractRunner>,
         results: BTreeMap<String, SuiteResult>,
         allow_failure: bool,
+        fuzz_seed: Option<U256>,
     ) -> Self {
-        Self { results, allow_failure, last_run_decoder: None, gas_report: None, runner }
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None, runner, fuzz_seed }
     }
 
     /// Creates a new empty test outcome.
     pub fn empty(runner: Option<MultiContractRunner>, allow_failure: bool) -> Self {
-        Self::new(runner, BTreeMap::new(), allow_failure)
+        Self::new(runner, BTreeMap::new(), allow_failure, None)
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -128,6 +131,11 @@ impl TestOutcome {
     /// Returns the number of tests that failed.
     pub fn failed(&self) -> usize {
         self.failures().count()
+    }
+
+    /// Returns `true` if any fuzz or invariant test failed.
+    pub fn has_fuzz_failures(&self) -> bool {
+        self.failures().any(|(_, t)| t.kind.is_fuzz() || t.kind.is_invariant())
     }
 
     /// Sums up all the durations of all individual test suites.
@@ -199,6 +207,17 @@ impl TestOutcome {
             failures,
             test_word
         )?;
+
+        // Print seed for fuzz/invariant test failures to enable reproduction.
+        if let Some(seed) = self.fuzz_seed
+            && outcome.has_fuzz_failures()
+        {
+            sh_println!(
+                "\nFuzz seed: {} (use {} to reproduce)",
+                format!("{seed:#x}").cyan(),
+                "`--fuzz-seed`".cyan()
+            )?;
+        }
 
         std::process::exit(1);
     }
@@ -895,6 +914,16 @@ impl Default for TestKind {
 }
 
 impl TestKind {
+    /// Returns `true` if this is a fuzz test.
+    pub fn is_fuzz(&self) -> bool {
+        matches!(self, Self::Fuzz { .. })
+    }
+
+    /// Returns `true` if this is an invariant test.
+    pub fn is_invariant(&self) -> bool {
+        matches!(self, Self::Invariant { .. })
+    }
+
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
         match self {

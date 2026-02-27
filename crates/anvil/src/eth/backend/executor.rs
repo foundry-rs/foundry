@@ -18,6 +18,7 @@ use alloy_consensus::{
     proofs::calculate_receipt_root, transaction::Either,
 };
 use alloy_eips::{
+    Encodable2718,
     eip7685::EMPTY_REQUESTS_HASH,
     eip7702::{RecoveredAuthority, RecoveredAuthorization},
     eip7840::BlobParams,
@@ -71,7 +72,7 @@ impl ExecutedTransaction {
         *cumulative_gas_used = cumulative_gas_used.saturating_add(self.gas_used);
 
         // successful return see [Return]
-        let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
+        let status_code = u8::from(self.exit_reason.is_ok());
         let receipt_with_bloom: ReceiptWithBloom = Receipt {
             status: (status_code == 1).into(),
             cumulative_gas_used: *cumulative_gas_used,
@@ -305,7 +306,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         }
 
         if self.networks.is_optimism() {
-            tx_env.enveloped_tx = Some(alloy_rlp::encode(tx.transaction.as_ref()).into());
+            tx_env.enveloped_tx = Some(tx.transaction.encoded_2718().into());
         }
 
         Env::new(self.evm_env.clone(), tx_env, self.networks)

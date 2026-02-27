@@ -213,15 +213,19 @@ impl SessionSource {
 
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
-                stack.chisel_state(final_pc).trace_mode(TraceMode::Call).cheatcodes(
-                    CheatsConfig::new(
-                        &self.config.foundry_config,
-                        self.config.evm_opts.clone(),
-                        None,
-                        None,
+                stack
+                    .logs(self.config.foundry_config.live_logs)
+                    .chisel_state(final_pc)
+                    .trace_mode(TraceMode::Call)
+                    .cheatcodes(
+                        CheatsConfig::new(
+                            &self.config.foundry_config,
+                            self.config.evm_opts.clone(),
+                            None,
+                            None,
+                        )
+                        .into(),
                     )
-                    .into(),
-                )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .spec_id(self.config.foundry_config.evm_spec_id())
@@ -521,16 +525,10 @@ impl Type {
             pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(DynSolType::Address)),
             pt::Expression::HexNumberLiteral(_, s, _) => {
                 match s.parse::<Address>() {
-                    Ok(addr) => {
-                        if *s == addr.to_checksum(None) {
-                            Some(Self::Builtin(DynSolType::Address))
-                        } else {
-                            Some(Self::Builtin(DynSolType::Uint(256)))
-                        }
-                    },
-                    _ => {
-                        Some(Self::Builtin(DynSolType::Uint(256)))
+                    Ok(addr) if *s == addr.to_checksum(None) => {
+                        Some(Self::Builtin(DynSolType::Address))
                     }
+                    _ => Some(Self::Builtin(DynSolType::Uint(256))),
                 }
             }
 
@@ -667,6 +665,7 @@ impl Type {
 
         // Type members, like array, bytes etc
         #[expect(clippy::single_match)]
+        #[allow(clippy::collapsible_match)]
         match &self {
             Self::Access(inner, access) => {
                 if let Some(ty) = inner.as_ref().clone().try_as_ethabi(None) {

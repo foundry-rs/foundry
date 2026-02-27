@@ -563,6 +563,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
 
+    /// Executes an RLP-encoded signed transaction with full EVM semantics (like `--isolate` mode).
+    /// The transaction is decoded from EIP-2718 format (type byte prefix + RLP payload) or legacy RLP.
+    /// Returns the execution output bytes.
+    ///
+    /// This cheatcode is not allowed in `forge script` contexts.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+
     // -------- Account State --------
 
     /// Sets an address' balance.
@@ -2782,6 +2790,34 @@ interface Vm {
     /// Derives secp256r1 public key from the provided `privateKey`.
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
+
+    /// Generates an Ed25519 key pair from a deterministic salt.
+    /// Returns (publicKey, privateKey) as 32-byte values.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function createEd25519Key(bytes32 salt) external pure returns (bytes32 publicKey, bytes32 privateKey);
+
+    /// Derives the Ed25519 public key from a private key.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function publicKeyEd25519(bytes32 privateKey) external pure returns (bytes32 publicKey);
+
+    /// Signs a message with namespace using Ed25519.
+    /// The signature covers namespace || message for domain separation.
+    /// Returns a 64-byte Ed25519 signature.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey)
+        external
+        pure
+        returns (bytes memory signature);
+
+    /// Verifies an Ed25519 signature over namespace || message.
+    /// Returns true if signature is valid, false otherwise.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function verifyEd25519(
+        bytes calldata signature,
+        bytes calldata namespace,
+        bytes calldata message,
+        bytes32 publicKey
+    ) external pure returns (bool valid);
 
     /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
