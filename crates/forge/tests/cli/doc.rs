@@ -113,8 +113,8 @@ contract Derived is IBase {
     );
 });
 
-// Test that constants and immutables are documented under "Constants" section when only constants are present
-// fixes <https://github.com/foundry-rs/foundry/issues/4611>
+// Test that constants and immutables are documented under "Constants" section when only constants
+// are present fixes <https://github.com/foundry-rs/foundry/issues/4611>
 forgetest_init!(constants_and_immutables_are_documented_under_constants_section, |prj, cmd| {
     prj.add_source(
         "CounterConstants.sol",
@@ -165,8 +165,8 @@ contract CounterConstants {
     );
 });
 
-// Test that state variables are documented under "State Variables" section when only state variables are present
-// fixes <https://github.com/foundry-rs/foundry/issues/4611>
+// Test that state variables are documented under "State Variables" section when only state
+// variables are present fixes <https://github.com/foundry-rs/foundry/issues/4611>
 forgetest_init!(state_variables_are_documented_under_state_variables_section, |prj, cmd| {
     prj.add_source(
         "CounterStateVariables.sol",
@@ -209,8 +209,8 @@ contract CounterStateVariables {
     );
 });
 
-// Test that constants/immutables and state-variables are documented under separate sections when both are present
-// fixes <https://github.com/foundry-rs/foundry/issues/4611>
+// Test that constants/immutables and state-variables are documented under separate sections when
+// both are present fixes <https://github.com/foundry-rs/foundry/issues/4611>
 forgetest_init!(
     constants_and_immutables_and_state_variables_are_documented_under_separate_sections,
     |prj, cmd| {
