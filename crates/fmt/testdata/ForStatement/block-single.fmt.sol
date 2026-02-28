@@ -1,3 +1,4 @@
+// config: single_line_statement_blocks = "single"
 pragma solidity ^0.8.8;
 
 contract ForStatement {
