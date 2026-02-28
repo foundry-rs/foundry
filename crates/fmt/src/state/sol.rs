@@ -2391,7 +2391,7 @@ impl<'ast> State<'_, 'ast> {
             std::slice::from_ref(stmt)
         };
 
-        if inline && !stmts.is_empty() {
+        if inline && stmts.len() == 1 {
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
