@@ -143,6 +143,43 @@ where
         self.walk_nested_source(id)
     }
 
+    fn visit_nested_item(&mut self, id: &'hir hir::ItemId) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_nested_item(self.ctx, self.hir, id);
+        }
+        self.walk_nested_item(id)
+    }
+
+    fn visit_nested_contract(
+        &mut self,
+        id: &'hir hir::ContractId,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_nested_contract(self.ctx, self.hir, id);
+        }
+        self.walk_nested_contract(id)
+    }
+
+    fn visit_nested_function(
+        &mut self,
+        id: &'hir hir::FunctionId,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_nested_function(self.ctx, self.hir, id);
+        }
+        self.walk_nested_function(id)
+    }
+
+    fn visit_nested_var(
+        &mut self,
+        id: &'hir hir::VariableId,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_nested_var(self.ctx, self.hir, id);
+        }
+        self.walk_nested_var(id)
+    }
+
     fn visit_contract(
         &mut self,
         contract: &'hir hir::Contract<'hir>,
@@ -158,6 +195,16 @@ where
             pass.check_function(self.ctx, self.hir, func);
         }
         self.walk_function(func)
+    }
+
+    fn visit_modifier(
+        &mut self,
+        modifier: &'hir hir::Modifier<'hir>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_modifier(self.ctx, self.hir, modifier);
+        }
+        self.walk_modifier(modifier)
     }
 
     fn visit_item(&mut self, item: hir::Item<'hir, 'hir>) -> ControlFlow<Self::BreakValue> {
@@ -179,6 +226,16 @@ where
             pass.check_expr(self.ctx, self.hir, expr);
         }
         self.walk_expr(expr)
+    }
+
+    fn visit_call_args(
+        &mut self,
+        args: &'hir hir::CallArgs<'hir>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_call_args(self.ctx, self.hir, args);
+        }
+        self.walk_call_args(args)
     }
 
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
