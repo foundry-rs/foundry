@@ -1,9 +1,8 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
-use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
-use alloy_provider::{Provider, ProviderBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet};
+use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
@@ -136,14 +135,6 @@ impl SendTxArgs {
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
-        // Check if this is a Tempo transaction - requires special handling for local signing
-        let is_tempo = builder.is_tempo();
-
-        // Tempo transactions with browser wallets are not supported
-        if is_tempo && send_tx.eth.wallet.browser {
-            return Err(eyre!("Tempo transactions are not supported with browser wallets."));
-        }
-
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
@@ -216,58 +207,28 @@ impl SendTxArgs {
                 return Ok(());
             }
 
-            // Tempo transactions need to be signed locally and sent as raw transactions
-            // because EthereumWallet doesn't understand type 0x76
-            // TODO(onbjerg): All of this is a side effect of a few things, most notably that we do
-            // not use `FoundryNetwork` and `FoundryTransactionRequest` everywhere, which is
-            // downstream of the fact that we use `EthereumWallet` everywhere.
-            if is_tempo {
-                let (ftx, _) = builder.build(&signer).await?;
+            let (tx_request, _) = builder.build(&signer).await?;
+            let wallet = EthereumWallet::from(signer);
+            let cast = CastTxSender::new(&provider);
+            let pending_tx = cast.sign_and_send(tx_request, &wallet).await?;
+            let tx_hash = pending_tx.inner().tx_hash();
 
-                let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
-
-                // Encode and send raw
-                let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
-                signed_tx.encode_2718(&mut raw_tx);
-
-                let cast = CastTxSender::new(&provider);
-                let pending_tx = cast.send_raw(&raw_tx).await?;
-                let tx_hash = pending_tx.inner().tx_hash();
-
-                if send_tx.cast_async {
-                    sh_println!("{tx_hash:#x}")?;
-                } else {
-                    let receipt = cast
-                        .receipt(
-                            format!("{tx_hash:#x}"),
-                            None,
-                            send_tx.confirmations,
-                            Some(timeout),
-                            false,
-                        )
-                        .await?;
-                    sh_println!("{receipt}")?;
-                }
-
-                return Ok(());
+            if send_tx.cast_async {
+                sh_println!("{tx_hash:#x}")?;
+            } else {
+                let receipt = cast
+                    .receipt(
+                        format!("{tx_hash:#x}"),
+                        None,
+                        send_tx.confirmations,
+                        Some(timeout),
+                        false,
+                    )
+                    .await?;
+                sh_println!("{receipt}")?;
             }
 
-            let (tx_request, _) = builder.build(&signer).await?;
-
-            let wallet = EthereumWallet::from(signer);
-            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                .wallet(wallet)
-                .connect_provider(&provider);
-
-            cast_send(
-                provider,
-                tx_request.into_inner().into(),
-                send_tx.cast_async,
-                send_tx.sync,
-                send_tx.confirmations,
-                timeout,
-            )
-            .await
+            Ok(())
         }
     }
 }

@@ -1,11 +1,10 @@
 use std::str::FromStr;
 
 use crate::{
-    cmd::send::cast_send,
     format_uint_exp,
     tx::{CastTxSender, SendTxOpts, get_provider_with_wallet},
 };
-use alloy_eips::{BlockId, Encodable2718};
+use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{U64, U256};
@@ -101,50 +100,39 @@ fn apply_tx_opts(
     }
 }
 
-/// Send an ERC20 transaction, handling Tempo transactions specially if needed
+/// Send an ERC20 transaction using the unified `sign_and_send` path.
 ///
-/// TODO: Remove this temporary helper when we migrate to FoundryNetwork/FoundryTransactionRequest.
+/// This handles all transaction types (legacy, EIP-1559, Tempo, etc.) uniformly
+/// via [`FoundryTransactionRequest`] and [`CastTxSender::sign_and_send`].
 async fn send_erc20_tx<P: Provider<AnyNetwork>>(
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
     send_tx: &SendTxOpts,
     timeout: u64,
 ) -> eyre::Result<()> {
-    // Same as in SendTxArgs::run(), Tempo transactions need to be signed locally and sent as raw
-    // transactions
-    if tx.other.contains_key("feeToken") || tx.other.contains_key("nonceKey") {
-        let signer = send_tx.eth.wallet.signer().await?;
-        let mut ftx = FoundryTransactionRequest::new(tx);
-        if ftx.chain_id().is_none() {
-            ftx.set_chain_id(provider.get_chain_id().await?);
-        }
-
-        let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
-
-        // Encode and send raw
-        let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
-        signed_tx.encode_2718(&mut raw_tx);
-
-        let cast = CastTxSender::new(&provider);
-        let pending_tx = cast.send_raw(&raw_tx).await?;
-        let tx_hash = pending_tx.inner().tx_hash();
-
-        if send_tx.cast_async {
-            sh_println!("{tx_hash:#x}")?;
-        } else {
-            // For sync mode, we already have the hash, just wait for receipt
-            let receipt = cast
-                .receipt(format!("{tx_hash:#x}"), None, send_tx.confirmations, Some(timeout), false)
-                .await?;
-            sh_println!("{receipt}")?;
-        }
-
-        return Ok(());
+    let signer = send_tx.eth.wallet.signer().await?;
+    let wallet = EthereumWallet::new(signer);
+    let mut ftx = FoundryTransactionRequest::new(tx);
+    if ftx.chain_id().is_none() {
+        ftx.set_chain_id(provider.get_chain_id().await?);
     }
 
-    // Use the normal cast_send path for non-Tempo transactions
-    cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout).await
+    let cast = CastTxSender::new(&provider);
+    let pending_tx = cast.sign_and_send(ftx, &wallet).await?;
+    let tx_hash = pending_tx.inner().tx_hash();
+
+    if send_tx.cast_async {
+        sh_println!("{tx_hash:#x}")?;
+    } else {
+        let receipt = cast
+            .receipt(format!("{tx_hash:#x}"), None, send_tx.confirmations, Some(timeout), false)
+            .await?;
+        sh_println!("{receipt}")?;
+    }
+
+    Ok(())
 }
+
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
