@@ -228,7 +228,7 @@ impl<N: Network> DatabaseRef for ForkDbStateSnapshot<N> {
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         match self.local.cache.accounts.get(&address) {
-            Some(account) => Ok(Some(account.info.clone())),
+            Some(account) => Ok(account.info()),
             None => {
                 let mut acc = self.state_snapshot.accounts.get(&address).cloned();
 
