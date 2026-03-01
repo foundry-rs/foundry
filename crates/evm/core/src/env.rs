@@ -52,6 +52,18 @@ impl EnvMut<'_> {
 
 pub trait AsEnvMut {
     fn as_env_mut(&mut self) -> EnvMut<'_>;
+
+    /// Writes an owned [`Env`] back into the context.
+    ///
+    /// Counterpart to `as_env_mut().to_owned()`: completes the read/write pair so callers
+    /// that receive an updated [`Env`] by value (e.g. after a fork switch or snapshot revert)
+    /// can apply it without manually assigning each field.
+    fn set_env(&mut self, env: Env) {
+        let m = self.as_env_mut();
+        *m.block = env.evm_env.block_env;
+        *m.cfg = env.evm_env.cfg_env;
+        *m.tx = env.tx;
+    }
 }
 
 impl AsEnvMut for EnvMut<'_> {
