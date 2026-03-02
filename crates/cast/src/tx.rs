@@ -280,7 +280,6 @@ where
                             .with_timeout(timeout.map(Duration::from_secs))
                             .get_receipt()
                             .await?
-                            .into()
                     }
                 }
             },
@@ -311,7 +310,7 @@ where
     }
 }
 
-/// Builder type constructing [TransactionRequest] from cast send/mktx inputs.
+/// Builder type constructing generic TransactionRequest from cast send/mktx inputs.
 ///
 /// It is implemented as a stateful builder with expected state transition of [InitState] ->
 /// [ToState] -> [InputState].
@@ -500,8 +499,8 @@ where
         self._build(sender, true, false).await
     }
 
-    /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
-    /// eth_call, eth_estimateGas, etc
+    /// Builds generic TransactionRequest without filling missing fields. Used for read-only calls
+    /// such as eth_call, eth_estimateGas, etc
     pub async fn build_raw(
         self,
         sender: impl Into<SenderKind<'_>>,
