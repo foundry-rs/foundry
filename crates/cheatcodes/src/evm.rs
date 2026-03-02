@@ -37,6 +37,7 @@ use rand::Rng;
 use revm::{
     bytecode::Bytecode,
     context::{Block, ContextTr, JournalTr, TxEnv, result::ExecutionResult},
+    inspector::JournalExt,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountStatus},
 };
@@ -341,7 +342,7 @@ impl Cheatcode for cloneAccountCall {
         let genesis = &genesis_account(account.data);
         db.clone_account(genesis, target, journal)?;
         // Cloned account should persist in forked envs.
-        ccx.ecx.journaled_state.database.add_persistent_account(*target);
+        ccx.ecx.db_mut().add_persistent_account(*target);
         Ok(Default::default())
     }
 }
@@ -364,8 +365,8 @@ impl Cheatcode for dumpStateCall {
 
         let alloc = ccx
             .ecx
-            .journaled_state
-            .state()
+            .journal_mut()
+            .evm_state_mut()
             .iter_mut()
             .filter(|(key, val)| !skip(key, val))
             .map(|(key, val)| (key, genesis_account(val)))
@@ -710,7 +711,7 @@ impl Cheatcode for storeCall {
 impl Cheatcode for coolCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target } = self;
-        if let Some(account) = ccx.ecx.journaled_state.state.get_mut(target) {
+        if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(target) {
             account.unmark_touch();
             account.storage.values_mut().for_each(|slot| slot.mark_cold());
         }
@@ -763,7 +764,7 @@ impl Cheatcode for coolSlotCall {
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.tx().caller, ccx.ecx.journaled_state.depth())
+        read_callers(ccx.state, &ccx.ecx.tx().caller, ccx.ecx.journal().depth())
     }
 }
 
@@ -1060,7 +1061,7 @@ impl Cheatcode for broadcastRawTransactionCall {
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
-                rpc: ccx.ecx.journaled_state.database.active_fork_url(),
+                rpc: ccx.ecx.db().active_fork_url(),
                 transaction: tx.try_into()?,
             });
         }
@@ -1078,7 +1079,7 @@ impl Cheatcode for setBlockhashCall {
             "block number must be less than or equal to the current block number"
         );
 
-        ccx.ecx.journaled_state.database.set_blockhash(blockNumber, blockHash);
+        ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
 
         Ok(Default::default())
     }
@@ -1185,8 +1186,8 @@ impl Cheatcode for executeTransactionCall {
 
         // Merge state changes back into the parent journaled state.
         for (addr, mut acc) in res.state {
-            let Some(acc_mut) = ccx.ecx.journaled_state.state.get_mut(&addr) else {
-                ccx.ecx.journaled_state.state.insert(addr, acc);
+            let Some(acc_mut) = ccx.ecx.journal_mut().evm_state_mut().get_mut(&addr) else {
+                ccx.ecx.journal_mut().evm_state_mut().insert(addr, acc);
                 continue;
             };
 
@@ -1345,12 +1346,12 @@ fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> 
 }
 
 fn inner_delete_state_snapshot(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = ccx.ecx.journaled_state.database.delete_state_snapshot(snapshot_id);
+    let result = ccx.ecx.db_mut().delete_state_snapshot(snapshot_id);
     Ok(result.abi_encode())
 }
 
 fn inner_delete_state_snapshots(ccx: &mut CheatsCtxt) -> Result {
-    ccx.ecx.journaled_state.database.delete_state_snapshots();
+    ccx.ecx.db_mut().delete_state_snapshots();
     Ok(Default::default())
 }
 
@@ -1396,7 +1397,7 @@ fn inner_start_gas_snapshot(
         group: group.clone(),
         name: name.clone(),
         gas_used: 0,
-        depth: ccx.ecx.journaled_state.depth(),
+        depth: ccx.ecx.journal().depth(),
     });
 
     ccx.state.gas_metering.active_gas_snapshot = Some((group, name));
@@ -1521,7 +1522,7 @@ pub(super) fn journaled_account<'a>(
     addr: Address,
 ) -> Result<&'a mut Account> {
     ensure_loaded_account(ecx, addr)?;
-    Ok(ecx.journaled_state.state.get_mut(&addr).expect("account is loaded"))
+    Ok(ecx.journal_mut().evm_state_mut().get_mut(&addr).expect("account is loaded"))
 }
 
 pub(super) fn ensure_loaded_account(ecx: Ecx, addr: Address) -> Result<()> {
@@ -1789,7 +1790,7 @@ fn get_contract_data<'a>(
 
 /// Helper function to set / unset cold storage slot of the target address.
 fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
-    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target)
+    if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(&target)
         && let Some(storage_slot) = account.storage.get_mut(&slot)
     {
         storage_slot.is_cold = cold;

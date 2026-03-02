@@ -376,10 +376,8 @@ fn deploy_code(
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
     // If prank active at current depth, then use it as caller for create input.
-    let caller = ccx
-        .state
-        .get_prank(ccx.ecx.journaled_state.depth())
-        .map_or(ccx.caller, |prank| prank.new_caller);
+    let caller =
+        ccx.state.get_prank(ccx.ecx.journal().depth()).map_or(ccx.caller, |prank| prank.new_caller);
 
     let outcome = executor.exec_create(
         CreateInputs::new(

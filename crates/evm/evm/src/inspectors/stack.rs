@@ -25,6 +25,7 @@ use revm::{
         result::{ExecutionResult, Output},
     },
     context_interface::CreateScheme,
+    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterResult,
@@ -749,8 +750,8 @@ impl InspectorStackRefMut<'_> {
         };
 
         for (addr, mut acc) in res.state {
-            let Some(acc_mut) = ecx.journaled_state.state.get_mut(&addr) else {
-                ecx.journaled_state.state.insert(addr, acc);
+            let Some(acc_mut) = ecx.journal_mut().evm_state_mut().get_mut(&addr) else {
+                ecx.journal_mut().evm_state_mut().insert(addr, acc);
                 continue;
             };
 
@@ -820,7 +821,7 @@ impl InspectorStackRefMut<'_> {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
-            self.top_frame_journal.clone_from(&ecx.journaled_state.state);
+            self.top_frame_journal.clone_from(ecx.journal().evm_state());
         }
     }
 
@@ -844,7 +845,7 @@ impl InspectorStackRefMut<'_> {
         // created We can't rely on revm's journal because it doesn't account for changes
         // made by isolated calls
         if self.enable_isolation {
-            ecx.journaled_state.state = std::mem::take(&mut self.top_frame_journal);
+            *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
     }
 
@@ -957,12 +958,12 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
         call: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if self.in_inner_context && ecx.journaled_state.depth == 1 {
+        if self.in_inner_context && ecx.journal().depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
 
-        if ecx.journaled_state.depth == 0 {
+        if ecx.journal().depth == 0 {
             self.top_level_frame_start(ecx);
         }
 
@@ -1004,7 +1005,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             }
         }
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+        if self.enable_isolation && !self.in_inner_context && ecx.journal().depth == 1 {
             match call.scheme {
                 // Isolate CALLs
                 CallScheme::Call => {
@@ -1061,13 +1062,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
-        if self.in_inner_context && ecx.journaled_state.depth == 1 {
+        if self.in_inner_context && ecx.journal().depth == 1 {
             return;
         }
 
         self.do_call_end(ecx, inputs, outcome);
 
-        if ecx.journaled_state.depth == 0 {
+        if ecx.journal().depth == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
@@ -1077,12 +1078,12 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        if self.in_inner_context && ecx.journaled_state.depth == 1 {
+        if self.in_inner_context && ecx.journal().depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
 
-        if ecx.journaled_state.depth == 0 {
+        if ecx.journal().depth == 0 {
             self.top_level_frame_start(ecx);
         }
 
@@ -1095,7 +1096,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
             && !self.in_inner_context
-            && ecx.journaled_state.depth == 1
+            && ecx.journal().depth == 1
         {
             let (result, address) = self.transact_inner(
                 ecx,
@@ -1119,13 +1120,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
-        if self.in_inner_context && ecx.journaled_state.depth == 1 {
+        if self.in_inner_context && ecx.journal().depth == 1 {
             return;
         }
 
         self.do_create_end(ecx, call, outcome);
 
-        if ecx.journaled_state.depth == 0 {
+        if ecx.journal().depth == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
     }

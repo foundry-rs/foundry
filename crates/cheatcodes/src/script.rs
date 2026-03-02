@@ -131,7 +131,7 @@ fn sign_delegation(
     let nonce = if let Some(nonce) = nonce {
         nonce
     } else {
-        let authority_acc = ccx.ecx.journaled_state.load_account(signer.address())?;
+        let authority_acc = ccx.ecx.journal_mut().load_account(signer.address())?;
         // Calculate next nonce considering existing active delegations
         next_delegation_nonce(
             &ccx.state.active_delegations,
@@ -191,7 +191,7 @@ fn next_delegation_nonce(
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
+    let authority_acc = ccx.ecx.journal_mut().load_account(authority)?;
 
     let expected_nonce = next_delegation_nonce(
         &ccx.state.active_delegations,
@@ -211,10 +211,10 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
     if auth.address.is_zero() {
         // Set empty code if the delegation address of authority is 0x.
         // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#behavior.
-        ccx.ecx.journaled_state.set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
+        ccx.ecx.journal_mut().set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
     } else {
         let bytecode = Bytecode::new_eip7702(*auth.address());
-        ccx.ecx.journaled_state.set_code(authority, bytecode);
+        ccx.ecx.journal_mut().set_code(authority, bytecode);
     }
     Ok(())
 }
@@ -352,7 +352,7 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
-    let depth = ccx.ecx.journaled_state.depth();
+    let depth = ccx.ecx.journal().depth();
     ensure!(
         ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
