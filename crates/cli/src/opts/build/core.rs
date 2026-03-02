@@ -38,6 +38,12 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub dynamic_test_linking: bool,
 
+    /// Whether to disallow linked libraries. If present, build will fail if any contract uses
+    /// linked libraries.
+    #[arg(long, help_heading = "Linker options")]
+    #[serde(skip)]
+    pub disallow_linked_libraries: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -267,6 +273,10 @@ impl Provider for BuildOpts {
 
         if self.dynamic_test_linking {
             dict.insert("dynamic_test_linking".to_string(), true.into());
+        }
+
+        if self.disallow_linked_libraries {
+            dict.insert("allow_linked_libraries".to_string(), false.into());
         }
 
         if self.build_info {
