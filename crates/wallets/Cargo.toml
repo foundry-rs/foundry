@@ -26,7 +26,6 @@ alloy-sol-types.workspace = true
 alloy-dyn-abi.workspace = true
 
 # browser wallet
-alloy-rpc-types.workspace = true
 axum.workspace = true
 foundry-common.workspace = true
 serde_json.workspace = true

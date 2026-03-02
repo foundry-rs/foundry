@@ -1167,8 +1167,7 @@ impl Backend {
         );
 
         if env.networks.is_optimism() {
-            env.tx.enveloped_tx =
-                Some(alloy_rlp::encode(tx.pending_transaction.transaction.as_ref()).into());
+            env.tx.enveloped_tx = Some(tx.pending_transaction.transaction.encoded_2718().into());
         }
 
         let db = self.db.read().await;
@@ -3682,6 +3681,19 @@ impl TransactionValidator for Backend {
                 && let Err(err) = blob_tx.validate(EnvKzgSettings::default().get())
             {
                 return Err(InvalidTransactionError::BlobTransactionValidationError(err));
+            }
+        }
+
+        // EIP-3860 initcode size validation, respects --code-size-limit / --disable-code-size-limit
+        if env.evm_env.cfg_env.spec >= SpecId::SHANGHAI && tx.kind() == TxKind::Create {
+            let max_initcode_size = env
+                .evm_env
+                .cfg_env
+                .limit_contract_code_size
+                .map(|limit| limit.saturating_mul(2))
+                .unwrap_or(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+            if tx.input().len() > max_initcode_size {
+                return Err(InvalidTransactionError::MaxInitCodeSizeExceeded);
             }
         }
 

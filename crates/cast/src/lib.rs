@@ -1158,7 +1158,7 @@ impl SimpleCast {
             DynSolType::Uint(n) => {
                 if MAX {
                     let mut max = U256::MAX;
-                    if n < 255 {
+                    if n < 256 {
                         max &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
                     }
                     Ok(max.to_string())
@@ -1874,7 +1874,7 @@ impl SimpleCast {
         let mut topics = vec![event.selector()];
         let mut data_tokens: Vec<u8> = Vec::new();
 
-        for (input, token) in event.inputs.iter().zip(tokens.into_iter()) {
+        for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
                 let ty = DynSolType::parse(&input.ty)?;
                 if matches!(

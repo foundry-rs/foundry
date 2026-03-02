@@ -29,6 +29,11 @@ const SETTINGS_OVERRIDES_KEYS: &[&str] =
 /// causing the default serialization to produce an empty dict.
 const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
 
+/// Allowed keys for DocConfig.
+/// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
+/// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
+const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "path", "ignore"];
+
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
 
@@ -192,6 +197,8 @@ impl<P: Provider> WarningsProvider<P> {
             // so the default serialization produces an empty dict. Use explicit keys instead.
             let allowed_keys: BTreeSet<String> = if *section_name == "vyper" {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if *section_name == "doc" {
+                DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_section_value) = default_dict.get(*section_name) else {
                     continue;
@@ -262,6 +269,8 @@ impl<P: Provider> WarningsProvider<P> {
             // so the default serialization produces an empty dict. Use explicit keys instead.
             let allowed_keys: BTreeSet<String> = if key == "vyper" {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "doc" {
+                DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_value) = default_dict.get(key) else {
                     continue;

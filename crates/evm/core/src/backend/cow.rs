@@ -245,7 +245,7 @@ impl DatabaseExt for CowBackend<'_> {
         allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
-        self.backend_mut(&Env::default().as_env_mut()).load_allocs(allocs, journaled_state)
+        self.backend.to_mut().load_allocs(allocs, journaled_state)
     }
 
     fn clone_account(
@@ -254,11 +254,7 @@ impl DatabaseExt for CowBackend<'_> {
         target: &Address,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
-        self.backend_mut(&Env::default().as_env_mut()).clone_account(
-            source,
-            target,
-            journaled_state,
-        )
+        self.backend.to_mut().clone_account(source, target, journaled_state)
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {

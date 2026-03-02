@@ -8,7 +8,7 @@ use crate::{
     writer::BufWriter,
 };
 use itertools::Itertools;
-use solang_parser::pt::{Base, FunctionDefinition};
+use solang_parser::pt::{Base, FunctionDefinition, VariableAttribute};
 use std::path::Path;
 
 /// The result of [`AsDoc::as_doc`].
@@ -173,18 +173,45 @@ impl AsDoc for Document {
 
                         writer.writeln_doc(&item.comments)?;
 
-                        if let Some(state_vars) = item.variables() {
-                            writer.write_subtitle("State Variables")?;
-                            state_vars.into_iter().try_for_each(|(item, comments, code)| {
-                                let comments = comments.merge_inheritdoc(
-                                    &item.name.safe_unwrap().name,
-                                    read_context!(self, INHERITDOC_ID, Inheritdoc),
-                                );
+                        if let Some(all_vars) = item.variables() {
+                            let (constants, state_vars): (Vec<_>, Vec<_>) =
+                                all_vars.into_iter().partition(|(item, _, _)| {
+                                    item.attrs.iter().any(|attr| {
+                                        matches!(
+                                            attr,
+                                            VariableAttribute::Constant(_)
+                                                | VariableAttribute::Immutable(_)
+                                        )
+                                    })
+                                });
 
-                                writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(&comments, code)?;
-                                writer.writeln()
-                            })?;
+                            if !constants.is_empty() {
+                                writer.write_subtitle("Constants")?;
+                                constants.into_iter().try_for_each(|(item, comments, code)| {
+                                    let comments = comments.merge_inheritdoc(
+                                        &item.name.safe_unwrap().name,
+                                        read_context!(self, INHERITDOC_ID, Inheritdoc),
+                                    );
+
+                                    writer.write_heading(&item.name.safe_unwrap().name)?;
+                                    writer.write_section(&comments, code)?;
+                                    writer.writeln()
+                                })?;
+                            }
+
+                            if !state_vars.is_empty() {
+                                writer.write_subtitle("State Variables")?;
+                                state_vars.into_iter().try_for_each(|(item, comments, code)| {
+                                    let comments = comments.merge_inheritdoc(
+                                        &item.name.safe_unwrap().name,
+                                        read_context!(self, INHERITDOC_ID, Inheritdoc),
+                                    );
+
+                                    writer.write_heading(&item.name.safe_unwrap().name)?;
+                                    writer.write_section(&comments, code)?;
+                                    writer.writeln()
+                                })?;
+                            }
                         }
 
                         if let Some(funcs) = item.functions() {
