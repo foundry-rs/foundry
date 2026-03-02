@@ -4941,6 +4941,7 @@ dependencies = [
  "foundry-evm-abi",
  "foundry-evm-networks",
  "foundry-fork-db",
+ "foundry-primitives",
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",

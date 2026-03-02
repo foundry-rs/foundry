@@ -12,9 +12,9 @@ use crate::{
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
+use foundry_primitives::FoundryTxRequest;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -203,7 +203,7 @@ impl DatabaseExt for CowBackend<'_> {
 
     fn transact_from_tx(
         &mut self,
-        transaction: &TransactionRequest,
+        transaction: &dyn FoundryTxRequest,
         mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,

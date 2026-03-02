@@ -14,6 +14,7 @@ use alloy_primitives::{
     map::{B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
+use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::SolValue;
 use foundry_common::{
     fs::{read_json_file, write_json_file},
@@ -1051,8 +1052,9 @@ impl Cheatcode for broadcastRawTransactionCall {
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
+        let tx_req: TransactionRequest = tx.clone().into();
         db.transact_from_tx(
-            &tx.clone().into(),
+            &tx_req,
             env.to_owned(),
             journal,
             &mut *executor.get_inspector(ccx.state),

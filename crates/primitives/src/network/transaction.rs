@@ -1,7 +1,9 @@
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
-use alloy_network::{AnyNetwork, DynTransactionBuilder, Network, NetworkTransactionBuilder};
+use alloy_network::{
+    AnyNetwork, DynTransactionBuilder, Ethereum, Network, NetworkTransactionBuilder,
+};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::{SignedAuthorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -164,6 +166,43 @@ pub trait FoundryTxRequestBuilder<N: Network>:
         self
     }
 }
+
+impl FoundryTxRequest for TransactionRequest {
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        self.max_fee_per_blob_gas
+    }
+
+    fn set_max_fee_per_blob_gas(&mut self, max_fee_per_blob_gas: u128) {
+        self.max_fee_per_blob_gas = Some(max_fee_per_blob_gas);
+    }
+
+    fn blob_versioned_hashes(&self) -> Option<&[B256]> {
+        self.blob_versioned_hashes.as_deref()
+    }
+
+    fn set_blob_versioned_hashes(&mut self, hashes: Vec<B256>) {
+        self.blob_versioned_hashes = Some(hashes);
+    }
+
+    fn blob_sidecar(&self) -> Option<&BlobTransactionSidecarVariant> {
+        self.sidecar.as_ref()
+    }
+
+    fn set_blob_sidecar(&mut self, sidecar: BlobTransactionSidecarVariant) {
+        self.sidecar = Some(sidecar);
+        self.populate_blob_hashes();
+    }
+
+    fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
+        self.authorization_list.as_ref()
+    }
+
+    fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
+        self.authorization_list = Some(authorization_list);
+    }
+}
+
+impl FoundryTxRequestBuilder<Ethereum> for <Ethereum as Network>::TransactionRequest {}
 
 impl FoundryTxRequest for WithOtherFields<TransactionRequest> {
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
