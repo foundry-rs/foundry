@@ -46,3 +46,25 @@ async fn eip2935_stores_parent_block_hash() {
     let stored_hash = alloy_primitives::B256::from_slice(&result);
     assert_eq!(stored_hash, block1_hash, "EIP-2935 contract should store parent block hash");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn eip2935_no_system_call_on_genesis() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    // At genesis (block 0), the contract should exist but no system call should have
+    // written any parent hash into its storage. Check raw storage slot 0 directly.
+    let slot = provider.get_storage_at(HISTORY_STORAGE_ADDRESS, U256::from(0)).await.unwrap();
+    assert_eq!(slot, U256::ZERO, "No hash should be stored in the contract at genesis");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn eip2935_not_deployed_before_prague() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let code = provider.get_code_at(HISTORY_STORAGE_ADDRESS).await.unwrap();
+    assert!(code.is_empty(), "EIP-2935 contract should NOT be deployed before Prague");
+}
