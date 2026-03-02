@@ -11,8 +11,8 @@ use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    ContextExt, Env, InspectorExt,
-    backend::{DatabaseExt, JournaledState},
+    Env, InspectorExt,
+    backend::{DatabaseExt, FoundryJournalExt, JournaledState},
     evm::new_evm_with_inspector,
 };
 use foundry_evm_coverage::HitMaps;
@@ -699,8 +699,9 @@ impl InspectorStackRefMut<'_> {
         self.in_inner_context = true;
 
         let res = self.with_inspector(|inspector| {
-            let (db, journal, env) = ecx.as_db_env_and_journal();
-            let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
+            let env = Env::from(ecx.cfg.clone(), ecx.block.clone(), ecx.tx.clone());
+            let (db, journal) = ecx.journaled_state.as_db_and_inner();
+            let mut evm = new_evm_with_inspector(db, env.clone(), inspector);
 
             evm.journaled_state.state = {
                 let mut state = journal.state.clone();
@@ -724,14 +725,14 @@ impl InspectorStackRefMut<'_> {
             // set depth to 1 to make sure traces are collected correctly
             evm.journaled_state.depth = 1;
 
-            let res = evm.transact(env.tx.clone());
+            let res = evm.transact(env.tx);
 
             // need to reset the env in case it was modified via cheatcodes during execution
-            *env.cfg = evm.cfg.clone();
-            *env.block = evm.block.clone();
+            ecx.cfg = evm.cfg.clone();
+            ecx.block = evm.block.clone();
 
-            *env.tx = cached_env.tx;
-            env.block.basefee = cached_env.evm_env.block_env.basefee;
+            ecx.tx = cached_env.tx;
+            ecx.block.basefee = cached_env.evm_env.block_env.basefee;
 
             res
         });

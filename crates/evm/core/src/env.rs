@@ -1,7 +1,8 @@
 pub use alloy_evm::EvmEnv;
 use revm::{
-    Context, Database, Journal, JournalEntry,
-    context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
+    Context, Database,
+    context::{BlockEnv, CfgEnv, JournalTr, TxEnv},
+    context_interface::ContextTr,
     primitives::hardfork::SpecId,
 };
 
@@ -78,25 +79,58 @@ impl<DB: Database, J: JournalTr<Database = DB>, C> AsEnvMut
     }
 }
 
-pub trait ContextExt {
-    type DB: Database;
+/// Extension trait providing mutable field access to block/tx/cfg.
+///
+/// Needed because [`ContextTr::all_mut()`] only returns immutable references for
+/// block, tx, and cfg. Cheatcodes like `vm.warp()`, `vm.roll()`, `vm.chainId()`
+/// need to mutate these fields.
+pub trait FoundryContextExt: ContextTr<Block = BlockEnv, Tx = TxEnv, Cfg = CfgEnv> {
+    /// Get a mutable reference to the block environment.
+    fn block_mut(&mut self) -> &mut BlockEnv;
+    /// Get a mutable reference to the transaction environment.
+    fn tx_mut(&mut self) -> &mut TxEnv;
+    /// Get a mutable reference to the configuration environment.
+    fn cfg_mut(&mut self) -> &mut CfgEnv;
 
-    fn as_db_env_and_journal(
-        &mut self,
-    ) -> (&mut Self::DB, &mut JournalInner<JournalEntry>, EnvMut<'_>);
+    /// Returns a cloned snapshot of the current environment.
+    fn to_env(&self) -> Env {
+        Env {
+            evm_env: EvmEnv { cfg_env: self.cfg().clone(), block_env: self.block().clone() },
+            tx: self.tx().clone(),
+        }
+    }
+
+    /// Applies an owned [`Env`] to this context, replacing block, cfg, and tx.
+    fn apply_env(&mut self, env: Env) {
+        *self.block_mut() = env.evm_env.block_env;
+        *self.cfg_mut() = env.evm_env.cfg_env;
+        *self.tx_mut() = env.tx;
+    }
+
+    /// Returns mutable references to the journal and environment simultaneously.
+    ///
+    /// This enables the caller to hold `&mut Journal` and `&mut EnvMut` at the same time,
+    /// which is needed for `DatabaseExt` methods that require both.
+    /// A single `&mut self` call avoids the borrow-splitting problem that arises
+    /// when calling `journal_mut()` and `block_mut()`/`tx_mut()`/`cfg_mut()` separately.
+    fn journal_and_env_mut(&mut self) -> (&mut Self::Journal, EnvMut<'_>);
 }
 
-impl<DB: Database, C> ContextExt
-    for Context<BlockEnv, TxEnv, CfgEnv, DB, Journal<DB, JournalEntry>, C>
+impl<DB: Database, J: JournalTr<Database = DB>, C> FoundryContextExt
+    for Context<BlockEnv, TxEnv, CfgEnv, DB, J, C>
 {
-    type DB = DB;
-
-    fn as_db_env_and_journal(
-        &mut self,
-    ) -> (&mut Self::DB, &mut JournalInner<JournalEntry>, EnvMut<'_>) {
+    fn block_mut(&mut self) -> &mut BlockEnv {
+        &mut self.block
+    }
+    fn tx_mut(&mut self) -> &mut TxEnv {
+        &mut self.tx
+    }
+    fn cfg_mut(&mut self) -> &mut CfgEnv {
+        &mut self.cfg
+    }
+    fn journal_and_env_mut(&mut self) -> (&mut J, EnvMut<'_>) {
         (
-            &mut self.journaled_state.database,
-            &mut self.journaled_state.inner,
+            &mut self.journaled_state,
             EnvMut { block: &mut self.block, cfg: &mut self.cfg, tx: &mut self.tx },
         )
     }

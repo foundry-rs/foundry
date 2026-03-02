@@ -1,8 +1,9 @@
 //! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
-use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, EthCheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
+use alloy_evm::eth::EthEvmContext;
 use alloy_json_abi::ContractObject;
 use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{Bytes, U256, hex, map::Entry};
@@ -12,8 +13,10 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_evm_core::{backend::DatabaseExt, env::FoundryContextExt};
 use revm::{
     context::{CreateScheme, JournalTr},
+    context_interface::ContextTr,
     interpreter::CreateInputs,
 };
 use revm_inspectors::tracing::types::CallKind;
@@ -28,7 +31,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
-impl Cheatcode for existsCall {
+impl<CTX> Cheatcode<CTX> for existsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -36,7 +39,7 @@ impl Cheatcode for existsCall {
     }
 }
 
-impl Cheatcode for fsMetadataCall {
+impl<CTX> Cheatcode<CTX> for fsMetadataCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -62,7 +65,7 @@ impl Cheatcode for fsMetadataCall {
     }
 }
 
-impl Cheatcode for isDirCall {
+impl<CTX> Cheatcode<CTX> for isDirCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -70,7 +73,7 @@ impl Cheatcode for isDirCall {
     }
 }
 
-impl Cheatcode for isFileCall {
+impl<CTX> Cheatcode<CTX> for isFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -78,14 +81,14 @@ impl Cheatcode for isFileCall {
     }
 }
 
-impl Cheatcode for projectRootCall {
+impl<CTX> Cheatcode<CTX> for projectRootCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state.config.root.display().to_string().abi_encode())
     }
 }
 
-impl Cheatcode for unixTimeCall {
+impl<CTX> Cheatcode<CTX> for unixTimeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         let difference = SystemTime::now()
@@ -95,7 +98,7 @@ impl Cheatcode for unixTimeCall {
     }
 }
 
-impl Cheatcode for closeFileCall {
+impl<CTX> Cheatcode<CTX> for closeFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -106,7 +109,7 @@ impl Cheatcode for closeFileCall {
     }
 }
 
-impl Cheatcode for copyFileCall {
+impl<CTX> Cheatcode<CTX> for copyFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { from, to } = self;
         let from = state.config.ensure_path_allowed(from, FsAccessKind::Read)?;
@@ -118,7 +121,7 @@ impl Cheatcode for copyFileCall {
     }
 }
 
-impl Cheatcode for createDirCall {
+impl<CTX> Cheatcode<CTX> for createDirCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -127,28 +130,28 @@ impl Cheatcode for createDirCall {
     }
 }
 
-impl Cheatcode for readDir_0Call {
+impl<CTX> Cheatcode<CTX> for readDir_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         read_dir(state, path.as_ref(), 1, false)
     }
 }
 
-impl Cheatcode for readDir_1Call {
+impl<CTX> Cheatcode<CTX> for readDir_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, maxDepth } = self;
         read_dir(state, path.as_ref(), *maxDepth, false)
     }
 }
 
-impl Cheatcode for readDir_2Call {
+impl<CTX> Cheatcode<CTX> for readDir_2Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, maxDepth, followLinks } = self;
         read_dir(state, path.as_ref(), *maxDepth, *followLinks)
     }
 }
 
-impl Cheatcode for readFileCall {
+impl<CTX> Cheatcode<CTX> for readFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -156,7 +159,7 @@ impl Cheatcode for readFileCall {
     }
 }
 
-impl Cheatcode for readFileBinaryCall {
+impl<CTX> Cheatcode<CTX> for readFileBinaryCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -164,7 +167,7 @@ impl Cheatcode for readFileBinaryCall {
     }
 }
 
-impl Cheatcode for readLineCall {
+impl<CTX> Cheatcode<CTX> for readLineCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -190,7 +193,7 @@ impl Cheatcode for readLineCall {
     }
 }
 
-impl Cheatcode for readLinkCall {
+impl<CTX> Cheatcode<CTX> for readLinkCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { linkPath: path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -199,7 +202,7 @@ impl Cheatcode for readLinkCall {
     }
 }
 
-impl Cheatcode for removeDirCall {
+impl<CTX> Cheatcode<CTX> for removeDirCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -208,7 +211,7 @@ impl Cheatcode for removeDirCall {
     }
 }
 
-impl Cheatcode for removeFileCall {
+impl<CTX> Cheatcode<CTX> for removeFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -225,21 +228,21 @@ impl Cheatcode for removeFileCall {
     }
 }
 
-impl Cheatcode for writeFileCall {
+impl<CTX> Cheatcode<CTX> for writeFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data.as_bytes())
     }
 }
 
-impl Cheatcode for writeFileBinaryCall {
+impl<CTX> Cheatcode<CTX> for writeFileBinaryCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data)
     }
 }
 
-impl Cheatcode for writeLineCall {
+impl<CTX> Cheatcode<CTX> for writeLineCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, data: line } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -253,7 +256,7 @@ impl Cheatcode for writeLineCall {
     }
 }
 
-impl Cheatcode for getArtifactPathByCodeCall {
+impl<CTX> Cheatcode<CTX> for getArtifactPathByCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { code } = self;
         let (artifact_id, _) = state
@@ -267,7 +270,7 @@ impl Cheatcode for getArtifactPathByCodeCall {
     }
 }
 
-impl Cheatcode for getArtifactPathByDeployedCodeCall {
+impl<CTX> Cheatcode<CTX> for getArtifactPathByDeployedCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { deployedCode } = self;
         let (artifact_id, _) = state
@@ -281,71 +284,103 @@ impl Cheatcode for getArtifactPathByDeployedCodeCall {
     }
 }
 
-impl Cheatcode for getCodeCall {
+impl<CTX> Cheatcode<CTX> for getCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, false)?.abi_encode())
     }
 }
 
-impl Cheatcode for getDeployedCodeCall {
+impl<CTX> Cheatcode<CTX> for getDeployedCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, true)?.abi_encode())
     }
 }
 
-impl Cheatcode for deployCode_0Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_0Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path } = self;
         deploy_code(ccx, executor, path, None, None, None)
     }
 }
 
-impl Cheatcode for deployCode_1Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_1Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args } = self;
         deploy_code(ccx, executor, path, Some(args), None, None)
     }
 }
 
-impl Cheatcode for deployCode_2Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_2Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path, value } = self;
         deploy_code(ccx, executor, path, None, Some(*value), None)
     }
 }
 
-impl Cheatcode for deployCode_3Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_3Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), None)
     }
 }
 
-impl Cheatcode for deployCode_4Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_4Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path, salt } = self;
         deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
     }
 }
 
-impl Cheatcode for deployCode_5Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_5Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, salt } = self;
         deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
     }
 }
 
-impl Cheatcode for deployCode_6Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_6Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path, value, salt } = self;
         deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
     }
 }
 
-impl Cheatcode for deployCode_7Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+impl<'db, 'db2> Cheatcode<EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>> for deployCode_7Call {
+    fn apply_full(
+        &self,
+        ccx: &mut CheatsCtxt<'_, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>,
+        executor: &mut dyn CheatcodesExecutor,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
     }
@@ -354,7 +389,7 @@ impl Cheatcode for deployCode_7Call {
 /// Helper function to deploy contract from artifact code.
 /// Uses CREATE2 scheme if salt specified.
 fn deploy_code(
-    ccx: &mut CheatsCtxt,
+    ccx: &mut EthCheatsCtxt,
     executor: &mut dyn CheatcodesExecutor,
     path: &str,
     constructor_args: Option<&Bytes>,
@@ -376,10 +411,8 @@ fn deploy_code(
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
     // If prank active at current depth, then use it as caller for create input.
-    let caller = ccx
-        .state
-        .get_prank(ccx.ecx.journaled_state.depth())
-        .map_or(ccx.caller, |prank| prank.new_caller);
+    let caller =
+        ccx.state.get_prank(ccx.ecx.journal().depth()).map_or(ccx.caller, |prank| prank.new_caller);
 
     let outcome = executor.exec_create(
         CreateInputs::new(
@@ -552,7 +585,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
     maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
 }
 
-impl Cheatcode for ffiCall {
+impl<CTX> Cheatcode<CTX> for ffiCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { commandInput: input } = self;
 
@@ -580,42 +613,42 @@ impl Cheatcode for ffiCall {
     }
 }
 
-impl Cheatcode for tryFfiCall {
+impl<CTX> Cheatcode<CTX> for tryFfiCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { commandInput: input } = self;
         ffi(state, input).map(|res| res.abi_encode())
     }
 }
 
-impl Cheatcode for promptCall {
+impl<CTX> Cheatcode<CTX> for promptCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_input).map(|res| res.abi_encode())
     }
 }
 
-impl Cheatcode for promptSecretCall {
+impl<CTX> Cheatcode<CTX> for promptSecretCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_password).map(|res| res.abi_encode())
     }
 }
 
-impl Cheatcode for promptSecretUintCall {
+impl<CTX> Cheatcode<CTX> for promptSecretUintCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
     }
 }
 
-impl Cheatcode for promptAddressCall {
+impl<CTX> Cheatcode<CTX> for promptAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Address)
     }
 }
 
-impl Cheatcode for promptUintCall {
+impl<CTX> Cheatcode<CTX> for promptUintCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Uint(256))
@@ -729,7 +762,7 @@ fn prompt(
     }
 }
 
-impl Cheatcode for getBroadcastCall {
+impl<CTX> Cheatcode<CTX> for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
@@ -744,7 +777,7 @@ impl Cheatcode for getBroadcastCall {
     }
 }
 
-impl Cheatcode for getBroadcasts_0Call {
+impl<CTX> Cheatcode<CTX> for getBroadcasts_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
@@ -765,7 +798,7 @@ impl Cheatcode for getBroadcasts_0Call {
     }
 }
 
-impl Cheatcode for getBroadcasts_1Call {
+impl<CTX> Cheatcode<CTX> for getBroadcasts_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
@@ -785,10 +818,10 @@ impl Cheatcode for getBroadcasts_1Call {
     }
 }
 
-impl Cheatcode for getDeployment_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: FoundryContextExt> Cheatcode<CTX> for getDeployment_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.cfg.chain_id;
+        let chain_id = ccx.ecx.cfg().chain_id;
 
         let latest_broadcast = latest_broadcast(
             contractName,
@@ -801,7 +834,7 @@ impl Cheatcode for getDeployment_0Call {
     }
 }
 
-impl Cheatcode for getDeployment_1Call {
+impl<CTX> Cheatcode<CTX> for getDeployment_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
@@ -816,7 +849,7 @@ impl Cheatcode for getDeployment_1Call {
     }
 }
 
-impl Cheatcode for getDeploymentsCall {
+impl<CTX> Cheatcode<CTX> for getDeploymentsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
@@ -897,7 +930,7 @@ fn latest_broadcast(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CheatsConfig;
+    use crate::{AnyCtx, CheatsConfig};
     use std::sync::Arc;
 
     fn cheats() -> Cheatcodes {
@@ -937,7 +970,7 @@ mod tests {
         #[cfg(windows)]
         let args = vec!["cmd".to_string(), "/c".to_string(), "exit 1".to_string()];
 
-        let result = ffiCall { commandInput: args }.apply(&mut cheats);
+        let result = Cheatcode::<AnyCtx>::apply(&ffiCall { commandInput: args }, &mut cheats);
 
         // Assert that the cheatcode returned an error.
         assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");

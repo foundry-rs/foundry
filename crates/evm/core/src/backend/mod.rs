@@ -18,7 +18,7 @@ use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
-    Database, DatabaseCommit, JournalEntry,
+    Database, DatabaseCommit, Journal, JournalEntry,
     bytecode::Bytecode,
     context::JournalInner,
     context_interface::{
@@ -26,7 +26,7 @@ use revm::{
         result::ResultAndState,
     },
     database::{CacheDB, DatabaseRef},
-    inspector::NoOpInspector,
+    inspector::{JournalExt, NoOpInspector},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -274,11 +274,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
     /// the contract is deployed there.
     ///
     /// Returns a more useful error message if that's the case
-    fn diagnose_revert(
-        &self,
-        callee: Address,
-        journaled_state: &JournaledState,
-    ) -> Option<RevertDiagnostic>;
+    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic>;
 
     /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
     ///
@@ -381,6 +377,57 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
 }
 
 struct _ObjectSafe(dyn DatabaseExt);
+
+/// Extension trait for [`Journal`] that wraps [`DatabaseExt`] methods requiring simultaneous
+/// mutable access to the database and journal.
+///
+/// Inside `Journal<DB, JournalEntry>`, the `database` and `inner` fields can be borrowed
+/// independently, avoiding the need to destructure the context.
+///
+/// Most cheatcodes should use [`as_db_and_inner()`](FoundryJournalExt::as_db_and_inner) to get
+/// direct access to the [`DatabaseExt`] and [`JournaledState`], calling `DatabaseExt` methods
+/// directly. This avoids the clone→apply pattern and enables zero-copy borrow splitting.
+pub trait FoundryJournalExt: JournalExt {
+    /// Loads account allocations into the journal.
+    fn load_allocs(
+        &mut self,
+        allocs: &BTreeMap<Address, GenesisAccount>,
+    ) -> Result<(), BackendError>;
+
+    /// Clones account data from source to target address.
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
+    ) -> Result<(), BackendError>;
+
+    /// Returns mutable references to the database and journal inner state.
+    ///
+    /// This enables calling `DatabaseExt` methods directly with zero-copy borrow splitting,
+    /// combined with `FoundryContextExt::journal_and_env_mut()` for simultaneous env access.
+    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState);
+}
+
+impl<DB: DatabaseExt> FoundryJournalExt for Journal<DB, JournalEntry> {
+    fn load_allocs(
+        &mut self,
+        allocs: &BTreeMap<Address, GenesisAccount>,
+    ) -> Result<(), BackendError> {
+        self.database.load_allocs(allocs, &mut self.inner)
+    }
+
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
+    ) -> Result<(), BackendError> {
+        self.database.clone_account(source, target, &mut self.inner)
+    }
+
+    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState) {
+        (&mut self.database, &mut self.inner)
+    }
+}
 
 /// Provides the underlying `revm::Database` implementation.
 ///
@@ -1355,11 +1402,7 @@ impl DatabaseExt for Backend {
         self.inner.ensure_fork_id(id)
     }
 
-    fn diagnose_revert(
-        &self,
-        callee: Address,
-        journaled_state: &JournaledState,
-    ) -> Option<RevertDiagnostic> {
+    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
 
@@ -1369,7 +1412,7 @@ impl DatabaseExt for Backend {
             return None;
         }
 
-        if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
+        if !active_fork.is_contract(callee) && !is_contract_in_state(evm_state, callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
             for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
@@ -1606,7 +1649,7 @@ impl Fork {
         {
             return true;
         }
-        is_contract_in_state(&self.journaled_state, acc)
+        is_contract_in_state(&self.journaled_state.state, acc)
     }
 }
 
@@ -1936,12 +1979,8 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 }
 
 /// Returns true of the address is a contract
-fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool {
-    journaled_state
-        .state
-        .get(&acc)
-        .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
-        .unwrap_or_default()
+fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
+    evm_state.get(&acc).map(|acc| acc.info.code_hash != KECCAK_EMPTY).unwrap_or_default()
 }
 
 /// Updates the env's block with the block's data

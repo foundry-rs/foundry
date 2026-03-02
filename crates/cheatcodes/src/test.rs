@@ -6,6 +6,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::constants::MAGIC_SKIP;
+use revm::context_interface::{ContextTr, JournalTr};
 use std::str::FromStr;
 
 pub(crate) mod assert;
@@ -13,28 +14,28 @@ pub(crate) mod assume;
 pub(crate) mod expect;
 pub(crate) mod revert_handlers;
 
-impl Cheatcode for breakpoint_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX> Cheatcode<CTX> for breakpoint_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { char } = self;
         breakpoint(ccx.state, &ccx.caller, char, true)
     }
 }
 
-impl Cheatcode for breakpoint_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX> Cheatcode<CTX> for breakpoint_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { char, value } = self;
         breakpoint(ccx.state, &ccx.caller, char, *value)
     }
 }
 
-impl Cheatcode for getFoundryVersionCall {
+impl<CTX> Cheatcode<CTX> for getFoundryVersionCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(SEMVER_VERSION.abi_encode())
     }
 }
 
-impl Cheatcode for rpcUrlCall {
+impl<CTX> Cheatcode<CTX> for rpcUrlCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { rpcAlias } = self;
         let url = state.config.rpc_endpoint(rpcAlias)?.url()?.abi_encode();
@@ -42,21 +43,21 @@ impl Cheatcode for rpcUrlCall {
     }
 }
 
-impl Cheatcode for rpcUrlsCall {
+impl<CTX> Cheatcode<CTX> for rpcUrlsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
-impl Cheatcode for rpcUrlStructsCall {
+impl<CTX> Cheatcode<CTX> for rpcUrlStructsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
-impl Cheatcode for sleepCall {
+impl<CTX> Cheatcode<CTX> for sleepCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { duration } = self;
         let sleep_duration = std::time::Duration::from_millis(duration.saturating_to());
@@ -65,20 +66,20 @@ impl Cheatcode for sleepCall {
     }
 }
 
-impl Cheatcode for skip_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr> Cheatcode<CTX> for skip_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { skipTest } = *self;
         skip_1Call { skipTest, reason: String::new() }.apply_stateful(ccx)
     }
 }
 
-impl Cheatcode for skip_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr> Cheatcode<CTX> for skip_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { skipTest, reason } = self;
         if *skipTest {
             // Skip should not work if called deeper than at test level.
             // Since we're not returning the magic skip bytes, this will cause a test failure.
-            ensure!(ccx.ecx.journaled_state.depth <= 1, "`skip` can only be used at test level");
+            ensure!(ccx.ecx.journal().depth() <= 1, "`skip` can only be used at test level");
             Err([MAGIC_SKIP, reason.as_bytes()].concat().into())
         } else {
             Ok(Default::default())
@@ -86,14 +87,14 @@ impl Cheatcode for skip_1Call {
     }
 }
 
-impl Cheatcode for getChain_0Call {
+impl<CTX> Cheatcode<CTX> for getChain_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { chainAlias } = self;
         get_chain(state, chainAlias)
     }
 }
 
-impl Cheatcode for getChain_1Call {
+impl<CTX> Cheatcode<CTX> for getChain_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { chainId } = self;
         // Convert the chainId to a string and use the existing get_chain function

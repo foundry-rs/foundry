@@ -1,6 +1,7 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
+use revm::context_interface::{ContextTr, JournalTr};
 use spec::Vm::{
     PotentialRevert, assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
 };
@@ -43,36 +44,36 @@ impl AcceptableRevertParameters {
     }
 }
 
-impl Cheatcode for assumeCall {
+impl<CTX> Cheatcode<CTX> for assumeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { condition } = self;
         if *condition { Ok(Default::default()) } else { Err(Error::from(MAGIC_ASSUME)) }
     }
 }
 
-impl Cheatcode for assumeNoRevert_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth, vec![])
+impl<CTX: ContextTr> Cheatcode<CTX> for assumeNoRevert_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+        assume_no_revert(ccx.state, ccx.ecx.journal().depth(), vec![])
     }
 }
 
-impl Cheatcode for assumeNoRevert_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr> Cheatcode<CTX> for assumeNoRevert_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { potentialRevert } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth,
+            ccx.ecx.journal().depth(),
             vec![AcceptableRevertParameters::from(potentialRevert)],
         )
     }
 }
 
-impl Cheatcode for assumeNoRevert_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr> Cheatcode<CTX> for assumeNoRevert_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { potentialReverts } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth,
+            ccx.ecx.journal().depth(),
             potentialReverts.iter().map(AcceptableRevertParameters::from).collect(),
         )
     }
