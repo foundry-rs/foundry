@@ -21,7 +21,7 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
     context::{
-        BlockEnv,
+        BlockEnv, ContextTr,
         result::{ExecutionResult, Output},
     },
     context_interface::CreateScheme,
@@ -677,10 +677,10 @@ impl InspectorStackRefMut<'_> {
         gas_limit: u64,
         value: U256,
     ) -> (InterpreterResult, Option<Address>) {
-        let cached_env = Env::from(ecx.cfg.clone(), ecx.block.clone(), ecx.tx.clone());
+        let cached_env = Env::from(ecx.cfg().clone(), ecx.block().clone(), ecx.tx().clone());
 
         ecx.block.basefee = 0;
-        ecx.tx.chain_id = Some(ecx.cfg.chain_id);
+        ecx.tx.chain_id = Some(ecx.cfg().chain_id);
         ecx.tx.caller = caller;
         ecx.tx.kind = kind;
         ecx.tx.data = input;
@@ -690,8 +690,8 @@ impl InspectorStackRefMut<'_> {
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
-        if !ecx.cfg.disable_block_gas_limit {
-            ecx.tx.gas_limit = std::cmp::min(ecx.tx.gas_limit, ecx.block.gas_limit);
+        if !ecx.cfg().disable_block_gas_limit {
+            ecx.tx.gas_limit = std::cmp::min(ecx.tx.gas_limit, ecx.block().gas_limit);
         }
         ecx.tx.gas_price = 0;
 

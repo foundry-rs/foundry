@@ -36,7 +36,7 @@ use itertools::Itertools;
 use rand::Rng;
 use revm::{
     bytecode::Bytecode,
-    context::{Block, JournalTr, TxEnv, result::ExecutionResult},
+    context::{Block, ContextTr, JournalTr, TxEnv, result::ExecutionResult},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountStatus},
 };
@@ -471,7 +471,7 @@ impl Cheatcode for lastCallGasCall {
 impl Cheatcode for getChainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(U256::from(ccx.ecx.cfg.chain_id).abi_encode())
+        Ok(U256::from(ccx.ecx.cfg().chain_id).abi_encode())
     }
 }
 
@@ -496,7 +496,7 @@ impl Cheatcode for difficultyCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            ccx.ecx.cfg.spec < SpecId::MERGE,
+            ccx.ecx.cfg().spec < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -518,7 +518,7 @@ impl Cheatcode for prevrandao_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::MERGE,
+            ccx.ecx.cfg().spec >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -531,7 +531,7 @@ impl Cheatcode for prevrandao_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::MERGE,
+            ccx.ecx.cfg().spec >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -544,7 +544,7 @@ impl Cheatcode for blobhashesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { hashes } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec >= SpecId::CANCUN,
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -559,11 +559,11 @@ impl Cheatcode for getBlobhashesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec >= SpecId::CANCUN,
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        Ok(ccx.ecx.tx.blob_hashes.clone().abi_encode())
+        Ok(ccx.ecx.tx().blob_hashes.clone().abi_encode())
     }
 }
 
@@ -578,7 +578,7 @@ impl Cheatcode for rollCall {
 impl Cheatcode for getBlockNumberCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.block.number.abi_encode())
+        Ok(ccx.ecx.block().number.abi_encode())
     }
 }
 
@@ -602,7 +602,7 @@ impl Cheatcode for warpCall {
 impl Cheatcode for getBlockTimestampCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.block.timestamp.abi_encode())
+        Ok(ccx.ecx.block().timestamp.abi_encode())
     }
 }
 
@@ -610,14 +610,14 @@ impl Cheatcode for blobBaseFeeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec >= SpecId::CANCUN,
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
         ccx.ecx.block.set_blob_excess_gas_and_price(
             (*newBlobBaseFee).to(),
-            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg.spec),
+            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg().spec),
         );
         Ok(Default::default())
     }
@@ -626,7 +626,7 @@ impl Cheatcode for blobBaseFeeCall {
 impl Cheatcode for getBlobBaseFeeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.block.blob_excess_gas().unwrap_or(0).abi_encode())
+        Ok(ccx.ecx.block().blob_excess_gas().unwrap_or(0).abi_encode())
     }
 }
 
@@ -763,7 +763,7 @@ impl Cheatcode for coolSlotCall {
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.tx.caller, ccx.ecx.journaled_state.depth())
+        read_callers(ccx.state, &ccx.ecx.tx().caller, ccx.ecx.journaled_state.depth())
     }
 }
 
@@ -1074,7 +1074,7 @@ impl Cheatcode for setBlockhashCall {
         let Self { blockNumber, blockHash } = *self;
         ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
         ensure!(
-            blockNumber <= U256::from(ccx.ecx.block.number),
+            blockNumber <= U256::from(ccx.ecx.block().number),
             "block number must be less than or equal to the current block number"
         );
 
@@ -1300,7 +1300,7 @@ impl Cheatcode for setEvmVersionCall {
 
 impl Cheatcode for getEvmVersionCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        Ok(ccx.ecx.cfg.spec.to_string().to_lowercase().abi_encode())
+        Ok(ccx.ecx.cfg().spec.to_string().to_lowercase().abi_encode())
     }
 }
 

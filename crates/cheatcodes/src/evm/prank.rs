@@ -1,6 +1,6 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use revm::context::JournalTr;
+use revm::context::{ContextTr, JournalTr};
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -151,7 +151,7 @@ fn prank(
 
     let prank = Prank::new(
         ccx.caller,
-        ccx.ecx.tx.caller,
+        ccx.ecx.tx().caller,
         *new_caller,
         new_origin.copied(),
         depth,
