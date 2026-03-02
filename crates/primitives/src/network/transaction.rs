@@ -126,6 +126,11 @@ pub trait FoundryTransactionBuilder<N: Network>:
         self
     }
 
+    /// Get the fee token for a Tempo transaction.
+    fn fee_token(&self) -> Option<Address> {
+        None
+    }
+
     /// Set the fee token for a Tempo transaction.
     fn set_fee_token(&mut self, _fee_token: Address) {}
 
@@ -133,6 +138,11 @@ pub trait FoundryTransactionBuilder<N: Network>:
     fn with_fee_token(mut self, fee_token: Address) -> Self {
         self.set_fee_token(fee_token);
         self
+    }
+
+    /// Get the 2D nonce key for a Tempo transaction.
+    fn nonce_key(&self) -> Option<U256> {
+        None
     }
 
     /// Set the 2D nonce key for the Tempo transaction.
@@ -189,8 +199,16 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         self.authorization_list = Some(authorization_list);
     }
 
+    fn fee_token(&self) -> Option<Address> {
+        self.fee_token
+    }
+
     fn set_fee_token(&mut self, fee_token: Address) {
         self.fee_token = Some(fee_token);
+    }
+
+    fn nonce_key(&self) -> Option<U256> {
+        self.nonce_key
     }
 
     fn set_nonce_key(&mut self, nonce_key: U256) {
