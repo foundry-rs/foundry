@@ -3,6 +3,7 @@ mod anvil;
 mod anvil_api;
 mod api;
 mod beacon_api;
+mod eip2935;
 mod eip4844;
 mod eip7702;
 mod fork;

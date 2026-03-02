@@ -866,7 +866,7 @@ async fn test_reorg_deep_blockhash_consistency() {
     let tip_after_reorg = api.block_number().unwrap().to::<u64>();
 
     // Verify blocks still in the 256 window have consistent hashes
-    for (block_num, _rpc_before) in &cached_hashes {
+    for (block_num, rpc_before) in &cached_hashes {
         // Skip blocks that were reorged
         if *block_num > tip_after_reorg - 50 {
             continue;
@@ -874,6 +874,10 @@ async fn test_reorg_deep_blockhash_consistency() {
         let rpc_after =
             provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
         let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap();
+        assert_eq!(
+            rpc_after, *rpc_before,
+            "Block {block_num}: hash should not change for non-reorged blocks"
+        );
         assert_eq!(
             rpc_after, opcode_after,
             "Block {block_num}: RPC and BLOCKHASH should match after deep reorg"
