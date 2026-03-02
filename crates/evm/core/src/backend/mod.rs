@@ -20,7 +20,7 @@ use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
-    Database, DatabaseCommit, JournalEntry,
+    Database, DatabaseCommit, Journal, JournalEntry,
     bytecode::Bytecode,
     context::JournalInner,
     context_interface::{
@@ -28,7 +28,7 @@ use revm::{
         result::ResultAndState,
     },
     database::{CacheDB, DatabaseRef},
-    inspector::NoOpInspector,
+    inspector::{JournalExt, NoOpInspector},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -379,6 +379,38 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
 }
 
 struct _ObjectSafe(dyn DatabaseExt);
+
+/// Extension trait for [`Journal`] providing borrow splitting and state replacement.
+///
+/// Generic code accesses the journal via `ctx.journal_mut()` which returns `&mut impl JournalTr`.
+/// This trait adds the ability to split the journal into its database and inner state components,
+/// enabling direct [`DatabaseExt`] method calls with zero-copy borrow splitting.
+pub trait FoundryJournalExt: JournalExt {
+    /// Returns mutable references to the database and journal inner state.
+    ///
+    /// Enables calling [`DatabaseExt`] methods directly, e.g.:
+    /// ```ignore
+    /// let (journal, env) = ctx.journal_and_env_mut();  // FoundryContextExt
+    /// let (db, inner) = journal.as_db_and_inner();     // FoundryJournalExt
+    /// db.select_fork(id, &env, inner)?;                // DatabaseExt
+    /// ```
+    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState);
+
+    /// Replaces the journal inner state.
+    ///
+    /// Used by sub-EVM execution to write back modified state after running a closure.
+    fn set_inner(&mut self, inner: JournaledState);
+}
+
+impl<DB: DatabaseExt> FoundryJournalExt for Journal<DB, JournalEntry> {
+    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState) {
+        (&mut self.database, &mut self.inner)
+    }
+
+    fn set_inner(&mut self, inner: JournaledState) {
+        self.inner = inner;
+    }
+}
 
 /// Provides the underlying `revm::Database` implementation.
 ///
