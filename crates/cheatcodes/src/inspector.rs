@@ -1540,9 +1540,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 && outcome.result.result == InstructionResult::Stop
                 && call.target_address != test_contract
             {
-                let journaled_state = ecx.journaled_state.clone();
-                self.fork_revert_diagnostic =
-                    ecx.journaled_state.db().diagnose_revert(call.target_address, &journaled_state);
+                self.fork_revert_diagnostic = ecx
+                    .journaled_state
+                    .db()
+                    .diagnose_revert(call.target_address, &ecx.journaled_state.state);
             }
         }
 
