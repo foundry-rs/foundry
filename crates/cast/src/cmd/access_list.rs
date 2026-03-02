@@ -84,3 +84,37 @@ impl AccessListArgs {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::hex;
+    use clap::error::ErrorKind;
+
+    #[test]
+    fn can_parse_access_list_data() {
+        let data = hex::encode("hello");
+        let args = AccessListArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
+        assert_eq!(args.data, Some(data));
+
+        let data = hex::encode_prefixed("hello");
+        let args = AccessListArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
+        assert_eq!(args.data, Some(data));
+    }
+
+    #[test]
+    fn data_conflicts_with_sig_and_args() {
+        let err = AccessListArgs::try_parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000001",
+            "transfer(address,uint256)",
+            "0x0000000000000000000000000000000000000002",
+            "1",
+            "--data",
+            "0x1234",
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+    }
+}
