@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_eips::{BlockId, Encodable2718};
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, DynTransactionBuilder, EthereumWallet, NetworkTransactionBuilder};
 use alloy_primitives::{U64, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;

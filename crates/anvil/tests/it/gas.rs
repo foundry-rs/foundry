@@ -1,7 +1,7 @@
 //! Gas related tests
 
 use crate::utils::http_provider_with_signer;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{DynTransactionBuilder, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};

@@ -4,7 +4,8 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, TransactionBuilder, TransactionBuilder7594, TransactionBuilder7702,
+    AnyNetwork, DynTransactionBuilder, NetworkTransactionBuilder, TransactionBuilder,
+    TransactionBuilder7594, TransactionBuilder7702,
 };
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
@@ -518,7 +519,11 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         self.tx.set_kind(self.state.kind);
 
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
-        self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
+        TransactionBuilder::set_input_kind(
+            &mut self.tx,
+            self.state.input.clone(),
+            TransactionInputKind::Both,
+        );
 
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());

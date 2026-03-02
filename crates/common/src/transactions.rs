@@ -2,11 +2,11 @@
 
 use alloy_consensus::{Transaction, TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network::{AnyTransactionReceipt, Network, TransactionResponse};
+use alloy_network::{AnyTransactionReceipt, DynTransactionBuilder, Network, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{
     Provider,
-    network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
+    network::{AnyNetwork, ReceiptResponse},
 };
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;

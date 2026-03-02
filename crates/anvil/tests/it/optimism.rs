@@ -2,7 +2,7 @@
 
 use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};

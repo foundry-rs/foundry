@@ -1,6 +1,7 @@
 use alloy_consensus::{BlobTransactionSidecar, EthereumTypedTransaction};
 use alloy_network::{
-    BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
+    BuildResult, DynTransactionBuilder, NetworkTransactionBuilder, NetworkWallet,
+    TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
 };
 use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
@@ -299,8 +300,7 @@ impl From<FoundryTxEnvelope> for FoundryTransactionRequest {
     }
 }
 
-// TransactionBuilder trait implementation for FoundryNetwork
-impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
+impl DynTransactionBuilder for FoundryTransactionRequest {
     fn chain_id(&self) -> Option<ChainId> {
         self.as_ref().chain_id
     }
@@ -325,23 +325,18 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         self.as_ref().input.input()
     }
 
-    fn set_input<T: Into<alloy_primitives::Bytes>>(&mut self, input: T) {
-        self.as_mut().input.input = Some(input.into());
+    fn set_input(&mut self, input: alloy_primitives::Bytes) {
+        self.as_mut().input.input = Some(input);
     }
 
-    fn set_input_kind<T: Into<alloy_primitives::Bytes>>(
-        &mut self,
-        input: T,
-        kind: TransactionInputKind,
-    ) {
+    fn set_input_kind(&mut self, input: alloy_primitives::Bytes, kind: TransactionInputKind) {
         let inner = self.as_mut();
         match kind {
-            TransactionInputKind::Input => inner.input.input = Some(input.into()),
-            TransactionInputKind::Data => inner.input.data = Some(input.into()),
+            TransactionInputKind::Input => inner.input.input = Some(input),
+            TransactionInputKind::Data => inner.input.data = Some(input),
             TransactionInputKind::Both => {
-                let bytes = input.into();
-                inner.input.input = Some(bytes.clone());
-                inner.input.data = Some(bytes);
+                inner.input.input = Some(input.clone());
+                inner.input.data = Some(input);
             }
         }
     }
@@ -414,6 +409,20 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         self.as_mut().access_list = Some(access_list);
     }
 
+    fn can_submit(&self) -> bool {
+        self.from().is_some()
+    }
+
+    fn can_build(&self) -> bool {
+        self.as_ref().can_build()
+            || self.complete_deposit().is_ok()
+            || self.complete_tempo().is_ok()
+    }
+}
+
+impl TransactionBuilder for FoundryTransactionRequest {}
+
+impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     fn complete_type(&self, ty: FoundryTxType) -> Result<(), Vec<&'static str>> {
         match ty {
             FoundryTxType::Legacy => self.as_ref().complete_legacy(),
@@ -424,16 +433,6 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
             FoundryTxType::Deposit => self.complete_deposit(),
             FoundryTxType::Tempo => self.complete_tempo(),
         }
-    }
-
-    fn can_submit(&self) -> bool {
-        self.from().is_some()
-    }
-
-    fn can_build(&self) -> bool {
-        self.as_ref().can_build()
-            || self.complete_deposit().is_ok()
-            || self.complete_tempo().is_ok()
     }
 
     fn output_tx_type(&self) -> FoundryTxType {

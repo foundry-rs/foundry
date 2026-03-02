@@ -13,7 +13,7 @@ mod types;
 mod tests {
     use std::time::Duration;
 
-    use alloy_network::{Ethereum, Network, TransactionBuilder};
+    use alloy_network::{DynTransactionBuilder, Ethereum, Network, TransactionBuilder};
     use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, address};
     use axum::http::{HeaderMap, HeaderValue};
     use tokio::task::JoinHandle;
