@@ -109,6 +109,20 @@ impl BuildArgs {
 
         let mut output = compiler.compile(&project)?;
 
+        if !config.allow_linked_libraries {
+            let violations: Vec<String> = output
+                .artifact_ids()
+                .filter(|(_, artifact)| !artifact.all_link_references().is_empty())
+                .map(|(id, _)| id.identifier())
+                .collect();
+            if !violations.is_empty() {
+                eyre::bail!(
+                    "Linked libraries are not allowed but the following contracts use linked libraries:\n  {}",
+                    violations.join("\n  ")
+                );
+            }
+        }
+
         // Cache project selectors.
         cache_local_signatures(&output)?;
 
