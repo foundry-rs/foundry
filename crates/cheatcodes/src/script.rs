@@ -11,7 +11,7 @@ use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
     bytecode::Bytecode,
-    context::JournalTr,
+    context::{ContextTr, JournalTr},
     context_interface::transaction::SignedAuthorization,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
@@ -103,7 +103,7 @@ fn attach_delegation(
     let SignedDelegation { v, r, s, nonce, implementation } = delegation;
     // Set chain id to 0 if universal deployment is preferred.
     // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#protection-from-malleability-cross-chain
-    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg.chain_id) };
+    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg().chain_id) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
     let signed_auth = SignedAuthorization::new_unchecked(
@@ -140,7 +140,7 @@ fn sign_delegation(
             authority_acc.data.info.nonce,
         )
     };
-    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg.chain_id) };
+    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg().chain_id) };
 
     let auth = Authorization { address: implementation, nonce, chain_id };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;
@@ -223,12 +223,12 @@ impl Cheatcode for attachBlobCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blob } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec >= SpecId::CANCUN,
             "`attachBlob` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(blob);
-        let sidecar_variant = if ccx.ecx.cfg.spec < SpecId::OSAKA {
+        let sidecar_variant = if ccx.ecx.cfg().spec < SpecId::OSAKA {
             sidecar.build_4844().map_err(|e| format!("{e}"))?.into()
         } else {
             sidecar.build_7594().map_err(|e| format!("{e}"))?.into()
@@ -373,14 +373,14 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
             }
         }
     }
-    let new_origin = new_origin.unwrap_or(ccx.ecx.tx.caller);
+    let new_origin = new_origin.unwrap_or(ccx.ecx.tx().caller);
     // Ensure new origin is loaded and touched.
     let _ = journaled_account(ccx.ecx, new_origin)?;
 
     let broadcast = Broadcast {
         new_origin,
         original_caller: ccx.caller,
-        original_origin: ccx.ecx.tx.caller,
+        original_origin: ccx.ecx.tx().caller,
         depth,
         single_call,
         deploy_from_code: false,
