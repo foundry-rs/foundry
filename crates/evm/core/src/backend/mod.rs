@@ -11,7 +11,9 @@ use crate::{
 use alloy_consensus::Typed2718;
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
-use alloy_network::{AnyNetwork, AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
+use alloy_network::{
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, TransactionResponse,
+};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
 use alloy_rpc_types::{BlockNumberOrTag, Transaction, TransactionRequest};
 use eyre::Context;
@@ -902,7 +904,7 @@ impl Backend {
             trace!(tx=?tx.tx_hash(), "committing transaction");
 
             commit_transaction(
-                &tx.inner,
+                tx,
                 &mut env.as_env_mut(),
                 journaled_state,
                 fork,
@@ -1296,7 +1298,7 @@ impl DatabaseExt for Backend {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
-            &tx.inner,
+            &tx,
             &mut env.as_env_mut(),
             journaled_state,
             fork,
@@ -1965,7 +1967,7 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
 fn commit_transaction(
-    tx: &Transaction<AnyTxEnvelope>,
+    tx: &AnyRpcTransaction,
     env: &mut EnvMut<'_>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
