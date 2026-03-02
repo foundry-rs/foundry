@@ -1,5 +1,6 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, Signature, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
@@ -496,13 +497,14 @@ impl WalletSubcommands {
                 cmd.run()?;
             }
             Self::Address { wallet, private_key_override } => {
+                // TODO: No generic Network handling required here
                 let wallet = private_key_override
                     .map(|pk| WalletOpts {
                         raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
                     })
                     .unwrap_or(wallet)
-                    .signer()
+                    .signer::<Ethereum>()
                     .await?;
                 let addr = wallet.address();
                 sh_println!("{}", addr.to_checksum(None))?;
@@ -511,6 +513,7 @@ impl WalletSubcommands {
                 let format_json = shell::is_json();
                 let mut accounts_json = json!([]);
                 for i in 0..accounts.unwrap_or(1) {
+                    // TODO: No generic Network handling required here
                     let wallet = WalletOpts {
                         raw: RawWalletOpts {
                             mnemonic: Some(mnemonic.clone()),
@@ -519,7 +522,7 @@ impl WalletSubcommands {
                         },
                         ..Default::default()
                     }
-                    .signer()
+                    .signer::<Ethereum>()
                     .await?;
 
                     match wallet {
@@ -556,13 +559,14 @@ impl WalletSubcommands {
                 }
             }
             Self::PublicKey { wallet, private_key_override } => {
+                // TODO: No generic Network handling required here
                 let wallet = private_key_override
                     .map(|pk| WalletOpts {
                         raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
                         ..Default::default()
                     })
                     .unwrap_or(wallet)
-                    .signer()
+                    .signer::<Ethereum>()
                     .await?;
 
                 let public_key = match wallet {
@@ -573,7 +577,8 @@ impl WalletSubcommands {
                 sh_println!("0x{}", hex::encode(public_key))?;
             }
             Self::Sign { message, data, from_file, no_hash, wallet } => {
-                let wallet = wallet.signer().await?;
+                // TODO: No generic Network handling required here
+                let wallet = wallet.signer::<Ethereum>().await?;
                 let sig = if data {
                     let typed_data: TypedData = if from_file {
                         // data is a file name, read json from file
@@ -613,7 +618,8 @@ impl WalletSubcommands {
                 }
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast } => {
-                let wallet = wallet.signer().await?;
+                // TODO: No generic Network handling required here
+                let wallet = wallet.signer::<Ethereum>().await?;
                 let provider = utils::get_provider(&rpc.load_config()?)?;
                 let nonce = if let Some(nonce) = nonce {
                     nonce
@@ -705,8 +711,9 @@ impl WalletSubcommands {
                 }
 
                 // get wallet
+                // TODO: No generic Network handling required here
                 let wallet = raw_wallet_options
-                    .signer()?
+                    .signer::<Ethereum>()?
                     .and_then(|s| match s {
                         WalletSigner::Local(s) => Some(s),
                         _ => None,
@@ -791,6 +798,7 @@ flag to set your key via:
                         },
                         None => (None, None),
                     };
+                // TODO: No generic Network handling required here
                 let wallet = WalletOpts {
                     raw: RawWalletOpts {
                         mnemonic: mnemonic_override.or(wallet.raw.mnemonic),
@@ -800,7 +808,7 @@ flag to set your key via:
                     },
                     ..wallet
                 }
-                .signer()
+                .signer::<Ethereum>()
                 .await?;
                 match wallet {
                     WalletSigner::Local(wallet) => {

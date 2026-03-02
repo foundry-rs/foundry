@@ -1,4 +1,5 @@
 use crate::{signer::WalletSigner, utils, wallet_raw::RawWalletOpts};
+use alloy_network::Network;
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::Result;
@@ -135,7 +136,7 @@ pub struct WalletOpts {
 }
 
 impl WalletOpts {
-    pub async fn signer(&self) -> Result<WalletSigner> {
+    pub async fn signer<N: Network>(&self) -> Result<WalletSigner<N>> {
         trace!("start finding signer");
 
         let get_env = |key: &str| {
@@ -234,6 +235,7 @@ impl From<RawWalletOpts> for WalletOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::AnyNetwork;
     use alloy_signer::Signer;
     use std::{path::Path, str::FromStr};
 
@@ -253,7 +255,7 @@ mod tests {
             "--password-file",
             password_file.to_str().unwrap(),
         ]);
-        let signer = wallet.signer().await.unwrap();
+        let signer = wallet.signer::<AnyNetwork>().await.unwrap();
         assert_eq!(
             signer.address(),
             Address::from_str("ec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
@@ -286,7 +288,7 @@ mod tests {
             browser_development: false,
             browser_disable_open: false,
         };
-        match wallet.signer().await {
+        match wallet.signer::<AnyNetwork>().await {
             Ok(_) => {
                 panic!("illformed private key shouldn't decode")
             }

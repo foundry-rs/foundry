@@ -1,4 +1,5 @@
 use crate::{PendingSigner, WalletSigner, utils};
+use alloy_network::Network;
 use clap::Parser;
 use eyre::Result;
 use serde::Serialize;
@@ -42,7 +43,7 @@ pub struct RawWalletOpts {
 
 impl RawWalletOpts {
     /// Returns signer configured by provided parameters.
-    pub fn signer(&self) -> Result<Option<WalletSigner>> {
+    pub fn signer<N: Network>(&self) -> Result<Option<WalletSigner<N>>> {
         if self.interactive {
             return Ok(Some(PendingSigner::Interactive.unlock()?));
         }

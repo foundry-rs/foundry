@@ -13,11 +13,10 @@ use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
-    utils::{self, LoadConfig, get_provider_builder, parse_function_args},
+    utils::{self, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr,
-    provider::RetryProviderWithSigner, shell,
+    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr, shell,
 };
 use foundry_config::{Chain, Config};
 use foundry_primitives::FoundryTransactionBuilder;
@@ -55,17 +54,17 @@ pub struct SendTxOpts {
 }
 
 /// Different sender kinds used by [`CastTxBuilder`].
-pub enum SenderKind<'a> {
+pub enum SenderKind<'a, N: Network> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
     /// accounts.
     Address(Address),
     /// A reference to a signer.
-    Signer(&'a WalletSigner),
+    Signer(&'a WalletSigner<N>),
     /// An owned signer.
-    OwnedSigner(Box<WalletSigner>),
+    OwnedSigner(Box<WalletSigner<N>>),
 }
 
-impl SenderKind<'_> {
+impl<N: Network> SenderKind<'_, N> {
     /// Resolves the name to an Ethereum Address.
     pub fn address(&self) -> Address {
         match self {
@@ -93,7 +92,7 @@ impl SenderKind<'_> {
     }
 
     /// Returns the signer if available.
-    pub fn as_signer(&self) -> Option<&WalletSigner> {
+    pub fn as_signer(&self) -> Option<&WalletSigner<N>> {
         match self {
             Self::Signer(signer) => Some(signer),
             Self::OwnedSigner(signer) => Some(signer.as_ref()),
@@ -102,20 +101,20 @@ impl SenderKind<'_> {
     }
 }
 
-impl From<Address> for SenderKind<'_> {
+impl<N: Network> From<Address> for SenderKind<'_, N> {
     fn from(addr: Address) -> Self {
         Self::Address(addr)
     }
 }
 
-impl<'a> From<&'a WalletSigner> for SenderKind<'a> {
-    fn from(signer: &'a WalletSigner) -> Self {
+impl<'a, N: Network> From<&'a WalletSigner<N>> for SenderKind<'a, N> {
+    fn from(signer: &'a WalletSigner<N>) -> Self {
         Self::Signer(signer)
     }
 }
 
-impl From<WalletSigner> for SenderKind<'_> {
-    fn from(signer: WalletSigner) -> Self {
+impl<N: Network> From<WalletSigner<N>> for SenderKind<'_, N> {
+    fn from(signer: WalletSigner<N>) -> Self {
         Self::OwnedSigner(Box::new(signer))
     }
 }
@@ -494,7 +493,7 @@ where
     /// is ready to be broadcasted.
     pub async fn build(
         self,
-        sender: impl Into<SenderKind<'_>>,
+        sender: impl Into<SenderKind<'_, N>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         self._build(sender, true, false).await
     }
@@ -503,7 +502,7 @@ where
     /// such as eth_call, eth_estimateGas, etc
     pub async fn build_raw(
         self,
-        sender: impl Into<SenderKind<'_>>,
+        sender: impl Into<SenderKind<'_, N>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         self._build(sender, false, false).await
     }
@@ -528,7 +527,7 @@ where
 
     async fn _build(
         mut self,
-        sender: impl Into<SenderKind<'_>>,
+        sender: impl Into<SenderKind<'_, N>>,
         fill: bool,
         unsigned: bool,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
@@ -636,7 +635,7 @@ where
     }
 
     /// Parses the passed --auth values and sets the authorization list on the transaction.
-    async fn resolve_auth(&mut self, sender: SenderKind<'_>, tx_nonce: u64) -> Result<()> {
+    async fn resolve_auth(&mut self, sender: SenderKind<'_, N>, tx_nonce: u64) -> Result<()> {
         if self.auth.is_empty() {
             return Ok(());
         }
@@ -717,18 +716,4 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         return Ok(Some(decoded_error));
     }
     Ok(None)
-}
-
-/// Creates a provider with wallet for signing transactions locally.
-pub(crate) async fn get_provider_with_wallet(
-    tx_opts: &SendTxOpts,
-) -> eyre::Result<RetryProviderWithSigner> {
-    let config = tx_opts.eth.load_config()?;
-    let signer = tx_opts.eth.wallet.signer().await?;
-    let wallet = alloy_network::EthereumWallet::from(signer);
-    let provider = get_provider_builder(&config)?.build_with_wallet(wallet)?;
-    if let Some(interval) = tx_opts.poll_interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval))
-    }
-    Ok(provider)
 }
