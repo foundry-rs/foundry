@@ -311,10 +311,7 @@ impl ResolvedEtherscanConfig {
         }
 
         let api_url = into_url(&api_url)?;
-        let client = reqwest::Client::builder()
-            .user_agent(ETHERSCAN_USER_AGENT)
-            .tls_built_in_root_certs(api_url.scheme() == "https")
-            .build()?;
+        let client = reqwest::Client::builder().user_agent(ETHERSCAN_USER_AGENT).build()?;
         let mut client_builder = foundry_block_explorers::Client::builder()
             .with_client(client)
             .with_api_key(api_key)

@@ -1,4 +1,5 @@
 use crate::{PendingSigner, WalletSigner, error::PrivateKeyError};
+use alloy_network::Network;
 use alloy_primitives::{B256, hex::FromHex};
 use alloy_signer_ledger::HDPath as LedgerHDPath;
 use alloy_signer_local::PrivateKeySigner;
@@ -17,8 +18,11 @@ fn ensure_pk_not_env(pk: &str) -> Result<()> {
     Ok(())
 }
 
+// TODO: For all following helpers, Network annotation doesn't makes sense here, remove it when
+// Browser variant gets extracted
+
 /// Validates and sanitizes user inputs, returning configured [WalletSigner].
-pub fn create_private_key_signer(private_key_str: &str) -> Result<WalletSigner> {
+pub fn create_private_key_signer<N: Network>(private_key_str: &str) -> Result<WalletSigner<N>> {
     let Ok(private_key) = B256::from_hex(private_key_str) else {
         ensure_pk_not_env(private_key_str)?;
         eyre::bail!("Failed to decode private key")
@@ -35,12 +39,12 @@ pub fn create_private_key_signer(private_key_str: &str) -> Result<WalletSigner> 
 /// Creates [WalletSigner] instance from given mnemonic parameters.
 ///
 /// Mnemonic can be either a file path or a mnemonic phrase.
-pub fn create_mnemonic_signer(
+pub fn create_mnemonic_signer<N: Network>(
     mnemonic: &str,
     passphrase: Option<&str>,
     hd_path: Option<&str>,
     index: u32,
-) -> Result<WalletSigner> {
+) -> Result<WalletSigner<N>> {
     let mnemonic = if Path::new(mnemonic).is_file() {
         fs::read_to_string(mnemonic)?
     } else {
@@ -52,10 +56,10 @@ pub fn create_mnemonic_signer(
 }
 
 /// Creates [WalletSigner] instance from given Ledger parameters.
-pub async fn create_ledger_signer(
+pub async fn create_ledger_signer<N: Network>(
     hd_path: Option<&str>,
     mnemonic_index: u32,
-) -> Result<WalletSigner> {
+) -> Result<WalletSigner<N>> {
     let derivation = if let Some(hd_path) = hd_path {
         LedgerHDPath::Other(hd_path.to_owned())
     } else {
@@ -70,10 +74,10 @@ Make sure it's connected and unlocked, with no other desktop wallet apps open."
 }
 
 /// Creates [WalletSigner] instance from given Trezor parameters.
-pub async fn create_trezor_signer(
+pub async fn create_trezor_signer<N: Network>(
     hd_path: Option<&str>,
     mnemonic_index: u32,
-) -> Result<WalletSigner> {
+) -> Result<WalletSigner<N>> {
     let derivation = if let Some(hd_path) = hd_path {
         TrezorHDPath::Other(hd_path.to_owned())
     } else {
@@ -105,11 +109,11 @@ pub fn maybe_get_keystore_path(
 ///
 /// Otherwise, a [PendingSigner] is returned, which can be used to unlock the keystore later,
 /// prompting user for password.
-pub fn create_keystore_signer(
+pub fn create_keystore_signer<N: Network>(
     path: &PathBuf,
     maybe_password: Option<&str>,
     maybe_password_file: Option<&str>,
-) -> Result<(Option<WalletSigner>, Option<PendingSigner>)> {
+) -> Result<(Option<WalletSigner<N>>, Option<PendingSigner>)> {
     if !path.exists() {
         eyre::bail!("Keystore file `{path:?}` does not exist")
     }
@@ -151,14 +155,16 @@ pub fn create_keystore_signer(
 
 #[cfg(test)]
 mod tests {
+    use alloy_network::AnyNetwork;
+
     use super::*;
 
     #[test]
     fn parse_private_key_signer() {
         let pk = B256::random();
         let pk_str = pk.to_string();
-        assert!(create_private_key_signer(&pk_str).is_ok());
+        assert!(create_private_key_signer::<AnyNetwork>(&pk_str).is_ok());
         // skip 0x
-        assert!(create_private_key_signer(&pk_str[2..]).is_ok());
+        assert!(create_private_key_signer::<AnyNetwork>(&pk_str[2..]).is_ok());
     }
 }

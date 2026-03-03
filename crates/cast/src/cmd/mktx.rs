@@ -1,17 +1,21 @@
 use crate::tx::{self, CastTxBuilder};
+use alloy_consensus::SignableTransaction;
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
-use alloy_signer::Signer;
+use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{LoadConfig, get_provider},
+    utils::LoadConfig,
 };
+use foundry_common::provider::ProviderBuilder;
+use foundry_primitives::FoundryTransactionBuilder;
 use std::{path::PathBuf, str::FromStr};
+use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast mktx`.
 #[derive(Debug, Parser)]
@@ -78,6 +82,19 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
+        if self.tx.tempo.fee_token.is_some() || self.tx.tempo.sequence_key.is_some() {
+            self.run_generic::<TempoNetwork>().await
+        } else {
+            self.run_generic::<AnyNetwork>().await
+        }
+    }
+
+    pub async fn run_generic<N>(self) -> Result<()>
+    where
+        N: Network,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+    {
         let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
@@ -97,7 +114,7 @@ impl MakeTxArgs {
 
         let config = eth.load_config()?;
 
-        let provider = get_provider(&config)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
 
         let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
             .await?
@@ -126,13 +143,11 @@ impl MakeTxArgs {
             return Ok(());
         }
 
-        let is_tempo = tx_builder.is_tempo();
-
         if ethsign {
             // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
             // unlocked accounts.
             let (tx, _) = tx_builder.build(config.sender).await?;
-            let signed_tx = provider.sign_transaction(tx.into_inner().into()).await?;
+            let signed_tx = provider.sign_transaction(tx).await?;
 
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -145,28 +160,9 @@ impl MakeTxArgs {
 
         tx::validate_from_address(eth.wallet.from, from)?;
 
-        // Handle Tempo transactions separately
-        // TODO(onbjerg): All of this is a side effect of a few things, most notably that we do
-        // not use `FoundryNetwork` and `FoundryTransactionRequest` everywhere, which is
-        // downstream of the fact that we use `EthereumWallet` everywhere.
-        if is_tempo {
-            let (ftx, _) = tx_builder.build(&signer).await?;
-
-            let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
-
-            // Encode as 2718
-            let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
-            signed_tx.encode_2718(&mut raw_tx);
-
-            let signed_tx_hex = hex::encode(&raw_tx);
-            sh_println!("0x{signed_tx_hex}")?;
-
-            return Ok(());
-        }
-
         let (tx, _) = tx_builder.build(&signer).await?;
 
-        let tx = tx.into_inner().build(&EthereumWallet::new(signer)).await?;
+        let tx = tx.build(&EthereumWallet::new(signer)).await?;
 
         let signed_tx = hex::encode(tx.encoded_2718());
         sh_println!("0x{signed_tx}")?;

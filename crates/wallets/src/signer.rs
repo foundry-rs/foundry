@@ -1,7 +1,7 @@
 use crate::{error::WalletSignerError, wallet_browser::signer::BrowserSigner};
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
-use alloy_network::TxSigner;
+use alloy_network::{Ethereum, Network, TxSigner};
 use alloy_primitives::{Address, B256, ChainId, Signature, hex};
 use alloy_signer::Signer;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
@@ -31,7 +31,7 @@ pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
 /// Wrapper enum around different signers.
 #[derive(Debug)]
-pub enum WalletSigner {
+pub enum WalletSigner<N: Network = Ethereum> {
     /// Wrapper around local wallet. e.g. private key, mnemonic
     Local(PrivateKeySigner),
     /// Wrapper around Ledger signer.
@@ -39,7 +39,7 @@ pub enum WalletSigner {
     /// Wrapper around Trezor signer.
     Trezor(TrezorSigner),
     /// Wrapper around browser wallet.
-    Browser(BrowserSigner),
+    Browser(BrowserSigner<N>),
     /// Wrapper around AWS KMS signer.
     #[cfg(feature = "aws-kms")]
     Aws(AwsSigner),
@@ -51,7 +51,7 @@ pub enum WalletSigner {
     Turnkey(TurnkeySigner),
 }
 
-impl WalletSigner {
+impl<N: Network> WalletSigner<N> {
     pub async fn from_ledger_path(path: LedgerHDPath) -> Result<Self> {
         let ledger = LedgerSigner::new(path, None).await?;
         Ok(Self::Ledger(ledger))
@@ -278,7 +278,7 @@ macro_rules! delegate {
 }
 
 #[async_trait]
-impl Signer for WalletSigner {
+impl<N: Network> Signer for WalletSigner<N> {
     /// Signs the given hash.
     async fn sign_hash(&self, hash: &B256) -> alloy_signer::Result<Signature> {
         delegate!(self, inner => inner.sign_hash(hash)).await
@@ -320,7 +320,7 @@ impl Signer for WalletSigner {
 }
 
 #[async_trait]
-impl TxSigner<Signature> for WalletSigner {
+impl<N: Network> TxSigner<Signature> for WalletSigner<N> {
     fn address(&self) -> Address {
         Signer::address(self)
     }
@@ -341,7 +341,9 @@ pub enum PendingSigner {
 }
 
 impl PendingSigner {
-    pub fn unlock(self) -> Result<WalletSigner> {
+    // TODO: Network annotation doesn't makes sense here, remove it when Browser variant gets
+    // extracted
+    pub fn unlock<N: Network>(self) -> Result<WalletSigner<N>> {
         match self {
             Self::Keystore(path) => {
                 let password = rpassword::prompt_password("Enter keystore password:")?;

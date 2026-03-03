@@ -2,7 +2,9 @@ use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
+use alloy_network::{
+    AnyNetwork, AnyTransactionReceipt, Ethereum, EthereumWallet, TransactionBuilder,
+};
 use alloy_primitives::{Address, Bytes, hex};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
@@ -184,7 +186,8 @@ impl CreateArgs {
             .await
         } else {
             // Deploy with signer
-            let signer = self.eth.wallet.signer().await?;
+            // TODO: generic Network handling
+            let signer = self.eth.wallet.signer::<Ethereum>().await?;
             let deployer = signer.address();
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(EthereumWallet::new(signer))
