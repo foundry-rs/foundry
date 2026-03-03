@@ -1,4 +1,5 @@
 pub mod error;
+pub mod opts;
 pub mod server;
 pub mod signer;
 pub mod state;
