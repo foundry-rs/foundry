@@ -190,7 +190,7 @@ pub struct ScriptArgs {
     pub etherscan_api_key: Option<String>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
-    #[arg(long, requires = "broadcast")]
+    #[arg(long)]
     pub verify: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
@@ -310,7 +310,7 @@ impl ScriptArgs {
             pre_simulation.fill_metadata().await?.bundle().await?
         };
 
-        // Exit early in case user didn't provide any broadcast/verify related flags.
+        // Exit early in case user didn't provide any broadcast/resume flags.
         if !bundled.args.should_broadcast() {
             if !shell::is_json() {
                 if shell::verbosity() >= 4 {
@@ -492,9 +492,9 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
+    /// We only broadcast transactions if --broadcast or --resume was passed.
     fn should_broadcast(&self) -> bool {
-        self.broadcast || self.resume || self.verify
+        self.broadcast || self.resume
     }
 }
 
