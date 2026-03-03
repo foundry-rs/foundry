@@ -43,10 +43,13 @@ pub mod precompiles;
 pub mod state_snapshot;
 pub mod utils;
 
-/// An extension trait that allows us to add additional hooks to Inspector for later use in
-/// handlers.
+/// Foundry-specific inspector methods, decoupled from any particular EVM context type.
+///
+/// This trait holds Foundry-specific extensions (create2 factory, console logging,
+/// network config, deployer address). It has no `Inspector<CTX>` supertrait so it can
+/// be used in generic code with `I: FoundryInspectorExt + Inspector<CTX>`.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> {
+pub trait FoundryInspectorExt {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
@@ -71,6 +74,20 @@ pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>
     }
 }
 
-impl InspectorExt for NoOpInspector {}
+/// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
+///
+/// Used as a trait object (`dyn InspectorExt`) in backend code that is Eth-specific.
+/// For generic multi-network code, use `I: FoundryInspectorExt + Inspector<CTX>` instead.
+pub trait InspectorExt:
+    for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
+{
+}
 
-impl InspectorExt for AccessListInspector {}
+impl<T> InspectorExt for T where
+    T: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
+{
+}
+
+impl FoundryInspectorExt for NoOpInspector {}
+
+impl FoundryInspectorExt for AccessListInspector {}

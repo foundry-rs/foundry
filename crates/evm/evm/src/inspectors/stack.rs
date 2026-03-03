@@ -11,7 +11,7 @@ use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    ContextExt, Env, InspectorExt,
+    ContextExt, Env, FoundryInspectorExt, InspectorExt,
     backend::{DatabaseExt, JournaledState},
     evm::new_evm_with_inspector,
 };
@@ -1140,7 +1140,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     }
 }
 
-impl InspectorExt for InspectorStackRefMut<'_> {
+impl FoundryInspectorExt for InspectorStackRefMut<'_> {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
         call_inspectors!(
             #[ret]
@@ -1152,7 +1152,7 @@ impl InspectorExt for InspectorStackRefMut<'_> {
     }
 
     fn console_log(&mut self, msg: &str) {
-        call_inspectors!([&mut self.log_collector], |inspector| InspectorExt::console_log(
+        call_inspectors!([&mut self.log_collector], |inspector| FoundryInspectorExt::console_log(
             inspector, msg
         ));
     }
@@ -1243,7 +1243,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
     }
 }
 
-impl InspectorExt for InspectorStack {
+impl FoundryInspectorExt for InspectorStack {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
         self.as_mut().should_use_create2_factory(depth, inputs)
     }
