@@ -530,7 +530,7 @@ impl TestArgs {
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
-        let show_progress = config.show_progress;
+        let show_progress = config.show_progress && !shell::is_quiet() && !shell::is_json();
         let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
             move || runner.test(&filter, tx, show_progress).map(|()| runner)

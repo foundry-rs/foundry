@@ -72,7 +72,7 @@ ignored_error_codes = [
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
-show_progress = false
+show_progress = true
 ffi = false
 live_logs = false
 allow_internal_expect_revert = false
@@ -279,7 +279,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         coverage_pattern_inverse: None,
         test_failures_file: "test-cache/test-failures".into(),
         threads: None,
-        show_progress: false,
+        show_progress: true,
         fuzz: FuzzConfig {
             runs: 1000,
             max_test_rejects: 100203,
@@ -1254,7 +1254,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "no_match_coverage": null,
   "test_failures_file": "cache/test-failures",
   "threads": null,
-  "show_progress": false,
+  "show_progress": true,
   "fuzz": {
     "runs": 256,
     "fail_on_revert": true,
