@@ -8,11 +8,10 @@ use alloy_consensus::{
     },
 };
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
+use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types::ConversionError;
-use alloy_serde::WithOtherFields;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
 use op_revm::OpTransaction;
 use revm::context::TxEnv;
@@ -156,9 +155,9 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
     type Error = ConversionError;
 
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let WithOtherFields { inner, .. } = value.0;
-        let from = inner.inner.signer();
-        match inner.inner.into_inner() {
+        let transaction = value.into_inner();
+        let from = transaction.from();
+        match transaction.into_inner() {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
                 TxEnvelope::Eip2930(tx) => Ok(Self::Eip2930(tx)),
