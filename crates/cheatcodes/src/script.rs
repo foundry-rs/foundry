@@ -11,7 +11,7 @@ use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
     bytecode::Bytecode,
-    context::JournalTr,
+    context::{ContextTr, JournalTr},
     context_interface::transaction::SignedAuthorization,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
@@ -103,7 +103,7 @@ fn attach_delegation(
     let SignedDelegation { v, r, s, nonce, implementation } = delegation;
     // Set chain id to 0 if universal deployment is preferred.
     // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#protection-from-malleability-cross-chain
-    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg.chain_id) };
+    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg().chain_id) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
     let signed_auth = SignedAuthorization::new_unchecked(
@@ -131,7 +131,7 @@ fn sign_delegation(
     let nonce = if let Some(nonce) = nonce {
         nonce
     } else {
-        let authority_acc = ccx.ecx.journaled_state.load_account(signer.address())?;
+        let authority_acc = ccx.ecx.journal_mut().load_account(signer.address())?;
         // Calculate next nonce considering existing active delegations
         next_delegation_nonce(
             &ccx.state.active_delegations,
@@ -140,7 +140,7 @@ fn sign_delegation(
             authority_acc.data.info.nonce,
         )
     };
-    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg.chain_id) };
+    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg().chain_id) };
 
     let auth = Authorization { address: implementation, nonce, chain_id };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;
@@ -191,7 +191,7 @@ fn next_delegation_nonce(
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
+    let authority_acc = ccx.ecx.journal_mut().load_account(authority)?;
 
     let expected_nonce = next_delegation_nonce(
         &ccx.state.active_delegations,
@@ -211,10 +211,10 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
     if auth.address.is_zero() {
         // Set empty code if the delegation address of authority is 0x.
         // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#behavior.
-        ccx.ecx.journaled_state.set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
+        ccx.ecx.journal_mut().set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
     } else {
         let bytecode = Bytecode::new_eip7702(*auth.address());
-        ccx.ecx.journaled_state.set_code(authority, bytecode);
+        ccx.ecx.journal_mut().set_code(authority, bytecode);
     }
     Ok(())
 }
@@ -223,12 +223,12 @@ impl Cheatcode for attachBlobCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blob } = self;
         ensure!(
-            ccx.ecx.cfg.spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec >= SpecId::CANCUN,
             "`attachBlob` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(blob);
-        let sidecar_variant = if ccx.ecx.cfg.spec < SpecId::OSAKA {
+        let sidecar_variant = if ccx.ecx.cfg().spec < SpecId::OSAKA {
             sidecar.build_4844().map_err(|e| format!("{e}"))?.into()
         } else {
             sidecar.build_7594().map_err(|e| format!("{e}"))?.into()
@@ -352,7 +352,7 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
-    let depth = ccx.ecx.journaled_state.depth();
+    let depth = ccx.ecx.journal().depth();
     ensure!(
         ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
@@ -373,14 +373,14 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
             }
         }
     }
-    let new_origin = new_origin.unwrap_or(ccx.ecx.tx.caller);
+    let new_origin = new_origin.unwrap_or(ccx.ecx.tx().caller);
     // Ensure new origin is loaded and touched.
     let _ = journaled_account(ccx.ecx, new_origin)?;
 
     let broadcast = Broadcast {
         new_origin,
         original_caller: ccx.caller,
-        original_origin: ccx.ecx.tx.caller,
+        original_origin: ccx.ecx.tx().caller,
         depth,
         single_call,
         deploy_from_code: false,

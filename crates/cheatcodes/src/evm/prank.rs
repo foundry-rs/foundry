@@ -1,6 +1,6 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use revm::context::JournalTr;
+use revm::context::{ContextTr, JournalTr};
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -112,7 +112,7 @@ impl Cheatcode for startPrank_3Call {
 impl Cheatcode for stopPrankCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth());
+        ccx.state.pranks.remove(&ccx.ecx.journal().depth());
         Ok(Default::default())
     }
 }
@@ -137,7 +137,7 @@ fn prank(
         );
     }
 
-    let depth = ccx.ecx.journaled_state.depth();
+    let depth = ccx.ecx.journal().depth();
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
@@ -151,7 +151,7 @@ fn prank(
 
     let prank = Prank::new(
         ccx.caller,
-        ccx.ecx.tx.caller,
+        ccx.ecx.tx().caller,
         *new_caller,
         new_origin.copied(),
         depth,

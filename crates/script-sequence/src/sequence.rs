@@ -8,7 +8,6 @@ use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
-    io::{BufWriter, Write},
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -108,9 +107,7 @@ impl ScriptSequence {
 
         // broadcast folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(path)?);
-        serde_json::to_writer_pretty(&mut writer, &self)?;
-        writer.flush()?;
+        fs::write_pretty_json_file(path, &self)?;
         if save_ts {
             //../run-[timestamp].json
             fs::copy(path, path.with_file_name(&ts_name))?;
@@ -118,9 +115,7 @@ impl ScriptSequence {
 
         // cache folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(sensitive_path)?);
-        serde_json::to_writer_pretty(&mut writer, &sensitive_script_sequence)?;
-        writer.flush()?;
+        fs::write_pretty_json_file(sensitive_path, &sensitive_script_sequence)?;
         if save_ts {
             //../run-[timestamp].json
             fs::copy(sensitive_path, sensitive_path.with_file_name(&ts_name))?;

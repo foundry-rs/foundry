@@ -1158,7 +1158,7 @@ impl SimpleCast {
             DynSolType::Uint(n) => {
                 if MAX {
                     let mut max = U256::MAX;
-                    if n < 255 {
+                    if n < 256 {
                         max &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
                     }
                     Ok(max.to_string())

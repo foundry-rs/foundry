@@ -564,7 +564,7 @@ impl EthApi {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
             None => match self.backend.transaction_by_hash(hash).await? {
-                Some(tx) => Ok(Some(tx.inner.inner.encoded_2718().into())),
+                Some(tx) => Ok(Some(tx.as_ref().encoded_2718().into())),
                 None => Ok(None),
             },
         }
