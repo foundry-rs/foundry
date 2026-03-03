@@ -21,7 +21,7 @@ use revm::{
     context_interface::result::ResultAndState,
     database::DatabaseRef,
     primitives::{HashMap as Map, hardfork::SpecId},
-    state::{Account, AccountInfo},
+    state::{Account, AccountInfo, EvmState},
 };
 use std::{borrow::Cow, collections::BTreeMap};
 
@@ -229,12 +229,8 @@ impl DatabaseExt for CowBackend<'_> {
         self.backend.ensure_fork_id(id)
     }
 
-    fn diagnose_revert(
-        &self,
-        callee: Address,
-        journaled_state: &JournaledState,
-    ) -> Option<RevertDiagnostic> {
-        self.backend.diagnose_revert(callee, journaled_state)
+    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic> {
+        self.backend.diagnose_revert(callee, evm_state)
     }
 
     fn load_allocs(

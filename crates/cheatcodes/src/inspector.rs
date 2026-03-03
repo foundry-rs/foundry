@@ -37,7 +37,7 @@ use foundry_common::{
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, ContextExt, InspectorExt,
+    Breakpoints, ContextExt, FoundryInspectorExt, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -1535,9 +1535,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 && outcome.result.result == InstructionResult::Stop
                 && call.target_address != test_contract
             {
-                let journaled_state = ecx.journaled_state.clone();
-                self.fork_revert_diagnostic =
-                    ecx.db().diagnose_revert(call.target_address, &journaled_state);
+                self.fork_revert_diagnostic = ecx
+                    .journaled_state
+                    .db()
+                    .diagnose_revert(call.target_address, &ecx.journaled_state.state);
             }
         }
 
@@ -1899,10 +1900,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 }
 
-impl InspectorExt for Cheatcodes {
-    fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &CreateInputs) -> bool {
+impl FoundryInspectorExt for Cheatcodes {
+    fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme() {
-            let depth = ecx.journal().depth();
             let target_depth = if let Some(prank) = &self.get_prank(depth) {
                 prank.depth
             } else if let Some(broadcast) = &self.broadcast {
