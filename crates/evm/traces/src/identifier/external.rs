@@ -300,7 +300,10 @@ impl Stream for ExternalFetcher {
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
                             warn!(target: "evm::traces::external", "rate limit exceeded on attempt");
-                            pin.backoff = Some(tokio::time::interval(pin.timeout));
+                            pin.backoff = Some(tokio::time::interval_at(
+                                tokio::time::Instant::now() + pin.timeout,
+                                pin.timeout,
+                            ));
                             pin.queue.push(addr);
                         }
                         Err(EtherscanError::InvalidApiKey) => {
