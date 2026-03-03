@@ -111,7 +111,7 @@ main() {
   fi
 
   # Install by downloading binaries
-  if [[ ("$FOUNDRYUP_REPO" == "foundry-rs/foundry" || -n "$FOUNDRYUP_NETWORK") && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
+  if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
@@ -309,6 +309,58 @@ main() {
           err "one or more binaries failed post-installation verification"
         fi
       fi
+    fi
+
+    # Use newly installed version.
+    FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
+    use
+
+    say "done!"
+  # Install from Tempo's fork of Foundry if --network tempo is set
+  elif [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
+    FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+
+    say "installing tempo-foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
+
+    # Detect platform and architecture.
+    detect_platform_arch
+
+    # Compute the URL of the release tarball in the Tempo Foundry repository.
+    RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
+    BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
+    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
+
+    ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
+
+    # Download and extract the binaries archive
+    say "downloading forge and cast for $FOUNDRYUP_TAG version"
+    if [ "$PLATFORM" = "win32" ]; then
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.zip"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      rm -f "$tmp"
+    else
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.tar.gz"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      # Make sure it's a valid tar archive.
+      ensure tar tf "$tmp" 1> /dev/null
+      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
+      rm -f "$tmp"
+    fi
+
+    # Optionally download the manuals
+    if check_cmd tar; then
+      say "downloading manpages"
+      mkdir -p "$FOUNDRY_MAN_DIR"
+      if ! download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"; then
+        warn "skipping manpage download: unavailable or invalid archive"
+      fi
+    else
+      say 'skipping manpage download: missing "tar"'
     fi
 
     # Use newly installed version.
