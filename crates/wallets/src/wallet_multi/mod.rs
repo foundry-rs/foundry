@@ -521,6 +521,24 @@ impl MultiWalletOpts {
         None
     }
 
+    /// Returns the address from a keystore file without decrypting it.
+    ///
+    /// When a single `--account` (or `--keystore`) is provided, reads the `"address"` field
+    /// from the keystore JSON so it can be used as the default sender.
+    pub fn keystore_address(&self) -> Option<alloy_primitives::Address> {
+        let paths = self.keystore_paths().ok()??;
+        if paths.len() != 1 {
+            return None;
+        }
+        let path = &paths[0];
+        let contents = std::fs::read_to_string(path).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        let addr_str = json.get("address")?.as_str()?;
+        // Keystore files store the address without 0x prefix
+        let addr_hex = if addr_str.starts_with("0x") { addr_str.to_string() } else { format!("0x{addr_str}") };
+        addr_hex.parse().ok()
+    }
+
     pub async fn browser_signer(&self) -> Result<Option<WalletSigner>> {
         if self.browser {
             let browser_signer = WalletSigner::from_browser(
