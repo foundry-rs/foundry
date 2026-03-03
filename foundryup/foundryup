@@ -110,14 +110,9 @@ main() {
     FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
   fi
 
-  # Install by downloading binaries (only for repos that publish prebuilt binaries)
+  # Install by downloading binaries
   if [[ ("$FOUNDRYUP_REPO" == "foundry-rs/foundry" || -n "$FOUNDRYUP_NETWORK") && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
-    # Default to nightly for network forks, stable for upstream
-    if [[ -n "$FOUNDRYUP_NETWORK" ]]; then
-      FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
-    else
-      FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
-    fi
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix)
