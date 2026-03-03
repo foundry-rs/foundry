@@ -181,9 +181,7 @@ impl BuildArgs {
                 get_solar_sources_from_compile_output(config, output, Some(&input_files), None)?;
             if solar_sources.input.sources.is_empty() {
                 if !input_files.is_empty() {
-                    sh_warn!(
-                        "unable to lint. Solar only supports Solidity versions prior to 0.8.0"
-                    )?;
+                    sh_warn!("unable to lint. Solar only supports Solidity versions >=0.8.0")?;
                 }
                 return Ok(());
             }
