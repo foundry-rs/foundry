@@ -1862,9 +1862,13 @@ impl Config {
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
+        // All path fields (src, test, script, out) must be extracted from ProjectPathsConfig
+        // to maintain a single source of truth. See: https://github.com/foundry-rs/foundry/issues/10300
         Self {
             root: paths.root,
             src: paths.sources.file_name().unwrap().into(),
+            test: paths.tests.file_name().unwrap().into(),
+            script: paths.scripts.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
