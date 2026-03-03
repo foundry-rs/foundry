@@ -160,7 +160,7 @@ impl WalletSigner {
             let _ = api_private_key;
             let _ = organization_id;
             let _ = address;
-            Err(WalletSignerError::UnsupportedSigner("Turnkey"))
+            Err(WalletSignerError::turnkey_unsupported())
         }
     }
 

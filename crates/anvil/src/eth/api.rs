@@ -2154,12 +2154,14 @@ impl EthApi {
         node_info!("anvil_reset");
         if let Some(forking) = forking {
             // if we're resetting the fork we need to reset the instance id
-            self.backend.reset_fork(forking).await
+            self.backend.reset_fork(forking).await?;
         } else {
             // Reset to a fresh in-memory state
-
-            self.backend.reset_to_in_mem().await
+            self.backend.reset_to_in_mem().await?;
         }
+        // Clear pending transactions since they reference the old chain state.
+        self.pool.clear();
+        Ok(())
     }
 
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {

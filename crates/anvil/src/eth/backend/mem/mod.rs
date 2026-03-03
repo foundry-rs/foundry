@@ -39,7 +39,7 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{
-    BlockNumHash, Encodable2718, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
+    BlockNumHash, Encodable2718, eip2935, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
     eip7910::SystemContract,
 };
 use alloy_evm::{
@@ -387,6 +387,14 @@ impl Backend {
             // insert the new genesis hash to the database so it's available for the next block in
             // the evm
             db.insert_block_hash(U256::from(self.best_number()), self.best_hash());
+
+            // Deploy EIP-2935 blockhash history storage contract if Prague is active.
+            if self.spec_id() >= SpecId::PRAGUE {
+                db.set_code(
+                    eip2935::HISTORY_STORAGE_ADDRESS,
+                    eip2935::HISTORY_STORAGE_CODE.clone(),
+                )?;
+            }
         }
 
         let db = self.db.write().await;
@@ -1167,8 +1175,7 @@ impl Backend {
         );
 
         if env.networks.is_optimism() {
-            env.tx.enveloped_tx =
-                Some(alloy_rlp::encode(tx.pending_transaction.transaction.as_ref()).into());
+            env.tx.enveloped_tx = Some(tx.pending_transaction.transaction.encoded_2718().into());
         }
 
         let db = self.db.read().await;
@@ -3682,6 +3689,19 @@ impl TransactionValidator for Backend {
                 && let Err(err) = blob_tx.validate(EnvKzgSettings::default().get())
             {
                 return Err(InvalidTransactionError::BlobTransactionValidationError(err));
+            }
+        }
+
+        // EIP-3860 initcode size validation, respects --code-size-limit / --disable-code-size-limit
+        if env.evm_env.cfg_env.spec >= SpecId::SHANGHAI && tx.kind() == TxKind::Create {
+            let max_initcode_size = env
+                .evm_env
+                .cfg_env
+                .limit_contract_code_size
+                .map(|limit| limit.saturating_mul(2))
+                .unwrap_or(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+            if tx.input().len() > max_initcode_size {
+                return Err(InvalidTransactionError::MaxInitCodeSizeExceeded);
             }
         }
 

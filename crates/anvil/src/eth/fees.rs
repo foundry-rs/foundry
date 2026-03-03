@@ -285,7 +285,10 @@ impl FeeHistoryService {
                 .iter()
                 .enumerate()
                 .map(|(i, receipt)| {
-                    let gas_used = receipt.cumulative_gas_used();
+                    let cumulative = receipt.cumulative_gas_used();
+                    let prev_cumulative =
+                        if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
+                    let gas_used = cumulative - prev_cumulative;
                     let effective_reward = block
                         .body
                         .transactions

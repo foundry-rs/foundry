@@ -6,7 +6,7 @@ use foundry_evm_core::{
     constants::CHEATCODE_ADDRESS,
 };
 use itertools::Itertools;
-use revm::context::JournalTr;
+use revm::context::{ContextTr, JournalTr};
 use std::{borrow::Cow, fmt};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = U256::from_limbs([18, 0, 0, 0]);
@@ -212,7 +212,7 @@ fn handle_assertion_result_mono(
         Err(msg.into_owned().into())
     } else {
         executor.console_log(ccx, &msg);
-        ccx.ecx.journaled_state.sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
+        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
         Ok(Default::default())
     }
 }

@@ -6,10 +6,7 @@ use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
-use std::{
-    io::{BufWriter, Write},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 /// Holds the sequences of multiple chain deployments.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -119,9 +116,7 @@ impl MultiChainSequence {
 
         // broadcast writes
         //../Contract-latest/run.json
-        let mut writer = BufWriter::new(fs::create_file(&self.path)?);
-        serde_json::to_writer_pretty(&mut writer, &self)?;
-        writer.flush()?;
+        fs::write_pretty_json_file(&self.path, self)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json
@@ -133,9 +128,7 @@ impl MultiChainSequence {
 
         // cache writes
         //../Contract-latest/run.json
-        let mut writer = BufWriter::new(fs::create_file(&self.sensitive_path)?);
-        serde_json::to_writer_pretty(&mut writer, &sensitive_sequence)?;
-        writer.flush()?;
+        fs::write_pretty_json_file(&self.sensitive_path, &sensitive_sequence)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json
