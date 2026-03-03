@@ -2,7 +2,8 @@ use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{ErrorExt, fmt::ConsoleFmt, sh_println};
 use foundry_evm_core::{
-    InspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_log,
+    FoundryInspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS,
+    decode::decode_console_log,
 };
 use revm::{
     Inspector,
@@ -96,7 +97,7 @@ where
     }
 }
 
-impl InspectorExt for LogCollector {
+impl FoundryInspectorExt for LogCollector {
     fn console_log(&mut self, msg: &str) {
         self.push_msg(msg);
     }
