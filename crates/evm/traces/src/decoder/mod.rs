@@ -323,7 +323,7 @@ impl CallTraceDecoder {
                 self.contracts.entry(address).or_insert(contract);
             }
 
-            if let Some(label) = label {
+            if let Some(label) = label.filter(|s| !s.is_empty()) {
                 self.labels.entry(address).or_insert(label);
             }
 
