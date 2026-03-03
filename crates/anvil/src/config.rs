@@ -57,8 +57,6 @@ use revm::{
 use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
-    fs::File,
-    io,
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::Arc,
@@ -980,11 +978,8 @@ impl NodeConfig {
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
         if let Some(path) = &self.config_out {
-            let file = io::BufWriter::new(
-                File::create(path).wrap_err("unable to create anvil config description file")?,
-            );
             let value = self.as_json(fork);
-            serde_json::to_writer(file, &value).wrap_err("failed writing JSON")?;
+            foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
         }
         if !self.silent {
             sh_println!("{}", self.as_string(fork))?;
