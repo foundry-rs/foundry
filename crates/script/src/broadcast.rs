@@ -18,7 +18,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     TransactionMaybeSigned,
-    provider::{RetryProvider, get_http_provider, try_get_http_provider},
+    provider::{RetryProvider, try_get_http_provider, try_get_http_provider_with_timeout},
     shell,
 };
 use foundry_config::Config;
@@ -271,6 +271,8 @@ impl BundledState {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
+        let rpc_timeout = self.script_config.config.eth_rpc_timeout;
+        let transaction_timeout = self.script_config.config.transaction_timeout;
         let futs = self
             .sequence
             .sequences_mut()
@@ -278,14 +280,12 @@ impl BundledState {
             .enumerate()
             .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
-                let provider = Arc::new(get_http_provider(rpc_url));
+                let provider = Arc::new(
+                    try_get_http_provider_with_timeout(rpc_url, rpc_timeout)
+                        .wrap_err_with(|| format!("bad fork_url provider: {rpc_url}"))?,
+                );
                 progress_ref
-                    .wait_for_pending(
-                        sequence_idx,
-                        sequence,
-                        &provider,
-                        self.script_config.config.transaction_timeout,
-                    )
+                    .wait_for_pending(sequence_idx, sequence, &provider, transaction_timeout)
                     .await
             })
             .collect::<Vec<_>>();
@@ -351,7 +351,10 @@ impl BundledState {
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
+            let provider = Arc::new(try_get_http_provider_with_timeout(
+                sequence.rpc_url(),
+                self.script_config.config.eth_rpc_timeout,
+            )?);
             let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);

@@ -74,6 +74,22 @@ pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> 
     ProviderBuilder::new(builder.as_ref()).build()
 }
 
+/// Like [`try_get_http_provider`] but with an optional request timeout in seconds.
+///
+/// When `timeout_secs` is `Some(s)`, the provider uses that timeout for RPC requests (e.g.
+/// `eth_sendTransaction`). When `None`, the default timeout ([`REQUEST_TIMEOUT`]) is used.
+#[inline]
+pub fn try_get_http_provider_with_timeout(
+    url: impl AsRef<str>,
+    timeout_secs: Option<u64>,
+) -> Result<RetryProvider> {
+    let mut builder = ProviderBuilder::new(url.as_ref());
+    if let Some(secs) = timeout_secs {
+        builder = builder.timeout(Duration::from_secs(secs));
+    }
+    builder.build()
+}
+
 /// Helper type to construct a `RetryProvider`
 ///
 /// This builder is generic over the network type `N`, defaulting to `AnyNetwork`.
