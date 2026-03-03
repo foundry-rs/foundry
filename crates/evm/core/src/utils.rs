@@ -3,10 +3,10 @@ use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::{AnyTxEnvelope, TransactionResponse};
+use alloy_network::{AnyRpcTransaction, TransactionResponse};
 use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
 use alloy_provider::{Network, network::BlockResponse};
-use alloy_rpc_types::{Transaction, TransactionRequest};
+use alloy_rpc_types::TransactionRequest;
 use foundry_config::NamedChain;
 use foundry_evm_networks::NetworkConfigs;
 use revm::primitives::{
@@ -138,9 +138,9 @@ pub fn get_function<'a>(
 
 /// Configures the env for the given RPC transaction.
 /// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
-pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
+pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &AnyRpcTransaction) {
     let from = tx.from();
-    if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
+    if let Some(tx) = tx.as_envelope() {
         configure_tx_req_env(
             env,
             &TransactionRequest::from_transaction_with_sender(tx.clone(), from),

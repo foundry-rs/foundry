@@ -1,6 +1,10 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
-use revm::{bytecode::Bytecode, context::JournalTr, interpreter::InstructionResult};
+use revm::{
+    bytecode::Bytecode,
+    context::{ContextTr, JournalTr},
+    interpreter::InstructionResult,
+};
 use std::{cmp::Ordering, collections::VecDeque};
 
 /// Mocked call data.
@@ -214,12 +218,12 @@ fn mock_calls(
 // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
 // check Solidity might perform.
 fn make_acc_non_empty(callee: &Address, ecx: &mut CheatsCtxt) -> Result {
-    let acc = ecx.journaled_state.load_account(*callee)?;
+    let acc = ecx.journal_mut().load_account(*callee)?;
 
     let empty_bytecode = acc.info.code.as_ref().is_none_or(Bytecode::is_empty);
     if empty_bytecode {
         let code = Bytecode::new_raw(Bytes::from_static(&[0u8]));
-        ecx.journaled_state.set_code(*callee, code);
+        ecx.journal_mut().set_code(*callee, code);
     }
 
     Ok(Default::default())

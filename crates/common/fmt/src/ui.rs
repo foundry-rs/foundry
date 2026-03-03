@@ -1051,7 +1051,7 @@ where
         "size" => Some(block.header().size_pretty()),
         "stateRoot" | "state_root" => Some(block.header().state_root().pretty()),
         "timestamp" => Some(block.header().timestamp().pretty()),
-        "totalDifficulty" | "total_difficult" => Some(block.header().difficulty().pretty()),
+        "totalDifficulty" | "total_difficulty" => Some(block.header().difficulty().pretty()),
         "blobGasUsed" | "blob_gas_used" => Some(block.header().blob_gas_used().pretty()),
         "excessBlobGas" | "excess_blob_gas" => Some(block.header().excess_blob_gas().pretty()),
         "requestsHash" | "requests_hash" => Some(block.header().requests_hash().pretty()),

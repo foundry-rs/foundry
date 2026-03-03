@@ -2529,10 +2529,16 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
-    /// Checks if a block statement `{ ... }` contains more than one line of actual code.
+    /// Checks if a block statement `{ ... }` should be treated as multiline,
+    /// either because it spans multiple lines or contains multiple statements.
     fn is_multiline_block(&self, block: &'ast ast::Block<'ast>, empty_as_multiline: bool) -> bool {
         if block.stmts.is_empty() {
             return empty_as_multiline;
+        }
+        // A block with multiple statements should never be inlined, regardless of
+        // whether it was written on a single line in the source.
+        if block.stmts.len() > 1 {
+            return true;
         }
         if self.sm.is_multiline(block.span)
             && let Ok(snip) = self.sm.span_to_snippet(block.span)
