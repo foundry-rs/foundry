@@ -37,7 +37,7 @@ use foundry_common::{
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, ContextExt, FoundryInspectorExt, InspectorExt,
+    Breakpoints, FoundryInspectorExt, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -322,10 +322,9 @@ impl ArbitraryStorage {
     /// - update account's storage with given value.
     pub fn save(&mut self, ecx: Ecx, address: Address, slot: U256, data: U256) {
         self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
-        let (db, journal, _) = ecx.as_db_env_and_journal();
-        if journal.load_account(db, address).is_ok() {
-            journal
-                .sstore(db, address, slot, data, false)
+        if ecx.journal_mut().load_account(address).is_ok() {
+            ecx.journal_mut()
+                .sstore(address, slot, data)
                 .expect("could not set arbitrary storage value");
         }
     }
@@ -343,19 +342,17 @@ impl ArbitraryStorage {
             None => {
                 storage_cache.insert(slot, new_value);
                 // Update source storage with new value.
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if journal.load_account(db, *source).is_ok() {
-                    journal
-                        .sstore(db, *source, slot, new_value, false)
+                if ecx.journal_mut().load_account(*source).is_ok() {
+                    ecx.journal_mut()
+                        .sstore(*source, slot, new_value)
                         .expect("could not copy arbitrary storage value");
                 }
                 new_value
             }
         };
         // Update target storage with new value.
-        let (db, journal, _) = ecx.as_db_env_and_journal();
-        if journal.load_account(db, target).is_ok() {
-            journal.sstore(db, target, slot, value, false).expect("could not set storage");
+        if ecx.journal_mut().load_account(target).is_ok() {
+            ecx.journal_mut().sstore(target, slot, value).expect("could not set storage");
         }
         value
     }
@@ -902,8 +899,7 @@ impl Cheatcodes {
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
                 if !call.is_static {
-                    let (db, journal, _) = ecx.as_db_env_and_journal();
-                    if let Err(err) = journal.load_account(db, broadcast.new_origin) {
+                    if let Err(err) = ecx.journal_mut().load_account(broadcast.new_origin) {
                         return Some(CallOutcome {
                             result: InterpreterResult {
                                 result: InstructionResult::Revert,
@@ -1007,11 +1003,10 @@ impl Cheatcodes {
             let old_balance;
             let old_nonce;
 
-            let (db, journal, _) = ecx.as_db_env_and_journal();
-            if let Ok(acc) = journal.load_account(db, call.target_address) {
-                initialized = acc.info.exists();
-                old_balance = acc.info.balance;
-                old_nonce = acc.info.nonce;
+            if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
+                initialized = acc.data.info.exists();
+                old_balance = acc.data.info.balance;
+                old_nonce = acc.data.info.nonce;
             } else {
                 initialized = false;
                 old_balance = U256::ZERO;
@@ -1414,14 +1409,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     // changes. Depending on the depth the cheat was
                     // called at, there may not be any pending
                     // calls to update if execution has percolated up to a higher depth.
-                    let (db, journal, _) = ecx.as_db_env_and_journal();
-                    let curr_depth = journal.depth;
+                    let curr_depth = ecx.journal().depth();
                     if call_access.depth == curr_depth as u64
-                        && let Ok(acc) = journal.load_account(db, call.target_address)
+                        && let Ok(acc) = ecx.journal_mut().load_account(call.target_address)
                     {
                         debug_assert!(access_is_call(call_access.kind));
-                        call_access.newBalance = acc.info.balance;
-                        call_access.newNonce = acc.info.nonce;
+                        call_access.newBalance = acc.data.info.balance;
+                        call_access.newNonce = acc.data.info.nonce;
                     }
                     // Merge the last depth's AccountAccesses into the AccountAccesses at the
                     // current depth, or push them back onto the pending
@@ -1699,8 +1693,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
         {
-            let (db, journal, _) = ecx.as_db_env_and_journal();
-            if let Err(err) = journal.load_account(db, broadcast.new_origin) {
+            if let Err(err) = ecx.journal_mut().load_account(broadcast.new_origin) {
                 return Some(CreateOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
@@ -1857,14 +1850,18 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                             create_access.kind as u8,
                             crate::Vm::AccountAccessKind::Create as u8
                         );
-                        let (db, journal, _) = ecx.as_db_env_and_journal();
                         if let Some(address) = outcome.address
-                            && let Ok(created_acc) = journal.load_account(db, address)
+                            && let Ok(created_acc) = ecx.journal_mut().load_account(address)
                         {
-                            create_access.newBalance = created_acc.info.balance;
-                            create_access.newNonce = created_acc.info.nonce;
-                            create_access.deployedCode =
-                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
+                            create_access.newBalance = created_acc.data.info.balance;
+                            create_access.newNonce = created_acc.data.info.nonce;
+                            create_access.deployedCode = created_acc
+                                .data
+                                .info
+                                .code
+                                .clone()
+                                .unwrap_or_default()
+                                .original_bytes();
                         }
                     }
                     // Merge the last depth's AccountAccesses into the AccountAccesses at the
@@ -1881,12 +1878,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
 
         // Match the create against expected_creates
-        let (db, journal, _) = ecx.as_db_env_and_journal();
         if !self.expected_creates.is_empty()
             && let (Some(address), Some(call)) = (outcome.address, call)
-            && let Ok(created_acc) = journal.load_account(db, address)
+            && let Ok(created_acc) = ecx.journal_mut().load_account(address)
         {
-            let bytecode = created_acc.info.code.clone().unwrap_or_default().original_bytes();
+            let bytecode = created_acc.data.info.code.clone().unwrap_or_default().original_bytes();
             if let Some((index, _)) =
                 self.expected_creates.iter().find_position(|expected_create| {
                     expected_create.deployer == call.caller()
@@ -2066,11 +2062,15 @@ impl Cheatcodes {
                 // get previous balance, nonce and initialized status of the target account
                 let target = try_or_return!(interpreter.stack.peek(0));
                 let target = Address::from_word(B256::from(target));
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                let (initialized, old_balance, old_nonce) = journal
-                    .load_account(db, target)
+                let (initialized, old_balance, old_nonce) = ecx
+                    .journal_mut()
+                    .load_account(target)
                     .map(|account| {
-                        (account.info.exists(), account.info.balance, account.info.nonce)
+                        (
+                            account.data.info.exists(),
+                            account.data.info.balance,
+                            account.data.info.nonce,
+                        )
                     })
                     .unwrap_or_default();
 
@@ -2117,8 +2117,7 @@ impl Cheatcodes {
                 // it's not set (zero value)
                 let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if journal.load_account(db, address).is_ok()
+                if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
                     present_value = previous.data;
@@ -2144,8 +2143,7 @@ impl Cheatcodes {
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
                 let mut previous_value = U256::ZERO;
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if journal.load_account(db, address).is_ok()
+                if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
                     previous_value = previous.data;
@@ -2178,11 +2176,10 @@ impl Cheatcodes {
                 let initialized;
                 let balance;
                 let nonce;
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if let Ok(acc) = journal.load_account(db, address) {
-                    initialized = acc.info.exists();
-                    balance = acc.info.balance;
-                    nonce = acc.info.nonce;
+                if let Ok(acc) = ecx.journal_mut().load_account(address) {
+                    initialized = acc.data.info.exists();
+                    balance = acc.data.info.balance;
+                    nonce = acc.data.info.nonce;
                 } else {
                     initialized = false;
                     balance = U256::ZERO;

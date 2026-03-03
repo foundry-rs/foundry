@@ -272,10 +272,11 @@ impl Cheatcode for loadCall {
         let Self { target, slot } = *self;
         ccx.ensure_not_precompile(&target)?;
 
-        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-        journal.load_account(db, target)?;
-        let mut val = journal
-            .sload(db, target, slot.into(), false)
+        ccx.ecx.journal_mut().load_account(target)?;
+        let mut val = ccx
+            .ecx
+            .journal_mut()
+            .sload(target, slot.into())
             .map_err(|e| fmt_err!("failed to load storage slot: {:?}", e))?;
 
         if val.is_cold && val.data.is_zero() {
@@ -646,11 +647,10 @@ impl Cheatcode for etchCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ccx.ensure_not_precompile(target)?;
-        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-        journal.load_account(db, *target)?;
+        ccx.ecx.journal_mut().load_account(*target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
-        journal.set_code(*target, bytecode);
+        ccx.ecx.journal_mut().set_code(*target, bytecode);
         Ok(Default::default())
     }
 }
@@ -700,9 +700,9 @@ impl Cheatcode for storeCall {
         let Self { target, slot, value } = *self;
         ccx.ensure_not_precompile(&target)?;
         ensure_loaded_account(ccx.ecx, target)?;
-        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-        journal
-            .sstore(db, target, slot.into(), value.into(), false)
+        ccx.ecx
+            .journal_mut()
+            .sstore(target, slot.into(), value.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {:?}", e))?;
         Ok(Default::default())
     }
@@ -1010,8 +1010,7 @@ impl Cheatcode for getStorageSlotsCall {
         if storage_type.encoding == ENCODING_BYTES {
             // Try to check if it's a long bytes/string by reading the current storage
             // value
-            let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-            if let Ok(value) = journal.sload(db, *target, slot, false) {
+            if let Ok(value) = ccx.ecx.journal_mut().sload(*target, slot) {
                 let value_bytes = value.data.to_be_bytes::<32>();
                 let length_byte = value_bytes[31];
                 // Check if it's a long bytes/string (LSB is 1)
@@ -1306,9 +1305,8 @@ impl Cheatcode for getEvmVersionCall {
 }
 
 pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
-    let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-    let account = journal.load_account(db, *address)?;
-    Ok(account.info.nonce.abi_encode())
+    let account = ccx.ecx.journal_mut().load_account(*address)?;
+    Ok(account.data.info.nonce.abi_encode())
 }
 
 fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
@@ -1526,9 +1524,8 @@ pub(super) fn journaled_account<'a>(
 }
 
 pub(super) fn ensure_loaded_account(ecx: Ecx, addr: Address) -> Result<()> {
-    let (db, journal, _) = ecx.as_db_env_and_journal();
-    journal.load_account(db, addr)?;
-    journal.touch(addr);
+    ecx.journal_mut().load_account(addr)?;
+    ecx.journal_mut().touch(addr);
     Ok(())
 }
 
@@ -1753,9 +1750,8 @@ fn get_contract_data<'a>(
     let artifacts = ccx.state.config.available_artifacts.as_ref()?;
 
     // Try to load the account and get its code
-    let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-    let account = journal.load_account(db, address).ok()?;
-    let code = account.info.code.as_ref()?;
+    let account = ccx.ecx.journal_mut().load_account(address).ok()?;
+    let code = account.data.info.code.as_ref()?;
 
     // Skip if code is empty
     if code.is_empty() {
