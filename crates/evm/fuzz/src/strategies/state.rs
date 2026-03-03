@@ -154,16 +154,12 @@ pub struct FuzzDictionary {
     /// Number of address values initially collected from db.
     /// Used to revert new collected addresses at the end of each run.
     db_addresses: usize,
-    /// Typed runtime sample values persisted across invariant runs.
-    /// Initially seeded with literal values collected from the source code.
-    sample_values: HashMap<DynSolType, B256IndexSet>,
+    /// Typed sample values persisted across invariant runs.
+    ///
+    /// `None` means literals from `literal_values` have not been merged yet.
+    sample_values: Option<HashMap<DynSolType, B256IndexSet>>,
     /// Lazily initialized dictionary of literal values collected from the source code.
     literal_values: LiteralsDictionary,
-    /// Tracks whether literals from `literal_values` have been merged into `sample_values`.
-    ///
-    /// Set to `true` on first call to `seed_samples()`. Before seeding, `samples()` checks both
-    /// maps separately. After seeding, literals are merged in, so only `sample_values` is checked.
-    samples_seeded: bool,
 
     misses: usize,
     hits: usize,
@@ -188,13 +184,12 @@ impl FuzzDictionary {
     pub fn new(config: FuzzDictionaryConfig) -> Self {
         let mut dictionary = Self {
             config,
-            samples_seeded: false,
 
             state_values: Default::default(),
             addresses: Default::default(),
             db_state_values: Default::default(),
             db_addresses: Default::default(),
-            sample_values: Default::default(),
+            sample_values: None,
             literal_values: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
@@ -212,10 +207,19 @@ impl FuzzDictionary {
     /// Should only be called once per dictionary lifetime.
     #[cold]
     fn seed_samples(&mut self) {
+        if self.sample_values.is_some() {
+            return;
+        }
         trace!("seeding `sample_values` from literal dictionary");
-        self.sample_values
-            .extend(self.literal_values.get().words.iter().map(|(k, v)| (k.clone(), v.clone())));
-        self.samples_seeded = true;
+        self.sample_values = Some(
+            self.literal_values.get().words.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        );
+    }
+
+    #[inline]
+    fn sample_values_mut(&mut self) -> &mut HashMap<DynSolType, B256IndexSet> {
+        self.seed_samples();
+        self.sample_values.as_mut().expect("sample values should be initialized")
     }
 
     /// Insert values from initial db state into fuzz dictionary.
@@ -388,10 +392,10 @@ impl FuzzDictionary {
             && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
-            if !self.samples_seeded {
-                self.seed_samples();
-            }
-            self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
+            self.sample_values_mut()
+                .entry(slot_info.slot_type.dyn_sol_type)
+                .or_default()
+                .insert(value);
         } else {
             self.insert_value_u256(value.into());
         }
@@ -440,20 +444,25 @@ impl FuzzDictionary {
         sample_values: impl IntoIterator<Item = DynSolValue>,
         limit: u32,
     ) {
-        if !self.samples_seeded {
-            self.seed_samples();
-        }
+        self.seed_samples();
         for sample in sample_values {
             if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
-                if let Some(values) = self.sample_values.get_mut(&sample_type) {
-                    if values.len() < limit as usize {
-                        values.insert(sample_value);
+                let mut insert_as_state = false;
+                {
+                    let sample_values = self.sample_values_mut();
+                    if let Some(values) = sample_values.get_mut(&sample_type) {
+                        if values.len() < limit as usize {
+                            values.insert(sample_value);
+                        } else {
+                            // Insert as state value (will be removed at the end of the run).
+                            insert_as_state = true;
+                        }
                     } else {
-                        // Insert as state value (will be removed at the end of the run).
-                        self.insert_value(sample_value);
+                        sample_values.entry(sample_type).or_default().insert(sample_value);
                     }
-                } else {
-                    self.sample_values.entry(sample_type).or_default().insert(sample_value);
+                }
+                if insert_as_state {
+                    self.insert_value(sample_value);
                 }
             }
         }
@@ -477,12 +486,11 @@ impl FuzzDictionary {
     /// separately. After seeding, all literal values are merged into `sample_values`.
     #[inline]
     pub fn samples(&self, param_type: &DynSolType) -> Option<&B256IndexSet> {
-        // If not seeded yet, return literals
-        if !self.samples_seeded {
-            return self.literal_values.get().words.get(param_type);
+        if let Some(sample_values) = &self.sample_values {
+            sample_values.get(param_type)
+        } else {
+            self.literal_values.get().words.get(param_type)
         }
-
-        self.sample_values.get(param_type)
     }
 
     /// Returns the collected literal strings, triggering initialization if needed.
@@ -511,7 +519,7 @@ impl FuzzDictionary {
     pub fn log_stats(&self) {
         trace!(
             addresses.len = self.addresses.len(),
-            sample.len = self.sample_values.len(),
+            sample.len = self.sample_values.as_ref().map_or(0, HashMap::len),
             state.len = self.state_values.len(),
             state.misses = self.misses,
             state.hits = self.hits,
@@ -522,6 +530,7 @@ impl FuzzDictionary {
     #[cfg(test)]
     /// Test-only helper to seed the dictionary with literal values.
     pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
+        self.sample_values = None;
         self.literal_values.set(map);
     }
 }
