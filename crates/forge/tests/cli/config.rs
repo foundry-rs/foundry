@@ -146,6 +146,7 @@ namespace_import_style = "prefer_plain"
 pow_no_space = false
 prefer_compact = "all"
 single_line_imports = false
+format_conditions = "inline"
 
 [lint]
 severity = [
@@ -1363,7 +1364,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "namespace_import_style": "prefer_plain",
     "pow_no_space": false,
     "prefer_compact": "all",
-    "single_line_imports": false
+    "single_line_imports": false,
+    "format_conditions": "inline"
   },
   "lint": {
     "severity": [

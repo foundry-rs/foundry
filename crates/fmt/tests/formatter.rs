@@ -170,6 +170,7 @@ fmt_tests! {
     BlockComments,
     BlockCommentsFunction,
     CommentEmptyLine,
+    ConditionFormatStyle,
     ConditionalOperatorExpression,
     ConstructorDefinition,
     ConstructorModifierStyle,
