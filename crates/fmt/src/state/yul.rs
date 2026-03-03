@@ -101,7 +101,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                     self.print_yul_block(body, *span, false, 0);
 
-                    self.print_trailing_comment(selector.span.hi(), None);
+                    self.print_trailing_comment(span.hi(), None);
                 }
             }
             yul::StmtKind::Leave => self.print_word("leave"),
