@@ -135,7 +135,7 @@ impl ScriptTransactionBuilder {
                     constructor_args=%hex::encode(constructor_args),
                     "Failed to decode constructor arguments",
                 );
-                debug!(full_data=%hex::encode(data), bytecode=%hex::encode(creation_code));
+                debug!(full_data=%hex::encode(data), bytecode=%hex::encode(bytecode));
             })?;
         self.transaction.arguments = Some(values.iter().map(format_token_raw).collect());
 
