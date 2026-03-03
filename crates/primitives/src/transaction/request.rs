@@ -263,9 +263,9 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
             FoundryTypedTx::Eip7702(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
             FoundryTypedTx::Deposit(tx) => {
                 let other = OtherFields::from_iter([
-                    ("sourceHash", tx.source_hash.to_string().into()),
-                    ("mint", tx.mint.to_string().into()),
-                    ("isSystemTx", tx.is_system_transaction.to_string().into()),
+                    ("sourceHash", serde_json::to_value(tx.source_hash).unwrap()),
+                    ("mint", serde_json::to_value(U256::from(tx.mint)).unwrap()),
+                    ("isSystemTx", serde_json::to_value(tx.is_system_transaction).unwrap()),
                 ]);
                 WithOtherFields { inner: Into::<TransactionRequest>::into(tx), other }.into()
             }
@@ -679,5 +679,28 @@ mod tests {
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
 
         assert!(matches!(deserialized, FoundryTransactionRequest::Tempo(_)));
+    }
+
+    #[test]
+    fn test_deposit_typed_tx_roundtrip() {
+        let deposit_tx = TxDeposit {
+            from: Address::random(),
+            source_hash: B256::random(),
+            to: TxKind::Call(Address::random()),
+            mint: 1000u128,
+            value: U256::from(500),
+            gas_limit: 21000,
+            is_system_transaction: true,
+            input: Default::default(),
+        };
+
+        let req: FoundryTransactionRequest = FoundryTypedTx::Deposit(deposit_tx.clone()).into();
+
+        assert!(matches!(req, FoundryTransactionRequest::Op(_)));
+
+        let parts = req.get_deposit_tx_parts().expect("should parse deposit parts");
+        assert_eq!(parts.source_hash, deposit_tx.source_hash);
+        assert_eq!(parts.mint, Some(deposit_tx.mint));
+        assert_eq!(parts.is_system_transaction, deposit_tx.is_system_transaction);
     }
 }
