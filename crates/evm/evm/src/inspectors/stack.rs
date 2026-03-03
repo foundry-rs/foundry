@@ -1141,15 +1141,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
 }
 
 impl InspectorExt for InspectorStackRefMut<'_> {
-    fn should_use_create2_factory(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        inputs: &CreateInputs,
-    ) -> bool {
+    fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
         call_inspectors!(
             #[ret]
             [&mut self.cheatcodes],
-            |inspector| { inspector.should_use_create2_factory(ecx, inputs).then_some(true) },
+            |inspector| { inspector.should_use_create2_factory(depth, inputs).then_some(true) },
         );
 
         false
@@ -1248,12 +1244,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
 }
 
 impl InspectorExt for InspectorStack {
-    fn should_use_create2_factory(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        inputs: &CreateInputs,
-    ) -> bool {
-        self.as_mut().should_use_create2_factory(ecx, inputs)
+    fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
+        self.as_mut().should_use_create2_factory(depth, inputs)
     }
 
     fn get_networks(&self) -> NetworkConfigs {

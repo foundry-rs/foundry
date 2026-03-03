@@ -51,11 +51,7 @@ pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
     /// factory.
-    fn should_use_create2_factory(
-        &mut self,
-        _context: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        _inputs: &CreateInputs,
-    ) -> bool {
+    fn should_use_create2_factory(&mut self, _depth: usize, _inputs: &CreateInputs) -> bool {
         false
     }
 
