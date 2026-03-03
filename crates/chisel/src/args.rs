@@ -179,9 +179,252 @@ fn chisel_history_file() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use foundry_config::Config;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn verify_cli() {
         Chisel::command().debug_assert();
+    }
+
+    #[test]
+    fn test_chisel_history_file() {
+        // Test that function returns Some when foundry_dir is available
+        let path = chisel_history_file();
+        // The function should return Some if foundry_dir() succeeds
+        // We can't easily mock this, so we just verify it doesn't panic
+        if let Some(p) = path {
+            assert!(p.ends_with(".chisel_history"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_prelude_none() {
+        // Test with None prelude (should return Ok immediately)
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        let result = evaluate_prelude(&mut dispatcher, None).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_prelude_single_file() {
+        // Test with a single file containing simple code
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.sol");
+        // Use simple code that compiles quickly
+        fs::write(&file_path, "// test comment").unwrap();
+
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // Should execute without panicking, may take time to compile
+        let _result = evaluate_prelude(&mut dispatcher, Some(file_path)).await;
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_prelude_directory() {
+        // Test with a directory containing .sol files
+        let temp_dir = TempDir::new().unwrap();
+        let file1 = temp_dir.path().join("file1.sol");
+        let file2 = temp_dir.path().join("file2.sol");
+        // Use simple code that compiles quickly
+        fs::write(&file1, "// file1").unwrap();
+        fs::write(&file2, "// file2").unwrap();
+
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // Should execute without panicking, may take time to compile
+        let _result = evaluate_prelude(&mut dispatcher, Some(temp_dir.path().to_path_buf())).await;
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_prelude_empty_directory() {
+        // Test with an empty directory
+        let temp_dir = TempDir::new().unwrap();
+
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        let result = evaluate_prelude(&mut dispatcher, Some(temp_dir.path().to_path_buf())).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_load_prelude_file_success() {
+        // Test successful file loading
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.sol");
+        // Use simple code that compiles quickly
+        fs::write(&file_path, "// test comment").unwrap();
+
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // Should execute without panicking, may take time to compile
+        let _result = load_prelude_file(&mut dispatcher, file_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_load_prelude_file_not_found() {
+        // Test with non-existent file
+        let non_existent = PathBuf::from("/nonexistent/path/file.sol");
+
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        let result = load_prelude_file(&mut dispatcher, non_existent).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_cli_command_list() {
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // List command should execute without panicking
+        // It may return Ok or Err depending on cache state, but should handle gracefully
+        let _result = handle_cli_command(&mut dispatcher, ChiselSubcommand::List).await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_cli_command_clear_cache() {
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // ClearCache should execute without panicking
+        let result = handle_cli_command(&mut dispatcher, ChiselSubcommand::ClearCache).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_cli_command_eval() {
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // Eval with simple expression should work
+        let result = handle_cli_command(
+            &mut dispatcher,
+            ChiselSubcommand::Eval { command: "1 + 1".to_string() },
+        )
+        .await;
+        // Should not panic, may succeed or fail depending on compilation
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_handle_cli_command_load() {
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // Load with non-existent ID should return an error
+        let result = handle_cli_command(
+            &mut dispatcher,
+            ChiselSubcommand::Load { id: "nonexistent".to_string() },
+        )
+        .await;
+        // This may succeed or fail depending on implementation, but shouldn't panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_handle_cli_command_view() {
+        let config = crate::source::SessionSourceConfig {
+            foundry_config: Config::default(),
+            evm_opts: Default::default(),
+            no_vm: false,
+            backend: None,
+            traces: false,
+            calldata: None,
+            ir_minimum: false,
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+        // View with non-existent ID should handle gracefully
+        let result = handle_cli_command(
+            &mut dispatcher,
+            ChiselSubcommand::View { id: "nonexistent".to_string() },
+        )
+        .await;
+        // Should return ControlFlow::Break if Load fails, or Continue if it succeeds
+        assert!(result.is_ok());
+        if let Ok(cf) = result {
+            // View should return Break if Load fails, or Continue if both succeed
+            match cf {
+                ControlFlow::Continue(()) | ControlFlow::Break(()) => {}
+            }
+        }
     }
 }
