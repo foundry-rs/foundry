@@ -290,7 +290,7 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         {
             let (ctx, inspector) = evm.ctx_inspector();
 
-            if inspector.should_use_create2_factory(ctx, inputs) {
+            if inspector.should_use_create2_factory(ctx.journal().depth(), inputs) {
                 let gas_limit = inputs.gas_limit();
 
                 // Get CREATE2 deployer.

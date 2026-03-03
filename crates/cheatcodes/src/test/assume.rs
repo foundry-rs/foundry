@@ -1,6 +1,7 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
+use revm::context::{ContextTr, JournalTr};
 use spec::Vm::{
     PotentialRevert, assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
 };
@@ -52,7 +53,7 @@ impl Cheatcode for assumeCall {
 
 impl Cheatcode for assumeNoRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth, vec![])
+        assume_no_revert(ccx.state, ccx.ecx.journal().depth(), vec![])
     }
 }
 
@@ -61,7 +62,7 @@ impl Cheatcode for assumeNoRevert_1Call {
         let Self { potentialRevert } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth,
+            ccx.ecx.journal().depth(),
             vec![AcceptableRevertParameters::from(potentialRevert)],
         )
     }
@@ -72,7 +73,7 @@ impl Cheatcode for assumeNoRevert_2Call {
         let Self { potentialReverts } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth,
+            ccx.ecx.journal().depth(),
             potentialReverts.iter().map(AcceptableRevertParameters::from).collect(),
         )
     }

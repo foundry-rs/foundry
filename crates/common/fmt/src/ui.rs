@@ -2,7 +2,7 @@
 
 use alloy_consensus::{
     BlockHeader, Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope,
-    TxType, Typed2718,
+    TxReceipt, TxType, Typed2718,
 };
 use alloy_network::{
     AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction,
@@ -17,6 +17,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxReceipt};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
+use tempo_alloy::rpc::TempoTransactionReceipt;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;
@@ -992,6 +993,68 @@ impl UIfmtReceiptExt for FoundryTxReceipt {
     }
 }
 
+impl UIfmt for TempoTransactionReceipt {
+    fn pretty(&self) -> String {
+        let receipt = &self.inner;
+
+        let mut pretty = format!(
+            "
+blockHash            {}
+blockNumber          {}
+contractAddress      {}
+cumulativeGasUsed    {}
+effectiveGasPrice    {}
+from                 {}
+gasUsed              {}
+logs                 {}
+logsBloom            {}
+root                 {}
+status               {}
+transactionHash      {}
+transactionIndex     {}
+type                 {}
+feePayer             {}
+feeToken             {}",
+            receipt.block_hash.pretty(),
+            receipt.block_number.pretty(),
+            receipt.contract_address.pretty(),
+            receipt.inner.cumulative_gas_used().pretty(),
+            receipt.effective_gas_price.pretty(),
+            receipt.from.pretty(),
+            receipt.gas_used.pretty(),
+            serde_json::to_string(receipt.inner.logs()).unwrap(),
+            receipt.inner.logs_bloom.pretty(),
+            self.state_root().pretty(),
+            receipt.inner.status().pretty(),
+            receipt.transaction_hash.pretty(),
+            receipt.transaction_index.pretty(),
+            receipt.inner.receipt.tx_type as u8,
+            self.fee_payer.pretty(),
+            self.fee_token.pretty(),
+        );
+
+        if let Some(to) = receipt.to {
+            pretty.push_str(&format!("\nto                   {}", to.pretty()));
+        }
+
+        pretty
+    }
+}
+
+impl UIfmtReceiptExt for TempoTransactionReceipt {
+    fn logs_pretty(&self) -> String {
+        serde_json::to_string(self.inner.inner.logs()).unwrap_or_default()
+    }
+
+    fn logs_bloom_pretty(&self) -> String {
+        self.inner.inner.logs_bloom.pretty()
+    }
+
+    fn tx_type_pretty(&self) -> String {
+        (self.inner.inner.receipt.tx_type as u8).to_string()
+    }
+}
+
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr<N>(transaction: &N::TransactionResponse, attr: &str) -> Option<String>
 where
@@ -1051,7 +1114,7 @@ where
         "size" => Some(block.header().size_pretty()),
         "stateRoot" | "state_root" => Some(block.header().state_root().pretty()),
         "timestamp" => Some(block.header().timestamp().pretty()),
-        "totalDifficulty" | "total_difficult" => Some(block.header().difficulty().pretty()),
+        "totalDifficulty" | "total_difficulty" => Some(block.header().difficulty().pretty()),
         "blobGasUsed" | "blob_gas_used" => Some(block.header().blob_gas_used().pretty()),
         "excessBlobGas" | "excess_blob_gas" => Some(block.header().excess_blob_gas().pretty()),
         "requestsHash" | "requests_hash" => Some(block.header().requests_hash().pretty()),
@@ -1815,6 +1878,37 @@ nonceKey             0
 signature            {"pubKeyX":"0xaacc80b21e45fb11f349424dce3a2f23547f60c0ff2f8bcaede2a247545ce8dd","pubKeyY":"0x87abf0dbb7a5c9507efae2e43833356651b45ac576c2e61cec4e9c0f41fcbf6e","r":"0xcfd45c3b19745a42f80b134dcb02a8ba099a0e4e7be1984da54734aa81d8f29f","s":"0x74bb9170ae6d25bd510c83fe35895ee5712efe13980a5edc8094c534e23af85e","type":"webAuthn","webauthnData":"0x7b98b7a8e6c68d7eac741a52e6fdae0560ce3c16ef5427ad46d7a54d0ed86dd41d000000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2238453071464a7a50585167546e645473643649456659457776323173516e626966374c4741776e4b43626b222c226f726967696e223a2268747470733a2f2f74656d706f2d6465782e76657263656c2e617070222c2263726f73734f726967696e223a66616c73657d"}
 validAfter           null
 validBefore          null
+"#
+                .trim()
+        );
+    }
+
+    #[test]
+    fn can_pretty_print_tempo_receipt() {
+        let s = r#"{"type":"0x76","status":"0x1","cumulativeGasUsed":"0x176d7f4","logs":[{"address":"0x20c0000000000000000000000000000000000000","topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x000000000000000000000000a70ab0448e66cd77995bfbba5c5b64b41a85f3fd","0x0000000000000000000000000000000000000000000000000000000000000001"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockHash":"0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66","blockNumber":"0x69a1d7","blockTimestamp":"0x69a5d790","transactionHash":"0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f","transactionIndex":"0x63","logIndex":"0xb8","removed":false},{"address":"0x20c0000000000000000000000000000000000003","topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x000000000000000000000000a70ab0448e66cd77995bfbba5c5b64b41a85f3fd","0x000000000000000000000000feec000000000000000000000000000000000000"],"data":"0x0000000000000000000000000000000000000000000000000000000000000417","blockHash":"0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66","blockNumber":"0x69a1d7","blockTimestamp":"0x69a5d790","transactionHash":"0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f","transactionIndex":"0x63","logIndex":"0xb9","removed":false}],"logsBloom":"0x00000000000000000000000000000000000000000000010000000000000000000000000000000000000000000100000000000000000000000000000000040008000004200000000000000008000000000000000000040000000000000400000000000002000000000000000000000000000000000000000000000010000000000000000000000000000000000020000000000000800000000000000000000000000020000000000000000000000000000000000400000000000000000000000000000002000000000000000400000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f","transactionIndex":"0x63","blockHash":"0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66","blockNumber":"0x69a1d7","gasUsed":"0xcc6a","effectiveGasPrice":"0x4a817c802","from":"0xa70ab0448e66cd77995bfbba5c5b64b41a85f3fd","to":"0x20c0000000000000000000000000000000000000","contractAddress":null,"feeToken":"0x20c0000000000000000000000000000000000003","feePayer":"0xa70ab0448e66cd77995bfbba5c5b64b41a85f3fd"}"#;
+
+        let tx: TempoTransactionReceipt = serde_json::from_str(s).unwrap();
+
+        assert_eq!(
+            tx.pretty().trim(),
+            r#"
+blockHash            0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66
+blockNumber          6922711
+contractAddress      
+cumulativeGasUsed    24565748
+effectiveGasPrice    20000000002
+from                 0xa70ab0448e66cD77995bfBBa5c5b64B41a85F3fd
+gasUsed              52330
+logs                 [{"address":"0x20c0000000000000000000000000000000000000","topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x000000000000000000000000a70ab0448e66cd77995bfbba5c5b64b41a85f3fd","0x0000000000000000000000000000000000000000000000000000000000000001"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockHash":"0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66","blockNumber":"0x69a1d7","blockTimestamp":"0x69a5d790","transactionHash":"0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f","transactionIndex":"0x63","logIndex":"0xb8","removed":false},{"address":"0x20c0000000000000000000000000000000000003","topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x000000000000000000000000a70ab0448e66cd77995bfbba5c5b64b41a85f3fd","0x000000000000000000000000feec000000000000000000000000000000000000"],"data":"0x0000000000000000000000000000000000000000000000000000000000000417","blockHash":"0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66","blockNumber":"0x69a1d7","blockTimestamp":"0x69a5d790","transactionHash":"0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f","transactionIndex":"0x63","logIndex":"0xb9","removed":false}]
+logsBloom            0x00000000000000000000000000000000000000000000010000000000000000000000000000000000000000000100000000000000000000000000000000040008000004200000000000000008000000000000000000040000000000000400000000000002000000000000000000000000000000000000000000000010000000000000000000000000000000000020000000000000800000000000000000000000000020000000000000000000000000000000000400000000000000000000000000000002000000000000000400000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000
+root                 
+status               true
+transactionHash      0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f
+transactionIndex     99
+type                 118
+feePayer             0xa70ab0448e66cD77995bfBBa5c5b64B41a85F3fd
+feeToken             0x20C0000000000000000000000000000000000003
+to                   0x20C0000000000000000000000000000000000000
 "#
                 .trim()
         );

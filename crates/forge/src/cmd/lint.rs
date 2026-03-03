@@ -111,9 +111,7 @@ impl LintArgs {
         let solar_sources =
             get_solar_sources_from_compile_output(&config, &output, Some(&input), Some(&ignored))?;
         if solar_sources.input.sources.is_empty() {
-            return Err(eyre!(
-                "unable to lint. Solar only supports Solidity versions prior to 0.8.0"
-            ));
+            return Err(eyre!("unable to lint. Solar only supports Solidity versions >=0.8.0"));
         }
 
         // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
