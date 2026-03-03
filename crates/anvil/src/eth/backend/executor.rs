@@ -18,7 +18,7 @@ use alloy_consensus::{
     proofs::calculate_receipt_root, transaction::Either,
 };
 use alloy_eips::{
-    Encodable2718,
+    Encodable2718, eip2935, eip4788,
     eip7685::EMPTY_REQUESTS_HASH,
     eip7702::{RecoveredAuthority, RecoveredAuthorization},
     eip7840::BlobParams,
@@ -29,7 +29,7 @@ use alloy_evm::{
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
 use alloy_op_evm::OpEvmFactory;
-use alloy_primitives::{B256, Bloom, BloomInput, Log};
+use alloy_primitives::{B256, Bloom, BloomInput, Bytes, Log};
 use anvil_core::eth::{
     block::{BlockInfo, create_block},
     transaction::{PendingTransaction, TransactionInfo},
@@ -169,6 +169,26 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let excess_blob_gas =
             if is_cancun { self.evm_env.block_env().blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
+
+        // EIP-2935: store parent block hash in history storage contract.
+        if is_prague && !block_number.is_zero() {
+            let env = Env::new(self.evm_env.clone(), Default::default(), self.networks);
+            let mut inspector = AnvilInspector::default();
+            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+            // SYSTEM_ADDRESS is defined in EIP-4788 and reused by EIP-2935.
+            match evm.transact_system_call(
+                eip4788::SYSTEM_ADDRESS,
+                eip2935::HISTORY_STORAGE_ADDRESS,
+                Bytes::copy_from_slice(parent_hash.as_slice()),
+            ) {
+                Ok(result) => {
+                    self.db.commit(result.state);
+                }
+                Err(err) => {
+                    warn!(target: "backend", "EIP-2935 system call failed: {:?}", err);
+                }
+            }
+        }
 
         for tx in self.into_iter() {
             let tx = match tx {

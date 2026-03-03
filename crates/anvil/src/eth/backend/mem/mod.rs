@@ -39,7 +39,7 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{
-    BlockNumHash, Encodable2718, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
+    BlockNumHash, Encodable2718, eip2935, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
     eip7910::SystemContract,
 };
 use alloy_evm::{
@@ -387,6 +387,14 @@ impl Backend {
             // insert the new genesis hash to the database so it's available for the next block in
             // the evm
             db.insert_block_hash(U256::from(self.best_number()), self.best_hash());
+
+            // Deploy EIP-2935 blockhash history storage contract if Prague is active.
+            if self.spec_id() >= SpecId::PRAGUE {
+                db.set_code(
+                    eip2935::HISTORY_STORAGE_ADDRESS,
+                    eip2935::HISTORY_STORAGE_CODE.clone(),
+                )?;
+            }
         }
 
         let db = self.db.write().await;

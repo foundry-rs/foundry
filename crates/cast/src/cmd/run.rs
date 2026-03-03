@@ -259,7 +259,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+                    configure_tx_env(&mut env.as_env_mut(), tx);
 
                     env.evm_env.cfg_env.disable_balance_check = true;
 
@@ -300,7 +300,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+            configure_tx_env(&mut env.as_env_mut(), &tx);
             if is_impersonated_tx(tx.inner.inner.inner()) {
                 env.evm_env.cfg_env.disable_balance_check = true;
             }
