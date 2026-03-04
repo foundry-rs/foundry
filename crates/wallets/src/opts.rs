@@ -1,4 +1,4 @@
-use crate::{BrowserWalletOpts, signer::WalletSigner, utils, wallet_raw::RawWalletOpts};
+use crate::{signer::WalletSigner, utils, wallet_raw::RawWalletOpts};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::Result;
@@ -102,10 +102,6 @@ pub struct WalletOpts {
     /// See: <https://docs.turnkey.com/getting-started/quickstart>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
     pub turnkey: bool,
-
-    /// Browser wallet options
-    #[command(flatten)]
-    pub browser: BrowserWalletOpts,
 }
 
 impl WalletOpts {
@@ -143,13 +139,6 @@ impl WalletOpts {
                 eyre::eyre!("TURNKEY_ADDRESS could not be parsed as an Ethereum address")
             })?;
             WalletSigner::from_turnkey(api_private_key, organization_id, address)?
-        } else if self.browser.browser {
-            WalletSigner::from_browser(
-                self.browser.browser_port,
-                !self.browser.browser_disable_open,
-                self.browser.browser_development,
-            )
-            .await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -255,7 +244,6 @@ mod tests {
             aws: false,
             gcp: false,
             turnkey: false,
-            browser: Default::default(),
         };
         match wallet.signer().await {
             Ok(_) => {

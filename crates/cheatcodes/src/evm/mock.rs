@@ -1,5 +1,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
+use foundry_evm_core::backend::DatabaseExt;
 use revm::{
     bytecode::Bytecode,
     context::{ContextTr, JournalTr},
@@ -42,7 +43,7 @@ impl Ord for MockCallDataContext {
     }
 }
 
-impl Cheatcode for clearMockedCallsCall {
+impl<CTX> Cheatcode<CTX> for clearMockedCallsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.mocked_calls = Default::default();
@@ -50,8 +51,8 @@ impl Cheatcode for clearMockedCallsCall {
     }
 }
 
-impl Cheatcode for mockCall_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -60,8 +61,8 @@ impl Cheatcode for mockCall_0Call {
     }
 }
 
-impl Cheatcode for mockCall_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -70,8 +71,8 @@ impl Cheatcode for mockCall_1Call {
     }
 }
 
-impl Cheatcode for mockCall_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -87,8 +88,8 @@ impl Cheatcode for mockCall_2Call {
     }
 }
 
-impl Cheatcode for mockCall_3Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_3Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -104,8 +105,8 @@ impl Cheatcode for mockCall_3Call {
     }
 }
 
-impl Cheatcode for mockCalls_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCalls_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -114,8 +115,8 @@ impl Cheatcode for mockCalls_0Call {
     }
 }
 
-impl Cheatcode for mockCalls_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCalls_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -124,8 +125,8 @@ impl Cheatcode for mockCalls_1Call {
     }
 }
 
-impl Cheatcode for mockCallRevert_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -134,8 +135,8 @@ impl Cheatcode for mockCallRevert_0Call {
     }
 }
 
-impl Cheatcode for mockCallRevert_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -144,8 +145,8 @@ impl Cheatcode for mockCallRevert_1Call {
     }
 }
 
-impl Cheatcode for mockCallRevert_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -161,8 +162,8 @@ impl Cheatcode for mockCallRevert_2Call {
     }
 }
 
-impl Cheatcode for mockCallRevert_3Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_3Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -178,7 +179,7 @@ impl Cheatcode for mockCallRevert_3Call {
     }
 }
 
-impl Cheatcode for mockFunctionCall {
+impl<CTX> Cheatcode<CTX> for mockFunctionCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { callee, target, data } = self;
         state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);
@@ -217,13 +218,17 @@ fn mock_calls(
 
 // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
 // check Solidity might perform.
-fn make_acc_non_empty(callee: &Address, ecx: &mut CheatsCtxt) -> Result {
-    let acc = ecx.journal_mut().load_account(*callee)?;
-
-    let empty_bytecode = acc.info.code.as_ref().is_none_or(Bytecode::is_empty);
+fn make_acc_non_empty<CTX: ContextTr<Db: DatabaseExt>>(
+    callee: &Address,
+    ccx: &mut CheatsCtxt<'_, CTX>,
+) -> Result {
+    let empty_bytecode = {
+        let acc = ccx.ecx.journal_mut().load_account(*callee)?;
+        acc.info.code.as_ref().is_none_or(Bytecode::is_empty)
+    };
     if empty_bytecode {
         let code = Bytecode::new_raw(Bytes::from_static(&[0u8]));
-        ecx.journal_mut().set_code(*callee, code);
+        ccx.ecx.journal_mut().set_code(*callee, code);
     }
 
     Ok(Default::default())

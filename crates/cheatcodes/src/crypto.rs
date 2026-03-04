@@ -29,28 +29,28 @@ use ed25519_consensus::{
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
-impl Cheatcode for createWallet_0Call {
+impl<CTX> Cheatcode<CTX> for createWallet_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { walletLabel } = self;
         create_wallet(&U256::from_be_bytes(keccak256(walletLabel).0), Some(walletLabel), state)
     }
 }
 
-impl Cheatcode for createWallet_1Call {
+impl<CTX> Cheatcode<CTX> for createWallet_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         create_wallet(privateKey, None, state)
     }
 }
 
-impl Cheatcode for createWallet_2Call {
+impl<CTX> Cheatcode<CTX> for createWallet_2Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { privateKey, walletLabel } = self;
         create_wallet(privateKey, Some(walletLabel), state)
     }
 }
 
-impl Cheatcode for sign_0Call {
+impl<CTX> Cheatcode<CTX> for sign_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
@@ -58,7 +58,7 @@ impl Cheatcode for sign_0Call {
     }
 }
 
-impl Cheatcode for signWithNonceUnsafeCall {
+impl<CTX> Cheatcode<CTX> for signWithNonceUnsafeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let pk: U256 = self.privateKey;
         let digest: B256 = self.digest;
@@ -68,7 +68,7 @@ impl Cheatcode for signWithNonceUnsafeCall {
     }
 }
 
-impl Cheatcode for signCompact_0Call {
+impl<CTX> Cheatcode<CTX> for signCompact_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
@@ -76,35 +76,35 @@ impl Cheatcode for signCompact_0Call {
     }
 }
 
-impl Cheatcode for deriveKey_0Call {
+impl<CTX> Cheatcode<CTX> for deriveKey_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, index } = self;
         derive_key::<English>(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index)
     }
 }
 
-impl Cheatcode for deriveKey_1Call {
+impl<CTX> Cheatcode<CTX> for deriveKey_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, index } = self;
         derive_key::<English>(mnemonic, derivationPath, *index)
     }
 }
 
-impl Cheatcode for deriveKey_2Call {
+impl<CTX> Cheatcode<CTX> for deriveKey_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, index, language } = self;
         derive_key_str(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index, language)
     }
 }
 
-impl Cheatcode for deriveKey_3Call {
+impl<CTX> Cheatcode<CTX> for deriveKey_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, index, language } = self;
         derive_key_str(mnemonic, derivationPath, *index, language)
     }
 }
 
-impl Cheatcode for rememberKeyCall {
+impl<CTX> Cheatcode<CTX> for rememberKeyCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
@@ -113,7 +113,7 @@ impl Cheatcode for rememberKeyCall {
     }
 }
 
-impl Cheatcode for rememberKeys_0Call {
+impl<CTX> Cheatcode<CTX> for rememberKeys_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
@@ -127,7 +127,7 @@ impl Cheatcode for rememberKeys_0Call {
     }
 }
 
-impl Cheatcode for rememberKeys_1Call {
+impl<CTX> Cheatcode<CTX> for rememberKeys_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, language, count } = self;
         let wallets = derive_wallets_str(mnemonic, derivationPath, language, *count)?;
@@ -147,7 +147,7 @@ fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Add
     address
 }
 
-impl Cheatcode for sign_1Call {
+impl<CTX> Cheatcode<CTX> for sign_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign(privateKey, digest)?;
@@ -155,7 +155,7 @@ impl Cheatcode for sign_1Call {
     }
 }
 
-impl Cheatcode for signCompact_1Call {
+impl<CTX> Cheatcode<CTX> for signCompact_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign(privateKey, digest)?;
@@ -163,7 +163,7 @@ impl Cheatcode for signCompact_1Call {
     }
 }
 
-impl Cheatcode for sign_2Call {
+impl<CTX> Cheatcode<CTX> for sign_2Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
@@ -171,7 +171,7 @@ impl Cheatcode for sign_2Call {
     }
 }
 
-impl Cheatcode for signCompact_2Call {
+impl<CTX> Cheatcode<CTX> for signCompact_2Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
@@ -179,7 +179,7 @@ impl Cheatcode for signCompact_2Call {
     }
 }
 
-impl Cheatcode for sign_3Call {
+impl<CTX> Cheatcode<CTX> for sign_3Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
@@ -187,7 +187,7 @@ impl Cheatcode for sign_3Call {
     }
 }
 
-impl Cheatcode for signCompact_3Call {
+impl<CTX> Cheatcode<CTX> for signCompact_3Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
@@ -195,14 +195,14 @@ impl Cheatcode for signCompact_3Call {
     }
 }
 
-impl Cheatcode for signP256Call {
+impl<CTX> Cheatcode<CTX> for signP256Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey, digest } = self;
         sign_p256(privateKey, digest)
     }
 }
 
-impl Cheatcode for publicKeyP256Call {
+impl<CTX> Cheatcode<CTX> for publicKeyP256Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         let pub_key =
@@ -214,28 +214,28 @@ impl Cheatcode for publicKeyP256Call {
     }
 }
 
-impl Cheatcode for createEd25519KeyCall {
+impl<CTX> Cheatcode<CTX> for createEd25519KeyCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { salt } = self;
         create_ed25519_key(salt)
     }
 }
 
-impl Cheatcode for publicKeyEd25519Call {
+impl<CTX> Cheatcode<CTX> for publicKeyEd25519Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         public_key_ed25519(privateKey)
     }
 }
 
-impl Cheatcode for signEd25519Call {
+impl<CTX> Cheatcode<CTX> for signEd25519Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { namespace, message, privateKey } = self;
         sign_ed25519(namespace, message, privateKey)
     }
 }
 
-impl Cheatcode for verifyEd25519Call {
+impl<CTX> Cheatcode<CTX> for verifyEd25519Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { signature, namespace, message, publicKey } = self;
         verify_ed25519(signature, namespace, message, publicKey)
@@ -377,7 +377,7 @@ fn sign_with_wallet(
 
     let mut wallets = state.wallets().inner.lock();
     let maybe_provided_sender = wallets.provided_sender;
-    let signers = wallets.multi_wallet.signers()?;
+    let (signers, _) = wallets.multi_wallet.signers()?;
 
     let signer = if let Some(signer) = signer {
         signer
