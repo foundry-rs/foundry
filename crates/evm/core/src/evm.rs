@@ -274,7 +274,7 @@ pub trait NestedEvm {
 
 impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
-        &mut self.inner.ctx.journaled_state.inner
+        JournaledState::from_inner_mut(&mut self.inner.ctx.journaled_state.inner)
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
@@ -341,7 +341,7 @@ impl<DB: revm::Database<Error = DatabaseError>, J: JournalTr<Database = DB>, C> 
             block: block_clone,
             cfg: cfg_clone,
             tx: tx_clone,
-            journaled_state: Journal { inner: journal_inner_clone, database: db },
+            journaled_state: Journal { inner: journal_inner_clone.into_inner(), database: db },
             local: LocalContext::default(),
             chain: (),
             error,
@@ -362,7 +362,7 @@ impl<DB: revm::Database<Error = DatabaseError>, J: JournalTr<Database = DB>, C> 
         self.cfg = cfg;
         self.tx = tx;
         self.error = sub_error;
-        self.journaled_state.set_inner(sub_inner);
+        self.journaled_state.set_inner(sub_inner.into());
 
         res
     }

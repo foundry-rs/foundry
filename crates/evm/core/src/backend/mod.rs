@@ -486,11 +486,11 @@ pub trait FoundryJournalExt: JournalExt {
 
 impl<DB: DatabaseExt> FoundryJournalExt for Journal<DB, JournalEntry> {
     fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState) {
-        (&mut self.database, &mut self.inner)
+        (&mut self.database, JournaledState::from_inner_mut(&mut self.inner))
     }
 
     fn set_inner(&mut self, inner: JournaledState) {
-        self.inner = inner;
+        self.inner = inner.into_inner();
     }
 }
 
