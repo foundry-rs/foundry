@@ -36,6 +36,7 @@ use revm::{
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
+    ops::{Deref, DerefMut},
     time::Instant,
 };
 
@@ -78,7 +79,88 @@ const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
 pub const GLOBAL_FAIL_SLOT: U256 =
     uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
-pub type JournaledState = JournalInner<JournalEntry>;
+/// Stable wrapper around revm's journal internals used across foundry's backend APIs.
+#[derive(Clone, Debug, Default)]
+#[repr(transparent)]
+pub struct JournaledState(JournalInner<JournalEntry>);
+
+impl JournaledState {
+    #[inline]
+    pub fn from_inner(inner: JournalInner<JournalEntry>) -> Self {
+        Self(inner)
+    }
+
+    #[inline]
+    pub fn as_inner(&self) -> &JournalInner<JournalEntry> {
+        &self.0
+    }
+
+    #[inline]
+    pub fn as_inner_mut(&mut self) -> &mut JournalInner<JournalEntry> {
+        &mut self.0
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> JournalInner<JournalEntry> {
+        self.0
+    }
+
+    #[inline]
+    pub fn from_inner_ref(inner: &JournalInner<JournalEntry>) -> &Self {
+        // SAFETY: `JournaledState` is `#[repr(transparent)]` over `JournalInner<JournalEntry>`.
+        unsafe { &*(inner as *const JournalInner<JournalEntry> as *const Self) }
+    }
+
+    #[inline]
+    pub fn from_inner_mut(inner: &mut JournalInner<JournalEntry>) -> &mut Self {
+        // SAFETY: `JournaledState` is `#[repr(transparent)]` over `JournalInner<JournalEntry>`.
+        unsafe { &mut *(inner as *mut JournalInner<JournalEntry> as *mut Self) }
+    }
+}
+
+impl From<JournalInner<JournalEntry>> for JournaledState {
+    #[inline]
+    fn from(inner: JournalInner<JournalEntry>) -> Self {
+        Self::from_inner(inner)
+    }
+}
+
+impl From<JournaledState> for JournalInner<JournalEntry> {
+    #[inline]
+    fn from(state: JournaledState) -> Self {
+        state.into_inner()
+    }
+}
+
+impl AsRef<JournalInner<JournalEntry>> for JournaledState {
+    #[inline]
+    fn as_ref(&self) -> &JournalInner<JournalEntry> {
+        self.as_inner()
+    }
+}
+
+impl AsMut<JournalInner<JournalEntry>> for JournaledState {
+    #[inline]
+    fn as_mut(&mut self) -> &mut JournalInner<JournalEntry> {
+        self.as_inner_mut()
+    }
+}
+
+impl Deref for JournaledState {
+    type Target = JournalInner<JournalEntry>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_inner()
+    }
+}
+
+impl DerefMut for JournaledState {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_inner_mut()
+    }
+}
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
@@ -1857,7 +1939,7 @@ impl BackendInner {
         journal
             .warm_addresses
             .set_precompile_addresses(self.precompiles().addresses().copied().collect());
-        journal
+        journal.into()
     }
 }
 
