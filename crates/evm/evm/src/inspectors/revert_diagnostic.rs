@@ -197,7 +197,10 @@ where
             return None;
         }
 
-        if let Ok(state) = ctx.journal_mut().code(target)
+        // Load the account to ensure we have the latest bytecode from the database.
+        // This is important for forked databases where the code might not be cached.
+        if ctx.journal_mut().load_account(target).is_ok()
+            && let Ok(state) = ctx.journal_mut().code(target)
             && state.is_empty()
             && !inputs.input.is_empty()
         {
