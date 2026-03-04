@@ -3,7 +3,7 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolValue;
 use foundry_common::mapping_slots::MappingSlots;
 
-impl Cheatcode for startMappingRecordingCall {
+impl<CTX> Cheatcode<CTX> for startMappingRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.mapping_slots.get_or_insert_default();
@@ -11,7 +11,7 @@ impl Cheatcode for startMappingRecordingCall {
     }
 }
 
-impl Cheatcode for stopMappingRecordingCall {
+impl<CTX> Cheatcode<CTX> for stopMappingRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.mapping_slots = None;
@@ -19,7 +19,7 @@ impl Cheatcode for stopMappingRecordingCall {
     }
 }
 
-impl Cheatcode for getMappingLengthCall {
+impl<CTX> Cheatcode<CTX> for getMappingLengthCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { target, mappingSlot } = self;
         let result = slot_child(state, target, mappingSlot).map(Vec::len).unwrap_or(0);
@@ -27,7 +27,7 @@ impl Cheatcode for getMappingLengthCall {
     }
 }
 
-impl Cheatcode for getMappingSlotAtCall {
+impl<CTX> Cheatcode<CTX> for getMappingSlotAtCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { target, mappingSlot, idx } = self;
         let result = slot_child(state, target, mappingSlot)
@@ -38,7 +38,7 @@ impl Cheatcode for getMappingSlotAtCall {
     }
 }
 
-impl Cheatcode for getMappingKeyAndParentOfCall {
+impl<CTX> Cheatcode<CTX> for getMappingKeyAndParentOfCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { target, elementSlot: slot } = self;
         let mut found = false;

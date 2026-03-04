@@ -4,14 +4,14 @@ use foundry_common::version::SEMVER_VERSION;
 use semver::Version;
 use std::cmp::Ordering;
 
-impl Cheatcode for foundryVersionCmpCall {
+impl<CTX> Cheatcode<CTX> for foundryVersionCmpCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { version } = self;
         foundry_version_cmp(version).map(|cmp| (cmp as i8).abi_encode())
     }
 }
 
-impl Cheatcode for foundryVersionAtLeastCall {
+impl<CTX> Cheatcode<CTX> for foundryVersionAtLeastCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { version } = self;
         foundry_version_cmp(version).map(|cmp| cmp.is_ge().abi_encode())

@@ -6,7 +6,7 @@ use alloy_primitives::{U256, hex};
 use alloy_sol_types::SolValue;
 
 // address
-impl Cheatcode for toString_0Call {
+impl<CTX> Cheatcode<CTX> for toString_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { value } = self;
         Ok(value.to_string().abi_encode())
@@ -14,7 +14,7 @@ impl Cheatcode for toString_0Call {
 }
 
 // bytes
-impl Cheatcode for toString_1Call {
+impl<CTX> Cheatcode<CTX> for toString_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { value } = self;
         Ok(value.to_string().abi_encode())
@@ -22,7 +22,7 @@ impl Cheatcode for toString_1Call {
 }
 
 // bytes32
-impl Cheatcode for toString_2Call {
+impl<CTX> Cheatcode<CTX> for toString_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { value } = self;
         Ok(value.to_string().abi_encode())
@@ -30,7 +30,7 @@ impl Cheatcode for toString_2Call {
 }
 
 // bool
-impl Cheatcode for toString_3Call {
+impl<CTX> Cheatcode<CTX> for toString_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { value } = self;
         Ok(value.to_string().abi_encode())
@@ -38,7 +38,7 @@ impl Cheatcode for toString_3Call {
 }
 
 // uint256
-impl Cheatcode for toString_4Call {
+impl<CTX> Cheatcode<CTX> for toString_4Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { value } = self;
         Ok(value.to_string().abi_encode())
@@ -46,84 +46,84 @@ impl Cheatcode for toString_4Call {
 }
 
 // int256
-impl Cheatcode for toString_5Call {
+impl<CTX> Cheatcode<CTX> for toString_5Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { value } = self;
         Ok(value.to_string().abi_encode())
     }
 }
 
-impl Cheatcode for parseBytesCall {
+impl<CTX> Cheatcode<CTX> for parseBytesCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Bytes)
     }
 }
 
-impl Cheatcode for parseAddressCall {
+impl<CTX> Cheatcode<CTX> for parseAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Address)
     }
 }
 
-impl Cheatcode for parseUintCall {
+impl<CTX> Cheatcode<CTX> for parseUintCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Uint(256))
     }
 }
 
-impl Cheatcode for parseIntCall {
+impl<CTX> Cheatcode<CTX> for parseIntCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Int(256))
     }
 }
 
-impl Cheatcode for parseBytes32Call {
+impl<CTX> Cheatcode<CTX> for parseBytes32Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::FixedBytes(32))
     }
 }
 
-impl Cheatcode for parseBoolCall {
+impl<CTX> Cheatcode<CTX> for parseBoolCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Bool)
     }
 }
 
-impl Cheatcode for toLowercaseCall {
+impl<CTX> Cheatcode<CTX> for toLowercaseCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input } = self;
         Ok(input.to_lowercase().abi_encode())
     }
 }
 
-impl Cheatcode for toUppercaseCall {
+impl<CTX> Cheatcode<CTX> for toUppercaseCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input } = self;
         Ok(input.to_uppercase().abi_encode())
     }
 }
 
-impl Cheatcode for trimCall {
+impl<CTX> Cheatcode<CTX> for trimCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input } = self;
         Ok(input.trim().abi_encode())
     }
 }
 
-impl Cheatcode for replaceCall {
+impl<CTX> Cheatcode<CTX> for replaceCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, from, to } = self;
         Ok(input.replace(from, to).abi_encode())
     }
 }
 
-impl Cheatcode for splitCall {
+impl<CTX> Cheatcode<CTX> for splitCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, delimiter } = self;
         let parts: Vec<&str> = input.split(delimiter).collect();
@@ -131,14 +131,14 @@ impl Cheatcode for splitCall {
     }
 }
 
-impl Cheatcode for indexOfCall {
+impl<CTX> Cheatcode<CTX> for indexOfCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, key } = self;
         Ok(input.find(key).map(U256::from).unwrap_or(U256::MAX).abi_encode())
     }
 }
 
-impl Cheatcode for containsCall {
+impl<CTX> Cheatcode<CTX> for containsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { subject, search } = self;
         Ok(subject.contains(search).abi_encode())
