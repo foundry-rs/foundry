@@ -1,6 +1,7 @@
+use alloy_network::AnyHeader;
 use alloy_primitives::{U256, hex};
 use alloy_rlp::{Buf, Decodable, Encodable, Header};
-use eyre::Context;
+use eyre::{Context, Result};
 use serde_json::Value;
 use std::fmt;
 
@@ -89,6 +90,33 @@ impl fmt::Display for Item {
             }
         };
         Ok(())
+    }
+}
+
+/// Helper trait to abstract Encodable Header types and non-Encodable ones
+///
+/// Non-Encodable like [`AnyHeader`] are converted to [`alloy_consensus::Header`].
+pub trait HeaderRlpEncodable {
+    fn rlp_encoded(&self) -> Result<Vec<u8>>;
+}
+
+trait PassthroughRlpHeader: Encodable {}
+
+impl PassthroughRlpHeader for alloy_consensus::Header {}
+
+impl<T> HeaderRlpEncodable for T
+where
+    T: PassthroughRlpHeader,
+{
+    fn rlp_encoded(&self) -> Result<Vec<u8>> {
+        Ok(alloy_rlp::encode(self))
+    }
+}
+
+impl HeaderRlpEncodable for AnyHeader {
+    fn rlp_encoded(&self) -> Result<Vec<u8>> {
+        let header = self.clone().try_into_header()?;
+        Ok(alloy_rlp::encode(header))
     }
 }
 
