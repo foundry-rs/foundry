@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
 //! Generate Markdown documentation for clap command-line tools.
 //!
 //! This is a fork of [`clap-markdown`](https://crates.io/crates/clap-markdown) with the following

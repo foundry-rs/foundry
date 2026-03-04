@@ -16,5 +16,4 @@ workspace = true
 clap = { version = "4", features = ["env"] }
 
 [dev-dependencies]
-clap = { version = "4", features = ["derive"] }
 pretty_assertions = "1"
