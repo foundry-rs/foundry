@@ -377,7 +377,7 @@ fn sign_with_wallet(
 
     let mut wallets = state.wallets().inner.lock();
     let maybe_provided_sender = wallets.provided_sender;
-    let signers = wallets.multi_wallet.signers()?;
+    let (signers, _) = wallets.multi_wallet.signers()?;
 
     let signer = if let Some(signer) = signer {
         signer

@@ -12,6 +12,7 @@ use alloy_primitives::{
 use alloy_provider::{Provider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
+use alloy_signer::Signer;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
@@ -202,11 +203,7 @@ impl From<EthereumWallet> for EitherSigner {
 
 impl From<WalletSigner> for EitherSigner {
     fn from(wallet: WalletSigner) -> Self {
-        match wallet {
-            WalletSigner::Browser(wallet) => Self::Browser(wallet),
-            // Convert any other signer to an Ethereum wallet
-            signer => EthereumWallet::new(signer).into(),
-        }
+        EthereumWallet::new(wallet).into()
     }
 }
 
@@ -324,11 +321,12 @@ impl BundledState {
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
-            let signers = self.script_wallets.into_multi_wallet().into_signers()?;
+            let signers: Vec<Address> =
+                self.script_wallets.signers().map_err(|e| eyre::eyre!("{e}"))?;
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
-                if !signers.contains_key(addr) {
+                if !signers.contains(addr) {
                     missing_addresses.push(addr);
                 }
             }
@@ -337,11 +335,16 @@ impl BundledState {
                 eyre::bail!(
                     "No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
                     missing_addresses,
-                    signers.keys().collect::<Vec<_>>()
+                    signers
                 );
             }
 
-            let signers = signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
+            let (signers, browser) = self.script_wallets.into_multi_wallet().into_signers()?;
+            let mut signers: AddressHashMap<EitherSigner> =
+                signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
+            if let Some(browser) = browser {
+                signers.insert(browser.address(), browser.into());
+            }
 
             SendTransactionsKind::Raw(signers)
         };

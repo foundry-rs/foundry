@@ -4,7 +4,7 @@ use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
-use alloy_signer::SignerSync;
+use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
@@ -331,17 +331,18 @@ impl Wallets {
 
     /// Locks inner Mutex and returns all signer addresses in the [MultiWallet].
     pub fn signers(&self) -> Result<Vec<Address>> {
-        Ok(self.inner.lock().multi_wallet.signers()?.keys().copied().collect())
+        let mut wallets = self.inner.lock();
+        let (signers, browser) = wallets.multi_wallet.signers()?;
+        Ok(signers.keys().copied().chain(browser.map(|b| b.address())).collect())
     }
 
     /// Number of signers in the [MultiWallet].
     pub fn len(&self) -> usize {
         let mut inner = self.inner.lock();
-        let signers = inner.multi_wallet.signers();
-        if signers.is_err() {
-            return 0;
+        match inner.multi_wallet.signers() {
+            Ok((signers, browser)) => signers.len() + usize::from(browser.is_some()),
+            Err(_) => 0,
         }
-        signers.unwrap().len()
     }
 
     /// Whether the [MultiWallet] is empty.
@@ -366,7 +367,7 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
         if let Some(provided_sender) = wallets.provided_sender {
             new_origin = Some(provided_sender);
         } else {
-            let signers = wallets.multi_wallet.signers()?;
+            let (signers, _) = wallets.multi_wallet.signers()?;
             if signers.len() == 1 {
                 let address = signers.keys().next().unwrap();
                 new_origin = Some(*address);
