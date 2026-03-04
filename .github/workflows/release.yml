@@ -260,7 +260,7 @@ jobs:
 
       - name: Binaries attestation
         id: attestation
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             ${{ env.anvil_bin_path }}
