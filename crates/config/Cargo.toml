@@ -50,6 +50,7 @@ tracing.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
 clap = { version = "4", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2"
