@@ -437,8 +437,8 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "12a5fc31f6c0b95535cfc72bf87d6ee21444038b" , default-features = false, features = ["serde"] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "12a5fc31f6c0b95535cfc72bf87d6ee21444038b" , default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "750621441d17768447b7895766111f7d3c85e0da" , default-features = false, features = ["serde"] }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "750621441d17768447b7895766111f7d3c85e0da" , default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
