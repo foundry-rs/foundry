@@ -5,6 +5,7 @@ use std::{
 };
 
 use alloy_dyn_abi::TypedData;
+use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, TxHash};
 use tokio::{
     net::TcpListener,
@@ -24,15 +25,15 @@ use crate::wallet_browser::{
 
 /// Browser wallet server.
 #[derive(Debug, Clone)]
-pub struct BrowserWalletServer {
+pub struct BrowserWalletServer<N: Network> {
     port: u16,
-    state: Arc<BrowserWalletState>,
+    state: Arc<BrowserWalletState<N>>,
     shutdown_tx: Option<Arc<Mutex<Option<oneshot::Sender<()>>>>>,
     open_browser: bool,
     timeout: Duration,
 }
 
-impl BrowserWalletServer {
+impl<N: Network> BrowserWalletServer<N> {
     /// Create a new browser wallet server.
     pub fn new(port: u16, open_browser: bool, timeout: Duration, development: bool) -> Self {
         Self {
@@ -118,7 +119,7 @@ impl BrowserWalletServer {
     /// Request a transaction to be signed and sent via the browser wallet.
     pub async fn request_transaction(
         &self,
-        request: BrowserTransactionRequest,
+        request: BrowserTransactionRequest<N>,
     ) -> Result<TxHash, BrowserWalletError> {
         if !self.is_connected().await {
             return Err(BrowserWalletError::NotConnected);

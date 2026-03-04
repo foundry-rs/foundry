@@ -60,11 +60,10 @@ impl ListArgs {
         {
             match self.list_local_senders() {
                 Ok(()) => {}
-                Err(e) => {
-                    if !self.all {
-                        sh_err!("{}", e)?;
-                    }
+                Err(e) if !self.all => {
+                    sh_err!("{}", e)?;
                 }
+                _ => {}
             }
         }
 
@@ -78,10 +77,7 @@ impl ListArgs {
             .turnkey(self.turnkey || self.all)
             .interactives(0)
             .interactive(false)
-            .browser(false)
-            .browser_port(Default::default())
-            .browser_disable_open(Default::default())
-            .browser_development(Default::default())
+            .browser(Default::default())
             .build()
             .expect("build multi wallet");
 
@@ -100,11 +96,10 @@ impl ListArgs {
                                 })
                         }
                     }
-                    Err(e) => {
-                        if !self.all {
-                            sh_err!("{}", e)?;
-                        }
+                    Err(e) if !self.all => {
+                        sh_err!("{}", e)?;
                     }
+                    _ => {}
                 }
             };
         }

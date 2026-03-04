@@ -4,7 +4,9 @@ use std::{
 };
 
 use crate::{
-    Env, InspectorExt, backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    Env, FoundryContextExt, InspectorExt,
+    backend::{DatabaseExt, FoundryJournalExt, JournaledState},
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
@@ -252,6 +254,131 @@ impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
     }
 }
 
+/// Object-safe trait exposing the operations that cheatcode nested EVM closures need.
+///
+/// This abstracts over the concrete EVM type (`FoundryEvm`, future `TempoEvm`, etc.)
+/// so that cheatcode impls can build and run nested EVMs without knowing the concrete type.
+pub trait NestedEvm {
+    /// Returns a mutable reference to the journal inner state (`JournaledState`).
+    fn journal_inner_mut(&mut self) -> &mut JournaledState;
+
+    /// Runs a single execution frame (create or call) through the EVM handler loop.
+    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
+
+    /// Executes a full transaction with the given `TxEnv`.
+    fn transact(
+        &mut self,
+        tx: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
+}
+
+impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
+    fn journal_inner_mut(&mut self) -> &mut JournaledState {
+        &mut self.inner.ctx.journaled_state.inner
+    }
+
+    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
+        FoundryEvm::run_execution(self, frame)
+    }
+
+    fn transact(
+        &mut self,
+        tx: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
+        Evm::transact_raw(self, tx)
+    }
+}
+
+/// Extension trait for building nested EVMs from a generic context.
+///
+/// Each network provides its own impl that constructs the right EVM type
+/// (instructions, precompiles) for that network.
+pub trait NestedEvmExt: FoundryContextExt {
+    /// Clones the current context (env + journal), builds a nested EVM, runs the closure,
+    /// and writes modified state back. Used by `exec_create` (`deployCode`).
+    fn with_nested_evm<R>(
+        &mut self,
+        inspector: &mut dyn InspectorExt,
+        f: impl FnOnce(&mut dyn NestedEvm) -> Result<R, EVMError<DatabaseError>>,
+    ) -> Result<R, EVMError<DatabaseError>>
+    where
+        Self::Journal: FoundryJournalExt;
+
+    /// Creates a fresh nested EVM from a database, environment, and inspector.
+    /// Used by `executeTransactionCall`.
+    fn new_nested_evm<'a>(
+        db: &'a mut dyn DatabaseExt,
+        env: Env,
+        inspector: &'a mut dyn InspectorExt,
+    ) -> Box<dyn NestedEvm + 'a>
+    where
+        Self: Sized;
+}
+
+impl<DB: revm::Database<Error = DatabaseError>, J: JournalTr<Database = DB>, C> NestedEvmExt
+    for Context<BlockEnv, TxEnv, CfgEnv, DB, J, C>
+{
+    fn with_nested_evm<R>(
+        &mut self,
+        inspector: &mut dyn InspectorExt,
+        f: impl FnOnce(&mut dyn NestedEvm) -> Result<R, EVMError<DatabaseError>>,
+    ) -> Result<R, EVMError<DatabaseError>>
+    where
+        Self::Journal: FoundryJournalExt,
+    {
+        // Clone env fields via field-level borrows on Context.
+        let block_clone = self.block.clone();
+        let cfg_clone = self.cfg.clone();
+        let tx_clone = self.tx.clone();
+        let error = std::mem::replace(&mut self.error, Ok(()));
+
+        // Split journal into (db, inner) and clone the inner state.
+        let (db, journal_inner) = self.journaled_state.as_db_and_inner();
+        let journal_inner_clone = journal_inner.clone();
+
+        // Build a nested EVM context. The db reference borrows self.journaled_state.
+        let ctx = EthEvmContext {
+            block: block_clone,
+            cfg: cfg_clone,
+            tx: tx_clone,
+            journaled_state: Journal { inner: journal_inner_clone, database: db },
+            local: LocalContext::default(),
+            chain: (),
+            error,
+        };
+
+        let mut evm = new_evm_with_existing_context(ctx, inspector);
+        let res = f(&mut evm);
+
+        // Destructure the nested EVM context to release the db borrow.
+        let sub_ctx = evm.into_context();
+        let Context { block, cfg, tx, journaled_state: sub_journal, error: sub_error, .. } =
+            sub_ctx;
+        // Dropping `database` releases the mutable borrow on self.journaled_state.
+        let Journal { inner: sub_inner, database: _ } = sub_journal;
+
+        // Write back modified state.
+        self.block = block;
+        self.cfg = cfg;
+        self.tx = tx;
+        self.error = sub_error;
+        self.journaled_state.set_inner(sub_inner);
+
+        res
+    }
+
+    fn new_nested_evm<'a>(
+        db: &'a mut dyn DatabaseExt,
+        env: Env,
+        inspector: &'a mut dyn InspectorExt,
+    ) -> Box<dyn NestedEvm + 'a>
+    where
+        Self: Sized,
+    {
+        Box::new(new_evm_with_inspector(db, env, inspector))
+    }
+}
+
 pub struct FoundryHandler<'db, I: InspectorExt> {
     create2_overrides: Vec<(usize, CallInputs)>,
     _phantom: PhantomData<(&'db mut dyn DatabaseExt, I)>,
@@ -290,7 +417,7 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         {
             let (ctx, inspector) = evm.ctx_inspector();
 
-            if inspector.should_use_create2_factory(ctx, inputs) {
+            if inspector.should_use_create2_factory(ctx.journal().depth(), inputs) {
                 let gas_limit = inputs.gas_limit();
 
                 // Get CREATE2 deployer.

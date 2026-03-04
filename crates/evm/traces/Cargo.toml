@@ -47,6 +47,3 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 yansi.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

@@ -825,21 +825,20 @@ impl<'a> FunctionRunner<'a> {
                     progress.as_ref(),
                     &self.tcfg.early_exit,
                 ) {
-                    Ok(replayed_call_sequence) => {
-                        if !replayed_call_sequence.is_empty() {
-                            call_sequence = replayed_call_sequence;
-                            // Persist error in invariant failure dir.
-                            record_invariant_failure(
-                                failure_dir.as_path(),
-                                failure_file.as_path(),
-                                &call_sequence,
-                                test_bytecode,
-                            );
-                        }
+                    Ok(replayed_call_sequence) if !replayed_call_sequence.is_empty() => {
+                        call_sequence = replayed_call_sequence;
+                        // Persist error in invariant failure dir.
+                        record_invariant_failure(
+                            failure_dir.as_path(),
+                            failure_file.as_path(),
+                            &call_sequence,
+                            test_bytecode,
+                        );
                     }
                     Err(err) => {
                         error!(%err, "Failed to replay invariant error");
                     }
+                    _ => {}
                 }
 
                 self.result.invariant_replay_fail(
@@ -897,33 +896,31 @@ impl<'a> FunctionRunner<'a> {
                                 progress.as_ref(),
                                 &self.tcfg.early_exit,
                             ) {
-                                Ok(call_sequence) => {
-                                    if !call_sequence.is_empty() {
-                                        // Persist error in invariant failure dir.
-                                        record_invariant_failure(
-                                            failure_dir.as_path(),
-                                            failure_file.as_path(),
-                                            &call_sequence,
-                                            test_bytecode,
-                                        );
+                                Ok(call_sequence) if !call_sequence.is_empty() => {
+                                    // Persist error in invariant failure dir.
+                                    record_invariant_failure(
+                                        failure_dir.as_path(),
+                                        failure_file.as_path(),
+                                        &call_sequence,
+                                        test_bytecode,
+                                    );
 
-                                        let original_seq_len = if let TestError::Fail(_, calls) =
-                                            &case_data.test_error
-                                        {
+                                    let original_seq_len =
+                                        if let TestError::Fail(_, calls) = &case_data.test_error {
                                             calls.len()
                                         } else {
                                             call_sequence.len()
                                         };
 
-                                        counterexample = Some(CounterExample::Sequence(
-                                            original_seq_len,
-                                            call_sequence,
-                                        ))
-                                    }
+                                    counterexample = Some(CounterExample::Sequence(
+                                        original_seq_len,
+                                        call_sequence,
+                                    ))
                                 }
                                 Err(err) => {
                                     error!(%err, "Failed to replay invariant error");
                                 }
+                                _ => {}
                             }
                         }
                     };
@@ -951,17 +948,16 @@ impl<'a> FunctionRunner<'a> {
                         progress.as_ref(),
                         &self.tcfg.early_exit,
                     ) {
-                        Ok(best_sequence) => {
-                            if !best_sequence.is_empty() {
-                                counterexample = Some(CounterExample::Sequence(
-                                    invariant_result.optimization_best_sequence.len(),
-                                    best_sequence,
-                                ));
-                            }
+                        Ok(best_sequence) if !best_sequence.is_empty() => {
+                            counterexample = Some(CounterExample::Sequence(
+                                invariant_result.optimization_best_sequence.len(),
+                                best_sequence,
+                            ));
                         }
                         Err(err) => {
                             error!(%err, "Failed to replay optimization best sequence");
                         }
+                        _ => {}
                     }
                 } else {
                     // Standard check mode: replay last run for traces.

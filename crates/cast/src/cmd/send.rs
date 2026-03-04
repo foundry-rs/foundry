@@ -140,7 +140,7 @@ impl SendTxArgs {
         let is_tempo = builder.is_tempo();
 
         // Tempo transactions with browser wallets are not supported
-        if is_tempo && send_tx.eth.wallet.browser {
+        if is_tempo && send_tx.eth.wallet.browser.browser {
             return Err(eyre!("Tempo transactions are not supported with browser wallets."));
         }
 
@@ -148,7 +148,7 @@ impl SendTxArgs {
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
-        if unlocked && !send_tx.eth.wallet.browser {
+        if unlocked && !send_tx.eth.wallet.browser.browser {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
                 let current_chain_id = provider.get_chain_id().await?;
@@ -191,7 +191,7 @@ impl SendTxArgs {
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
             // Browser wallets work differently as they sign and send the transaction in one step.
-            if send_tx.eth.wallet.browser
+            if send_tx.eth.wallet.browser.browser
                 && let WalletSigner::Browser(ref browser_signer) = signer
             {
                 let (tx_request, _) = builder.build(from).await?;

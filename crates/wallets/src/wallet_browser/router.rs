@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_network::Network;
 use axum::{
     Router,
     extract::{Request, State},
@@ -13,7 +14,7 @@ use tower_http::{cors::CorsLayer, set_header::SetResponseHeaderLayer};
 
 use crate::wallet_browser::{handlers, state::BrowserWalletState};
 
-pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
+pub async fn build_router<N: Network>(state: Arc<BrowserWalletState<N>>, port: u16) -> Router {
     let api = Router::new()
         .route("/transaction/request", get(handlers::get_next_transaction_request))
         .route("/transaction/response", post(handlers::post_transaction_response))
@@ -76,8 +77,8 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
         .with_state(state)
 }
 
-async fn require_session_token(
-    State(state): State<Arc<BrowserWalletState>>,
+async fn require_session_token<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {

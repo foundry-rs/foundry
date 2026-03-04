@@ -106,7 +106,6 @@ alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 
 mockall = "0.14"
 globset = "0.4"

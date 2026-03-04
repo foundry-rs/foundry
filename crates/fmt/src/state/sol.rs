@@ -2433,20 +2433,19 @@ impl<'ast> State<'_, 'ast> {
 
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve => {
-                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
-                {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Preserve
+                if self.is_stmt_in_new_line(cond, then)
+                    || self.is_multiline_block_stmt(then, true) =>
+            {
+                return Decision { outcome: false, is_cached: false };
             }
-            config::SingleLineBlockStyle::Single => {
-                if self.is_multiline_block_stmt(then, true) {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Single if self.is_multiline_block_stmt(then, true) => {
+                return Decision { outcome: false, is_cached: false };
             }
             config::SingleLineBlockStyle::Multi => {
                 return Decision { outcome: false, is_cached: false };
             }
+            _ => {}
         };
 
         // If no decision was made, estimate the length to be formatted.
@@ -2530,10 +2529,16 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
-    /// Checks if a block statement `{ ... }` contains more than one line of actual code.
+    /// Checks if a block statement `{ ... }` should be treated as multiline,
+    /// either because it spans multiple lines or contains multiple statements.
     fn is_multiline_block(&self, block: &'ast ast::Block<'ast>, empty_as_multiline: bool) -> bool {
         if block.stmts.is_empty() {
             return empty_as_multiline;
+        }
+        // A block with multiple statements should never be inlined, regardless of
+        // whether it was written on a single line in the source.
+        if block.stmts.len() > 1 {
+            return true;
         }
         if self.sm.is_multiline(block.span)
             && let Ok(snip) = self.sm.span_to_snippet(block.span)
