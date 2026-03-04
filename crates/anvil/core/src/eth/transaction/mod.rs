@@ -1,6 +1,6 @@
 //! Transaction related types
 use alloy_consensus::{
-    Signed, Transaction, TxEnvelope, Typed2718, crypto::RecoveryError, transaction::Recovered,
+    Signed, Transaction, Typed2718, crypto::RecoveryError, transaction::Recovered,
 };
 
 use alloy_eips::eip2718::Encodable2718;
@@ -70,28 +70,8 @@ impl MaybeImpersonatedTransaction {
 
         // NOTE: we must update the hash because the tx can be impersonated, this requires forcing
         // the hash
-        let inner_envelope = match envelope {
-            TxEnvelope::Legacy(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip2930(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip1559(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip4844(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip7702(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash))
-            }
-        };
+        let (typed_tx, signature, _) = Into::<Signed<_>>::into(envelope).into_parts();
+        let inner_envelope = Signed::new_unchecked(typed_tx, signature, hash).into();
 
         RpcTransaction {
             block_hash: None,
