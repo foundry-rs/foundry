@@ -1,5 +1,5 @@
 use crate::tx::{self, CastTxBuilder};
-use alloy_consensus::SignableTransaction;
+use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
@@ -92,8 +92,9 @@ impl MakeTxArgs {
     pub async fn run_generic<N>(self) -> Result<()>
     where
         N: Network,
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
 
