@@ -4,7 +4,7 @@ use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyRpcTransaction, TransactionResponse};
-use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
+use alloy_primitives::{B256, ChainId, Selector, TxKind, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use alloy_rpc_types::TransactionRequest;
 use foundry_config::NamedChain;
@@ -144,20 +144,13 @@ pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &AnyRpcTransaction) {
         configure_tx_req_env(
             env,
             &TransactionRequest::from_transaction_with_sender(tx.clone(), from),
-            Some(from),
         )
         .expect("cannot fail");
     }
 }
 
 /// Configures the env for the given RPC transaction request.
-/// `impersonated_from` is the address of the impersonated account. This helps account for an
-/// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
-pub fn configure_tx_req_env(
-    env: &mut EnvMut<'_>,
-    tx: &TransactionRequest,
-    impersonated_from: Option<Address>,
-) -> eyre::Result<()> {
+pub fn configure_tx_req_env(env: &mut EnvMut<'_>, tx: &TransactionRequest) -> eyre::Result<()> {
     // If no transaction type is provided, we need to infer it from the other fields.
     let tx_type = tx.transaction_type.unwrap_or_else(|| tx.minimal_tx_type() as u8);
     env.tx.tx_type = tx_type;
@@ -183,13 +176,7 @@ pub fn configure_tx_req_env(
 
     // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
     env.tx.kind = to.unwrap_or(TxKind::Create);
-    // If the transaction is impersonated, we need to set the caller to the from
-    // address Ref: https://github.com/foundry-rs/foundry/issues/9541
-    env.tx.caller = if let Some(caller) = impersonated_from {
-        caller
-    } else {
-        from.ok_or_else(|| eyre::eyre!("missing `from` field"))?
-    };
+    env.tx.caller = from.ok_or_else(|| eyre::eyre!("missing `from` field"))?;
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
     env.tx.nonce = nonce.unwrap_or_default();
     env.tx.value = value.unwrap_or_default();
