@@ -11,8 +11,9 @@ use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    ContextExt, Env, FoundryInspectorExt, InspectorExt,
-    backend::{DatabaseExt, JournaledState},
+    Env, FoundryInspectorExt, InspectorExt,
+    backend::{DatabaseExt, FoundryJournalExt, JournaledState},
+    env::FoundryContextExt,
     evm::new_evm_with_inspector,
 };
 use foundry_evm_coverage::HitMaps;
@@ -700,7 +701,8 @@ impl InspectorStackRefMut<'_> {
         self.in_inner_context = true;
 
         let res = self.with_inspector(|inspector| {
-            let (db, journal, env) = ecx.as_db_env_and_journal();
+            let (journal, env) = ecx.journal_and_env_mut();
+            let (db, journal) = journal.as_db_and_inner();
             let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
 
             evm.journaled_state.state = {
