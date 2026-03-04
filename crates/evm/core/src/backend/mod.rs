@@ -11,7 +11,9 @@ use crate::{
 use alloy_consensus::Typed2718;
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
-use alloy_network::{AnyNetwork, AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
+use alloy_network::{
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, TransactionResponse,
+};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
 use alloy_rpc_types::{BlockNumberOrTag, Transaction, TransactionRequest};
 use eyre::Context;
@@ -274,11 +276,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
     /// the contract is deployed there.
     ///
     /// Returns a more useful error message if that's the case
-    fn diagnose_revert(
-        &self,
-        callee: Address,
-        journaled_state: &JournaledState,
-    ) -> Option<RevertDiagnostic>;
+    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic>;
 
     /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
     ///
@@ -902,7 +900,7 @@ impl Backend {
             trace!(tx=?tx.tx_hash(), "committing transaction");
 
             commit_transaction(
-                &tx.inner,
+                tx,
                 &mut env.as_env_mut(),
                 journaled_state,
                 fork,
@@ -1296,7 +1294,7 @@ impl DatabaseExt for Backend {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
-            &tx.inner,
+            &tx,
             &mut env.as_env_mut(),
             journaled_state,
             fork,
@@ -1355,11 +1353,7 @@ impl DatabaseExt for Backend {
         self.inner.ensure_fork_id(id)
     }
 
-    fn diagnose_revert(
-        &self,
-        callee: Address,
-        journaled_state: &JournaledState,
-    ) -> Option<RevertDiagnostic> {
+    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
 
@@ -1369,7 +1363,7 @@ impl DatabaseExt for Backend {
             return None;
         }
 
-        if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
+        if !active_fork.is_contract(callee) && !is_contract_in_state(evm_state, callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
             for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
@@ -1606,7 +1600,7 @@ impl Fork {
         {
             return true;
         }
-        is_contract_in_state(&self.journaled_state, acc)
+        is_contract_in_state(&self.journaled_state.state, acc)
     }
 }
 
@@ -1936,12 +1930,8 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 }
 
 /// Returns true of the address is a contract
-fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool {
-    journaled_state
-        .state
-        .get(&acc)
-        .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
-        .unwrap_or_default()
+fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
+    evm_state.get(&acc).map(|acc| acc.info.code_hash != KECCAK_EMPTY).unwrap_or_default()
 }
 
 /// Updates the env's block with the block's data
@@ -1965,7 +1955,7 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
 fn commit_transaction(
-    tx: &Transaction<AnyTxEnvelope>,
+    tx: &AnyRpcTransaction,
     env: &mut EnvMut<'_>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,

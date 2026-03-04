@@ -56,7 +56,6 @@ tracing.workspace = true
 eth-keystore = "0.5.0"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros"] }
 reqwest = { workspace = true, features = ["json"] }
 
 [features]

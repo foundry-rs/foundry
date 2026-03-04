@@ -18,6 +18,7 @@ extern crate tracing;
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
+use revm::context::ContextTr;
 use spec::Status;
 
 pub use Vm::ForgeContext;
@@ -159,7 +160,7 @@ impl CheatsCtxt<'_, '_, '_, '_> {
     }
 
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.ecx.journaled_state.warm_addresses.precompiles().contains(address)
+        self.ecx.journal().warm_addresses.precompiles().contains(address)
     }
 }
 

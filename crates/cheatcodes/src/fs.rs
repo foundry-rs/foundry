@@ -13,7 +13,7 @@ use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use revm::{
-    context::{CreateScheme, JournalTr},
+    context::{ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
 };
 use revm_inspectors::tracing::types::CallKind;
@@ -376,10 +376,8 @@ fn deploy_code(
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
     // If prank active at current depth, then use it as caller for create input.
-    let caller = ccx
-        .state
-        .get_prank(ccx.ecx.journaled_state.depth())
-        .map_or(ccx.caller, |prank| prank.new_caller);
+    let caller =
+        ccx.state.get_prank(ccx.ecx.journal().depth()).map_or(ccx.caller, |prank| prank.new_caller);
 
     let outcome = executor.exec_create(
         CreateInputs::new(
@@ -788,7 +786,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.cfg.chain_id;
+        let chain_id = ccx.ecx.cfg().chain_id;
 
         let latest_broadcast = latest_broadcast(
             contractName,

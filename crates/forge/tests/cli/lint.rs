@@ -860,14 +860,14 @@ contract OldContract {
 
     // Run forge build - should SUCCEED without linting
     cmd.arg("build").assert_success().stderr_eq(str![[
-        r#"Warning: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+        r#"Warning: unable to lint. Solar only supports Solidity versions >=0.8.0
 
 "#
     ]]);
 
     // Run forge lint - should FAIL
     cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[
-        r#"Error: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+        r#"Error: unable to lint. Solar only supports Solidity versions >=0.8.0
 
 "#
     ]]);

@@ -233,6 +233,15 @@ impl ScriptArgs {
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
+        } else if self.evm.sender.is_none() {
+            // If no sender was explicitly set via --sender and there's exactly one signer
+            // (e.g. from --account or --keystore), use that signer's address as the sender.
+            // This makes --account behave consistently with --private-key.
+            if let Ok(signers) = script_wallets.signers()
+                && signers.len() == 1
+            {
+                evm_opts.sender = signers[0];
+            }
         }
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
