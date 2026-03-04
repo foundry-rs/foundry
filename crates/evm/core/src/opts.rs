@@ -13,7 +13,7 @@ use foundry_config::{Chain, Config, GasLimit};
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
+use std::{fmt::Write, time::Duration};
 use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,6 +37,9 @@ pub struct EvmOpts {
 
     /// Headers to use with `fork_url`
     pub fork_headers: Option<Vec<String>>,
+
+    /// The request timeout in seconds for fork RPC calls.
+    pub fork_timeout: Option<u64>,
 
     /// The available compute units per second.
     ///
@@ -94,6 +97,7 @@ impl Default for EvmOpts {
             fork_retries: None,
             fork_retry_backoff: None,
             fork_headers: None,
+            fork_timeout: None,
             compute_units_per_second: None,
             no_rpc_rate_limit: false,
             no_storage_caching: false,
@@ -119,12 +123,15 @@ impl EvmOpts {
         &self,
         fork_url: &str,
     ) -> eyre::Result<RootProvider<N>> {
-        ProviderBuilder::new(fork_url)
+        let mut builder = ProviderBuilder::new(fork_url)
             .maybe_max_retry(self.fork_retries)
             .maybe_initial_backoff(self.fork_retry_backoff)
             .maybe_headers(self.fork_headers.clone())
-            .compute_units_per_second(self.get_compute_units_per_second())
-            .build()
+            .compute_units_per_second(self.get_compute_units_per_second());
+        if let Some(secs) = self.fork_timeout {
+            builder = builder.timeout(Duration::from_secs(secs));
+        }
+        builder.build()
     }
 
     /// Configures a new `revm::Env`
