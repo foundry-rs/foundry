@@ -68,7 +68,7 @@ jobs:
 
       - name: Build changelog
         id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@6faf020194b7c8853f9e55c4fd92e40b02122a04 # v6
+        uses: mikepenz/release-changelog-builder-action@a34a8009a9588bb86b02a873cf592440e96a5da8 # v6
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ env.IS_NIGHTLY == 'true' && 'nightly' || env.STABLE_VERSION }}
