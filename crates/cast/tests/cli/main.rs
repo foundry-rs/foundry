@@ -2025,19 +2025,19 @@ blockNumber          22287055
 from                 0x4648451b5F87FF8F0F7D622bD40574bb97E25980
 transactionIndex     230
 effectiveGasPrice    363392048
-accessList           []
-chainId              1
-gasLimit             350000
 hash                 0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594
-input                0xa9059cbb000000000000000000000000568766d218d82333dd4dae933ddfcda5da26625000000000000000000000000000000000000000000000000000000000cc3ed109
+type                 2
+chainId              1
+nonce                113642
+gasLimit             350000
 maxFeePerGas         675979146
 maxPriorityFeePerGas 1337
-nonce                113642
+to                   0xdAC17F958D2ee523a2206206994597C13D831ec7
+value                0
+accessList           []
+input                0xa9059cbb000000000000000000000000568766d218d82333dd4dae933ddfcda5da26625000000000000000000000000000000000000000000000000000000000cc3ed109
 r                    0x1e92d3e1ca69109a1743fc4b3cf9dff58630bc9f429cea3c3fe311506264e36c
 s                    0x793947d4bbdce56a1a5b2b3525c46f01569414a22355f4883b5429668ab0f51a
-to                   0xdAC17F958D2ee523a2206206994597C13D831ec7
-type                 2
-value                0
 yParity              1
 ...
 "#]]);
