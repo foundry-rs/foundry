@@ -24,7 +24,7 @@ use crate::{
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
-        sign::build_typed_transaction,
+        sign::build_impersonated,
     },
     mem::{
         inspector::AnvilInspector,
@@ -75,7 +75,6 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use alloy_signer::Signature;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
@@ -1703,10 +1702,7 @@ impl Backend {
 
                     let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
 
-                    let tx = build_typed_transaction(
-                        typed_tx,
-                        Signature::new(Default::default(), Default::default(), false),
-                    )?;
+                    let tx = build_impersonated(typed_tx);
                     let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
