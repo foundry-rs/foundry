@@ -29,9 +29,7 @@ use tempo_alloy::TempoNetwork;
 /// If the Network supports Tempo transactions, implement these methods:
 /// - [`FoundryTransactionBuilder::set_fee_token`]
 /// - [`FoundryTransactionBuilder::set_nonce_key`]
-pub trait FoundryTransactionBuilder<N: Network>:
-    TransactionBuilder<N> + Default + Sized + Send + Sync + 'static
-{
+pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     /// Get the max fee per blob gas for the transaction.
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
         None
