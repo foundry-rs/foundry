@@ -374,11 +374,11 @@ impl CallTraceDecoder {
         for IdentifiedAddress { address, label, contract, abi, artifact_id: _ } in addrs {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
 
-            if let Some(contract) = contract {
+            if let Some(contract) = contract.filter(|c| !c.is_empty()) {
                 self.contracts.entry(address).or_insert(contract);
             }
 
-            if let Some(label) = label {
+            if let Some(label) = label.filter(|l| !l.is_empty()) {
                 self.labels.entry(address).or_insert(label);
             }
 
@@ -438,8 +438,11 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        let label =
-            if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
+        let label = if self.disable_labels {
+            None
+        } else {
+            self.labels.get(&trace.address).filter(|label| !label.is_empty()).cloned()
+        };
 
         if trace.kind.is_any_create() {
             return DecodedCallTrace { label, ..Default::default() };
@@ -850,7 +853,7 @@ impl CallTraceDecoder {
     /// Pretty-prints a value.
     fn format_value(&self, value: &DynSolValue) -> String {
         if let DynSolValue::Address(addr) = value
-            && let Some(label) = self.labels.get(addr)
+            && let Some(label) = self.labels.get(addr).filter(|label| !label.is_empty())
         {
             return format!("{label}: [{addr}]");
         }
