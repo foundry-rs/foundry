@@ -272,8 +272,6 @@ pub trait NestedEvm {
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
 
     /// Returns a snapshot of the current environment (cfg, block, tx).
-    ///
-    /// Used after `transact()` to read back cheatcode-modified cfg/block from the nested EVM.
     fn to_env(&self) -> Env;
 }
 
