@@ -54,7 +54,9 @@ use rand::Rng;
 use revm::{
     Inspector,
     bytecode::opcode as op,
-    context::{BlockEnv, ContextTr, JournalTr, Transaction, TransactionType, result::EVMError},
+    context::{
+        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, result::EVMError,
+    },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     inspector::JournalExt,
@@ -698,7 +700,7 @@ impl Cheatcodes {
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
         // broadcasting.
         if curr_depth == 0 {
-            let sender = ecx.tx().caller;
+            let sender = ecx.tx().caller();
             let account = match super::evm::journaled_account(ecx, sender) {
                 Ok(account) => account,
                 Err(err) => {
@@ -895,7 +897,7 @@ impl Cheatcodes {
                     }
 
                     let input = TransactionInput::new(call.input.bytes(ecx));
-                    let chain_id = ecx.cfg().chain_id;
+                    let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let account =
                         ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
@@ -1009,7 +1011,7 @@ impl Cheatcodes {
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
                     forkId: ecx.db().active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(ecx.cfg().chain_id),
+                    chainId: U256::from(ecx.cfg().chain_id()),
                 },
                 accessor: call.caller,
                 account: call.bytecode_address,
@@ -1503,7 +1505,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
         // not exist
-        if let TxKind::Call(test_contract) = ecx.tx().kind {
+        if let TxKind::Call(test_contract) = ecx.tx().kind() {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
             if ecx.db().is_forked_mode()
@@ -1718,7 +1720,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
                     forkId: ecx.db().active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(ecx.cfg().chain_id),
+                    chainId: U256::from(ecx.cfg().chain_id()),
                 },
                 accessor: input.caller(),
                 account: address,
@@ -2064,7 +2066,7 @@ impl Cheatcodes {
                 last.push(crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
                         forkId: ecx.db().active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.cfg().chain_id),
+                        chainId: U256::from(ecx.cfg().chain_id()),
                     },
                     accessor: interpreter.input.target_address,
                     account: target,
@@ -2170,7 +2172,7 @@ impl Cheatcodes {
                 let account_access = crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
                         forkId: ecx.db().active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.cfg().chain_id),
+                        chainId: U256::from(ecx.cfg().chain_id()),
                     },
                     accessor: interpreter.input.target_address,
                     account: address,
