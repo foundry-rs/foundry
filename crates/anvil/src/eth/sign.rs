@@ -1,5 +1,5 @@
 use crate::eth::error::BlockchainError;
-use alloy_consensus::{Sealed, SignableTransaction};
+use alloy_consensus::{Sealed, SignableTransaction, Signed};
 use alloy_dyn_abi::TypedData;
 use alloy_network::{Network, TxSignerSync};
 use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
@@ -14,7 +14,7 @@ use tempo_primitives::TempoSignature;
 /// [`sign_transaction_from`](Signer::sign_transaction_from) method takes an
 /// unsigned transaction and returns the fully-signed envelope in one step.
 #[async_trait::async_trait]
-pub trait Signer<N: Network>: Send + Sync {
+pub trait AnvilSigner<N: Network>: Send + Sync {
     /// returns the available accounts for this signer
     fn accounts(&self) -> Vec<Address>;
 
@@ -62,7 +62,11 @@ impl DevSigner {
 }
 
 #[async_trait::async_trait]
-impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
+impl<N: Network> AnvilSigner<N> for DevSigner
+where
+    N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+    N::UnsignedTx: SignableTransaction<Signature>,
+{
     fn accounts(&self) -> Vec<Address> {
         self.addresses.clone()
     }
@@ -101,39 +105,12 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     fn sign_transaction_from(
         &self,
         sender: &Address,
-        tx: FoundryTypedTx,
-    ) -> Result<FoundryTxEnvelope, BlockchainError> {
+        mut tx: N::UnsignedTx,
+    ) -> Result<N::TxEnvelope, BlockchainError>
+where {
         let signer = self.accounts.get(sender).ok_or(BlockchainError::NoSignerAvailable)?;
-        let envelope = match tx {
-            FoundryTypedTx::Legacy(mut t) => {
-                let sig = signer.sign_transaction_sync(&mut t)?;
-                FoundryTxEnvelope::Legacy(t.into_signed(sig))
-            }
-            FoundryTypedTx::Eip2930(mut t) => {
-                let sig = signer.sign_transaction_sync(&mut t)?;
-                FoundryTxEnvelope::Eip2930(t.into_signed(sig))
-            }
-            FoundryTypedTx::Eip1559(mut t) => {
-                let sig = signer.sign_transaction_sync(&mut t)?;
-                FoundryTxEnvelope::Eip1559(t.into_signed(sig))
-            }
-            FoundryTypedTx::Eip7702(mut t) => {
-                let sig = signer.sign_transaction_sync(&mut t)?;
-                FoundryTxEnvelope::Eip7702(t.into_signed(sig))
-            }
-            FoundryTypedTx::Eip4844(mut t) => {
-                let sig = signer.sign_transaction_sync(&mut t)?;
-                FoundryTxEnvelope::Eip4844(t.into_signed(sig))
-            }
-            FoundryTypedTx::Deposit(_) => {
-                unreachable!("op deposit txs should not be signed")
-            }
-            FoundryTypedTx::Tempo(mut t) => {
-                let sig = signer.sign_transaction_sync(&mut t)?;
-                FoundryTxEnvelope::Tempo(t.into_signed(sig.into()))
-            }
-        };
-        Ok(envelope)
+        let signature = signer.sign_transaction_sync(&mut tx)?;
+        Ok(tx.into_signed(signature).into())
     }
 }
 
