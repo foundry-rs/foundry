@@ -11,44 +11,13 @@ use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
-/// Trait for transaction envelopes that support impersonation.
-///
-/// Provides the methods needed by [`MaybeImpersonatedTransaction`] to compute hashes
-/// and recover signers, abstracting over the concrete envelope type.
-pub trait ImpersonatedTxEnvelope {
-    /// Returns the hash of the transaction.
-    fn tx_hash(&self) -> B256;
-
-    /// Recovers the address which was used to sign the transaction.
-    fn recover_signer(&self) -> Result<Address, RecoveryError>;
-
-    /// Returns a modified hash that makes impersonated transactions unique.
-    ///
-    /// This appends the `sender` address to the encoded transaction before hashing.
-    fn impersonated_hash(&self, sender: Address) -> B256;
-}
-
-impl ImpersonatedTxEnvelope for FoundryTxEnvelope {
-    fn tx_hash(&self) -> B256 {
-        self.hash()
-    }
-
-    fn recover_signer(&self) -> Result<Address, RecoveryError> {
-        self.recover()
-    }
-
-    fn impersonated_hash(&self, sender: Address) -> B256 {
-        Self::impersonated_hash(self, sender)
-    }
-}
-
 /// Anvil's concrete impersonated transaction type.
 pub type MaybeImpersonatedTransaction = ImpersonatedTransaction<FoundryTxEnvelope>;
 
 /// A wrapper for a transaction envelope that allows impersonating accounts.
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
-/// can be created via [`ImpersonatedTxEnvelope::impersonated_hash`].
+/// can be created.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImpersonatedTransaction<T> {
     transaction: T,
@@ -61,7 +30,7 @@ impl<T: Typed2718> Typed2718 for ImpersonatedTransaction<T> {
     }
 }
 
-impl<T: ImpersonatedTxEnvelope> ImpersonatedTransaction<T> {
+impl<T> ImpersonatedTransaction<T> {
     /// Creates a new wrapper for the given transaction
     pub fn new(transaction: T) -> Self {
         Self { transaction, impersonated_sender: None }
@@ -72,17 +41,24 @@ impl<T: ImpersonatedTxEnvelope> ImpersonatedTransaction<T> {
         Self { transaction, impersonated_sender: Some(impersonated_sender) }
     }
 
+    /// Returns whether the transaction is impersonated
+    pub fn is_impersonated(&self) -> bool {
+        self.impersonated_sender.is_some()
+    }
+
+    /// Returns the inner transaction.
+    pub fn into_inner(self) -> T {
+        self.transaction
+    }
+}
+
+impl ImpersonatedTransaction<FoundryTxEnvelope> {
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, RecoveryError> {
         if let Some(sender) = self.impersonated_sender {
             return Ok(sender);
         }
-        self.transaction.recover_signer()
-    }
-
-    /// Returns whether the transaction is impersonated
-    pub fn is_impersonated(&self) -> bool {
-        self.impersonated_sender.is_some()
+        self.transaction.recover()
     }
 
     /// Returns the hash of the transaction
@@ -90,12 +66,7 @@ impl<T: ImpersonatedTxEnvelope> ImpersonatedTransaction<T> {
         if let Some(sender) = self.impersonated_sender {
             return self.transaction.impersonated_hash(sender);
         }
-        self.transaction.tx_hash()
-    }
-
-    /// Returns the inner transaction.
-    pub fn into_inner(self) -> T {
-        self.transaction
+        self.transaction.hash()
     }
 }
 
@@ -127,7 +98,7 @@ impl From<FoundryTxEnvelope> for MaybeImpersonatedTransaction {
     }
 }
 
-impl<T: Decodable + ImpersonatedTxEnvelope> Decodable for ImpersonatedTransaction<T> {
+impl<T: Decodable> Decodable for ImpersonatedTransaction<T> {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         T::decode(buf).map(Self::new)
     }
@@ -160,13 +131,13 @@ pub struct PendingTransaction {
 
 impl PendingTransaction {
     pub fn new(transaction: FoundryTxEnvelope) -> Result<Self, RecoveryError> {
-        let sender = transaction.recover_signer()?;
-        let hash = transaction.tx_hash();
+        let sender = transaction.recover()?;
+        let hash = transaction.hash();
         Ok(Self { transaction: MaybeImpersonatedTransaction::new(transaction), sender, hash })
     }
 
     pub fn with_impersonated(transaction: FoundryTxEnvelope, sender: Address) -> Self {
-        let hash = ImpersonatedTxEnvelope::impersonated_hash(&transaction, sender);
+        let hash = transaction.impersonated_hash(sender);
         Self {
             transaction: MaybeImpersonatedTransaction::impersonated(transaction, sender),
             sender,

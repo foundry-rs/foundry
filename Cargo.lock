@@ -1184,6 +1184,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eip5792",
  "alloy-eips",
+ "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",
