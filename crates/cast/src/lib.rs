@@ -65,7 +65,7 @@ pub mod tx;
 
 use rlp_converter::Item;
 
-use crate::rlp_converter::HeaderRlpEncodable;
+use crate::rlp_converter::TryIntoRlpEncodable;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -80,7 +80,7 @@ where
     N: Network,
     N::TxEnvelope: Serialize + UIfmtSignatureExt,
     N::TransactionRequest: Clone,
-    N::Header: HeaderRlpEncodable,
+    N::Header: TryIntoRlpEncodable,
     N::TransactionResponse: UIfmt,
     N::HeaderResponse: UIfmtHeaderExt,
     N::BlockResponse: UIfmt,
@@ -330,7 +330,7 @@ where
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
         Ok(if raw {
-            let encoded = block.header().as_ref().rlp_encoded()?;
+            let encoded = block.header().as_ref().try_rlp_encode()?;
             format!("0x{}", hex::encode(encoded))
         } else if !fields.is_empty() {
             let mut result = String::new();
