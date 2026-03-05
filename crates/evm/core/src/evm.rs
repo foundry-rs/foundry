@@ -270,6 +270,9 @@ pub trait NestedEvm {
         &mut self,
         tx: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
+
+    /// Returns a snapshot of the current environment (cfg, block, tx).
+    fn to_env(&self) -> Env;
 }
 
 impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
@@ -286,6 +289,16 @@ impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
         tx: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
         Evm::transact_raw(self, tx)
+    }
+
+    fn to_env(&self) -> Env {
+        Env {
+            evm_env: EvmEnv {
+                cfg_env: self.inner.ctx.cfg.clone(),
+                block_env: self.inner.ctx.block.clone(),
+            },
+            tx: self.inner.ctx.tx.clone(),
+        }
     }
 }
 
