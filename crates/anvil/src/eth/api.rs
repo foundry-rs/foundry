@@ -1,6 +1,6 @@
 use super::{
     backend::mem::{BlockRequest, DatabaseRef, State},
-    sign::build_typed_transaction,
+    sign::build_impersonated,
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
@@ -41,7 +41,7 @@ use alloy_network::{
     TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
-    Address, B64, B256, Bytes, Signature, TxHash, TxKind, U64, U256,
+    Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types::{
@@ -525,20 +525,13 @@ impl EthApi {
         response
     }
 
-    fn sign_request(&self, from: &Address, request: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
-        match request {
-            FoundryTypedTx::Deposit(_) => {
-                let nil_signature = Signature::from_scalars_and_parity(
-                    B256::with_last_byte(1),
-                    B256::with_last_byte(1),
-                    false,
-                );
-                return build_typed_transaction(request, nil_signature);
-            }
+    fn sign_request(&self, from: &Address, typed_tx: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
+        match typed_tx {
+            FoundryTypedTx::Deposit(_) => return Ok(build_impersonated(typed_tx)),
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
-                        return signer.sign_transaction_from(from, request);
+                        return signer.sign_transaction_from(from, typed_tx);
                     }
                 }
             }
@@ -1066,17 +1059,16 @@ impl EthApi {
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        let request = self.build_tx_request(request, nonce).await?;
+        let typed_tx = self.build_tx_request(request, nonce).await?;
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let bypass_signature = self.impersonated_signature(&request);
-            let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            let transaction = sign::build_impersonated(typed_tx);
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
         } else {
-            let transaction = self.sign_request(&from, request)?;
+            let transaction = self.sign_request(&from, typed_tx)?;
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
@@ -1367,10 +1359,7 @@ impl EthApi {
         }
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
-        let tx = build_typed_transaction(
-            typed_tx,
-            Signature::new(Default::default(), Default::default(), false),
-        )?;
+        let tx = build_impersonated(typed_tx);
 
         let raw = tx.encoded_2718().to_vec().into();
 
@@ -2590,20 +2579,18 @@ impl EthApi {
                         );
 
                         // Build typed transaction request
-                        let typed = self.build_tx_request(request.into(), *curr_nonce).await?;
+                        let typed_tx = self.build_tx_request(request.into(), *curr_nonce).await?;
 
                         // Increment nonce
                         *curr_nonce += 1;
 
                         // Handle signer and convert to pending transaction
                         if self.is_impersonated(from) {
-                            let bypass_signature = self.impersonated_signature(&typed);
-                            let transaction =
-                                sign::build_typed_transaction(typed, bypass_signature)?;
+                            let transaction = sign::build_impersonated(typed_tx);
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)
                         } else {
-                            let transaction = self.sign_request(&from, typed)?;
+                            let transaction = self.sign_request(&from, typed_tx)?;
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::new(transaction)?
                         }
@@ -2829,10 +2816,9 @@ impl EthApi {
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        let request = self.build_tx_request(request, nonce).await?;
+        let typed_tx = self.build_tx_request(request, nonce).await?;
 
-        let bypass_signature = self.impersonated_signature(&request);
-        let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+        let transaction = sign::build_impersonated(typed_tx);
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -3363,24 +3349,6 @@ impl EthApi {
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
         self.backend.cheats().is_impersonated(addr)
-    }
-
-    /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
-    fn impersonated_signature(&self, request: &FoundryTypedTx) -> Signature {
-        match request {
-            FoundryTypedTx::Legacy(_)
-            | FoundryTypedTx::Eip2930(_)
-            | FoundryTypedTx::Eip1559(_)
-            | FoundryTypedTx::Eip7702(_)
-            | FoundryTypedTx::Eip4844(_)
-            | FoundryTypedTx::Deposit(_) => Signature::from_scalars_and_parity(
-                B256::with_last_byte(1),
-                B256::with_last_byte(1),
-                false,
-            ),
-            // TODO(onbjerg): we should impl support for Tempo transactions
-            FoundryTypedTx::Tempo(_) => todo!(),
-        }
     }
 
     /// Returns the nonce of the `address` depending on the `block_number`

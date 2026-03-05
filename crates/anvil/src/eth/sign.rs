@@ -137,16 +137,12 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     }
 }
 
-/// Converts an unsigned [`FoundryTypedTx`] into a [`FoundryTxEnvelope`] using
-/// the provided signature.
+/// Builds a TxEnvelope from UnsignedTx with a zeroed signature.
 ///
-/// This is used for impersonated / unsigned transactions where no real signing
-/// is performed (the caller supplies a bypass or nil signature).
-pub fn build_typed_transaction(
-    request: FoundryTypedTx,
-    signature: Signature,
-) -> Result<FoundryTxEnvelope, BlockchainError> {
-    let tx = match request {
+/// Used for impersonated accounts, where transactions are accepted without a valid signature.
+pub fn build_impersonated(typed_tx: FoundryTypedTx) -> FoundryTxEnvelope {
+    let signature = Signature::new(Default::default(), Default::default(), false);
+    match typed_tx {
         FoundryTypedTx::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
         FoundryTypedTx::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
         FoundryTypedTx::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
@@ -157,7 +153,5 @@ pub fn build_typed_transaction(
             let tempo_sig: TempoSignature = signature.into();
             FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))
         }
-    };
-
-    Ok(tx)
+    }
 }
