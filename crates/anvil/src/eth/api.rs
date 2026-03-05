@@ -76,7 +76,8 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
-    FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
+    FoundryNetwork, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType,
+    FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -112,7 +113,7 @@ pub struct EthApi {
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
-    signers: Arc<Vec<Box<dyn Signer>>>,
+    signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
     /// data required for `eth_feeHistory`
     fee_history_cache: FeeHistoryCache,
     /// max number of items kept in fee cache
@@ -140,7 +141,7 @@ impl EthApi {
     pub fn new(
         pool: Arc<Pool>,
         backend: Arc<backend::mem::Backend>,
-        signers: Arc<Vec<Box<dyn Signer>>>,
+        signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
         fee_history_cache: FeeHistoryCache,
         fee_history_limit: u64,
         miner: Miner,
@@ -537,8 +538,7 @@ impl EthApi {
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
-                        let signature = signer.sign_transaction(request.clone(), from)?;
-                        return build_typed_transaction(request, signature);
+                        return signer.sign_transaction_from(from, request);
                     }
                 }
             }
@@ -3197,7 +3197,7 @@ impl EthApi {
 
     /// Returns the first signer that can sign for the given address
     #[expect(clippy::borrowed_box)]
-    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer>> {
+    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<FoundryNetwork>>> {
         self.signers.iter().find(|signer| signer.is_signer_for(address))
     }
 
