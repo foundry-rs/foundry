@@ -15,7 +15,6 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use revm::context::{ContextTr, JournalTr};
@@ -25,6 +24,7 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
+    CheatsCtxExt,
 };
 pub use spec::{CheatcodeDef, Vm};
 
@@ -106,10 +106,6 @@ pub struct CheatsCtxt<'a, CTX> {
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
 }
-
-/// Concrete [`CheatsCtxt`] for the Ethereum EVM context.
-pub type EthCheatsCtxt<'a, 'db, 'db2> =
-    CheatsCtxt<'a, EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>>;
 
 /// Placeholder context type for cheatcodes that don't need EVM context access
 /// (i.e., they only use `apply`, not `apply_stateful` or `apply_full`).

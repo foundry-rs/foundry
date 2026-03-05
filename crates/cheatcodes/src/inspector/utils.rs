@@ -1,4 +1,4 @@
-use super::Ecx;
+use super::CheatsCtxExt;
 use crate::inspector::Cheatcodes;
 use alloy_primitives::{Address, Bytes, U256};
 use revm::{
@@ -16,7 +16,11 @@ pub(crate) trait CommonCreateInput {
     fn scheme(&self) -> Option<CreateScheme>;
     fn set_caller(&mut self, caller: Address);
     fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme);
-    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address;
+    fn allow_cheatcodes<CTX: CheatsCtxExt>(
+        &self,
+        cheatcodes: &mut Cheatcodes,
+        ecx: &mut CTX,
+    ) -> Address;
 }
 
 impl CommonCreateInput for &mut CreateInputs {
@@ -46,7 +50,11 @@ impl CommonCreateInput for &mut CreateInputs {
         };
         debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
     }
-    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address {
+    fn allow_cheatcodes<CTX: CheatsCtxExt>(
+        &self,
+        cheatcodes: &mut Cheatcodes,
+        ecx: &mut CTX,
+    ) -> Address {
         let caller = CreateInputs::caller(self);
         let old_nonce =
             ecx.journal().evm_state().get(&caller).map(|acc| acc.info.nonce).unwrap_or_default();

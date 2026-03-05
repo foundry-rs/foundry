@@ -1,7 +1,7 @@
 //! Cheatcode EVM inspector.
 
 use crate::{
-    Cheatcode, CheatsConfig, CheatsCtxt, Error, EthCheatsCtxt, Result,
+    Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
@@ -21,7 +21,6 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_evm::eth::EthEvmContext;
 use alloy_network::{TransactionBuilder4844, TransactionBuilder7594};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
@@ -61,7 +60,7 @@ use revm::{
     handler::FrameResult,
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
@@ -83,9 +82,19 @@ mod utils;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
-/// Concrete EVM context type alias for the Inspector impl that remains concrete
-/// until (InspectorExt + FoundryEvm generics).
-pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
+/// Bounds for the generic `Inspector<CTX>` impl on `Cheatcodes`.
+///
+/// Shorthand used internally to avoid repeating the full where-clause.
+/// Any `EthEvmContext<&mut dyn DatabaseExt>` satisfies these bounds, so all
+/// existing call-sites (e.g. `InspectorStackRefMut`) keep working unchanged.
+pub trait CheatsCtxExt:
+    FoundryContextExt + NestedEvmExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+{
+}
+impl<CTX> CheatsCtxExt for CTX where
+    CTX: FoundryContextExt + NestedEvmExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+{
+}
 
 /// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
 /// [Cheatcodes].
@@ -592,9 +601,9 @@ impl Cheatcodes {
     }
 
     /// Decodes the input data and applies the cheatcode.
-    fn apply_cheatcode(
+    fn apply_cheatcode<CTX: CheatsCtxExt>(
         &mut self,
-        ecx: Ecx,
+        ecx: &mut CTX,
         call: &CallInputs,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
@@ -619,7 +628,7 @@ impl Cheatcodes {
 
         apply_dispatch(
             &decoded,
-            &mut EthCheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
             executor,
         )
     }
@@ -682,9 +691,9 @@ impl Cheatcodes {
         }
     }
 
-    pub fn call_with_executor(
+    pub fn call_with_executor<CTX: CheatsCtxExt>(
         &mut self,
-        ecx: Ecx,
+        ecx: &mut CTX,
         call: &mut CallInputs,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Option<CallOutcome> {
@@ -1103,8 +1112,8 @@ impl Cheatcodes {
     }
 }
 
-impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -1125,7 +1134,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         self.pc = interpreter.bytecode.pc();
 
         if self.broadcast.is_some() {
@@ -1171,7 +1180,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1186,7 +1195,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, _ecx: Ecx, log: Log) {
+    fn log(&mut self, _ecx: &mut CTX, log: Log) {
         if !self.expected_emits.is_empty()
             && let Some(err) = expect::handle_expect_emit(self, &log, None)
         {
@@ -1200,7 +1209,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         record_logs(&mut self.recorded_logs, &log);
     }
 
-    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
+    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX, log: Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, &log, Some(interpreter));
         }
@@ -1209,11 +1218,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         record_logs(&mut self.recorded_logs, &log);
     }
 
-    fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
-    fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
+    fn call_end(&mut self, ecx: &mut CTX, call: &CallInputs, outcome: &mut CallOutcome) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
@@ -1615,7 +1624,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn create(&mut self, ecx: Ecx, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
+    fn create(&mut self, ecx: &mut CTX, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
             ecx.cfg_mut().spec = spec_id;
@@ -1742,7 +1751,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         None
     }
 
-    fn create_end(&mut self, ecx: Ecx, call: &CreateInputs, outcome: &mut CreateOutcome) {
+    fn create_end(&mut self, ecx: &mut CTX, call: &CreateInputs, outcome: &mut CreateOutcome) {
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -1918,7 +1927,11 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn meter_gas_record<CTX: CheatsCtxExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut CTX,
+    ) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 let curr_depth = ecx.journal().depth();
@@ -1982,7 +1995,11 @@ impl Cheatcodes {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn arbitrary_storage_end<CTX: CheatsCtxExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut CTX,
+    ) {
         let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
         } else {
@@ -2034,7 +2051,11 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn record_state_diffs(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn record_state_diffs<CTX: CheatsCtxExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut CTX,
+    ) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         match interpreter.bytecode.opcode() {
             op::SELFDESTRUCT => {
@@ -2502,9 +2523,9 @@ fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
 }
 
 /// Dispatches the cheatcode call to the appropriate function.
-fn apply_dispatch(
+fn apply_dispatch<CTX: CheatsCtxExt>(
     calls: &Vm::VmCalls,
-    ccx: &mut EthCheatsCtxt,
+    ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor,
 ) -> Result {
     // Extract metadata for logging/deprecation via CheatcodeDef.
