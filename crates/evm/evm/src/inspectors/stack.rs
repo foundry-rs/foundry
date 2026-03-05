@@ -12,7 +12,7 @@ use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     Env, FoundryInspectorExt, InspectorExt,
-    backend::{DatabaseExt, FoundryJournalExt, JournaledState},
+    backend::{DatabaseExt, FoundryJournalExt},
     env::FoundryContextExt,
     evm::new_evm_with_inspector,
 };
