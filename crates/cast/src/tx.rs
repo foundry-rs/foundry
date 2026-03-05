@@ -21,7 +21,7 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config};
 use foundry_primitives::FoundryTransactionBuilder;
-use foundry_wallets::{WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -52,6 +52,10 @@ pub struct SendTxOpts {
     /// Ethereum options
     #[command(flatten)]
     pub eth: EthereumOpts,
+
+    /// Browser wallet options
+    #[command(flatten)]
+    pub browser: BrowserWalletOpts,
 }
 
 /// Different sender kinds used by [`CastTxBuilder`].

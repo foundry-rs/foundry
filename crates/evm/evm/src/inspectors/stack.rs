@@ -11,8 +11,9 @@ use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    ContextExt, Env, FoundryInspectorExt, InspectorExt,
-    backend::{DatabaseExt, JournaledState},
+    Env, FoundryInspectorExt, InspectorExt,
+    backend::{DatabaseExt, FoundryJournalExt, JournaledState},
+    env::FoundryContextExt,
     evm::new_evm_with_inspector,
 };
 use foundry_evm_coverage::HitMaps;
@@ -21,7 +22,7 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
     context::{
-        BlockEnv, ContextTr,
+        BlockEnv, Cfg, ContextTr, JournalTr,
         result::{ExecutionResult, Output},
     },
     context_interface::CreateScheme,
@@ -603,7 +604,7 @@ impl InspectorStackRefMut<'_> {
     fn adjust_evm_data_for_inner_context(&mut self, ecx: &mut EthEvmContext<&mut dyn DatabaseExt>) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
-        ecx.tx.caller = inner_context_data.original_origin;
+        ecx.tx_mut().caller = inner_context_data.original_origin;
     }
 
     fn do_call_end(
@@ -680,27 +681,28 @@ impl InspectorStackRefMut<'_> {
     ) -> (InterpreterResult, Option<Address>) {
         let cached_env = Env::from(ecx.cfg().clone(), ecx.block().clone(), ecx.tx().clone());
 
-        ecx.block.basefee = 0;
-        ecx.tx.chain_id = Some(ecx.cfg().chain_id);
-        ecx.tx.caller = caller;
-        ecx.tx.kind = kind;
-        ecx.tx.data = input;
-        ecx.tx.value = value;
+        ecx.block_mut().basefee = 0;
+        ecx.tx_mut().chain_id = Some(ecx.cfg().chain_id());
+        ecx.tx_mut().caller = caller;
+        ecx.tx_mut().kind = kind;
+        ecx.tx_mut().data = input;
+        ecx.tx_mut().value = value;
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        ecx.tx.gas_limit = gas_limit + 21000;
+        ecx.tx_mut().gas_limit = gas_limit + 21000;
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
         if !ecx.cfg().disable_block_gas_limit {
-            ecx.tx.gas_limit = std::cmp::min(ecx.tx.gas_limit, ecx.block().gas_limit);
+            ecx.tx_mut().gas_limit = std::cmp::min(ecx.tx().gas_limit, ecx.block().gas_limit);
         }
-        ecx.tx.gas_price = 0;
+        ecx.tx_mut().gas_price = 0;
 
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
         let res = self.with_inspector(|inspector| {
-            let (db, journal, env) = ecx.as_db_env_and_journal();
+            let (journal, env) = ecx.journal_and_env_mut();
+            let (db, journal) = journal.as_db_and_inner();
             let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
 
             evm.journaled_state.state = {
@@ -958,12 +960,12 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
         call: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if self.in_inner_context && ecx.journal().depth == 1 {
+        if self.in_inner_context && ecx.journal().depth() == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
 
-        if ecx.journal().depth == 0 {
+        if ecx.journal().depth() == 0 {
             self.top_level_frame_start(ecx);
         }
 
@@ -1005,7 +1007,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             }
         }
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journal().depth == 1 {
+        if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
             match call.scheme {
                 // Isolate CALLs
                 CallScheme::Call => {
@@ -1027,8 +1029,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                 }
                 // Mark accounts and storage cold before STATICCALLs
                 CallScheme::StaticCall => {
-                    let JournaledState { state, warm_addresses, .. } =
-                        &mut ecx.journaled_state.inner;
+                    let (_, journal_inner) = ecx.journal_mut().as_db_and_inner();
+                    let JournaledState { state, warm_addresses, .. } = journal_inner;
                     for (addr, acc_mut) in state {
                         // Do not mark accounts and storage cold accounts with arbitrary storage.
                         if let Some(cheatcodes) = &self.cheatcodes
@@ -1062,13 +1064,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
-        if self.in_inner_context && ecx.journal().depth == 1 {
+        if self.in_inner_context && ecx.journal().depth() == 1 {
             return;
         }
 
         self.do_call_end(ecx, inputs, outcome);
 
-        if ecx.journal().depth == 0 {
+        if ecx.journal().depth() == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
@@ -1078,12 +1080,12 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        if self.in_inner_context && ecx.journal().depth == 1 {
+        if self.in_inner_context && ecx.journal().depth() == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
 
-        if ecx.journal().depth == 0 {
+        if ecx.journal().depth() == 0 {
             self.top_level_frame_start(ecx);
         }
 
@@ -1096,7 +1098,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
             && !self.in_inner_context
-            && ecx.journal().depth == 1
+            && ecx.journal().depth() == 1
         {
             let (result, address) = self.transact_inner(
                 ecx,
@@ -1120,13 +1122,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
-        if self.in_inner_context && ecx.journal().depth == 1 {
+        if self.in_inner_context && ecx.journal().depth() == 1 {
             return;
         }
 
         self.do_create_end(ecx, call, outcome);
 
-        if ecx.journal().depth == 0 {
+        if ecx.journal().depth() == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
