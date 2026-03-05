@@ -10,7 +10,7 @@ use tempo_primitives::TempoSignature;
 
 /// A transaction signer, generic over the network.
 ///
-/// Modelled after [`alloy_network::NetworkWallet<N>`]: the
+/// Modelled after alloy's `NetworkWallet<N>`: the
 /// [`sign_transaction_from`](Signer::sign_transaction_from) method takes an
 /// unsigned transaction and returns the fully-signed envelope in one step.
 #[async_trait::async_trait]
@@ -39,7 +39,7 @@ pub trait Signer<N: Network>: Send + Sync {
 
     /// Signs an unsigned transaction and returns the signed envelope.
     ///
-    /// Mirrors [`NetworkWallet::sign_transaction_from`].
+    /// Mirrors `NetworkWallet::sign_transaction_from`.
     fn sign_transaction_from(
         &self,
         sender: &Address,
