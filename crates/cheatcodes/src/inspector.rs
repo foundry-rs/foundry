@@ -898,7 +898,6 @@ impl Cheatcodes {
                     }
 
                     let input = TransactionInput::new(call.input.bytes(ecx));
-
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let account =
