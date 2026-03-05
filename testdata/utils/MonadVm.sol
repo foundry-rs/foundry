@@ -31,7 +31,7 @@ interface MonadVm {
     function epochSnapshot() external;
 
     /// Execute syscallOnEpochChange: increments epoch, clears in_boundary.
-    /// `newEpoch` must equal `currentEpoch + 1`.
+    /// `newEpoch` must be strictly greater than `currentEpoch`.
     function epochChange(uint64 newEpoch) external;
 
     /// Convenience: epochSnapshot() then epochChange(newEpoch).
