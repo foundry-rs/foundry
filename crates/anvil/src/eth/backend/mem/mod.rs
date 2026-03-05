@@ -33,8 +33,8 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TrieAccount, TxEnvelope, Typed2718,
+    Blob, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
+    Transaction as TransactionTrait, TrieAccount, TxEnvelope, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -1619,6 +1619,7 @@ impl Backend {
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut logs= Vec::new();
+                let mut receipts = Vec::with_capacity(calls.len());
 
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
@@ -1699,6 +1700,33 @@ impl Backend {
                         typed_tx,
                         Signature::new(Default::default(), Default::default(), false),
                     )?;
+
+                    // Build receipt for correct receipts_root calculation
+                    let receipt_with_bloom: ReceiptWithBloom = Receipt {
+                        status: result.is_success().into(),
+                        cumulative_gas_used: gas_used,
+                        logs: result.clone().into_logs(),
+                    }
+                    .into();
+                    receipts.push(match &tx {
+                        FoundryTxEnvelope::Legacy(_) => FoundryReceiptEnvelope::Legacy(receipt_with_bloom),
+                        FoundryTxEnvelope::Eip2930(_) => FoundryReceiptEnvelope::Eip2930(receipt_with_bloom),
+                        FoundryTxEnvelope::Eip1559(_) => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
+                        FoundryTxEnvelope::Eip4844(_) => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
+                        FoundryTxEnvelope::Eip7702(_) => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
+                        FoundryTxEnvelope::Deposit(_) => FoundryReceiptEnvelope::Deposit(
+                            op_alloy_consensus::OpDepositReceiptWithBloom {
+                                receipt: op_alloy_consensus::OpDepositReceipt {
+                                    inner: receipt_with_bloom.receipt,
+                                    deposit_nonce: Some(0),
+                                    deposit_receipt_version: Some(1),
+                                },
+                                logs_bloom: receipt_with_bloom.logs_bloom,
+                            },
+                        ),
+                        FoundryTxEnvelope::Tempo(_) => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
+                    });
+
                     let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
@@ -1749,7 +1777,7 @@ impl Backend {
                 let header = Header {
                     logs_bloom: logs_bloom(logs.iter()),
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
-                    receipts_root: calculate_receipt_root(&transactions_envelopes),
+                    receipts_root: calculate_receipt_root(&receipts),
                     parent_hash: Default::default(),
                     beneficiary: block_env.beneficiary,
                     state_root: Default::default(),
