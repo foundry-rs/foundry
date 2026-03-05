@@ -60,8 +60,7 @@ use alloy_rpc_types::{
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
-use alloy_rpc_types_eth::FillTransaction;
-use alloy_rpc_types_eth::erc4337::TransactionConditional;
+use alloy_rpc_types_eth::{FillTransaction, erc4337::TransactionConditional};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;

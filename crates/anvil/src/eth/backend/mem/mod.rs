@@ -1345,7 +1345,7 @@ impl Backend {
                     .filter(|tx| {
                         tx.conditions
                             .as_ref()
-                            .map_or(true, |c| c.matches_block_attributes(&block_attrs))
+                            .is_none_or(|c| c.matches_block_attributes(&block_attrs))
                     })
                     .collect();
 
