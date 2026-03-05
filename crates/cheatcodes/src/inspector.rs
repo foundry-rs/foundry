@@ -55,8 +55,7 @@ use revm::{
     Inspector,
     bytecode::opcode as op,
     context::{
-        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType,
-        result::EVMError,
+        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, result::EVMError,
     },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
