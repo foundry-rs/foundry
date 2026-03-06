@@ -137,7 +137,7 @@ impl<CTX: ContextTr> Cheatcode<CTX> for stopPrankCall {
     }
 }
 
-fn prank<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+fn prank<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     new_caller: &Address,
     new_origin: Option<&Address>,

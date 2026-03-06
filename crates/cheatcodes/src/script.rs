@@ -7,7 +7,7 @@ use alloy_rpc_types::Authorization;
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
-use foundry_evm_core::{backend::DatabaseExt, env::FoundryContextExt};
+use foundry_evm_core::backend::DatabaseExt;
 use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
@@ -19,34 +19,28 @@ use revm::{
 };
 use std::sync::Arc;
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for broadcast_0Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for broadcast_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         broadcast(ccx, None, true)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for broadcast_1Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for broadcast_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), true)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for broadcast_2Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for broadcast_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, true)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for attachDelegation_0Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -55,7 +49,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for attachDelegation_1Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -64,34 +58,28 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for signDelegation_0Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for signDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { implementation, privateKey } = *self;
         sign_delegation(ccx, privateKey, implementation, None, false, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for signDelegation_1Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for signDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { implementation, privateKey, nonce } = *self;
         sign_delegation(ccx, privateKey, implementation, Some(nonce), false, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for signDelegation_2Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for signDelegation_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { implementation, privateKey, crossChain } = *self;
         sign_delegation(ccx, privateKey, implementation, None, crossChain, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for signAndAttachDelegation_0Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -100,7 +88,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for signAndAttachDelegation_1Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -109,7 +97,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for signAndAttachDelegation_2Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -119,7 +107,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
 }
 
 /// Helper function to attach an EIP-7702 delegation.
-fn attach_delegation<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+fn attach_delegation<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     delegation: &SignedDelegation,
     cross_chain: bool,
@@ -143,7 +131,7 @@ fn attach_delegation<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal
 
 /// Helper function to sign and attach (if needed) an EIP-7702 delegation.
 /// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
-fn sign_delegation<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+fn sign_delegation<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     private_key: Uint<256, 4>,
     implementation: Address,
@@ -216,7 +204,7 @@ fn next_delegation_nonce(
     }
 }
 
-fn write_delegation<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+fn write_delegation<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     auth: SignedAuthorization,
 ) -> Result<()> {
@@ -252,9 +240,7 @@ fn write_delegation<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal:
     Ok(())
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for attachBlobCall
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for attachBlobCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { blob } = self;
         ensure!(
@@ -273,27 +259,21 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for startBroadcast_0Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for startBroadcast_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         broadcast(ccx, None, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for startBroadcast_1Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for startBroadcast_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for startBroadcast_2Call
-{
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for startBroadcast_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, false)
@@ -393,7 +373,7 @@ impl Wallets {
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
-fn broadcast<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+fn broadcast<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     new_origin: Option<&Address>,
     single_call: bool,
@@ -439,7 +419,7 @@ fn broadcast<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: Journa
 /// Sets up broadcasting from a script with the sender derived from `private_key`.
 /// Adds this private key to `state`'s `wallets` vector to later be used for signing
 /// if broadcast is successful.
-fn broadcast_key<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+fn broadcast_key<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     private_key: &U256,
     single_call: bool,

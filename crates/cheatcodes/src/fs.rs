@@ -14,7 +14,7 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::{backend::FoundryJournalExt, env::FoundryContextExt, evm::NestedEvmExt};
+use foundry_evm_core::{backend::FoundryJournalExt, evm::NestedEvmExt};
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
@@ -835,7 +835,7 @@ impl<CTX> Cheatcode<CTX> for getBroadcasts_1Call {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for getDeployment_0Call {
+impl<CTX: ContextTr> Cheatcode<CTX> for getDeployment_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { contractName } = self;
         let chain_id = ccx.ecx.cfg().chain_id();
