@@ -4,7 +4,7 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, TransactionBuilder, TransactionBuilder7594, TransactionBuilder7702,
+    AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
 };
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
@@ -680,7 +680,7 @@ where
 
         if self.eip4844 {
             let sidecar = coder.build()?;
-            alloy_network::TransactionBuilder4844::set_blob_sidecar(&mut self.tx, sidecar);
+            self.tx.set_blob_sidecar_4844(sidecar);
         } else {
             let sidecar = coder.build_7594()?;
             self.tx.set_blob_sidecar_7594(sidecar);

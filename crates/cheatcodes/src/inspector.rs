@@ -21,7 +21,8 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_network::{TransactionBuilder4844, TransactionBuilder7594};
+use alloy_evm::eth::EthEvmContext;
+use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
@@ -940,7 +941,7 @@ impl Cheatcodes {
                             });
                         }
                         if blob_sidecar.is_eip4844() {
-                            tx_req.set_blob_sidecar(blob_sidecar.into_eip4844().unwrap());
+                            tx_req.set_blob_sidecar_4844(blob_sidecar.into_eip4844().unwrap());
                         } else if blob_sidecar.is_eip7594() {
                             tx_req.set_blob_sidecar_7594(blob_sidecar.into_eip7594().unwrap());
                         }
