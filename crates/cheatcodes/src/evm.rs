@@ -1164,10 +1164,10 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
         // when the inner EVM executes calls at depth == 1.
         executor.set_in_inner_context(true, Some(sender));
 
-        let res = {
+        let (res, nested_env) = {
             let mut inspector = executor.get_inspector(ccx.state);
 
-            let res = {
+            let (res, nested_env) = {
                 let (db, journal) = ccx.ecx.journal_mut().as_db_and_inner();
 
                 // Create a new EVM instance with the inspector.
@@ -1191,16 +1191,22 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
                 // Set depth to 1 for proper trace collection.
                 evm.journal_inner_mut().depth = 1;
 
-                evm.transact(modified_env.tx)
+                let res = evm.transact(modified_env.tx);
+                let nested_env = evm.to_env();
+                (res, nested_env)
             };
 
             // Inspector must be dropped before we can call set_in_inner_context again.
             drop(inspector);
-            res
+            (res, nested_env)
         };
 
-        // Restore the original environment.
-        ccx.ecx.apply_env(cached_env);
+        // Restore env, preserving cheatcode cfg/block changes from the nested EVM
+        // but restoring the original tx and basefee (which we zeroed for the nested call).
+        let mut restored_env = nested_env;
+        restored_env.tx = cached_env.tx;
+        restored_env.evm_env.block_env.basefee = cached_env.evm_env.block_env.basefee;
+        ccx.ecx.apply_env(restored_env);
 
         // Reset inner context flag.
         executor.set_in_inner_context(false, None);
