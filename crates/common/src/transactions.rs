@@ -33,12 +33,12 @@ where
 {
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<P: Provider<N>>(&mut self, provider: &P) -> Result<()> {
+    pub async fn update_revert_reason(&mut self, provider: &dyn Provider<N>) -> Result<()> {
         self.revert_reason = self.fetch_revert_reason(provider).await?;
         Ok(())
     }
 
-    async fn fetch_revert_reason<P: Provider<N>>(&self, provider: &P) -> Result<Option<String>> {
+    async fn fetch_revert_reason(&self, provider: &dyn Provider<N>) -> Result<Option<String>> {
         // If the transaction succeeded, there is no revert reason to fetch
         if self.receipt.status() {
             return Ok(None);
