@@ -180,7 +180,7 @@ impl<CTX> Cheatcode<CTX> for pauseTracingCall {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to pause
@@ -203,7 +203,7 @@ impl<CTX> Cheatcode<CTX> for resumeTracingCall {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to unpause

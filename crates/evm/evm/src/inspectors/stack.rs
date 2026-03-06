@@ -360,7 +360,7 @@ pub struct InspectorStackRefMut<'a> {
     pub inner: &'a mut InspectorStackInner,
 }
 
-impl CheatcodesExecutor for InspectorStackInner {
+impl<CTX> CheatcodesExecutor<CTX> for InspectorStackInner {
     fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
         Box::new(InspectorStackRefMut { cheatcodes: Some(cheats), inner: self })
     }

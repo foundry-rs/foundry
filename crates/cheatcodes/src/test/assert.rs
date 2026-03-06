@@ -189,7 +189,7 @@ type ComparisonResult<'a, T> = Result<(), ComparisonAssertionError<'a, T>>;
 #[cold]
 fn handle_assertion_result<CTX: ContextTr<Db: DatabaseExt>, E>(
     ccx: &mut CheatsCtxt<'_, CTX>,
-    executor: &mut dyn CheatcodesExecutor,
+    executor: &mut dyn CheatcodesExecutor<CTX>,
     err: E,
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
@@ -205,7 +205,7 @@ fn handle_assertion_result<CTX: ContextTr<Db: DatabaseExt>, E>(
 
 fn handle_assertion_result_mono<CTX: ContextTr<Db: DatabaseExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
-    executor: &mut dyn CheatcodesExecutor,
+    executor: &mut dyn CheatcodesExecutor<CTX>,
     msg: Cow<'_, str>,
 ) -> Result {
     if ccx.state.config.assertions_revert {
@@ -249,7 +249,7 @@ macro_rules! impl_assertions {
             fn apply_full(
                 &self,
                 ccx: &mut CheatsCtxt<'_, CTX>,
-                executor: &mut dyn CheatcodesExecutor,
+                executor: &mut dyn CheatcodesExecutor<CTX>,
             ) -> Result {
                 let Self { $($arg),* } = self;
                 match $body {
@@ -263,7 +263,7 @@ macro_rules! impl_assertions {
             fn apply_full(
                 &self,
                 ccx: &mut CheatsCtxt<'_, CTX>,
-                executor: &mut dyn CheatcodesExecutor,
+                executor: &mut dyn CheatcodesExecutor<CTX>,
             ) -> Result {
                 let Self { $($arg,)* error } = self;
                 match $body {

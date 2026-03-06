@@ -143,7 +143,7 @@ impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<C
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         let Self { txHash } = *self;
         transact(ccx, executor, txHash, None)
@@ -156,7 +156,7 @@ impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<C
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         let Self { forkId, txHash } = *self;
         transact(ccx, executor, txHash, Some(forkId))
@@ -407,7 +407,7 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
 
 fn transact<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
-    executor: &mut dyn CheatcodesExecutor,
+    executor: &mut dyn CheatcodesExecutor<CTX>,
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
