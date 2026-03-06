@@ -15,6 +15,7 @@ use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     Env, FoundryInspectorExt, InspectorExt,
     backend::{DatabaseError, FoundryJournalExt, JournaledState},
+    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::NetworkConfigs;
@@ -370,7 +371,14 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        ecx.with_nested_evm(&mut inspector, |evm| f(evm))
+        with_cloned_context(ecx, |db, env, journal_inner| {
+            let mut evm = new_evm_with_inspector(db, env, &mut inspector);
+            *evm.journal_inner_mut() = journal_inner;
+            f(&mut evm)?;
+            let sub_env = evm.to_env();
+            let sub_inner = evm.into_context().journaled_state.inner;
+            Ok(((), sub_env, sub_inner))
+        })
     }
 
     fn with_fresh_nested_evm(
@@ -381,8 +389,8 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = CTX::new_nested_evm(db, env, &mut inspector);
-        f(&mut *evm)
+        let mut evm = new_evm_with_inspector(db, env, &mut inspector);
+        f(&mut evm)
     }
 
     fn transact_on_db(
@@ -757,7 +765,7 @@ impl InspectorStackRefMut<'_> {
             let (res, nested_env) = {
                 let (journal, _env) = ecx.journal_and_env_mut();
                 let (db, journal) = journal.as_db_and_inner();
-                let mut evm = CTX::new_nested_evm(db, modified_env.clone(), &mut inspector);
+                let mut evm = new_evm_with_inspector(db, modified_env.clone(), &mut inspector);
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();

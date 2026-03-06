@@ -41,7 +41,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{NestedEvm, NestedEvmExt},
+    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -88,11 +88,11 @@ pub use analysis::CheatcodeAnalysis;
 /// Any `EthEvmContext<&mut dyn DatabaseExt>` satisfies these bounds, so all
 /// existing call-sites (e.g. `InspectorStackRefMut`) keep working unchanged.
 pub trait CheatsCtxExt:
-    FoundryContextExt + NestedEvmExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+    FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
 {
 }
 impl<CTX> CheatsCtxExt for CTX where
-    CTX: FoundryContextExt + NestedEvmExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+    CTX: FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
 {
 }
 
@@ -203,7 +203,14 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         ecx: &mut CTX,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        ecx.with_nested_evm(cheats, |evm| f(evm))
+        with_cloned_context(ecx, |db, env, journal_inner| {
+            let mut evm = new_evm_with_inspector(db, env, cheats);
+            *evm.journal_inner_mut() = journal_inner;
+            f(&mut evm)?;
+            let sub_env = evm.to_env();
+            let sub_inner = evm.into_context().journaled_state.inner;
+            Ok(((), sub_env, sub_inner))
+        })
     }
 
     fn with_fresh_nested_evm(
@@ -213,8 +220,8 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         env: Env,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        let mut evm = CTX::new_nested_evm(db, env, cheats);
-        f(&mut *evm)
+        let mut evm = new_evm_with_inspector(db, env, cheats);
+        f(&mut evm)
     }
 
     fn transact_on_db(
