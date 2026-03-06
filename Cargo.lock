@@ -1114,7 +1114,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
- "alloy-eip5792",
  "alloy-eips",
  "alloy-evm",
  "alloy-genesis",

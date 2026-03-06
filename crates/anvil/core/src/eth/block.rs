@@ -7,7 +7,7 @@ use alloy_network::Network;
 use foundry_primitives::FoundryNetwork;
 use std::fmt::Debug;
 
-use crate::eth::transaction::{ImpersonatedTransaction, MaybeImpersonatedTransaction};
+use crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Type alias for Ethereum Block with Anvil's transaction type
 pub type Block = alloy_consensus::Block<MaybeImpersonatedTransaction>;
@@ -18,7 +18,7 @@ pub type BlockInfo = TypedBlockInfo<FoundryNetwork>;
 /// Container type that gathers all block data, generic over a [`Network`].
 #[derive(Clone, Debug)]
 pub struct TypedBlockInfo<N: Network> {
-    pub block: alloy_consensus::Block<ImpersonatedTransaction<N::TxEnvelope>>,
+    pub block: alloy_consensus::Block<MaybeImpersonatedTransaction<N::TxEnvelope>>,
     pub transactions: Vec<TransactionInfo>,
     pub receipts: Vec<N::ReceiptEnvelope>,
 }
