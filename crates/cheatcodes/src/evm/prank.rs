@@ -1,6 +1,6 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use foundry_evm_core::{backend::DatabaseExt, env::FoundryContextExt};
+use foundry_evm_core::backend::DatabaseExt;
 use revm::{
     context::{ContextTr, JournalTr, Transaction},
     inspector::JournalExt,
@@ -57,7 +57,7 @@ impl Prank {
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for prank_0Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -66,7 +66,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for startPrank_0Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -75,7 +75,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for prank_1Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -84,7 +84,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for startPrank_1Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -93,7 +93,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for prank_2Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -102,7 +102,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for startPrank_2Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -111,7 +111,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for prank_3Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
@@ -120,7 +120,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
+impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
     for startPrank_3Call
 {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
