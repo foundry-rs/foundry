@@ -1,8 +1,8 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
-    Vm::*, inspector::RecordDebugStepInfo,
+    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxExt, CheatsCtxt,
+    Error, Result, Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::TxEnvelope;
 use alloy_evm::FromRecoveredTx;
@@ -26,7 +26,6 @@ use foundry_evm_core::{
     backend::{DatabaseExt, FoundryJournalExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
-    evm::NestedEvmExt,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceMode;
@@ -1059,9 +1058,7 @@ impl<CTX> Cheatcode<CTX> for getStorageAccessesCall {
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for broadcastRawTransactionCall
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for broadcastRawTransactionCall {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -1070,11 +1067,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournal
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        let env = ccx.ecx.to_env();
-        let mut inspector = executor.get_inspector(ccx.state);
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(&tx.clone().into(), env, inner, &mut *inspector)?;
-        drop(inspector);
+        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, &tx.clone().into())?;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1102,9 +1095,7 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for setBlockhashCall {
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for executeTransactionCall
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for executeTransactionCall {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -1164,42 +1155,39 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
         // when the inner EVM executes calls at depth == 1.
         executor.set_in_inner_context(true, Some(sender));
 
-        let (res, nested_env) = {
-            let mut inspector = executor.get_inspector(ccx.state);
+        // Clone journaled state and mark all accounts/slots cold.
+        let cold_state = {
+            let (_, journal) = ccx.ecx.journal_mut().as_db_and_inner();
+            let mut state = journal.state.clone();
+            for (addr, acc_mut) in &mut state {
+                if journal.warm_addresses.is_cold(addr) {
+                    acc_mut.mark_cold();
+                }
+                for slot_mut in acc_mut.storage.values_mut() {
+                    slot_mut.is_cold = true;
+                    slot_mut.original_value = slot_mut.present_value;
+                }
+            }
+            state
+        };
 
-            let (res, nested_env) = {
-                let (db, journal) = ccx.ecx.journal_mut().as_db_and_inner();
-
-                // Create a new EVM instance with the inspector.
-                let mut evm = CTX::new_nested_evm(db, modified_env.clone(), &mut *inspector);
-
-                // Clone journaled state and mark all accounts/slots cold.
-                evm.journal_inner_mut().state = {
-                    let mut state = journal.state.clone();
-                    for (addr, acc_mut) in &mut state {
-                        if journal.warm_addresses.is_cold(addr) {
-                            acc_mut.mark_cold();
-                        }
-                        for slot_mut in acc_mut.storage.values_mut() {
-                            slot_mut.is_cold = true;
-                            slot_mut.original_value = slot_mut.present_value;
-                        }
-                    }
-                    state
-                };
-
+        let mut res = None;
+        let mut nested_env = None;
+        let mut cold_state = Some(cold_state);
+        let modified_tx = modified_env.tx.clone();
+        {
+            let (db, _) = ccx.ecx.journal_mut().as_db_and_inner();
+            executor.with_fresh_nested_evm(ccx.state, db, modified_env, &mut |evm| {
+                // SAFETY: closure is called exactly once by the executor.
+                evm.journal_inner_mut().state = cold_state.take().expect("called once");
                 // Set depth to 1 for proper trace collection.
                 evm.journal_inner_mut().depth = 1;
-
-                let res = evm.transact(modified_env.tx);
-                let nested_env = evm.to_env();
-                (res, nested_env)
-            };
-
-            // Inspector must be dropped before we can call set_in_inner_context again.
-            drop(inspector);
-            (res, nested_env)
-        };
+                res = Some(evm.transact(modified_tx.clone()));
+                nested_env = Some(evm.to_env());
+                Ok(())
+            })?;
+        }
+        let (res, nested_env) = (res.unwrap(), nested_env.unwrap());
 
         // Restore env, preserving cheatcode cfg/block changes from the nested EVM
         // but restoring the original tx and basefee (which we zeroed for the nested call).
