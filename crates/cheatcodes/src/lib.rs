@@ -24,7 +24,7 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    CheatsCtxExt,
+    CheatsCtxExt, NestedEvmClosure,
 };
 pub use spec::{CheatcodeDef, Vm};
 

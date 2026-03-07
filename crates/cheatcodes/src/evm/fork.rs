@@ -1,6 +1,6 @@
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*,
-    json::json_value_to_token,
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxExt, CheatsCtxt, DatabaseExt, Result,
+    Vm::*, json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_network::AnyNetwork;
@@ -137,9 +137,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournal
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for transact_0Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for transact_0Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -150,9 +148,7 @@ impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<C
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for transact_1Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for transact_1Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -405,16 +401,13 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     }
 }
 
-fn transact<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
+fn transact<CTX: CheatsCtxExt>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let env = ccx.ecx.to_env();
-    let mut inspector = executor.get_inspector(ccx.state);
-    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    db.transact(fork_id, transaction, env, inner, &mut *inspector)?;
+    executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
     Ok(Default::default())
 }
 

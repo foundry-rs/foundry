@@ -3,15 +3,19 @@ use super::{
     LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
 use alloy_primitives::{
-    Address, Bytes, Log, TxKind, U256,
+    Address, B256, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
 };
-use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, CheatsCtxExt, Wallets};
+use alloy_rpc_types::request::TransactionRequest;
+use foundry_cheatcodes::{
+    CheatcodeAnalysis, CheatcodesExecutor, CheatsCtxExt, NestedEvmClosure, Wallets,
+};
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     Env, FoundryInspectorExt, InspectorExt,
-    backend::{FoundryJournalExt, JournaledState},
+    backend::{DatabaseError, FoundryJournalExt, JournaledState},
+    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::NetworkConfigs;
@@ -19,8 +23,8 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
     context::{
-        BlockEnv, Cfg, ContextTr, JournalTr,
-        result::{ExecutionResult, Output},
+        Block, BlockEnv, Cfg, ContextTr, JournalTr,
+        result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
     inspector::JournalExt,
@@ -353,16 +357,71 @@ pub struct InspectorStackInner {
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
-/// [revm::Inspector]. This struct can be obtained via [InspectorStack::as_mut] or via
-/// [CheatcodesExecutor::get_inspector] method implemented for [InspectorStackInner].
+/// [revm::Inspector]. This struct can be obtained via [InspectorStack::as_mut].
 pub struct InspectorStackRefMut<'a> {
     pub cheatcodes: Option<&'a mut Cheatcodes>,
     pub inner: &'a mut InspectorStackInner,
 }
 
-impl<CTX> CheatcodesExecutor<CTX> for InspectorStackInner {
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
-        Box::new(InspectorStackRefMut { cheatcodes: Some(cheats), inner: self })
+impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
+    fn with_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>> {
+        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
+        with_cloned_context(ecx, |db, env, journal_inner| {
+            let mut evm = new_evm_with_inspector(db, env, &mut inspector);
+            *evm.journal_inner_mut() = journal_inner;
+            f(&mut evm)?;
+            let sub_env = evm.to_env();
+            let sub_inner = evm.into_context().journaled_state.inner;
+            Ok(((), sub_env, sub_inner))
+        })
+    }
+
+    fn with_fresh_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        db: &mut dyn foundry_evm_core::backend::DatabaseExt,
+        env: foundry_evm_core::Env,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>> {
+        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
+        let mut evm = new_evm_with_inspector(db, env, &mut inspector);
+        f(&mut evm)
+    }
+
+    fn transact_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        fork_id: Option<U256>,
+        transaction: B256,
+    ) -> eyre::Result<()> {
+        let env = ecx.to_env();
+        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
+        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        db.transact(fork_id, transaction, env, inner, &mut inspector)
+    }
+
+    fn transact_from_tx_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        tx: &TransactionRequest,
+    ) -> eyre::Result<()> {
+        let env = ecx.to_env();
+        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
+        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        db.transact_from_tx(tx, env, inner, &mut inspector)
+    }
+
+    fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {
+        if let Some(ref mut collector) = self.log_collector {
+            FoundryInspectorExt::console_log(&mut **collector, msg);
+        }
     }
 
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
@@ -692,9 +751,8 @@ impl InspectorStackRefMut<'_> {
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
-        if !ecx.cfg_mut().disable_block_gas_limit {
-            ecx.tx_mut().gas_limit =
-                std::cmp::min(ecx.tx_mut().gas_limit, ecx.block_mut().gas_limit);
+        if !ecx.cfg().is_block_gas_limit_disabled() {
+            ecx.tx_mut().gas_limit = std::cmp::min(ecx.tx_mut().gas_limit, ecx.block().gas_limit());
         }
         ecx.tx_mut().gas_price = 0;
 
@@ -707,7 +765,7 @@ impl InspectorStackRefMut<'_> {
             let (res, nested_env) = {
                 let (journal, _env) = ecx.journal_and_env_mut();
                 let (db, journal) = journal.as_db_and_inner();
-                let mut evm = CTX::new_nested_evm(db, modified_env.clone(), &mut inspector);
+                let mut evm = new_evm_with_inspector(db, modified_env.clone(), &mut inspector);
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();

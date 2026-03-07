@@ -2,7 +2,8 @@
 
 use super::string::parse;
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*, inspector::exec_create,
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxExt, CheatsCtxt, Result, Vm::*,
+    inspector::exec_create,
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
@@ -14,7 +15,6 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::{backend::FoundryJournalExt, evm::NestedEvmExt};
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
@@ -298,9 +298,7 @@ impl<CTX> Cheatcode<CTX> for getDeployedCodeCall {
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_0Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_0Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -311,9 +309,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_1Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_1Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -324,9 +320,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_2Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_2Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -337,9 +331,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_3Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_3Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -350,9 +342,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_4Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_4Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -363,9 +353,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_5Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_5Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -376,9 +364,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_6Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_6Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -389,9 +375,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for deployCode_7Call
-{
+impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_7Call {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
@@ -404,7 +388,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
 
 /// Helper function to deploy contract from artifact code.
 /// Uses CREATE2 scheme if salt specified.
-fn deploy_code<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>>(
+fn deploy_code<CTX: CheatsCtxExt>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     path: &str,

@@ -36,12 +36,12 @@ use foundry_common::{
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, FoundryInspectorExt, InspectorExt,
+    Breakpoints, Env, FoundryInspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::NestedEvmExt,
+    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -88,27 +88,70 @@ pub use analysis::CheatcodeAnalysis;
 /// Any `EthEvmContext<&mut dyn DatabaseExt>` satisfies these bounds, so all
 /// existing call-sites (e.g. `InspectorStackRefMut`) keep working unchanged.
 pub trait CheatsCtxExt:
-    FoundryContextExt + NestedEvmExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+    FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
 {
 }
 impl<CTX> CheatsCtxExt for CTX where
-    CTX: FoundryContextExt + NestedEvmExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+    CTX: FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
 {
 }
 
-/// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
-/// [Cheatcodes].
-///
-/// This is needed for cases when inspector itself needs mutable access to [Cheatcodes] state and
-/// allows us to correctly execute arbitrary EVM frames from inside cheatcode implementations.
-pub trait CheatcodesExecutor<CTX> {
-    /// Core trait method accepting mutable reference to [Cheatcodes] and returning
-    /// [revm::Inspector].
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
+/// Closure type used by [`CheatcodesExecutor`] methods that run nested EVM operations.
+pub type NestedEvmClosure<'a> =
+    &'a mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>;
 
-    fn console_log(&mut self, cheats: &mut Cheatcodes, msg: &str) {
-        self.get_inspector(cheats).console_log(msg);
-    }
+/// Helper trait for running nested EVM operations from inside cheatcode implementations.
+///
+/// The executor assembles the full inspector stack internally and never exposes it across the
+/// trait boundary. This keeps the trait free of `InspectorExt` (which is Eth-specific).
+pub trait CheatcodesExecutor<CTX> {
+    /// Runs a closure with a nested EVM built from the current context.
+    /// The inspector is assembled internally — never exposed to the caller.
+    fn with_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>>
+    where
+        CTX: CheatsCtxExt;
+
+    /// Replays a historical transaction on the database. Inspector is assembled internally.
+    fn transact_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        fork_id: Option<U256>,
+        transaction: B256,
+    ) -> eyre::Result<()>
+    where
+        CTX: CheatsCtxExt;
+
+    /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
+    fn transact_from_tx_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        tx: &TransactionRequest,
+    ) -> eyre::Result<()>
+    where
+        CTX: CheatsCtxExt;
+
+    /// Runs a closure with a fresh nested EVM built from a raw database and environment.
+    /// Unlike `with_nested_evm`, this does NOT clone from `ecx` and does NOT write back.
+    /// The caller is responsible for state merging. Used by `executeTransactionCall`.
+    fn with_fresh_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        db: &mut dyn DatabaseExt,
+        env: Env,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>>
+    where
+        CTX: CheatsCtxExt;
+
+    /// Simulates `console.log` invocation.
+    fn console_log(&mut self, cheats: &mut Cheatcodes, msg: &str);
 
     /// Returns a mutable reference to the tracing inspector if it is available.
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
@@ -122,29 +165,30 @@ pub trait CheatcodesExecutor<CTX> {
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
-pub(crate) fn exec_create<CTX: NestedEvmExt>(
+pub(crate) fn exec_create<CTX: CheatsCtxExt>(
     executor: &mut dyn CheatcodesExecutor<CTX>,
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, CTX>,
-) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>>
-where
-    CTX::Journal: FoundryJournalExt,
-{
-    let mut inspector = executor.get_inspector(ccx.state);
-    ccx.ecx.with_nested_evm(&mut *inspector, |evm| {
+) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
+    let mut inputs = Some(inputs);
+    let mut outcome = None;
+    executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
+        let inputs = inputs.take().unwrap();
         evm.journal_inner_mut().depth += 1;
 
         let frame = FrameInput::Create(Box::new(inputs));
 
-        let outcome = match evm.run_execution(frame)? {
+        let result = match evm.run_execution(frame)? {
             FrameResult::Call(_) => unreachable!(),
             FrameResult::Create(create) => create,
         };
 
         evm.journal_inner_mut().depth -= 1;
 
-        Ok(outcome)
-    })
+        outcome = Some(result);
+        Ok(())
+    })?;
+    Ok(outcome.unwrap())
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
@@ -152,10 +196,58 @@ where
 #[derive(Debug, Default, Clone, Copy)]
 struct TransparentCheatcodesExecutor;
 
-impl<CTX> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor {
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
-        Box::new(cheats)
+impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor {
+    fn with_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>> {
+        with_cloned_context(ecx, |db, env, journal_inner| {
+            let mut evm = new_evm_with_inspector(db, env, cheats);
+            *evm.journal_inner_mut() = journal_inner;
+            f(&mut evm)?;
+            let sub_env = evm.to_env();
+            let sub_inner = evm.into_context().journaled_state.inner;
+            Ok(((), sub_env, sub_inner))
+        })
     }
+
+    fn with_fresh_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        db: &mut dyn DatabaseExt,
+        env: Env,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>> {
+        let mut evm = new_evm_with_inspector(db, env, cheats);
+        f(&mut evm)
+    }
+
+    fn transact_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        fork_id: Option<U256>,
+        transaction: B256,
+    ) -> eyre::Result<()> {
+        let env = ecx.to_env();
+        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        db.transact(fork_id, transaction, env, inner, cheats)
+    }
+
+    fn transact_from_tx_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        tx: &TransactionRequest,
+    ) -> eyre::Result<()> {
+        let env = ecx.to_env();
+        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        db.transact_from_tx(tx, env, inner, cheats)
+    }
+
+    fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
 }
 
 macro_rules! try_or_return {
