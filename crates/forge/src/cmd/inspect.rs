@@ -9,6 +9,7 @@ use foundry_common::{
     find_matching_contract_artifact, find_target_path, shell,
 };
 use foundry_compilers::{
+    ProjectCompileOutput,
     artifacts::{
         StorageLayout,
         output_selection::{
@@ -18,9 +19,11 @@ use foundry_compilers::{
     },
     solc::SolcLanguage,
 };
+use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
-use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
+use solar::sema::interface::source_map::FileName;
+use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -76,6 +79,9 @@ impl InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
+        if field == ContractArtifactField::Linearization && project.compiler.solc.is_none() {
+            eyre::bail!("linearization inspection is only supported for Solidity contracts");
+        }
         let compiler = ProjectCompiler::new().quiet(true);
         let target_path = find_target_path(&project, &contract)?;
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
@@ -168,6 +174,15 @@ impl InspectArgs {
                             .join("\n")
                     )?;
                 }
+            }
+            ContractArtifactField::Linearization => {
+                print_linearization(
+                    &mut output,
+                    project.root(),
+                    &target_path,
+                    contract.name(),
+                    wrap,
+                )?;
             }
         };
 
@@ -406,6 +421,91 @@ fn print_table(
     Ok(())
 }
 
+fn print_linearization(
+    output: &mut ProjectCompileOutput,
+    root: &Path,
+    target_path: &Path,
+    target_name: Option<&str>,
+    should_wrap: bool,
+) -> Result<()> {
+    let mut chain = Vec::new();
+    let compiler = output.parser_mut().solc_mut().compiler_mut();
+    compiler.enter_mut(|compiler| -> Result<()> {
+        let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
+            eyre::bail!("unable to inspect linearization. Solar only supports Solidity versions >=0.8.0");
+        };
+
+        let hir = &compiler.gcx().hir;
+        let matching_contracts = hir
+            .contract_ids()
+            .filter(|id| {
+                let contract = hir.contract(*id);
+                if let Some(target_name) = target_name
+                    && contract.name.as_str() != target_name
+                {
+                    return false;
+                }
+
+                matches!(
+                    &hir.source(contract.source).file.name,
+                    FileName::Real(path) if path == target_path
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let target_contract = match matching_contracts.as_slice() {
+            [id] => *id,
+            [] => {
+                if let Some(target_name) = target_name {
+                    eyre::bail!(
+                        "Could not find contract `{target_name}` in `{}`",
+                        target_path.display()
+                    );
+                }
+                eyre::bail!("Could not find contract in `{}`", target_path.display());
+            }
+            _ => {
+                eyre::bail!(
+                    "Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>"
+                );
+            }
+        };
+
+        for (order, base_id) in hir.contract(target_contract).linearized_bases.iter().enumerate() {
+            let contract = hir.contract(*base_id);
+            let source = hir.source(contract.source);
+            let FileName::Real(path) = &source.file.name else { continue };
+            let path = path.strip_prefix(root).unwrap_or(path);
+            chain.push((
+                order,
+                path.to_slash_lossy().into_owned(),
+                contract.name.as_str().to_string(),
+            ));
+        }
+
+        Ok(())
+    })?;
+
+    if shell::is_json() {
+        let contracts = chain
+            .into_iter()
+            .map(|(_, source, contract)| format!("{source}:{contract}"))
+            .collect::<Vec<_>>();
+        return print_json(&contracts);
+    }
+
+    let headers = vec![Cell::new("Order"), Cell::new("Source"), Cell::new("Contract")];
+    print_table(
+        headers,
+        |table| {
+            for (order, source, contract) in &chain {
+                table.add_row([order.to_string(), source.to_string(), contract.to_string()]);
+            }
+        },
+        should_wrap,
+    )
+}
+
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContractArtifactField {
@@ -428,6 +528,7 @@ pub enum ContractArtifactField {
     Events,
     StandardJson,
     Libraries,
+    Linearization,
 }
 
 macro_rules! impl_value_enum {
@@ -512,6 +613,9 @@ impl_value_enum! {
         Events            => "events" | "ev",
         StandardJson      => "standardJson" | "standard-json" | "standard_json",
         Libraries         => "libraries" | "lib" | "libs",
+        Linearization     => "linearization" | "linearizedInheritance"
+                             | "linearized-inheritance" | "linearized_inheritance"
+                             | "linearizedBases" | "linearized-bases" | "linearized_bases",
     }
 }
 
@@ -545,6 +649,9 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
                 Err(eyre!("StandardJson is not supported for ContractOutputSelection"))
             }
             Caf::Libraries => Err(eyre!("Libraries is not supported for ContractOutputSelection")),
+            Caf::Linearization => {
+                Err(eyre!("Linearization is not supported for ContractOutputSelection"))
+            }
         }
     }
 }
@@ -585,7 +692,11 @@ impl ContractArtifactField {
     pub const fn can_skip_field(&self) -> bool {
         matches!(
             self,
-            Self::Bytecode | Self::DeployedBytecode | Self::StandardJson | Self::Libraries
+            Self::Bytecode
+                | Self::DeployedBytecode
+                | Self::StandardJson
+                | Self::Libraries
+                | Self::Linearization
         )
     }
 }
@@ -661,6 +772,14 @@ mod tests {
                         .unwrap_err()
                         .to_string()
                         .eq("Libraries is not supported for ContractOutputSelection")
+                );
+            } else if field == ContractArtifactField::Linearization {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("Linearization is not supported for ContractOutputSelection")
                 );
             } else {
                 let selection: ContractOutputSelection = field.try_into().unwrap();

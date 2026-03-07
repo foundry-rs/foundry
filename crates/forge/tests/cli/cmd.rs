@@ -1227,6 +1227,67 @@ contract Foo {
     ]]);
 });
 
+forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
+    prj.add_source("A.sol", "contract A {}");
+    prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);
+    prj.add_source("C.sol", r#"import {B} from "./B.sol"; contract C is B {}"#);
+
+    cmd.forge_fuse().args(["inspect", "C", "linearization", "--md"]).assert_success().stdout_eq(
+        str![[r#"
+
+| Order | Source    | Contract |
+|-------|-----------|----------|
+| 0     | src/C.sol | C        |
+| 1     | src/B.sol | B        |
+| 2     | src/A.sol | A        |
+
+
+"#]],
+    );
+});
+
+forgetest!(can_inspect_linearization_json, |prj, cmd| {
+    prj.add_source("A.sol", "contract A {}");
+    prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);
+    prj.add_source("C.sol", r#"import {B} from "./B.sol"; contract C is B {}"#);
+
+    cmd.forge_fuse().args(["inspect", "C", "linearization", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  "src/C.sol:C",
+  "src/B.sol:B",
+  "src/A.sol:A"
+]
+
+"#]],
+    );
+});
+
+forgetest!(can_inspect_linearization_path_qualified_contract, |prj, cmd| {
+    prj.add_source("one/Base.sol", "contract Base {}");
+    prj.add_source(
+        "one/Target.sol",
+        r#"import {Base} from "./Base.sol"; contract Target is Base {}"#,
+    );
+
+    prj.add_source("two/Base.sol", "contract Base {}");
+    prj.add_source(
+        "two/Target.sol",
+        r#"import {Base} from "./Base.sol"; contract Target is Base {}"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "src/two/Target.sol:Target", "linearization", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[
+  "src/two/Target.sol:Target",
+  "src/two/Base.sol:Base"
+]
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();
