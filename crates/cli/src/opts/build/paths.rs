@@ -11,7 +11,7 @@ use foundry_config::{
     find_project_root, remappings_from_env_var,
 };
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{ffi::OsStr, path::PathBuf};
 
 /// Common arguments for a project's paths.
 #[derive(Clone, Debug, Default, Serialize, Parser)]
@@ -58,7 +58,12 @@ pub struct ProjectPathOpts {
     pub hardhat: bool,
 
     /// Path to the config file.
-    #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILE")]
+    #[arg(
+        long,
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE",
+        value_parser = parse_config_path
+    )]
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
 }
@@ -81,12 +86,91 @@ impl ProjectPathOpts {
     /// Returns the remappings to add to the config
     pub fn get_remappings(&self) -> Vec<Remapping> {
         let mut remappings = self.remappings.clone();
-        if let Some(env_remappings) =
-            self.remappings_env.as_ref().and_then(|env| remappings_from_env_var(env))
+        if let Some(remappings_env) = self.remappings_env.as_deref()
+            && let Some(env_remappings) = remappings_from_env_var(remappings_env)
         {
-            remappings.extend(env_remappings.expect("Failed to parse env var remappings"));
+            match env_remappings {
+                Ok(env_remappings) => remappings.extend(env_remappings),
+                Err(err) => {
+                    let _ = sh_warn!(
+                        "failed to parse env var remappings from `{remappings_env}`: {err}"
+                    );
+                }
+            }
         }
         remappings
+    }
+}
+
+/// Parses and validates `--config-path`.
+fn parse_config_path(path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err(format!("config-path `{}` does not exist", path.display()));
+    }
+    if path.file_name() != Some(OsStr::new(Config::FILE_NAME)) {
+        return Err("the config-path must be a path to a foundry.toml file".to_string());
+    }
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProjectPathOpts, parse_config_path};
+    use foundry_config::Config;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parse_config_path_rejects_nonexistent_path() {
+        let path = PathBuf::from("/definitely/nonexistent/path/foundry.toml");
+        let err = parse_config_path(path.to_str().expect("utf8 path")).unwrap_err();
+        assert!(err.contains("does not exist"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_config_path_rejects_non_foundry_toml_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().with_file_name("not-foundry.toml");
+        std::fs::write(&path, "").unwrap();
+
+        let err = parse_config_path(path.to_str().expect("utf8 path")).unwrap_err();
+        assert!(err.contains(Config::FILE_NAME), "error should mention required file name: {err}");
+    }
+
+    #[test]
+    fn get_remappings_ignores_invalid_remappings_env_var() {
+        let env_name = "FOUNDRY_CLI_TEST_INVALID_REMAPPINGS";
+        unsafe {
+            std::env::set_var(env_name, "this-is-not-a-remapping");
+        }
+
+        let opts =
+            ProjectPathOpts { remappings_env: Some(env_name.to_string()), ..Default::default() };
+        let remappings = opts.get_remappings();
+        assert!(remappings.is_empty());
+
+        unsafe {
+            std::env::remove_var(env_name);
+        }
+    }
+
+    #[test]
+    fn get_remappings_parses_valid_remappings_env_var() {
+        let env_name = "FOUNDRY_CLI_TEST_VALID_REMAPPINGS";
+        unsafe {
+            std::env::set_var(env_name, "forge-std/=lib/forge-std/src/");
+        }
+
+        let opts =
+            ProjectPathOpts { remappings_env: Some(env_name.to_string()), ..Default::default() };
+        let remappings = opts.get_remappings();
+        assert_eq!(remappings.len(), 1);
+        assert_eq!(remappings[0].name, "forge-std/");
+        assert_eq!(remappings[0].path, "lib/forge-std/src/");
+
+        unsafe {
+            std::env::remove_var(env_name);
+        }
     }
 }
 
