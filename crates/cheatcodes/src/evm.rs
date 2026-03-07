@@ -471,7 +471,7 @@ impl<CTX> Cheatcode<CTX> for lastCallGasCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for getChainIdCall {
+impl<CTX: ContextTr> Cheatcode<CTX> for getChainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(U256::from(ccx.ecx.cfg().chain_id()).abi_encode())
@@ -558,7 +558,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for blobhashesCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for getBlobhashesCall {
+impl<CTX: ContextTr> Cheatcode<CTX> for getBlobhashesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         ensure!(
@@ -578,7 +578,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for rollCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for getBlockNumberCall {
+impl<CTX: ContextTr> Cheatcode<CTX> for getBlockNumberCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().number().abi_encode())
@@ -602,7 +602,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for warpCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for getBlockTimestampCall {
+impl<CTX: ContextTr> Cheatcode<CTX> for getBlockTimestampCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().timestamp().abi_encode())
@@ -627,7 +627,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for blobBaseFeeCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for getBlobBaseFeeCall {
+impl<CTX: ContextTr> Cheatcode<CTX> for getBlobBaseFeeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().blob_excess_gas().unwrap_or(0).abi_encode())
@@ -763,7 +763,7 @@ impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for coolSlotCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for readCallersCall {
+impl<CTX: ContextTr> Cheatcode<CTX> for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         read_callers(ccx.state, &ccx.ecx.tx().caller(), ccx.ecx.journal().depth())
@@ -1087,7 +1087,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournal
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for setBlockhashCall {
+impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for setBlockhashCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { blockNumber, blockHash } = *self;
         ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
@@ -1336,7 +1336,7 @@ impl<CTX> Cheatcode<CTX> for setEvmVersionCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for getEvmVersionCall {
+impl<CTX: ContextTr> Cheatcode<CTX> for getEvmVersionCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let spec: SpecId = ccx.ecx.cfg().spec().into();
         Ok(spec.to_string().to_lowercase().abi_encode())
