@@ -88,7 +88,7 @@ pub(crate) trait Cheatcode<CTX>: CheatcodeDef {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         let _ = executor;
         self.apply_stateful(ccx)
