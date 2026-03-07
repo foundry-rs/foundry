@@ -4,7 +4,7 @@ use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
-use alloy_signer::{Signer, SignerSync};
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_evm_core::backend::DatabaseExt;
