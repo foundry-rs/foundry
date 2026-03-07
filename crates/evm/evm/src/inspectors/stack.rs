@@ -15,6 +15,7 @@ use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     Env, FoundryInspectorExt, InspectorExt,
     backend::{DatabaseError, FoundryJournalExt, JournaledState},
+    env::FoundryContextExt,
     evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_coverage::HitMaps;
@@ -657,7 +658,7 @@ impl InspectorStackRefMut<'_> {
     /// Should be called on the top-level call of inner context (depth == 0 &&
     /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
     /// Updates tx.origin to the value before entering inner context
-    fn adjust_evm_data_for_inner_context<CTX: CheatsCtxExt>(&mut self, ecx: &mut CTX) {
+    fn adjust_evm_data_for_inner_context<CTX: FoundryContextExt>(&mut self, ecx: &mut CTX) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
         ecx.tx_mut().caller = inner_context_data.original_origin;
@@ -884,7 +885,7 @@ impl InspectorStackRefMut<'_> {
     }
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
-    fn top_level_frame_start<CTX: CheatsCtxExt>(&mut self, ecx: &mut CTX) {
+    fn top_level_frame_start<CTX: ContextTr<Journal: FoundryJournalExt>>(&mut self, ecx: &mut CTX) {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
@@ -893,7 +894,11 @@ impl InspectorStackRefMut<'_> {
     }
 
     /// Invoked at the end of root frame.
-    fn top_level_frame_end<CTX: CheatsCtxExt>(&mut self, ecx: &mut CTX, result: InstructionResult) {
+    fn top_level_frame_end<CTX: ContextTr<Journal: FoundryJournalExt>>(
+        &mut self,
+        ecx: &mut CTX,
+        result: InstructionResult,
+    ) {
         if !result.is_revert() {
             return;
         }
