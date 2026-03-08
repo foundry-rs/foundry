@@ -72,6 +72,13 @@ pub trait FoundryInspectorExt {
     fn create2_deployer(&self) -> Address {
         DEFAULT_CREATE2_DEPLOYER
     }
+
+    /// Returns a mutable reference to the concrete type as `dyn Any`, for downcasting.
+    ///
+    /// Used by [`FoundryEvmFactory`](crate::evm::FoundryEvmFactory) implementations to recover
+    /// the concrete inspector type (e.g. `InspectorStack`) from the network-agnostic
+    /// `&mut dyn FoundryInspectorExt` that the factory receives.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 /// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
@@ -88,6 +95,14 @@ impl<T> InspectorExt for T where
 {
 }
 
-impl FoundryInspectorExt for NoOpInspector {}
+impl FoundryInspectorExt for NoOpInspector {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
 
-impl FoundryInspectorExt for AccessListInspector {}
+impl FoundryInspectorExt for AccessListInspector {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
