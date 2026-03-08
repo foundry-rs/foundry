@@ -1,5 +1,6 @@
 use clap::Parser;
 use eyre::Result;
+use foundry_cli::utils;
 use foundry_common::shell;
 use soldeer_commands::{Command, Verbosity};
 
@@ -10,13 +11,27 @@ use soldeer_commands::{Command, Verbosity};
     override_usage = "Native Solidity Package Manager, run `forge soldeer [COMMAND] --help` for more details"
 )]
 pub struct SoldeerArgs {
-    /// Command must be one of the following init/install/login/push/uninstall/update/version.
+    /// Command must be one of the following
+    /// init/install/update/login/push/uninstall/clean/version/help.
     #[command(subcommand)]
     command: Command,
 }
 
 impl SoldeerArgs {
     pub async fn run(self) -> Result<()> {
+        // Reconfigure the tracing filter so that Soldeer's log output is visible when `-v` flags
+        // are used
+        if std::env::var_os("RUST_LOG").is_none() {
+            let level = match shell::verbosity() {
+                0 => "error",
+                1 => "warn",
+                2 => "info",
+                3 => "debug",
+                _ => "trace",
+            };
+            utils::update_tracing_filter(level);
+        }
+
         let verbosity = Verbosity::new(shell::verbosity(), if shell::is_quiet() { 1 } else { 0 });
         match soldeer_commands::run(self.command, verbosity).await {
             Ok(_) => Ok(()),
