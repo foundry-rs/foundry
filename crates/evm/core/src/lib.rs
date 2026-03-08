@@ -75,9 +75,8 @@ pub trait FoundryInspectorExt {
 
     /// Returns a mutable reference to the concrete type as `dyn Any`, for downcasting.
     ///
-    /// Used by [`FoundryEvmFactory`](crate::evm::FoundryEvmFactory) implementations to recover
-    /// the concrete inspector type (e.g. `InspectorStack`) from the network-agnostic
-    /// `&mut dyn FoundryInspectorExt` that the factory receives.
+    /// Used to recover the concrete inspector type (e.g. `InspectorStack`) from a
+    /// `&mut dyn FoundryInspectorExt` trait object.
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
