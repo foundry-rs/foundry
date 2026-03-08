@@ -88,6 +88,9 @@ pub use error::SolidityErrorCode;
 pub mod doc;
 pub use doc::DocConfig;
 
+pub mod anvil;
+pub use anvil::AnvilConfig;
+
 pub mod filter;
 pub use filter::SkipBuildFilters;
 
@@ -492,6 +495,8 @@ pub struct Config {
     pub doc: DocConfig,
     /// Configuration for `forge bind-json`
     pub bind_json: BindJsonConfig,
+    /// Configuration for `anvil`
+    pub anvil: AnvilConfig,
     /// Configures the permissions of cheat codes that touch the file system.
     ///
     /// This includes what operations can be executed (read, write)
@@ -708,6 +713,7 @@ impl Config {
         "soldeer",
         "vyper",
         "bind_json",
+        "anvil",
     ];
 
     pub(crate) fn is_standalone_section<T: ?Sized + PartialEq<str>>(section: &T) -> bool {
@@ -2631,6 +2637,7 @@ impl Default for Config {
             lint: Default::default(),
             doc: Default::default(),
             bind_json: Default::default(),
+            anvil: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
@@ -4383,6 +4390,123 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.runs, 500);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_standalone_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [anvil]
+                port = 9999
+                accounts = 20
+                balance = 50000
+                no_mining = true
+                hardfork = "prague"
+                fork_url = "https://eth.llamarpc.com"
+                no_storage_caching = true
+                disable_block_gas_limit = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 9999);
+            assert_eq!(config.anvil.accounts, 20);
+            assert_eq!(config.anvil.balance, 50000);
+            assert!(config.anvil.no_mining);
+            assert_eq!(config.anvil.hardfork, Some("prague".to_string()));
+            assert_eq!(
+                config.anvil.fork_url,
+                Some("https://eth.llamarpc.com".to_string())
+            );
+            assert!(config.anvil.no_storage_caching);
+            assert!(config.anvil.disable_block_gas_limit);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_profile_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [anvil]
+                port = 9999
+                no_storage_caching = false
+
+                [profile.ci.anvil]
+                port = 8888
+                no_storage_caching = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 9999);
+            assert!(!config.anvil.no_storage_caching);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 8888);
+            assert!(config.anvil.no_storage_caching);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_env_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [anvil]
+                port = 9999
+            "#,
+            )?;
+
+            jail.set_env("FOUNDRY_ANVIL_PORT", "7777");
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 7777);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_defaults() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 8545);
+            assert_eq!(config.anvil.accounts, 10);
+            assert_eq!(config.anvil.balance, 10000);
+            assert_eq!(config.anvil.slots_in_an_epoch, 32);
+            assert!(!config.anvil.no_mining);
+            assert!(!config.anvil.no_storage_caching);
+            assert!(config.anvil.fork_url.is_none());
+            assert!(config.anvil.hardfork.is_none());
 
             Ok(())
         });
