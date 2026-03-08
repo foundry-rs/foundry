@@ -346,6 +346,42 @@ impl WalletSubcommands {
                             rpassword::prompt_password("Enter secret: ")?
                         };
 
+                        // Prevent accidental overwriting: check all target files upfront
+                        if let Some(ref acc_name) = account_name {
+                            let mut existing_files = Vec::new();
+
+                            for i in 0..number {
+                                let name = match number {
+                                    1 => acc_name.to_string(),
+                                    _ => format!("{}_{}", acc_name, i + 1),
+                                };
+                                let file_path = path.join(&name);
+                                if file_path.exists() {
+                                    existing_files.push(name);
+                                }
+                            }
+
+                            if !existing_files.is_empty() {
+                                use std::io::Write;
+
+                                sh_eprintln!("The following keystore file(s) already exist:")?;
+                                for file in &existing_files {
+                                    sh_eprintln!("   - {file}")?;
+                                }
+                                sh_print!(
+                                    "\nDo you want to overwrite all {} file(s)? [y/N]: ",
+                                    existing_files.len()
+                                )?;
+                                std::io::stdout().flush()?;
+
+                                let mut input = String::new();
+                                std::io::stdin().read_line(&mut input)?;
+
+                                if !input.trim().eq_ignore_ascii_case("y") {
+                                    eyre::bail!("Operation cancelled. No keystores were modified.");
+                                }
+                            }
+                        }
                         for i in 0..number {
                             let account_name_ref =
                                 account_name.as_deref().map(|name| match number {
