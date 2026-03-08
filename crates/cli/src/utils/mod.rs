@@ -27,6 +27,8 @@ pub use cmd::*;
 mod suggestions;
 pub use suggestions::*;
 
+pub mod git_gix;
+
 mod abi;
 pub use abi::*;
 
@@ -344,15 +346,37 @@ impl<'a> Git<'a> {
         from: impl AsRef<OsStr>,
         to: Option<impl AsRef<OsStr>>,
     ) -> Result<()> {
-        Self::cmd_no_root()
-            .stderr(Stdio::inherit())
-            .args(["clone", "--recurse-submodules"])
-            .args(shallow.then_some("--depth=1"))
-            .args(shallow.then_some("--shallow-submodules"))
-            .arg(from)
-            .args(to)
-            .exec()
-            .map(drop)
+        let url_str = from.as_ref().to_string_lossy();
+        let target = to.as_ref().map(|t| PathBuf::from(t.as_ref()));
+
+        // Determine target directory: explicit path or derive from URL basename.
+        let target_dir = match &target {
+            Some(p) => p.clone(),
+            None => {
+                let basename = url_str.rsplit('/').next().unwrap_or("repo");
+                let basename = basename.strip_suffix(".git").unwrap_or(basename);
+                PathBuf::from(basename)
+            }
+        };
+
+        match git_gix::clone(&url_str, &target_dir, shallow) {
+            Ok(()) => {
+                tracing::debug!(%url_str, ?target_dir, "gix clone succeeded");
+                Ok(())
+            }
+            Err(gix_err) => {
+                tracing::warn!(%url_str, ?gix_err, "gix clone failed, falling back to git CLI");
+                Self::cmd_no_root()
+                    .stderr(Stdio::inherit())
+                    .args(["clone", "--recurse-submodules"])
+                    .args(shallow.then_some("--depth=1"))
+                    .args(shallow.then_some("--shallow-submodules"))
+                    .arg(from)
+                    .args(to)
+                    .exec()
+                    .map(drop)
+            }
+        }
     }
 
     pub fn fetch(
@@ -361,15 +385,27 @@ impl<'a> Git<'a> {
         remote: impl AsRef<OsStr>,
         branch: Option<impl AsRef<OsStr>>,
     ) -> Result<()> {
-        self.cmd()
-            .stderr(Stdio::inherit())
-            .arg("fetch")
-            .args(shallow.then_some("--no-tags"))
-            .args(shallow.then_some("--depth=1"))
-            .arg(remote)
-            .args(branch)
-            .exec()
-            .map(drop)
+        let remote_str = remote.as_ref().to_string_lossy().to_string();
+        let branch_str = branch.as_ref().map(|b| b.as_ref().to_string_lossy().to_string());
+
+        match git_gix::fetch(self.root, &remote_str, branch_str.as_deref(), shallow) {
+            Ok(()) => {
+                tracing::debug!(root = %self.root.display(), %remote_str, "gix fetch succeeded");
+                Ok(())
+            }
+            Err(gix_err) => {
+                tracing::warn!(root = %self.root.display(), ?gix_err, "gix fetch failed, falling back to git CLI");
+                self.cmd()
+                    .stderr(Stdio::inherit())
+                    .arg("fetch")
+                    .args(shallow.then_some("--no-tags"))
+                    .args(shallow.then_some("--depth=1"))
+                    .arg(remote)
+                    .args(branch)
+                    .exec()
+                    .map(drop)
+            }
+        }
     }
 
     pub fn root(self, root: &Path) -> Git<'_> {

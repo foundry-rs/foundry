@@ -40,6 +40,7 @@ color-eyre.workspace = true
 dotenvy = "0.15"
 eyre.workspace = true
 futures.workspace = true
+gix.workspace = true
 indicatif.workspace = true
 itertools.workspace = true
 mimalloc = { workspace = true, optional = true }
