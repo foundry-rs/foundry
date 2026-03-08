@@ -32,6 +32,155 @@ For more information, try '--help'.
 "#]]);
 });
 
+forgetest!(disallow_linked_libraries, |prj, cmd| {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+library Lib {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer {
+    function bar() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]]);
+});
+
+forgetest!(disallow_linked_libraries_succeeds_without_libs, |prj, cmd| {
+    prj.add_source(
+        "Plain.sol",
+        r#"
+contract Plain {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_success();
+});
+
+forgetest!(disallow_linked_libraries_succeeds_with_internal_library, |prj, cmd| {
+    prj.add_source(
+        "InternalLib.sol",
+        r#"
+library InternalLib {
+    function foo() internal pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import "./InternalLib.sol";
+
+contract Consumer {
+    function bar() public pure returns (uint256) {
+        return InternalLib.foo();
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_success();
+});
+
+forgetest!(disallow_linked_libraries_via_config, |prj, cmd| {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+library Lib {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer {
+    function bar() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.allow_linked_libraries = false);
+
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]]);
+});
+
+forgetest!(disallow_linked_libraries_multiple_violations, |prj, cmd| {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+library Lib {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer1.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer1 {
+    function bar() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer2.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer2 {
+    function baz() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer1
+  [..]:Consumer2
+
+"#]]);
+});
+
 // tests that json is printed when --format-json is passed
 forgetest!(compile_json, |prj, cmd| {
     prj.add_source(
