@@ -2,18 +2,16 @@
 
 use super::BackendError;
 use crate::{
-    Env, InspectorExt,
+    Env, FoundryInspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
     fork::{CreateFork, ForkId},
 };
-use alloy_evm::{Evm, EvmEnv};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::TransactionRequest;
-use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
     Database, DatabaseCommit,
@@ -64,27 +62,17 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: InspectorExt>(
+    pub fn inspect(
         &mut self,
         env: &mut Env,
-        inspector: I,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.spec_id = Some(env.evm_env.cfg_env.spec);
 
-        let mut evm = crate::evm::new_evm_with_inspector(
-            self,
-            env.evm_env.clone(),
-            env.tx.clone(),
-            inspector,
-        );
-
-        let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
-
-        *env = Env::from(evm.cfg.clone(), evm.block.clone(), evm.tx.clone());
-
-        Ok(res)
+        let factory = self.backend.evm_factory.clone();
+        factory.inspect(self, env, inspector)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
@@ -215,7 +203,7 @@ impl DatabaseExt for CowBackend<'_> {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<()> {
         self.backend_mut(&evm_env, &tx_env).transact(
             id,
@@ -233,7 +221,7 @@ impl DatabaseExt for CowBackend<'_> {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<()> {
         self.backend_mut(&evm_env, &tx_env).transact_from_tx(
             transaction,
