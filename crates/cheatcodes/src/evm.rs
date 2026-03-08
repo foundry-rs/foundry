@@ -23,6 +23,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
+    FoundryBlock, FoundryCfg, FoundryTransaction,
     backend::{DatabaseExt, FoundryJournalExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
@@ -481,7 +482,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for chainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
-        ccx.ecx.cfg_mut().chain_id = newChainId.to();
+        ccx.ecx.cfg_mut().set_chain_id(newChainId.to());
         Ok(Default::default())
     }
 }
@@ -489,7 +490,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for chainIdCall {
 impl<CTX: FoundryContextExt> Cheatcode<CTX> for coinbaseCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newCoinbase } = self;
-        ccx.ecx.block_mut().beneficiary = *newCoinbase;
+        ccx.ecx.block_mut().set_beneficiary(*newCoinbase);
         Ok(Default::default())
     }
 }
@@ -502,7 +503,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for difficultyCall {
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.block_mut().difficulty = *newDifficulty;
+        ccx.ecx.block_mut().set_difficulty(*newDifficulty);
         Ok(Default::default())
     }
 }
@@ -511,7 +512,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for feeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newBasefee } = self;
         ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
-        ccx.ecx.block_mut().basefee = newBasefee.saturating_to();
+        ccx.ecx.block_mut().set_basefee(newBasefee.saturating_to());
         Ok(Default::default())
     }
 }
@@ -524,7 +525,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for prevrandao_0Call {
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.block_mut().prevrandao = Some(*newPrevrandao);
+        ccx.ecx.block_mut().set_prevrandao(Some(*newPrevrandao));
         Ok(Default::default())
     }
 }
@@ -537,7 +538,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for prevrandao_1Call {
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.block_mut().prevrandao = Some((*newPrevrandao).into());
+        ccx.ecx.block_mut().set_prevrandao(Some((*newPrevrandao).into()));
         Ok(Default::default())
     }
 }
@@ -550,9 +551,9 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for blobhashesCall {
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.tx_mut().blob_hashes.clone_from(hashes);
+        ccx.ecx.tx_mut().set_blob_hashes(hashes.clone());
         // force this as 4844 txtype
-        ccx.ecx.tx_mut().tx_type = EIP4844_TX_TYPE_ID;
+        ccx.ecx.tx_mut().set_tx_type(EIP4844_TX_TYPE_ID);
         Ok(Default::default())
     }
 }
@@ -572,7 +573,7 @@ impl<CTX: ContextTr> Cheatcode<CTX> for getBlobhashesCall {
 impl<CTX: FoundryContextExt> Cheatcode<CTX> for rollCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newHeight } = self;
-        ccx.ecx.block_mut().number = *newHeight;
+        ccx.ecx.block_mut().set_number(*newHeight);
         Ok(Default::default())
     }
 }
@@ -588,7 +589,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for txGasPriceCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newGasPrice } = self;
         ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
-        ccx.ecx.tx_mut().gas_price = newGasPrice.saturating_to();
+        ccx.ecx.tx_mut().set_gas_price(newGasPrice.saturating_to());
         Ok(Default::default())
     }
 }
@@ -596,7 +597,7 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for txGasPriceCall {
 impl<CTX: FoundryContextExt> Cheatcode<CTX> for warpCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newTimestamp } = self;
-        ccx.ecx.block_mut().timestamp = *newTimestamp;
+        ccx.ecx.block_mut().set_timestamp(*newTimestamp);
         Ok(Default::default())
     }
 }
@@ -1136,17 +1137,18 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for executeTransactionCall {
         let cached_env = ccx.ecx.to_env();
 
         // Override env for isolated execution.
-        ccx.ecx.block_mut().basefee = 0;
+        ccx.ecx.block_mut().set_basefee(0);
         *ccx.ecx.tx_mut() = tx_env;
-        ccx.ecx.tx_mut().gas_price = 0;
-        ccx.ecx.tx_mut().gas_priority_fee = None;
+        ccx.ecx.tx_mut().set_gas_price(0);
+        ccx.ecx.tx_mut().set_gas_priority_fee(None);
 
         // Enable nonce checks for realistic simulation.
-        ccx.ecx.cfg_mut().disable_nonce_check = false;
+        ccx.ecx.cfg_mut().set_disable_nonce_check(false);
 
         // EIP-3860: enforce initcode size limit.
-        ccx.ecx.cfg_mut().limit_contract_initcode_size =
-            Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+        ccx.ecx
+            .cfg_mut()
+            .set_limit_contract_initcode_size(Some(revm::primitives::eip3860::MAX_INITCODE_SIZE));
 
         // Snapshot the modified env for EVM construction.
         let modified_env = ccx.ecx.to_env();

@@ -13,7 +13,7 @@ use foundry_cheatcodes::{
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    Env, FoundryInspectorExt, InspectorExt,
+    Env, FoundryBlock, FoundryInspectorExt, FoundryTransaction, InspectorExt,
     backend::{DatabaseError, FoundryJournalExt, JournaledState},
     evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
@@ -23,7 +23,7 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
     context::{
-        Block, BlockEnv, Cfg, ContextTr, JournalTr,
+        Block, BlockEnv, Cfg, ContextTr, JournalTr, Transaction,
         result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
@@ -660,7 +660,7 @@ impl InspectorStackRefMut<'_> {
     fn adjust_evm_data_for_inner_context<CTX: CheatsCtxExt>(&mut self, ecx: &mut CTX) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
-        ecx.tx_mut().caller = inner_context_data.original_origin;
+        ecx.tx_mut().set_caller(inner_context_data.original_origin);
     }
 
     fn do_call_end<CTX: CheatsCtxExt>(
@@ -740,21 +740,21 @@ impl InspectorStackRefMut<'_> {
     {
         let cached_env = ecx.to_env();
 
-        ecx.block_mut().basefee = 0;
-        ecx.tx_mut().chain_id = Some(ecx.cfg().chain_id());
-        ecx.tx_mut().caller = caller;
-        ecx.tx_mut().kind = kind;
-        ecx.tx_mut().data = input;
-        ecx.tx_mut().value = value;
+        ecx.block_mut().set_basefee(0);
+        ecx.tx_mut().set_caller(caller);
+        ecx.tx_mut().set_kind(kind);
+        ecx.tx_mut().set_data(input);
+        ecx.tx_mut().set_value(value);
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        ecx.tx_mut().gas_limit = gas_limit + 21000;
+        ecx.tx_mut().set_gas_limit(gas_limit + 21000);
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
         if !ecx.cfg().is_block_gas_limit_disabled() {
-            ecx.tx_mut().gas_limit = std::cmp::min(ecx.tx_mut().gas_limit, ecx.block().gas_limit());
+            let gas_limit = std::cmp::min(ecx.tx().gas_limit(), ecx.block().gas_limit());
+            ecx.tx_mut().set_gas_limit(gas_limit);
         }
-        ecx.tx_mut().gas_price = 0;
+        ecx.tx_mut().set_gas_price(0);
 
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
