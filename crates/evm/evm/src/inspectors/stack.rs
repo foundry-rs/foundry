@@ -13,7 +13,7 @@ use foundry_cheatcodes::{
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    Env, FoundryInspectorExt, InspectorExt,
+    Env, FoundryInspectorExt,
     backend::{DatabaseError, FoundryJournalExt, JournaledState},
     evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
@@ -344,7 +344,7 @@ pub struct InspectorStackInner {
     pub script_execution_inspector: Option<Box<ScriptExecutionInspector>>,
     pub tracer: Option<Box<TracingInspector>>,
 
-    // InspectorExt and other internal data.
+    // FoundryInspectorExt and other internal data.
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -592,12 +592,6 @@ impl InspectorStack {
     #[inline(always)]
     fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_deref_mut(), inner: &mut self.inner }
-    }
-
-    /// Returns an [`InspectorExt`] using this stack's inspectors.
-    #[inline]
-    pub fn as_inspector(&mut self) -> impl InspectorExt + '_ {
-        self
     }
 
     /// Collects all the data gathered during inspection into a single struct.
