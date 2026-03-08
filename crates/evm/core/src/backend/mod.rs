@@ -2143,6 +2143,21 @@ mod tests {
         ) -> eyre::Result<ResultAndState> {
             unimplemented!("StubEvmFactory: not meant for EVM execution")
         }
+
+        fn call_nested(
+            &self,
+            _db: &mut dyn crate::backend::DatabaseExt,
+            _env: crate::Env,
+            _inspector: &mut dyn FoundryInspectorExt,
+            _f: &mut dyn FnMut(
+                &mut dyn crate::evm::NestedEvm,
+            ) -> Result<
+                (),
+                revm::context::result::EVMError<foundry_fork_db::DatabaseError>,
+            >,
+        ) -> eyre::Result<(crate::Env, crate::backend::JournaledState)> {
+            unimplemented!("StubEvmFactory: not meant for EVM execution")
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

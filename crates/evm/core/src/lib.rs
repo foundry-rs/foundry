@@ -6,11 +6,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
-use backend::DatabaseExt;
-use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
+use revm::{inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
@@ -91,20 +89,6 @@ pub trait FoundryInspectorDowncastExt: FoundryInspectorExt {
 }
 
 impl<I: FoundryInspectorExt + ?Sized> FoundryInspectorDowncastExt for I {}
-
-/// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
-///
-/// Used as a trait object (`dyn InspectorExt`) in backend code that is Eth-specific.
-/// For generic multi-network code, use `I: FoundryInspectorExt + Inspector<CTX>` instead.
-pub trait InspectorExt:
-    for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
-{
-}
-
-impl<T> InspectorExt for T where
-    T: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
-{
-}
 
 impl FoundryInspectorExt for NoOpInspector {
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {

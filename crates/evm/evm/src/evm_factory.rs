@@ -1,14 +1,21 @@
 use std::sync::Arc;
 
-use crate::inspectors::InspectorStack;
+use crate::{
+    eth_evm::{EthInspectorExt, new_eth_evm},
+    inspectors::InspectorStack,
+};
 use eyre::WrapErr;
 use foundry_cheatcodes::Cheatcodes;
 use foundry_evm_core::{
-    Env, FoundryInspectorDowncastExt, FoundryInspectorExt, InspectorExt,
-    backend::DatabaseExt,
-    evm::{FoundryEvmFactory, new_evm_with_inspector},
+    Env, FoundryInspectorDowncastExt, FoundryInspectorExt,
+    backend::{DatabaseExt, JournaledState},
+    evm::{FoundryEvmFactory, NestedEvm},
 };
-use revm::{context_interface::result::ResultAndState, inspector::NoOpInspector};
+use foundry_fork_db::DatabaseError;
+use revm::{
+    context::result::{EVMError, ResultAndState},
+    inspector::NoOpInspector,
+};
 
 /// Ethereum EVM factory — the default for Ethereum-based chains.
 ///
@@ -21,16 +28,30 @@ pub struct EthFoundryEvmFactory;
 
 impl EthFoundryEvmFactory {
     /// Runs a transaction with a concrete inspector, setting the journaled state depth.
-    fn run_with_depth<I: InspectorExt>(
+    fn run_with_depth<I: EthInspectorExt>(
         db: &mut dyn DatabaseExt,
         env: Env,
         inspector: &mut I,
         depth: usize,
     ) -> eyre::Result<ResultAndState> {
         let tx = env.tx.clone();
-        let mut evm = new_evm_with_inspector(db, env, inspector);
+        let mut evm = new_eth_evm(db, env, inspector);
         evm.journaled_state.depth = depth;
         alloy_evm::Evm::transact(&mut evm, tx).wrap_err("EVM error")
+    }
+
+    /// Builds an EVM with a concrete inspector, runs the closure, and extracts state.
+    fn run_nested<I: EthInspectorExt>(
+        db: &mut dyn DatabaseExt,
+        env: Env,
+        inspector: I,
+        f: &mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>,
+    ) -> eyre::Result<(Env, JournaledState)> {
+        let mut evm = new_eth_evm(db, env, inspector);
+        f(&mut evm).map_err(|e| eyre::eyre!("{e}"))?;
+        let (sub_evm_env, sub_tx) = evm.to_env();
+        let sub_inner = evm.take_journal_inner();
+        Ok((Env { evm_env: sub_evm_env, tx: sub_tx }, sub_inner))
     }
 }
 
@@ -45,7 +66,7 @@ impl FoundryEvmFactory for EthFoundryEvmFactory {
             .downcast_mut::<InspectorStack>()
             .ok_or_else(|| eyre::eyre!("EthFoundryEvmFactory::inspect requires InspectorStack"))?;
         let tx = env.tx.clone();
-        let mut evm = new_evm_with_inspector(db, env.to_owned(), stack);
+        let mut evm = new_eth_evm(db, env.to_owned(), stack);
         let res = alloy_evm::Evm::transact(&mut evm, tx).wrap_err("EVM error")?;
         *env = Env::from(evm.cfg.clone(), evm.block.clone(), evm.tx.clone());
         Ok(res)
@@ -61,6 +82,7 @@ impl FoundryEvmFactory for EthFoundryEvmFactory {
         if let Some(stack) = inspector.downcast_mut::<InspectorStack>() {
             Self::run_with_depth(db, env, stack, depth)
         } else if let Some(cheats) = inspector.downcast_mut::<Cheatcodes>() {
+            cheats.evm_factory.get_or_insert_with(|| Arc::new(EthFoundryEvmFactory));
             Self::run_with_depth(db, env, cheats, depth)
         } else if let Some(noop) = inspector.downcast_mut::<NoOpInspector>() {
             Self::run_with_depth(db, env, noop, depth)
@@ -68,6 +90,26 @@ impl FoundryEvmFactory for EthFoundryEvmFactory {
             eyre::bail!(
                 "EthFoundryEvmFactory::transact_with_depth: unsupported inspector type \
                  (expected InspectorStack, Cheatcodes, or NoOpInspector)"
+            )
+        }
+    }
+
+    fn call_nested(
+        &self,
+        db: &mut dyn DatabaseExt,
+        env: Env,
+        inspector: &mut dyn FoundryInspectorExt,
+        f: &mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>,
+    ) -> eyre::Result<(Env, JournaledState)> {
+        if let Some(cheats) = inspector.downcast_mut::<Cheatcodes>() {
+            cheats.evm_factory.get_or_insert_with(|| Arc::new(EthFoundryEvmFactory));
+            Self::run_nested(db, env, cheats, f)
+        } else if let Some(noop) = inspector.downcast_mut::<NoOpInspector>() {
+            Self::run_nested(db, env, noop, f)
+        } else {
+            eyre::bail!(
+                "EthFoundryEvmFactory::call_nested: unsupported inspector type \
+                 (expected Cheatcodes or NoOpInspector)"
             )
         }
     }
