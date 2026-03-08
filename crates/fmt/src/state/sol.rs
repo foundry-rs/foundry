@@ -2391,7 +2391,7 @@ impl<'ast> State<'_, 'ast> {
             std::slice::from_ref(stmt)
         };
 
-        if inline && !stmts.is_empty() {
+        if inline && stmts.len() == 1 {
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
@@ -2523,10 +2523,34 @@ impl<'ast> State<'_, 'ast> {
         stmt: &'ast ast::Stmt<'ast>,
         empty_as_multiline: bool,
     ) -> bool {
-        if let ast::StmtKind::Block(block) = &stmt.kind {
-            return self.is_multiline_block(block, empty_as_multiline);
+        match &stmt.kind {
+            ast::StmtKind::Block(block) => self.is_multiline_block(block, empty_as_multiline),
+
+            ast::StmtKind::For { body, .. } | ast::StmtKind::While(_, body) => {
+                self.is_multiline_block_stmt(body, empty_as_multiline)
+            }
+
+            ast::StmtKind::If(_, _, Some(_)) => true,
+            ast::StmtKind::If(_, then, None) => {
+                self.is_multiline_block_stmt(then, empty_as_multiline)
+            }
+
+            // these ones always has an inner block, so we mark them as multiline
+            ast::StmtKind::Assembly(_)
+            | ast::StmtKind::DoWhile(_, _)
+            | ast::StmtKind::Try(_)
+            | ast::StmtKind::UncheckedBlock(_) => true,
+
+            ast::StmtKind::Break
+            | ast::StmtKind::Continue
+            | ast::StmtKind::DeclMulti(_, _)
+            | ast::StmtKind::DeclSingle(_)
+            | ast::StmtKind::Emit(_, _)
+            | ast::StmtKind::Expr(_)
+            | ast::StmtKind::Return(_)
+            | ast::StmtKind::Revert(_, _)
+            | ast::StmtKind::Placeholder => false,
         }
-        false
     }
 
     /// Checks if a block statement `{ ... }` should be treated as multiline,
