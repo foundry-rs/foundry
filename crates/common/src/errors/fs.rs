@@ -45,6 +45,9 @@ pub enum FsPathError {
     /// Provides additional path context for the new JSON file.
     #[error("failed to write to json file: {path:?}: {source}")]
     WriteJson { source: serde_json::Error, path: PathBuf },
+    /// Provides additional path context for the file whose contents should be decoded as gzip.
+    #[error("failed to decode gz file: {path:?}: {source}")]
+    DecodeGz { source: io::Error, path: PathBuf },
 }
 
 impl FsPathError {
@@ -119,7 +122,8 @@ impl AsRef<Path> for FsPathError {
             | Self::Lock { path, .. }
             | Self::Unlock { path, .. }
             | Self::ReadJson { path, .. }
-            | Self::WriteJson { path, .. } => path,
+            | Self::WriteJson { path, .. }
+            | Self::DecodeGz { path, .. } => path,
         }
     }
 }
@@ -137,7 +141,8 @@ impl From<FsPathError> for io::Error {
             | FsPathError::RemoveFile { source, .. }
             | FsPathError::Open { source, .. }
             | FsPathError::Lock { source, .. }
-            | FsPathError::Unlock { source, .. } => source,
+            | FsPathError::Unlock { source, .. }
+            | FsPathError::DecodeGz { source, .. } => source,
 
             FsPathError::ReadJson { source, .. } | FsPathError::WriteJson { source, .. } => {
                 source.into()
