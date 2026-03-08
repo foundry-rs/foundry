@@ -12,6 +12,7 @@ use crate::eth::{
 };
 use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
     map::{B256HashMap, HashMap},
@@ -31,7 +32,7 @@ use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxReceipt};
+use foundry_primitives::{FoundryNetwork, FoundryTxReceipt};
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -271,7 +272,7 @@ pub struct BlockchainStorage {
     pub genesis_hash: B256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
-    pub transactions: B256HashMap<MinedTransaction>,
+    pub transactions: B256HashMap<MinedTransaction<FoundryNetwork>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
 }
@@ -425,7 +426,10 @@ impl BlockchainStorage {
     }
 
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
-        self.transactions.values().map(|tx: &MinedTransaction| tx.clone().into()).collect()
+        self.transactions
+            .values()
+            .map(|tx: &MinedTransaction<FoundryNetwork>| tx.clone().into())
+            .collect()
     }
 
     /// Deserialize and add all blocks data to the backend storage
@@ -449,7 +453,8 @@ impl BlockchainStorage {
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
         for serializable_transaction in &serializable_transactions {
-            let transaction: MinedTransaction = serializable_transaction.clone().into();
+            let transaction: MinedTransaction<FoundryNetwork> =
+                serializable_transaction.clone().into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }
@@ -504,7 +509,7 @@ impl Blockchain {
         self.storage.read().blocks.get(hash).cloned()
     }
 
-    pub fn get_transaction_by_hash(&self, hash: &B256) -> Option<MinedTransaction> {
+    pub fn get_transaction_by_hash(&self, hash: &B256) -> Option<MinedTransaction<FoundryNetwork>> {
         self.storage.read().transactions.get(hash).cloned()
     }
 
@@ -528,14 +533,14 @@ pub struct MinedBlockOutcome {
 
 /// Container type for a mined transaction
 #[derive(Clone, Debug)]
-pub struct MinedTransaction {
+pub struct MinedTransaction<N: Network> {
     pub info: TransactionInfo,
-    pub receipt: FoundryReceiptEnvelope,
+    pub receipt: N::ReceiptEnvelope,
     pub block_hash: B256,
     pub block_number: u64,
 }
 
-impl MinedTransaction {
+impl<N: Network> MinedTransaction<N> {
     /// Returns the traces of the transaction for `trace_transaction`
     pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
         ParityTraceBuilder::new(

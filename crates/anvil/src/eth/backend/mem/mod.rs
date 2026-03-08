@@ -97,8 +97,8 @@ use foundry_evm::{
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_primitives::{
-    FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt,
-    get_deposit_tx_parts,
+    FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
+    FoundryTxReceipt, get_deposit_tx_parts,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
@@ -2596,7 +2596,7 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub(crate) fn mined_transaction(&self, hash: B256) -> Option<MinedTransaction> {
+    pub(crate) fn mined_transaction(&self, hash: B256) -> Option<MinedTransaction<FoundryNetwork>> {
         self.blockchain.storage.read().transactions.get(&hash).cloned()
     }
 
@@ -2836,7 +2836,7 @@ impl Backend {
 
     fn geth_trace(
         &self,
-        tx: &MinedTransaction,
+        tx: &MinedTransaction<FoundryNetwork>,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
