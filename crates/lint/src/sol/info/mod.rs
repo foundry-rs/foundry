@@ -18,6 +18,12 @@ use named_struct_fields::NAMED_STRUCT_FIELDS;
 mod unsafe_cheatcodes;
 use unsafe_cheatcodes::UNSAFE_CHEATCODE_USAGE;
 
+mod multi_contract_file;
+use multi_contract_file::MULTI_CONTRACT_FILE;
+
+mod interface_naming;
+use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
+
 register_lints!(
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
     (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
@@ -25,5 +31,7 @@ register_lints!(
     (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
     (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT)),
     (NamedStructFields, late, (NAMED_STRUCT_FIELDS)),
-    (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE))
+    (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
+    (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
+    (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING))
 );
