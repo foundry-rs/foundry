@@ -80,6 +80,16 @@ pub trait FoundryInspectorExt {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
+/// Convenience extension for downcasting `dyn FoundryInspectorExt` to concrete types.
+pub trait FoundryInspectorDowncastExt: FoundryInspectorExt {
+    /// Attempts to downcast to a concrete type `T`.
+    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.as_any_mut().downcast_mut::<T>()
+    }
+}
+
+impl<I: FoundryInspectorExt + ?Sized> FoundryInspectorDowncastExt for I {}
+
 /// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
 ///
 /// Used as a trait object (`dyn InspectorExt`) in backend code that is Eth-specific.

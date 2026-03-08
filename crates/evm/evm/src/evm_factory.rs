@@ -4,7 +4,7 @@ use crate::inspectors::InspectorStack;
 use eyre::WrapErr;
 use foundry_cheatcodes::Cheatcodes;
 use foundry_evm_core::{
-    Env, FoundryInspectorExt, InspectorExt,
+    Env, FoundryInspectorDowncastExt, FoundryInspectorExt, InspectorExt,
     backend::DatabaseExt,
     evm::{FoundryEvmFactory, new_evm_with_inspector},
 };
@@ -42,9 +42,8 @@ impl FoundryEvmFactory for EthFoundryEvmFactory {
         inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<ResultAndState> {
         let stack = inspector
-            .as_any_mut()
             .downcast_mut::<InspectorStack>()
-            .expect("EthFoundryEvmFactory::inspect requires InspectorStack");
+            .ok_or_else(|| eyre::eyre!("EthFoundryEvmFactory::inspect requires InspectorStack"))?;
         let tx = env.tx.clone();
         let mut evm = new_evm_with_inspector(db, env.to_owned(), stack);
         let res = alloy_evm::Evm::transact(&mut evm, tx).wrap_err("EVM error")?;
@@ -59,12 +58,11 @@ impl FoundryEvmFactory for EthFoundryEvmFactory {
         inspector: &mut dyn FoundryInspectorExt,
         depth: usize,
     ) -> eyre::Result<ResultAndState> {
-        let any = inspector.as_any_mut();
-        if let Some(stack) = any.downcast_mut::<InspectorStack>() {
+        if let Some(stack) = inspector.downcast_mut::<InspectorStack>() {
             Self::run_with_depth(db, env, stack, depth)
-        } else if let Some(cheats) = any.downcast_mut::<Cheatcodes>() {
+        } else if let Some(cheats) = inspector.downcast_mut::<Cheatcodes>() {
             Self::run_with_depth(db, env, cheats, depth)
-        } else if let Some(noop) = any.downcast_mut::<NoOpInspector>() {
+        } else if let Some(noop) = inspector.downcast_mut::<NoOpInspector>() {
             Self::run_with_depth(db, env, noop, depth)
         } else {
             eyre::bail!(
