@@ -5,6 +5,7 @@ use foundry_config::InvariantConfig;
 use foundry_evm_core::decode::RevertDecoder;
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
+use std::collections::BTreeMap;
 
 /// Stores information about failures and reverts of the invariant tests.
 #[derive(Clone, Default)]
@@ -15,6 +16,8 @@ pub struct InvariantFailures {
     pub revert_reason: Option<String>,
     /// Maps a broken invariant to its specific error.
     pub error: Option<InvariantFuzzError>,
+    /// Distinct handler-level assertion failures observed during the campaign.
+    pub assertion_failures: BTreeMap<String, FailedInvariantCaseData>,
 }
 
 impl InvariantFailures {
@@ -24,6 +27,12 @@ impl InvariantFailures {
 
     pub fn into_inner(self) -> (usize, Option<InvariantFuzzError>) {
         (self.reverts, self.error)
+    }
+
+    pub fn record_assertion_failure(&mut self, case_data: FailedInvariantCaseData) {
+        let key =
+            case_data.failing_handler.clone().unwrap_or_else(|| "unknown_handler".to_string());
+        self.assertion_failures.entry(key).or_insert(case_data);
     }
 }
 
@@ -65,6 +74,10 @@ pub struct FailedInvariantCaseData {
     pub shrink_run_limit: u32,
     /// Fail on revert, used to check sequence when shrinking.
     pub fail_on_revert: bool,
+    /// Fail on Solidity assert failures, used to check sequence when shrinking.
+    pub fail_on_assert: bool,
+    /// Handler function that triggered a fail-on-assert violation, when available.
+    pub failing_handler: Option<String>,
 }
 
 impl FailedInvariantCaseData {
@@ -97,6 +110,13 @@ impl FailedInvariantCaseData {
             inner_sequence: inner_sequence.to_vec(),
             shrink_run_limit: invariant_config.shrink_run_limit,
             fail_on_revert: invariant_config.fail_on_revert,
+            fail_on_assert: invariant_config.fail_on_assert,
+            failing_handler: None,
         }
+    }
+
+    pub fn with_failing_handler(mut self, failing_handler: Option<String>) -> Self {
+        self.failing_handler = failing_handler;
+        self
     }
 }
