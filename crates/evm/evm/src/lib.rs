@@ -8,9 +8,11 @@
 #[macro_use]
 extern crate tracing;
 
+pub mod evm_factory;
 pub mod executors;
 pub mod inspectors;
 
+pub use evm_factory::{EthFoundryEvmFactory, default_evm_factory};
 pub use foundry_evm_core as core;
 pub use foundry_evm_core::{
     Env, EnvMut, EvmEnv, FoundryInspectorExt, InspectorExt, backend, constants, decode, fork,

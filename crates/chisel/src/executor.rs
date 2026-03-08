@@ -205,7 +205,7 @@ impl SessionSource {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
-                let backend = Backend::spawn(fork)?;
+                let backend = Backend::spawn(fork, foundry_evm::default_evm_factory())?;
                 self.config.backend = Some(backend.clone());
                 backend
             }

@@ -401,9 +401,8 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         transaction: B256,
     ) -> eyre::Result<()> {
         let env = ecx.to_env();
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact(fork_id, transaction, env, inner, &mut inspector)
+        db.transact(fork_id, transaction, env, inner, cheats)
     }
 
     fn transact_from_tx_on_db(
@@ -413,9 +412,8 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
         let env = ecx.to_env();
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, env, inner, &mut inspector)
+        db.transact_from_tx(tx, env, inner, cheats)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {
@@ -1189,6 +1187,13 @@ impl FoundryInspectorExt for InspectorStackRefMut<'_> {
     fn create2_deployer(&self) -> Address {
         self.inner.create2_deployer
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        // InspectorStackRefMut borrows with a non-'static lifetime,
+        // so it can't implement Any. This is fine — only InspectorStack
+        // (not the RefMut wrapper) is passed to FoundryEvmFactory.
+        unimplemented!("InspectorStackRefMut is not passed to FoundryEvmFactory")
+    }
 }
 
 impl<CTX: CheatsCtxExt> Inspector<CTX> for InspectorStack
@@ -1249,6 +1254,10 @@ impl FoundryInspectorExt for InspectorStack {
 
     fn create2_deployer(&self) -> Address {
         self.create2_deployer
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 

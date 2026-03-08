@@ -2000,6 +2000,10 @@ impl FoundryInspectorExt for Cheatcodes {
     fn create2_deployer(&self) -> Address {
         self.config.evm_opts.create2_deployer
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 impl Cheatcodes {
