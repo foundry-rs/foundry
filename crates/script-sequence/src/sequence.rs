@@ -224,15 +224,15 @@ pub fn sig_to_file_name(sig: &str) -> String {
         return name.to_string();
     }
     // assume calldata if `sig` is hex
-    if let Ok(calldata) = hex::decode(sig.strip_prefix("0x").unwrap_or(sig)) {
+    let hex_sig = sig.strip_prefix("0x").unwrap_or(sig);
+    if let Ok(calldata) = hex::decode(hex_sig) {
         // in which case we return the function selector if available
         if let Some(selector) = calldata.get(..SELECTOR_LEN) {
             return hex::encode(selector);
         }
-        // fallback to original string if calldata is too short to contain selector
-        return sig.to_string();
     }
 
+    // fallback to original string if calldata is too short to contain selector or not hex
     sig.to_string()
 }
 
