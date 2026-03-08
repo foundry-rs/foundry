@@ -31,6 +31,7 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
     chain: Chain,
     provider: &P,
     etherscan_api_key: Option<&str>,
+    etherscan_api_url: Option<&str>,
 ) -> Result<(Vec<u8>, Option<Function>)> {
     if sig.trim().is_empty() {
         eyre::bail!("Function signature or calldata must be provided.")
@@ -57,7 +58,7 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
             "Function signature does not contain parentheses. If you wish to fetch function data from Etherscan, please provide an API key.",
         )?;
         let to = to.ok_or_eyre("A 'to' address must be provided to fetch function data.")?;
-        get_func_etherscan(sig, to, &args, chain, etherscan_api_key).await?
+        get_func_etherscan(sig, to, &args, chain, etherscan_api_key, etherscan_api_url).await?
     };
 
     if to.is_none() {
