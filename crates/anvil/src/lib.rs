@@ -11,7 +11,7 @@ use crate::{
         fees::{FeeHistoryService, FeeManager},
         miner::{Miner, MiningMode},
         pool::Pool,
-        sign::{DevSigner, Signer as EthSigner},
+        sign::{AnvilSigner, DevSigner},
     },
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
@@ -184,7 +184,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         _ => Miner::new(mode),
     };
 
-    let dev_signer: Box<dyn EthSigner<foundry_primitives::FoundryNetwork>> =
+    let dev_signer: Box<dyn AnvilSigner<foundry_primitives::FoundryNetwork>> =
         Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
     if let Some(genesis) = genesis {
