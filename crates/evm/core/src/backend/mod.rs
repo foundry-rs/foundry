@@ -2020,8 +2020,7 @@ fn commit_transaction(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
-        let mut db =
-            Backend::new_with_fork(fork_id, fork, journaled_state, evm_factory.clone())?;
+        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state, evm_factory.clone())?;
 
         evm_factory
             .transact_with_depth(&mut db, env.to_owned(), inspector, depth + 1)
@@ -2072,10 +2071,7 @@ fn apply_state_changeset(
 #[cfg(test)]
 mod tests {
     use crate::{
-        FoundryInspectorExt,
-        backend::Backend,
-        evm::FoundryEvmFactory,
-        fork::CreateFork,
+        FoundryInspectorExt, backend::Backend, evm::FoundryEvmFactory, fork::CreateFork,
         opts::EvmOpts,
     };
     use alloy_primitives::{U256, address};
@@ -2131,8 +2127,7 @@ mod tests {
             evm_opts,
         };
 
-        let backend =
-            Backend::spawn(Some(fork), Arc::new(StubEvmFactory)).unwrap();
+        let backend = Backend::spawn(Some(fork), Arc::new(StubEvmFactory)).unwrap();
 
         // some rng contract from etherscan
         let address = address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
