@@ -97,8 +97,8 @@ use foundry_evm::{
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_primitives::{
-    FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt,
-    get_deposit_tx_parts,
+    FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
+    FoundryTxReceipt, get_deposit_tx_parts,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
@@ -2596,7 +2596,7 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub(crate) fn mined_transaction(&self, hash: B256) -> Option<MinedTransaction> {
+    pub(crate) fn mined_transaction(&self, hash: B256) -> Option<MinedTransaction<FoundryNetwork>> {
         self.blockchain.storage.read().transactions.get(&hash).cloned()
     }
 
@@ -2836,7 +2836,7 @@ impl Backend {
 
     fn geth_trace(
         &self,
-        tx: &MinedTransaction,
+        tx: &MinedTransaction<FoundryNetwork>,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
@@ -3862,20 +3862,23 @@ pub fn transaction_build(
         }
     }
 
-    let transaction = eth_transaction.into_rpc_transaction();
-    let effective_gas_price = transaction.effective_gas_price(base_fee);
-
-    let envelope = transaction.inner;
-    let from = envelope.signer();
+    let from = eth_transaction.recover().unwrap_or_default();
+    let effective_gas_price = eth_transaction.effective_gas_price(base_fee);
 
     // if a specific hash was provided we update the transaction's hash
     // This is important for impersonated transactions since they all use the
     // `BYPASS_SIGNATURE` which would result in different hashes
     // Note: for impersonated transactions this only concerns pending transactions because
-    // there's // no `info` yet.
-    let hash = tx_hash.unwrap_or(*envelope.tx_hash());
+    // there's no `info` yet.
+    let hash = tx_hash.unwrap_or_else(|| eth_transaction.hash());
 
-    let envelope = match envelope.into_inner() {
+    // TODO: this panics for non-standard tx types (e.g. Tempo) that aren't handled above
+    // (pre-existing issue from the original `into_rpc_transaction`).
+    let eth_envelope = FoundryTxEnvelope::from(eth_transaction)
+        .try_into_eth()
+        .expect("deposit transactions are handled above");
+
+    let envelope = match eth_envelope {
         TxEnvelope::Legacy(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);

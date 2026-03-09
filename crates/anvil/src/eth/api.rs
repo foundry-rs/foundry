@@ -1535,11 +1535,8 @@ impl EthApi {
                 self.backend.mined_transactions_by_block_number(target_block.into()).await
         {
             for tx in txs {
-                if tx.from() == sender
-                    && tx.nonce() == target_nonce
-                    && let Some(mined_tx) = self.backend.transaction_by_hash(tx.tx_hash()).await?
-                {
-                    return Ok(Some(mined_tx));
+                if tx.from() == sender && tx.nonce() == target_nonce {
+                    return Ok(Some(tx));
                 }
             }
         }

@@ -2,14 +2,15 @@
 
 use alloy_consensus::{Transaction, TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network::{AnyTransactionReceipt, Network, TransactionResponse};
+use alloy_network::{
+    AnyTransactionReceipt, Ethereum, Network, TransactionBuilder7702, TransactionResponse,
+};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{
     Provider,
     network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
 };
 use alloy_rpc_types::{BlockId, TransactionRequest};
-use alloy_serde::WithOtherFields;
 use eyre::Result;
 use foundry_common_fmt::{UIfmt, UIfmtReceiptExt, get_pretty_receipt_attr};
 use serde::{Deserialize, Serialize};
@@ -160,25 +161,28 @@ where
 /// or a [`TxEnvelope`], already signed
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum TransactionMaybeSigned {
+pub enum TransactionMaybeSigned<N: Network = Ethereum> {
     Signed {
         #[serde(flatten)]
-        tx: TxEnvelope,
+        tx: N::TxEnvelope,
         from: Address,
     },
-    Unsigned(WithOtherFields<TransactionRequest>),
+    Unsigned(N::TransactionRequest),
 }
 
-impl TransactionMaybeSigned {
+impl<N: Network> TransactionMaybeSigned<N> {
     /// Creates a new (unsigned) transaction for broadcast
-    pub fn new(tx: WithOtherFields<TransactionRequest>) -> Self {
+    pub fn new(tx: N::TransactionRequest) -> Self {
         Self::Unsigned(tx)
     }
 
     /// Creates a new signed transaction for broadcast.
     pub fn new_signed(
-        tx: TxEnvelope,
-    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError> {
+        tx: N::TxEnvelope,
+    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError>
+    where
+        N::TxEnvelope: SignerRecoverable,
+    {
         let from = tx.recover_signer()?;
         Ok(Self::Signed { tx, from })
     }
@@ -187,7 +191,7 @@ impl TransactionMaybeSigned {
         matches!(self, Self::Unsigned(_))
     }
 
-    pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {
+    pub fn as_unsigned_mut(&mut self) -> Option<&mut N::TransactionRequest> {
         match self {
             Self::Unsigned(tx) => Some(tx),
             _ => None,
@@ -197,28 +201,28 @@ impl TransactionMaybeSigned {
     pub fn from(&self) -> Option<Address> {
         match self {
             Self::Signed { from, .. } => Some(*from),
-            Self::Unsigned(tx) => tx.from,
+            Self::Unsigned(tx) => tx.from(),
         }
     }
 
     pub fn input(&self) -> Option<&Bytes> {
         match self {
             Self::Signed { tx, .. } => Some(tx.input()),
-            Self::Unsigned(tx) => tx.input.input(),
+            Self::Unsigned(tx) => tx.input(),
         }
     }
 
     pub fn to(&self) -> Option<TxKind> {
         match self {
             Self::Signed { tx, .. } => Some(tx.kind()),
-            Self::Unsigned(tx) => tx.to,
+            Self::Unsigned(tx) => tx.kind(),
         }
     }
 
     pub fn value(&self) -> Option<U256> {
         match self {
             Self::Signed { tx, .. } => Some(tx.value()),
-            Self::Unsigned(tx) => tx.value,
+            Self::Unsigned(tx) => tx.value(),
         }
     }
 
@@ -232,14 +236,17 @@ impl TransactionMaybeSigned {
     pub fn nonce(&self) -> Option<u64> {
         match self {
             Self::Signed { tx, .. } => Some(tx.nonce()),
-            Self::Unsigned(tx) => tx.nonce,
+            Self::Unsigned(tx) => tx.nonce(),
         }
     }
 
-    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>> {
+    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>>
+    where
+        N::TransactionRequest: TransactionBuilder7702,
+    {
         match self {
             Self::Signed { tx, .. } => tx.authorization_list().map(|auths| auths.to_vec()),
-            Self::Unsigned(tx) => tx.authorization_list.as_deref().map(|auths| auths.to_vec()),
+            Self::Unsigned(tx) => tx.authorization_list().map(|auths| auths.to_vec()),
         }
         .filter(|auths| !auths.is_empty())
     }
@@ -247,7 +254,7 @@ impl TransactionMaybeSigned {
 
 impl From<TransactionRequest> for TransactionMaybeSigned {
     fn from(tx: TransactionRequest) -> Self {
-        Self::new(WithOtherFields::new(tx))
+        Self::new(tx)
     }
 }
 

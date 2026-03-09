@@ -13,6 +13,7 @@ use foundry_cli::{
     opts::TransactionOpts,
     utils::{LoadConfig, get_provider},
 };
+use foundry_primitives::FoundryNetwork;
 
 use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
 
@@ -139,7 +140,7 @@ impl SendTxArgs {
         let is_tempo = builder.is_tempo();
 
         // Launch browser signer if `--browser` flag is set
-        let browser = send_tx.browser.run().await?;
+        let browser = send_tx.browser.run::<FoundryNetwork>().await?;
 
         // Tempo transactions with browser signer are not supported
         if is_tempo && browser.is_some() {
@@ -189,7 +190,7 @@ impl SendTxArgs {
             // Browser wallet work differently as it sign and send the transaction in one step.
             if let Some(browser) = browser {
                 let (tx_request, _) = builder.build(browser.address()).await?;
-                let tx_hash = browser.send_transaction_via_browser(tx_request.into_inner()).await?;
+                let tx_hash = browser.send_transaction_via_browser(tx_request.into()).await?;
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;

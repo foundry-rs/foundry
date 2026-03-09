@@ -17,9 +17,9 @@ pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
         Data::Struct(s) if name_s.ends_with("Call") => derive_call(name, s, &input.attrs),
         Data::Struct(_) if name_s.ends_with("Return") => Ok(TokenStream::new()),
         Data::Struct(s) => derive_struct(name, s, &input.attrs),
-        Data::Enum(e) if name_s.ends_with("Calls") => derive_calls_enum(name, e),
-        Data::Enum(e) if name_s.ends_with("Errors") => derive_errors_events_enum(name, e, false),
-        Data::Enum(e) if name_s.ends_with("Events") => derive_errors_events_enum(name, e, true),
+        Data::Enum(e) if name_s.ends_with("Calls") => derive_calls_enum(e),
+        Data::Enum(e) if name_s.ends_with("Errors") => derive_errors_events_enum(e, false),
+        Data::Enum(e) if name_s.ends_with("Events") => derive_errors_events_enum(e, true),
         Data::Enum(e) => derive_enum(name, e, &input.attrs),
         Data::Union(_) => Err(Error::new(name.span(), "unions are not supported")),
     }
@@ -107,21 +107,21 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     })
 }
 
-/// Generates the `CHEATCODES` constant and implements `CheatcodeImpl` dispatch for an enum.
-fn derive_calls_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
-    if input.variants.iter().any(|v| v.fields.len() != 1) {
-        return Err(syn::Error::new(name.span(), "expected all variants to have a single field"));
+fn sorted_variant_types(input: &syn::DataEnum) -> Result<Vec<&syn::Type>> {
+    if let Some(v) = input.variants.iter().find(|v| v.fields.len() != 1) {
+        return Err(syn::Error::new(v.ident.span(), "expected variant to have a single field"));
     }
 
-    // keep original order for matching
+    let mut variants: Vec<_> = input.variants.iter().collect();
+    variants.sort_by_key(|v| &v.ident);
+    Ok(variants.into_iter().map(|v| &v.fields.iter().next().unwrap().ty).collect())
+}
+
+/// Generates the `CHEATCODES` constant and implements `CheatcodeImpl` dispatch for an enum.
+fn derive_calls_enum(input: &syn::DataEnum) -> Result<TokenStream> {
+    let variant_tys = sorted_variant_types(input)?;
     let variant_names = input.variants.iter().map(|v| &v.ident);
 
-    let mut variants = input.variants.iter().collect::<Vec<_>>();
-    variants.sort_by(|a, b| a.ident.cmp(&b.ident));
-    let variant_tys = variants.iter().map(|v| {
-        assert_eq!(v.fields.len(), 1);
-        &v.fields.iter().next().unwrap().ty
-    });
     Ok(quote! {
         /// All the cheatcodes in [this contract](self).
         pub const CHEATCODES: &'static [&'static Cheatcode<'static>] = &[#(<#variant_tys as CheatcodeDef>::CHEATCODE,)*];
@@ -137,14 +137,8 @@ fn derive_calls_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream>
     })
 }
 
-fn derive_errors_events_enum(
-    name: &Ident,
-    input: &syn::DataEnum,
-    events: bool,
-) -> Result<TokenStream> {
-    if input.variants.iter().any(|v| v.fields.len() != 1) {
-        return Err(syn::Error::new(name.span(), "expected all variants to have a single field"));
-    }
+fn derive_errors_events_enum(input: &syn::DataEnum, events: bool) -> Result<TokenStream> {
+    let variant_tys = sorted_variant_types(input)?;
 
     let (ident, ty_assoc_name, ty, doc) = if events {
         ("VM_EVENTS", "EVENT", "Event", "events")
@@ -156,12 +150,6 @@ fn derive_errors_events_enum(
     let ty = Ident::new(ty, Span::call_site());
     let doc = format!("All the {doc} in [this contract](self).");
 
-    let mut variants = input.variants.iter().collect::<Vec<_>>();
-    variants.sort_by(|a, b| a.ident.cmp(&b.ident));
-    let variant_tys = variants.iter().map(|v| {
-        assert_eq!(v.fields.len(), 1);
-        &v.fields.iter().next().unwrap().ty
-    });
     Ok(quote! {
         #[doc = #doc]
         pub const #ident: &'static [&'static #ty<'static>] = &[#(#variant_tys::#ty_assoc_name,)*];

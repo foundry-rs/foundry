@@ -2,20 +2,25 @@ use super::transaction::TransactionInfo;
 use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root,
 };
-use foundry_primitives::FoundryReceiptEnvelope;
+use alloy_eips::eip2718::Encodable2718;
+use alloy_network::Network;
+use foundry_primitives::FoundryNetwork;
+use std::fmt::Debug;
 
-// Type alias to optionally support impersonated transactions
-type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
+use crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Type alias for Ethereum Block with Anvil's transaction type
-pub type Block = alloy_consensus::Block<Transaction>;
+pub type Block = alloy_consensus::Block<MaybeImpersonatedTransaction>;
 
-/// Container type that gathers all block data
+/// Anvil's concrete block info type.
+pub type BlockInfo = TypedBlockInfo<FoundryNetwork>;
+
+/// Container type that gathers all block data, generic over a [`Network`].
 #[derive(Clone, Debug)]
-pub struct BlockInfo {
-    pub block: Block,
+pub struct TypedBlockInfo<N: Network> {
+    pub block: alloy_consensus::Block<MaybeImpersonatedTransaction<N::TxEnvelope>>,
     pub transactions: Vec<TransactionInfo>,
-    pub receipts: Vec<FoundryReceiptEnvelope>,
+    pub receipts: Vec<N::ReceiptEnvelope>,
 }
 
 /// Helper function to create a new block with Header and Anvil transactions
@@ -24,7 +29,7 @@ pub struct BlockInfo {
 /// `MaybeImpersonatedTransaction`.
 pub fn create_block<T>(mut header: Header, transactions: impl IntoIterator<Item = T>) -> Block
 where
-    T: Into<Transaction>,
+    T: Into<MaybeImpersonatedTransaction>,
 {
     let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
     let transactions_root = calculate_transaction_root(&transactions);
@@ -34,6 +39,24 @@ where
 
     let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
     Block::new(header, body)
+}
+
+/// Generic helper function to create a block with any transaction type that supports encoding.
+pub fn create_typed_block<T>(
+    mut header: Header,
+    transactions: impl IntoIterator<Item = T>,
+) -> alloy_consensus::Block<T>
+where
+    T: Encodable2718,
+{
+    let transactions: Vec<_> = transactions.into_iter().collect();
+    let transactions_root = calculate_transaction_root(&transactions);
+
+    header.transactions_root = transactions_root;
+    header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
+
+    let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
+    alloy_consensus::Block::new(header, body)
 }
 
 #[cfg(test)]

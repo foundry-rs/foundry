@@ -3,14 +3,14 @@ use alloy_consensus::{
     TxLegacy, TxType, Typed2718,
     crypto::RecoveryError,
     transaction::{
-        TxEip7702,
+        SignerRecoverable, TxEip7702, TxHashRef,
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
     },
 };
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, ChainId, TxHash};
-use alloy_rlp::{BufMut, Encodable};
+use alloy_rlp::BufMut;
 use alloy_rpc_types::ConversionError;
 use alloy_signer::Signature;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
@@ -107,16 +107,6 @@ impl FoundryTxEnvelope {
         }
     }
 
-    /// Returns the hash if the transaction is impersonated (using a fake signature)
-    ///
-    /// This appends the `address` before hashing it
-    pub fn impersonated_hash(&self, sender: Address) -> B256 {
-        let mut buffer = Vec::new();
-        Encodable::encode(self, &mut buffer);
-        buffer.extend_from_slice(sender.as_ref());
-        B256::from_slice(alloy_primitives::utils::keccak256(&buffer).as_slice())
-    }
-
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, RecoveryError> {
         Ok(match self {
@@ -128,6 +118,30 @@ impl FoundryTxEnvelope {
             Self::Deposit(tx) => tx.from,
             Self::Tempo(tx) => tx.signature().recover_signer(&tx.signature_hash())?,
         })
+    }
+}
+
+impl TxHashRef for FoundryTxEnvelope {
+    fn tx_hash(&self) -> &TxHash {
+        match self {
+            Self::Legacy(t) => t.hash(),
+            Self::Eip2930(t) => t.hash(),
+            Self::Eip1559(t) => t.hash(),
+            Self::Eip4844(t) => t.hash(),
+            Self::Eip7702(t) => t.hash(),
+            Self::Deposit(t) => t.hash_ref(),
+            Self::Tempo(t) => t.hash(),
+        }
+    }
+}
+
+impl SignerRecoverable for FoundryTxEnvelope {
+    fn recover_signer(&self) -> Result<Address, RecoveryError> {
+        self.recover()
+    }
+
+    fn recover_signer_unchecked(&self) -> Result<Address, RecoveryError> {
+        self.recover()
     }
 }
 

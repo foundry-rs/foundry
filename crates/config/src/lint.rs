@@ -3,7 +3,10 @@
 use clap::ValueEnum;
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
-use solar::interface::diagnostics::Level;
+use solar::{
+    ast::{self as ast},
+    interface::diagnostics::Level,
+};
 use std::str::FromStr;
 use yansi::Paint;
 
@@ -26,11 +29,8 @@ pub struct LinterConfig {
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
 
-    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
-    ///
-    /// Defaults to common abbreviations: `ERC`, `URI`, `ID`, `URL`, `API`, `JSON`, `XML`, `HTML`,
-    /// `HTTP`, `HTTPS`. This allows names like `marketID`, `tokenURI`, `apiURL`, `parseJSON`, etc.
-    pub mixed_case_exceptions: Vec<String>,
+    /// Configuration specific to individual lints.
+    pub lint_specific: LintSpecificConfig,
 }
 
 impl Default for LinterConfig {
@@ -40,6 +40,42 @@ impl Default for LinterConfig {
             severity: vec![Severity::High, Severity::Med, Severity::Low],
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
+            lint_specific: LintSpecificConfig::default(),
+        }
+    }
+}
+
+/// Contract types that can be exempted from the multi-contract-file lint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContractException {
+    Interface,
+    Library,
+    AbstractContract,
+}
+
+/// Configuration specific to individual lints.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LintSpecificConfig {
+    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    ///
+    /// Defaults to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
+    /// or `tokenURI`.
+    pub mixed_case_exceptions: Vec<String>,
+
+    /// Contract types that are allowed to appear multiple times in the same file.
+    ///
+    /// Valid values: "interface", "library", "abstract_contract"
+    ///
+    /// Defaults to an empty array (all contract types are flagged when multiple exist).
+    /// Note: Regular contracts cannot be exempted and will always be flagged when multiple exist.
+    pub multi_contract_file_exceptions: Vec<ContractException>,
+}
+
+impl Default for LintSpecificConfig {
+    fn default() -> Self {
+        Self {
             mixed_case_exceptions: vec![
                 "ERC".to_string(),
                 "URI".to_string(),
@@ -52,7 +88,23 @@ impl Default for LinterConfig {
                 "HTTP".to_string(),
                 "HTTPS".to_string(),
             ],
+            multi_contract_file_exceptions: Vec::new(),
         }
+    }
+}
+
+impl LintSpecificConfig {
+    /// Checks if a given contract kind is included in the list of exceptions
+    pub fn is_exempted(&self, contract_kind: &ast::ContractKind) -> bool {
+        let exception_to_check = match contract_kind {
+            ast::ContractKind::Interface => ContractException::Interface,
+            ast::ContractKind::Library => ContractException::Library,
+            ast::ContractKind::AbstractContract => ContractException::AbstractContract,
+            // Regular contracts are always linted
+            ast::ContractKind::Contract => return false,
+        };
+
+        self.multi_contract_file_exceptions.contains(&exception_to_check)
     }
 }
 

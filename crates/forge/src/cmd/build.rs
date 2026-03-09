@@ -154,7 +154,7 @@ impl BuildArgs {
                             .collect(),
                     )
                 })
-                .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
+                .with_lint_specific(&config.lint.lint_specific);
 
             // Expand ignore globs and canonicalize from the get go
             let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
