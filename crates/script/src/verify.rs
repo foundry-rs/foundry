@@ -119,6 +119,7 @@ impl VerifyBundle {
 
                 if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
+                    return None;
                 }
 
                 // Strip artifact profile from contract name when creating contract info.

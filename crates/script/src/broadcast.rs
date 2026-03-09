@@ -11,7 +11,6 @@ use alloy_primitives::{
 };
 use alloy_provider::{Provider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
-use alloy_serde::WithOtherFields;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
@@ -22,6 +21,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::Config;
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 
@@ -31,7 +31,7 @@ use crate::{
 };
 
 pub async fn estimate_gas<P: Provider<AnyNetwork>>(
-    tx: &mut WithOtherFields<TransactionRequest>,
+    tx: &mut TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
 ) -> Result<()> {
@@ -40,7 +40,7 @@ pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
+        provider.estimate_gas(tx.clone().into()).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
             / 100,
     );
@@ -62,8 +62,9 @@ pub async fn next_nonce(
 /// Represents how to send a single transaction.
 #[derive(Clone)]
 pub enum SendTransactionKind<'a> {
-    Unlocked(WithOtherFields<TransactionRequest>),
-    Raw(WithOtherFields<TransactionRequest>, &'a EthereumWallet),
+    Unlocked(TransactionRequest),
+    Raw(TransactionRequest, &'a EthereumWallet),
+    Browser(TransactionRequest, &'a BrowserSigner),
     Signed(TxEnvelope),
 }
 
@@ -82,7 +83,7 @@ impl<'a> SendTransactionKind<'a> {
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
     ) -> Result<()> {
-        if let Self::Raw(tx, _) | Self::Unlocked(tx) = self {
+        if let Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) = self {
             if sequential_broadcast {
                 let from = tx.from.expect("no sender");
 
@@ -131,27 +132,34 @@ impl<'a> SendTransactionKind<'a> {
     /// - Sign and submit via `eth_sendRawTransaction` for raw transactions
     /// - Submit pre-signed transaction via `eth_sendRawTransaction`
     pub async fn send(self, provider: Arc<RetryProvider>) -> Result<TxHash> {
-        let pending = match self {
+        match self {
             Self::Unlocked(tx) => {
                 debug!("sending transaction from unlocked account {:?}", tx);
 
                 // Submit the transaction
-                provider.send_transaction(tx).await?
+                let pending = provider.send_transaction(tx.into()).await?;
+                Ok(*pending.tx_hash())
             }
             Self::Raw(tx, signer) => {
                 debug!("sending transaction: {:?}", tx);
                 let signed = tx.build(signer).await?;
 
                 // Submit the raw transaction
-                provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
+                let pending = provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?;
+                Ok(*pending.tx_hash())
             }
             Self::Signed(tx) => {
                 debug!("sending transaction: {:?}", tx);
-                provider.send_raw_transaction(tx.encoded_2718().as_ref()).await?
+                let pending = provider.send_raw_transaction(tx.encoded_2718().as_ref()).await?;
+                Ok(*pending.tx_hash())
             }
-        };
+            Self::Browser(tx, signer) => {
+                debug!("sending transaction: {:?}", tx);
 
-        Ok(*pending.tx_hash())
+                // Sign and send the transaction via the browser wallet
+                Ok(signer.send_transaction_via_browser(tx).await?)
+            }
+        }
     }
 
     /// Prepares and sends the transaction in one operation.
@@ -183,8 +191,8 @@ impl<'a> SendTransactionKind<'a> {
 pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(AddressHashSet),
-    /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(AddressHashMap<EthereumWallet>),
+    /// Send a signed transaction via `eth_sendRawTransaction`, or via browser
+    Raw { eth_wallets: AddressHashMap<EthereumWallet>, browser: Option<BrowserSigner> },
 }
 
 impl SendTransactionsKind {
@@ -194,7 +202,7 @@ impl SendTransactionsKind {
     pub fn for_sender(
         &self,
         addr: &Address,
-        tx: WithOtherFields<TransactionRequest>,
+        tx: TransactionRequest,
     ) -> Result<SendTransactionKind<'_>> {
         match self {
             Self::Unlocked(unlocked) => {
@@ -203,9 +211,13 @@ impl SendTransactionsKind {
                 }
                 Ok(SendTransactionKind::Unlocked(tx))
             }
-            Self::Raw(wallets) => {
-                if let Some(wallet) = wallets.get(addr) {
+            Self::Raw { eth_wallets, browser } => {
+                if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
+                } else if let Some(b) = browser
+                    && b.address() == *addr
+                {
+                    Ok(SendTransactionKind::Browser(tx, b))
                 } else {
                     bail!("No matching signer for {:?} found", addr)
                 }
@@ -282,11 +294,12 @@ impl BundledState {
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
-            let signers = self.script_wallets.into_multi_wallet().into_signers()?;
+            let signers: Vec<Address> =
+                self.script_wallets.signers().map_err(|e| eyre::eyre!("{e}"))?;
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
-                if !signers.contains_key(addr) {
+                if !signers.contains(addr) {
                     missing_addresses.push(addr);
                 }
             }
@@ -295,16 +308,15 @@ impl BundledState {
                 eyre::bail!(
                     "No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
                     missing_addresses,
-                    signers.keys().collect::<Vec<_>>()
+                    signers
                 );
             }
 
-            let signers = signers
-                .into_iter()
-                .map(|(addr, signer)| (addr, EthereumWallet::new(signer)))
-                .collect();
+            let (signers, browser) = self.script_wallets.into_multi_wallet().into_signers()?;
+            let eth_wallets =
+                signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
 
-            SendTransactionsKind::Raw(signers)
+            SendTransactionsKind::Raw { eth_wallets, browser }
         };
 
         let progress = ScriptProgress::default();
@@ -504,8 +516,10 @@ impl BundledState {
                     (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
                 });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
-                .unwrap_or_else(|_| "N/A".to_string());
+            let avg_gas_price = total_gas_price
+                .checked_div(sequence.receipts.len() as u64)
+                .and_then(|avg| format_units(avg, 9).ok())
+                .unwrap_or_else(|| "N/A".to_string());
 
             let token_symbol = NamedChain::try_from(sequence.chain)
                 .unwrap_or_default()

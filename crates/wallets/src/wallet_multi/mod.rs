@@ -1,7 +1,10 @@
 use crate::{
+    BrowserWalletOpts,
     signer::{PendingSigner, WalletSigner},
     utils,
+    wallet_browser::signer::BrowserSigner,
 };
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::map::AddressHashMap;
 use alloy_signer::Signer;
 use clap::Parser;
@@ -12,19 +15,35 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 /// Container for multiple wallets.
-#[derive(Debug, Default)]
-pub struct MultiWallet {
+#[derive(Debug)]
+pub struct MultiWallet<N: Network = Ethereum> {
     /// Vector of wallets that require an action to be unlocked.
     /// Those are lazily unlocked on the first access of the signers.
     pending_signers: Vec<PendingSigner>,
     /// Contains unlocked signers.
     signers: AddressHashMap<WalletSigner>,
+    /// Browser signer
+    browser: Option<BrowserSigner<N>>,
 }
 
-impl MultiWallet {
-    pub fn new(pending_signers: Vec<PendingSigner>, signers: Vec<WalletSigner>) -> Self {
+impl<N: Network> Default for MultiWallet<N> {
+    fn default() -> Self {
+        Self {
+            pending_signers: Default::default(),
+            signers: Default::default(),
+            browser: Default::default(),
+        }
+    }
+}
+
+impl<N: Network> MultiWallet<N> {
+    pub fn new(
+        pending_signers: Vec<PendingSigner>,
+        signers: Vec<WalletSigner>,
+        browser: Option<BrowserSigner<N>>,
+    ) -> Self {
         let signers = signers.into_iter().map(|signer| (signer.address(), signer)).collect();
-        Self { pending_signers, signers }
+        Self { pending_signers, signers, browser }
     }
 
     fn maybe_unlock_pending(&mut self) -> Result<()> {
@@ -35,14 +54,18 @@ impl MultiWallet {
         Ok(())
     }
 
-    pub fn signers(&mut self) -> Result<&AddressHashMap<WalletSigner>> {
+    pub fn signers(
+        &mut self,
+    ) -> Result<(&AddressHashMap<WalletSigner>, Option<&BrowserSigner<N>>)> {
         self.maybe_unlock_pending()?;
-        Ok(&self.signers)
+        Ok((&self.signers, self.browser.as_ref()))
     }
 
-    pub fn into_signers(mut self) -> Result<AddressHashMap<WalletSigner>> {
+    pub fn into_signers(
+        mut self,
+    ) -> Result<(AddressHashMap<WalletSigner>, Option<BrowserSigner<N>>)> {
         self.maybe_unlock_pending()?;
-        Ok(self.signers)
+        Ok((self.signers, self.browser))
     }
 
     pub fn add_signer(&mut self, signer: WalletSigner) {
@@ -229,13 +252,18 @@ pub struct MultiWalletOpts {
     /// See: <https://docs.turnkey.com/getting-started/quickstart>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
     pub turnkey: bool,
+
+    /// Browser wallet options
+    #[command(flatten)]
+    pub browser: BrowserWalletOpts,
 }
 
 impl MultiWalletOpts {
     /// Returns [MultiWallet] container configured with provided options.
-    pub async fn get_multi_wallet(&self) -> Result<MultiWallet> {
+    pub async fn get_multi_wallet<N: Network>(&self) -> Result<MultiWallet<N>> {
         let mut pending = Vec::new();
         let mut signers: Vec<WalletSigner> = Vec::new();
+        let browser = self.browser_signer().await?;
 
         if let Some(ledgers) = self.ledgers().await? {
             signers.extend(ledgers);
@@ -272,7 +300,7 @@ impl MultiWalletOpts {
             ));
         }
 
-        Ok(MultiWallet::new(pending, signers))
+        Ok(MultiWallet::new(pending, signers, browser))
     }
 
     pub fn private_keys(&self) -> Result<Option<Vec<WalletSigner>>> {
@@ -486,6 +514,11 @@ impl MultiWalletOpts {
         }
 
         None
+    }
+
+    /// Launches and returns the Browser signer if `--browser` flag is set
+    pub async fn browser_signer<N: Network>(&self) -> Result<Option<BrowserSigner<N>>> {
+        self.browser.run().await
     }
 }
 

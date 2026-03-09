@@ -205,6 +205,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         let comment_range = result.data;
         let src = file.src.as_str();
 
+        #[allow(clippy::collapsible_match)]
         match item {
             InlineConfigItem::DisableNextItem(ids) => {
                 if let Some(next_item) = find_next_item(span.hi()) {

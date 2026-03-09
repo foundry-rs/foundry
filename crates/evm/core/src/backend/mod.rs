@@ -11,14 +11,16 @@ use crate::{
 use alloy_consensus::Typed2718;
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
-use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
+use alloy_network::{
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, TransactionResponse,
+};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
 use alloy_rpc_types::{BlockNumberOrTag, Transaction, TransactionRequest};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
-    Database, DatabaseCommit, JournalEntry,
+    Database, DatabaseCommit, Journal, JournalEntry,
     bytecode::Bytecode,
     context::JournalInner,
     context_interface::{
@@ -26,7 +28,7 @@ use revm::{
         result::ResultAndState,
     },
     database::{CacheDB, DatabaseRef},
-    inspector::NoOpInspector,
+    inspector::{JournalExt, NoOpInspector},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -274,11 +276,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
     /// the contract is deployed there.
     ///
     /// Returns a more useful error message if that's the case
-    fn diagnose_revert(
-        &self,
-        callee: Address,
-        journaled_state: &JournaledState,
-    ) -> Option<RevertDiagnostic>;
+    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic>;
 
     /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
     ///
@@ -382,6 +380,38 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
 
 struct _ObjectSafe(dyn DatabaseExt);
 
+/// Extension trait for [`Journal`] providing borrow splitting and state replacement.
+///
+/// Generic code accesses the journal via `ctx.journal_mut()` which returns `&mut impl JournalTr`.
+/// This trait adds the ability to split the journal into its database and inner state components,
+/// enabling direct [`DatabaseExt`] method calls with zero-copy borrow splitting.
+pub trait FoundryJournalExt: JournalExt {
+    /// Returns mutable references to the database and journal inner state.
+    ///
+    /// Enables calling [`DatabaseExt`] methods directly, e.g.:
+    /// ```ignore
+    /// let (journal, env) = ctx.journal_and_env_mut();  // FoundryContextExt
+    /// let (db, inner) = journal.as_db_and_inner();     // FoundryJournalExt
+    /// db.select_fork(id, &env, inner)?;                // DatabaseExt
+    /// ```
+    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState);
+
+    /// Replaces the journal inner state.
+    ///
+    /// Used by sub-EVM execution to write back modified state after running a closure.
+    fn set_inner(&mut self, inner: JournaledState);
+}
+
+impl<DB: DatabaseExt> FoundryJournalExt for Journal<DB, JournalEntry> {
+    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState) {
+        (&mut self.database, &mut self.inner)
+    }
+
+    fn set_inner(&mut self, inner: JournaledState) {
+        self.inner = inner;
+    }
+}
+
 /// Provides the underlying `revm::Database` implementation.
 ///
 /// A `Backend` can be initialised in two forms:
@@ -438,7 +468,7 @@ struct _ObjectSafe(dyn DatabaseExt);
 #[must_use]
 pub struct Backend {
     /// The access point for managing forks
-    forks: MultiFork,
+    forks: MultiFork<AnyNetwork>,
     // The default in memory db
     mem_db: FoundryEvmInMemoryDB,
     /// The journaled_state to use to initialize new forks with
@@ -481,7 +511,7 @@ impl Backend {
     /// database.
     ///
     /// Prefer using [`spawn`](Self::spawn) instead.
-    pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> eyre::Result<Self> {
+    pub fn new(forks: MultiFork<AnyNetwork>, fork: Option<CreateFork>) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
         let inner = BackendInner {
@@ -902,7 +932,7 @@ impl Backend {
             trace!(tx=?tx.tx_hash(), "committing transaction");
 
             commit_transaction(
-                &tx.inner,
+                tx,
                 &mut env.as_env_mut(),
                 journaled_state,
                 fork,
@@ -1296,7 +1326,7 @@ impl DatabaseExt for Backend {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
-            &tx.inner,
+            &tx,
             &mut env.as_env_mut(),
             journaled_state,
             fork,
@@ -1318,7 +1348,7 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            configure_tx_req_env(&mut env.as_env_mut(), tx, None)?;
+            configure_tx_req_env(&mut env.as_env_mut(), tx)?;
 
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
@@ -1355,11 +1385,7 @@ impl DatabaseExt for Backend {
         self.inner.ensure_fork_id(id)
     }
 
-    fn diagnose_revert(
-        &self,
-        callee: Address,
-        journaled_state: &JournaledState,
-    ) -> Option<RevertDiagnostic> {
+    fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
 
@@ -1369,7 +1395,7 @@ impl DatabaseExt for Backend {
             return None;
         }
 
-        if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
+        if !active_fork.is_contract(callee) && !is_contract_in_state(evm_state, callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
             for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
@@ -1606,7 +1632,7 @@ impl Fork {
         {
             return true;
         }
-        is_contract_in_state(&self.journaled_state, acc)
+        is_contract_in_state(&self.journaled_state.state, acc)
     }
 }
 
@@ -1936,12 +1962,8 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 }
 
 /// Returns true of the address is a contract
-fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool {
-    journaled_state
-        .state
-        .get(&acc)
-        .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
-        .unwrap_or_default()
+fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
+    evm_state.get(&acc).map(|acc| acc.info.code_hash != KECCAK_EMPTY).unwrap_or_default()
 }
 
 /// Updates the env's block with the block's data
@@ -1965,7 +1987,7 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
 fn commit_transaction(
-    tx: &Transaction<AnyTxEnvelope>,
+    tx: &AnyRpcTransaction,
     env: &mut EnvMut<'_>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,

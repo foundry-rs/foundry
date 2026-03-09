@@ -135,7 +135,7 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_cli::utils::get_provider_builder(&config, false)?
+        let provider = foundry_cli::utils::get_provider_builder(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
             .build()?;
 
@@ -259,7 +259,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+                    configure_tx_env(&mut env.as_env_mut(), tx);
 
                     env.evm_env.cfg_env.disable_balance_check = true;
 
@@ -300,8 +300,8 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env.as_env_mut(), &tx.inner);
-            if is_impersonated_tx(tx.inner.inner.inner()) {
+            configure_tx_env(&mut env.as_env_mut(), &tx);
+            if is_impersonated_tx(tx.as_ref()) {
                 env.evm_env.cfg_env.disable_balance_check = true;
             }
 

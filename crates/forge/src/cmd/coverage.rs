@@ -137,13 +137,14 @@ impl CoverageArgs {
                  which can result in inaccurate source mappings.\n\
                  Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
                  Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
-                 See more: https://github.com/foundry-rs/foundry/issues/3357"
+                 See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
             )?;
         } else {
             sh_warn!(
                 "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
                  If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
-                 enables `viaIR` with minimum optimization resolving most of the errors"
+                 enables `viaIR` with minimum optimization resolving most of the errors.\n\
+                 See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
             )?;
         }
 
@@ -254,7 +255,7 @@ impl CoverageArgs {
         let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
 
         // Add hit data to the coverage report
-        let data = outcome.results.iter().flat_map(|(_, suite)| {
+        let data = outcome.results.values().flat_map(|suite| {
             let mut hits = Vec::new();
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.line_coverage.as_ref() else { continue };

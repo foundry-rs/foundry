@@ -4,7 +4,9 @@ use std::{
 };
 
 use crate::{
-    Env, InspectorExt, backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    Env, FoundryContextExt, InspectorExt,
+    backend::{DatabaseExt, FoundryJournalExt, JournaledState},
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
@@ -50,25 +52,6 @@ pub fn new_evm_with_inspector<'db, I: InspectorExt>(
         error: Ok(()),
     };
     ctx.cfg.tx_chain_id_check = true;
-    let spec = ctx.cfg.spec;
-
-    let mut evm = FoundryEvm {
-        inner: RevmEvm::new_with_inspector(
-            ctx,
-            inspector,
-            EthInstructions::default(),
-            get_precompiles(spec),
-        ),
-    };
-
-    evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
-    evm
-}
-
-pub fn new_evm_with_existing_context<'a>(
-    ctx: EthEvmContext<&'a mut dyn DatabaseExt>,
-    inspector: &'a mut dyn InspectorExt,
-) -> FoundryEvm<'a, &'a mut dyn InspectorExt> {
     let spec = ctx.cfg.spec;
 
     let mut evm = FoundryEvm {
@@ -252,6 +235,86 @@ impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
     }
 }
 
+/// Object-safe trait exposing the operations that cheatcode nested EVM closures need.
+///
+/// This abstracts over the concrete EVM type (`FoundryEvm`, future `TempoEvm`, etc.)
+/// so that cheatcode impls can build and run nested EVMs without knowing the concrete type.
+pub trait NestedEvm {
+    /// Returns a mutable reference to the journal inner state (`JournaledState`).
+    fn journal_inner_mut(&mut self) -> &mut JournaledState;
+
+    /// Runs a single execution frame (create or call) through the EVM handler loop.
+    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
+
+    /// Executes a full transaction with the given `TxEnv`.
+    fn transact(
+        &mut self,
+        tx: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
+
+    /// Returns a snapshot of the current environment (cfg, block, tx).
+    fn to_env(&self) -> Env;
+}
+
+impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
+    fn journal_inner_mut(&mut self) -> &mut JournaledState {
+        &mut self.inner.ctx.journaled_state.inner
+    }
+
+    fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
+        FoundryEvm::run_execution(self, frame)
+    }
+
+    fn transact(
+        &mut self,
+        tx: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
+        Evm::transact_raw(self, tx)
+    }
+
+    fn to_env(&self) -> Env {
+        Env {
+            evm_env: EvmEnv {
+                cfg_env: self.inner.ctx.cfg.clone(),
+                block_env: self.inner.ctx.block.clone(),
+            },
+            tx: self.inner.ctx.tx.clone(),
+        }
+    }
+}
+
+/// Clones the current context (env + journal), passes the database, cloned env,
+/// and cloned journal inner to the callback. The callback builds whatever EVM it
+/// needs, runs its operations, and returns `(result, modified_env, modified_journal)`.
+/// Modified state is written back after the callback returns.
+pub fn with_cloned_context<CTX: FoundryContextExt, R>(
+    ecx: &mut CTX,
+    f: impl FnOnce(
+        &mut dyn DatabaseExt,
+        Env,
+        JournaledState,
+    ) -> Result<(R, Env, JournaledState), EVMError<DatabaseError>>,
+) -> Result<R, EVMError<DatabaseError>>
+where
+    CTX::Journal: FoundryJournalExt,
+{
+    let (journal, env_mut) = ecx.journal_and_env_mut();
+    let env = env_mut.to_owned();
+
+    let (db, journal_inner) = journal.as_db_and_inner();
+    let journal_inner_clone = journal_inner.clone();
+
+    let (result, sub_env, sub_inner) = f(db, env, journal_inner_clone)?;
+
+    // Write back modified state. The db borrow was released when f returned.
+    journal.set_inner(sub_inner);
+    *env_mut.block = sub_env.evm_env.block_env;
+    *env_mut.cfg = sub_env.evm_env.cfg_env;
+    *env_mut.tx = sub_env.tx;
+
+    Ok(result)
+}
+
 pub struct FoundryHandler<'db, I: InspectorExt> {
     create2_overrides: Vec<(usize, CallInputs)>,
     _phantom: PhantomData<(&'db mut dyn DatabaseExt, I)>,
@@ -290,7 +353,7 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         {
             let (ctx, inspector) = evm.ctx_inspector();
 
-            if inspector.should_use_create2_factory(ctx, inputs) {
+            if inspector.should_use_create2_factory(ctx.journal().depth(), inputs) {
                 let gas_limit = inputs.gas_limit();
 
                 // Get CREATE2 deployer.

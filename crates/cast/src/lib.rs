@@ -325,7 +325,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             let mut result = String::new();
             for field in fields {
                 result.push_str(
-                    &get_pretty_block_attr(&block, &field)
+                    &get_pretty_block_attr::<AnyNetwork>(&block, &field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field")),
                 );
 
@@ -756,7 +756,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             let encoded = foundry_tx.encoded_2718();
             format!("0x{}", hex::encode(encoded))
         } else if let Some(ref field) = field {
-            get_pretty_tx_attr(&tx.inner, field.as_str())
+            get_pretty_tx_attr::<AnyNetwork>(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
@@ -1158,7 +1158,7 @@ impl SimpleCast {
             DynSolType::Uint(n) => {
                 if MAX {
                     let mut max = U256::MAX;
-                    if n < 255 {
+                    if n < 256 {
                         max &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
                     }
                     Ok(max.to_string())
@@ -1874,7 +1874,7 @@ impl SimpleCast {
         let mut topics = vec![event.selector()];
         let mut data_tokens: Vec<u8> = Vec::new();
 
-        for (input, token) in event.inputs.iter().zip(tokens.into_iter()) {
+        for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
                 let ty = DynSolType::parse(&input.ty)?;
                 if matches!(
@@ -2336,7 +2336,7 @@ fn explorer_client(
     api_url: Option<String>,
     explorer_url: Option<String>,
 ) -> Result<Client> {
-    let mut builder = Client::builder().chain(chain)?;
+    let mut builder = Client::builder();
 
     let deduced = chain.etherscan_urls();
 

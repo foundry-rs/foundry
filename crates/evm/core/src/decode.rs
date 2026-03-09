@@ -54,7 +54,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
-fn decode_console_log(log: &Log) -> Option<String> {
+pub fn decode_console_log(log: &Log) -> Option<String> {
     console::ds::ConsoleEvents::decode_log(log).ok().map(|decoded| decoded.to_string())
 }
 

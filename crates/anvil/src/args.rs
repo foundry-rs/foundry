@@ -7,6 +7,8 @@ use foundry_cli::utils;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_markdown_help::<Anvil>();
+
     let mut args = Anvil::parse();
     args.global.init()?;
     args.node.evm.resolve_rpc_alias();

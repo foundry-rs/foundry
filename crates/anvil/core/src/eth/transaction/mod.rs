@@ -1,12 +1,13 @@
 //! Transaction related types
 use alloy_consensus::{
-    Signed, Transaction, TxEnvelope, Typed2718, crypto::RecoveryError, transaction::Recovered,
+    Transaction, Typed2718,
+    crypto::RecoveryError,
+    transaction::{SignerRecoverable, TxHashRef},
 };
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_rlp::{Decodable, Encodable};
-use alloy_rpc_types::Transaction as RpcTransaction;
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use foundry_primitives::FoundryTxEnvelope;
@@ -14,39 +15,31 @@ use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
-/// A wrapper for [FoundryTxEnvelope] that allows impersonating accounts.
+/// A wrapper for a transaction envelope that allows impersonating accounts.
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
-/// [FoundryTxEnvelope::impersonated_hash] can be created.
+/// can be created.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MaybeImpersonatedTransaction {
-    transaction: FoundryTxEnvelope,
+pub struct MaybeImpersonatedTransaction<T = FoundryTxEnvelope> {
+    transaction: T,
     impersonated_sender: Option<Address>,
 }
 
-impl Typed2718 for MaybeImpersonatedTransaction {
+impl<T: Typed2718> Typed2718 for MaybeImpersonatedTransaction<T> {
     fn ty(&self) -> u8 {
         self.transaction.ty()
     }
 }
 
-impl MaybeImpersonatedTransaction {
+impl<T> MaybeImpersonatedTransaction<T> {
     /// Creates a new wrapper for the given transaction
-    pub fn new(transaction: FoundryTxEnvelope) -> Self {
+    pub fn new(transaction: T) -> Self {
         Self { transaction, impersonated_sender: None }
     }
 
     /// Creates a new impersonated transaction wrapper using the given sender
-    pub fn impersonated(transaction: FoundryTxEnvelope, impersonated_sender: Address) -> Self {
+    pub fn impersonated(transaction: T, impersonated_sender: Address) -> Self {
         Self { transaction, impersonated_sender: Some(impersonated_sender) }
-    }
-
-    /// Recovers the Ethereum address which was used to sign the transaction.
-    pub fn recover(&self) -> Result<Address, RecoveryError> {
-        if let Some(sender) = self.impersonated_sender {
-            return Ok(sender);
-        }
-        self.transaction.recover()
     }
 
     /// Returns whether the transaction is impersonated
@@ -54,56 +47,37 @@ impl MaybeImpersonatedTransaction {
         self.impersonated_sender.is_some()
     }
 
-    /// Returns the hash of the transaction
-    pub fn hash(&self) -> B256 {
-        if let Some(sender) = self.impersonated_sender {
-            return self.transaction.impersonated_hash(sender);
-        }
-        self.transaction.hash()
-    }
-
-    /// Converts the transaction into an [`RpcTransaction`]
-    pub fn into_rpc_transaction(self) -> RpcTransaction {
-        let hash = self.hash();
-        let from = self.recover().unwrap_or_default();
-        let envelope = self.transaction.try_into_eth().expect("cant build deposit transactions");
-
-        // NOTE: we must update the hash because the tx can be impersonated, this requires forcing
-        // the hash
-        let inner_envelope = match envelope {
-            TxEnvelope::Legacy(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip2930(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip1559(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip4844(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash))
-            }
-            TxEnvelope::Eip7702(t) => {
-                let (tx, sig, _) = t.into_parts();
-                TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash))
-            }
-        };
-
-        RpcTransaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            effective_gas_price: None,
-            inner: Recovered::new_unchecked(inner_envelope, from),
-        }
+    /// Returns the inner transaction.
+    pub fn into_inner(self) -> T {
+        self.transaction
     }
 }
 
-impl Encodable2718 for MaybeImpersonatedTransaction {
+impl<T: SignerRecoverable + TxHashRef + Encodable> MaybeImpersonatedTransaction<T> {
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    pub fn recover(&self) -> Result<Address, RecoveryError> {
+        if let Some(sender) = self.impersonated_sender {
+            return Ok(sender);
+        }
+        self.transaction.recover_signer()
+    }
+
+    /// Returns the hash of the transaction.
+    ///
+    /// If the transaction is impersonated, returns a unique hash derived by appending the
+    /// impersonated sender address to the encoded transaction before hashing.
+    pub fn hash(&self) -> B256 {
+        if let Some(sender) = self.impersonated_sender {
+            let mut buffer = Vec::new();
+            self.transaction.encode(&mut buffer);
+            buffer.extend_from_slice(sender.as_ref());
+            return B256::from_slice(alloy_primitives::utils::keccak256(&buffer).as_slice());
+        }
+        *self.transaction.tx_hash()
+    }
+}
+
+impl<T: Encodable2718> Encodable2718 for MaybeImpersonatedTransaction<T> {
     fn encode_2718_len(&self) -> usize {
         self.transaction.encode_2718_len()
     }
@@ -113,7 +87,7 @@ impl Encodable2718 for MaybeImpersonatedTransaction {
     }
 }
 
-impl Encodable for MaybeImpersonatedTransaction {
+impl<T: Encodable> Encodable for MaybeImpersonatedTransaction<T> {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         self.transaction.encode(out)
     }
@@ -131,29 +105,23 @@ impl From<FoundryTxEnvelope> for MaybeImpersonatedTransaction {
     }
 }
 
-impl Decodable for MaybeImpersonatedTransaction {
+impl<T: Decodable> Decodable for MaybeImpersonatedTransaction<T> {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        FoundryTxEnvelope::decode(buf).map(Self::new)
+        T::decode(buf).map(Self::new)
     }
 }
 
-impl AsRef<FoundryTxEnvelope> for MaybeImpersonatedTransaction {
-    fn as_ref(&self) -> &FoundryTxEnvelope {
+impl<T> AsRef<T> for MaybeImpersonatedTransaction<T> {
+    fn as_ref(&self) -> &T {
         &self.transaction
     }
 }
 
-impl Deref for MaybeImpersonatedTransaction {
-    type Target = FoundryTxEnvelope;
+impl<T> Deref for MaybeImpersonatedTransaction<T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
         &self.transaction
-    }
-}
-
-impl From<MaybeImpersonatedTransaction> for RpcTransaction {
-    fn from(value: MaybeImpersonatedTransaction) -> Self {
-        value.into_rpc_transaction()
     }
 }
 
@@ -176,12 +144,9 @@ impl PendingTransaction {
     }
 
     pub fn with_impersonated(transaction: FoundryTxEnvelope, sender: Address) -> Self {
-        let hash = transaction.impersonated_hash(sender);
-        Self {
-            transaction: MaybeImpersonatedTransaction::impersonated(transaction, sender),
-            sender,
-            hash,
-        }
+        let transaction = MaybeImpersonatedTransaction::impersonated(transaction, sender);
+        let hash = transaction.hash();
+        Self { transaction, sender, hash }
     }
 
     /// Converts a [`MaybeImpersonatedTransaction`] into a [`PendingTransaction`].

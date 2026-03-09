@@ -105,15 +105,13 @@ impl LintArgs {
             .with_lints(include)
             .without_lints(exclude)
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
-            .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
+            .with_lint_specific(&config.lint.lint_specific);
 
         let output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
         let solar_sources =
             get_solar_sources_from_compile_output(&config, &output, Some(&input), Some(&ignored))?;
         if solar_sources.input.sources.is_empty() {
-            return Err(eyre!(
-                "unable to lint. Solar only supports Solidity versions prior to 0.8.0"
-            ));
+            return Err(eyre!("unable to lint. Solar only supports Solidity versions >=0.8.0"));
         }
 
         // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new

@@ -38,8 +38,8 @@ impl AnvilInspector {
     ///
     /// This will log all `console.sol` logs
     pub fn print_logs(&self) {
-        if let Some(collector) = &self.log_collector {
-            print_logs(&collector.logs);
+        if let Some(LogCollector::Capture { logs }) = &self.log_collector {
+            print_logs(logs);
         }
     }
 
@@ -78,7 +78,7 @@ impl AnvilInspector {
 
     /// Configures the `Tracer` [`revm::Inspector`] with a log collector
     pub fn with_log_collector(mut self) -> Self {
-        self.log_collector = Some(Default::default());
+        self.log_collector = Some(LogCollector::Capture { logs: Vec::new() });
         self
     }
 

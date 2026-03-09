@@ -1,6 +1,6 @@
 use super::{
     backend::mem::{BlockRequest, DatabaseRef, State},
-    sign::build_typed_transaction,
+    sign::build_impersonated,
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
@@ -41,7 +41,7 @@ use alloy_network::{
     TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
-    Address, B64, B256, Bytes, Signature, TxHash, TxKind, U64, U256,
+    Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types::{
@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
-        parity::LocalizedTransactionTrace,
+        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
@@ -69,7 +69,6 @@ use anvil_core::{
         EthRequest,
         block::BlockInfo,
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
-        wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
 };
@@ -77,7 +76,8 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
-    FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
+    FoundryNetwork, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType,
+    FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -113,7 +113,7 @@ pub struct EthApi {
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
-    signers: Arc<Vec<Box<dyn Signer>>>,
+    signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
     /// data required for `eth_feeHistory`
     fee_history_cache: FeeHistoryCache,
     /// max number of items kept in fee cache
@@ -141,7 +141,7 @@ impl EthApi {
     pub fn new(
         pool: Arc<Pool>,
         backend: Arc<backend::mem::Backend>,
-        signers: Arc<Vec<Box<dyn Signer>>>,
+        signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
         fee_history_cache: FeeHistoryCache,
         fee_history_limit: u64,
         miner: Miner,
@@ -345,6 +345,9 @@ impl EthApi {
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
+            EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
+                self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
+            }
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -455,7 +458,6 @@ impl EthApi {
             EthRequest::EthSendUnsignedTransaction(tx) => {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
-            EthRequest::EnableTraces(_) => self.anvil_enable_traces().await.to_rpc_result(),
             EthRequest::EthNewFilter(filter) => self.new_filter(filter).await.to_rpc_result(),
             EthRequest::EthGetFilterChanges(id) => self.get_filter_changes(&id).await,
             EthRequest::EthNewBlockFilter(_) => self.new_block_filter().await.to_rpc_result(),
@@ -512,11 +514,6 @@ impl EthApi {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
-            EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
-            EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
-            EthRequest::AnvilSetExecutor(executor_pk) => {
-                self.anvil_set_executor(executor_pk).to_rpc_result()
-            }
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -528,21 +525,13 @@ impl EthApi {
         response
     }
 
-    fn sign_request(&self, from: &Address, request: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
-        match request {
-            FoundryTypedTx::Deposit(_) => {
-                let nil_signature = Signature::from_scalars_and_parity(
-                    B256::with_last_byte(1),
-                    B256::with_last_byte(1),
-                    false,
-                );
-                return build_typed_transaction(request, nil_signature);
-            }
+    fn sign_request(&self, from: &Address, typed_tx: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
+        match typed_tx {
+            FoundryTypedTx::Deposit(_) => return Ok(build_impersonated(typed_tx)),
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
-                        let signature = signer.sign_transaction(request.clone(), from)?;
-                        return build_typed_transaction(request, signature);
+                        return signer.sign_transaction_from(from, typed_tx);
                     }
                 }
             }
@@ -568,7 +557,7 @@ impl EthApi {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
             None => match self.backend.transaction_by_hash(hash).await? {
-                Some(tx) => Ok(Some(tx.inner.inner.encoded_2718().into())),
+                Some(tx) => Ok(Some(tx.as_ref().encoded_2718().into())),
                 None => Ok(None),
             },
         }
@@ -1070,17 +1059,16 @@ impl EthApi {
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        let request = self.build_tx_request(request, nonce).await?;
+        let typed_tx = self.build_tx_request(request, nonce).await?;
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let bypass_signature = self.impersonated_signature(&request);
-            let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            let transaction = sign::build_impersonated(typed_tx);
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
         } else {
-            let transaction = self.sign_request(&from, request)?;
+            let transaction = self.sign_request(&from, typed_tx)?;
             self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
@@ -1371,10 +1359,7 @@ impl EthApi {
         }
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
-        let tx = build_typed_transaction(
-            typed_tx,
-            Signature::new(Default::default(), Default::default(), false),
-        )?;
+        let tx = build_impersonated(typed_tx);
 
         let raw = tx.encoded_2718().to_vec().into();
 
@@ -1550,11 +1535,8 @@ impl EthApi {
                 self.backend.mined_transactions_by_block_number(target_block.into()).await
         {
             for tx in txs {
-                if tx.from() == sender
-                    && tx.nonce() == target_nonce
-                    && let Some(mined_tx) = self.backend.transaction_by_hash(tx.tx_hash()).await?
-                {
-                    return Ok(Some(mined_tx));
+                if tx.from() == sender && tx.nonce() == target_nonce {
+                    return Ok(Some(tx));
                 }
             }
         }
@@ -1865,7 +1847,7 @@ impl EthApi {
         if let Some(filter) = self.filters.get_log_filter(id).await {
             self.backend.logs(filter).await
         } else {
-            Ok(Vec::new())
+            Err(BlockchainError::FilterNotFound)
         }
     }
 
@@ -1995,6 +1977,18 @@ impl EthApi {
     ) -> Result<Vec<LocalizedTransactionTrace>> {
         node_info!("trace_filter");
         self.backend.trace_filter(filter).await
+    }
+
+    /// Replays all transactions in a block returning the requested traces for each transaction
+    ///
+    /// Handler for RPC call: `trace_replayBlockTransactions`
+    pub async fn trace_replay_block_transactions(
+        &self,
+        block: BlockNumber,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<Vec<TraceResultsWithTransactionHash>> {
+        node_info!("trace_replayBlockTransactions");
+        self.backend.trace_replay_block_transactions(block, trace_types).await
     }
 }
 
@@ -2146,12 +2140,14 @@ impl EthApi {
         node_info!("anvil_reset");
         if let Some(forking) = forking {
             // if we're resetting the fork we need to reset the instance id
-            self.backend.reset_fork(forking).await
+            self.backend.reset_fork(forking).await?;
         } else {
             // Reset to a fresh in-memory state
-
-            self.backend.reset_to_in_mem().await
+            self.backend.reset_to_in_mem().await?;
         }
+        // Clear pending transactions since they reference the old chain state.
+        self.pool.clear();
+        Ok(())
     }
 
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
@@ -2175,7 +2171,7 @@ impl EthApi {
     pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_addBalance");
         let current_balance = self.backend.get_balance(address, None).await?;
-        self.backend.set_balance(address, current_balance + balance).await?;
+        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
         Ok(())
     }
 
@@ -2580,20 +2576,18 @@ impl EthApi {
                         );
 
                         // Build typed transaction request
-                        let typed = self.build_tx_request(request.into(), *curr_nonce).await?;
+                        let typed_tx = self.build_tx_request(request.into(), *curr_nonce).await?;
 
                         // Increment nonce
                         *curr_nonce += 1;
 
                         // Handle signer and convert to pending transaction
                         if self.is_impersonated(from) {
-                            let bypass_signature = self.impersonated_signature(&typed);
-                            let transaction =
-                                sign::build_typed_transaction(typed, bypass_signature)?;
+                            let transaction = sign::build_impersonated(typed_tx);
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::with_impersonated(transaction, from)
                         } else {
-                            let transaction = self.sign_request(&from, typed)?;
+                            let transaction = self.sign_request(&from, typed_tx)?;
                             self.ensure_typed_transaction_supported(&transaction)?;
                             PendingTransaction::new(transaction)?
                         }
@@ -2806,15 +2800,6 @@ impl EthApi {
         Ok(())
     }
 
-    /// Turn on call traces for transactions that are returned to the user when they execute a
-    /// transaction (instead of just txhash/receipt)
-    ///
-    /// Handler for ETH RPC call: `anvil_enableTraces`
-    pub async fn anvil_enable_traces(&self) -> Result<()> {
-        node_info!("anvil_enableTraces");
-        Err(BlockchainError::RpcUnimplemented)
-    }
-
     /// Execute a transaction regardless of signature status
     ///
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
@@ -2828,10 +2813,9 @@ impl EthApi {
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
-        let request = self.build_tx_request(request, nonce).await?;
+        let typed_tx = self.build_tx_request(request, nonce).await?;
 
-        let bypass_signature = self.impersonated_signature(&request);
-        let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+        let transaction = sign::build_impersonated(typed_tx);
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -2936,33 +2920,6 @@ impl EthApi {
         }
 
         Ok(content)
-    }
-}
-
-// ===== impl Wallet endpoints =====
-impl EthApi {
-    /// Get the capabilities of the wallet.
-    ///
-    /// See also [EIP-5792][eip-5792].
-    ///
-    /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
-    pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
-        node_info!("wallet_getCapabilities");
-        Ok(self.backend.get_capabilities())
-    }
-
-    /// Add an address to the delegation capability of wallet.
-    ///
-    /// This entails that the executor will now be able to sponsor transactions to this address.
-    pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
-        node_info!("anvil_addCapability");
-        self.backend.add_capability(address);
-        Ok(())
-    }
-
-    pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
-        node_info!("anvil_setExecutor");
-        self.backend.set_executor(executor_pk)
     }
 }
 
@@ -3223,7 +3180,7 @@ impl EthApi {
 
     /// Returns the first signer that can sign for the given address
     #[expect(clippy::borrowed_box)]
-    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer>> {
+    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<FoundryNetwork>>> {
         self.signers.iter().find(|signer| signer.is_signer_for(address))
     }
 
@@ -3328,10 +3285,14 @@ impl EthApi {
         request.kind().is_none().then(|| request.set_kind(TxKind::default()));
         if request.gas_limit().is_none() {
             request.set_gas_limit(
-                self.do_estimate_gas(request.as_ref().clone(), None, EvmOverrides::default())
-                    .await
-                    .map(|v| v as u64)
-                    .unwrap_or(self.backend.gas_limit()),
+                self.do_estimate_gas(
+                    request.as_ref().clone().into(),
+                    None,
+                    EvmOverrides::default(),
+                )
+                .await
+                .map(|v| v as u64)
+                .unwrap_or(self.backend.gas_limit()),
             );
         }
 
@@ -3385,24 +3346,6 @@ impl EthApi {
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
         self.backend.cheats().is_impersonated(addr)
-    }
-
-    /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
-    fn impersonated_signature(&self, request: &FoundryTypedTx) -> Signature {
-        match request {
-            FoundryTypedTx::Legacy(_)
-            | FoundryTypedTx::Eip2930(_)
-            | FoundryTypedTx::Eip1559(_)
-            | FoundryTypedTx::Eip7702(_)
-            | FoundryTypedTx::Eip4844(_)
-            | FoundryTypedTx::Deposit(_) => Signature::from_scalars_and_parity(
-                B256::with_last_byte(1),
-                B256::with_last_byte(1),
-                false,
-            ),
-            // TODO(onbjerg): we should impl support for Tempo transactions
-            FoundryTypedTx::Tempo(_) => todo!(),
-        }
     }
 
     /// Returns the nonce of the `address` depending on the `block_number`

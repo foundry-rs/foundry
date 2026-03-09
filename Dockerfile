@@ -24,21 +24,23 @@ ENV CARGO_INCREMENTAL=0 \
     SCCACHE_DIR=/sccache
 
 # Build dependencies.
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
     cargo chef cook --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
 
 ARG TAG_NAME="dev"
 ENV TAG_NAME=$TAG_NAME
 ARG VERGEN_GIT_SHA="ffffffffffffffffffffffffffffffffffffffff"
+ENV VERGEN_GIT_SHA=$VERGEN_GIT_SHA
 
 # Build the project.
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
-    cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
+    cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
+    && sccache --show-stats || true
 
 # `dev` profile outputs to the `target/debug` directory.
 RUN ln -s /app/target/debug /app/target/dev \
@@ -49,8 +51,6 @@ RUN ln -s /app/target/debug /app/target/dev \
     /app/target/${RUST_PROFILE}/anvil \
     /app/target/${RUST_PROFILE}/chisel \
     /app/output/
-
-RUN sccache --show-stats || true
 
 FROM ubuntu:22.04 AS runtime
 

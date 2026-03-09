@@ -304,6 +304,8 @@ pub struct Config {
     /// You can also the ETH_RPC_HEADERS env variable like so:
     /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
     pub eth_rpc_headers: Option<Vec<String>>,
+    /// Print the equivalent curl command instead of making the RPC request.
+    pub eth_rpc_curl: bool,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -352,6 +354,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Whether to show `console.log` outputs in realtime during script/test execution
+    pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
@@ -1863,11 +1867,6 @@ impl Config {
             src: paths.sources.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            remappings: paths
-                .remappings
-                .into_iter()
-                .map(|r| RelativeRemapping::new(r, root))
-                .collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Self::default()
         }
@@ -2328,8 +2327,8 @@ impl Config {
             figment = figment.merge(("evm_version", version));
         }
 
-        // Normalize `deny` based on the provided `deny_warnings` version.
-        if self.deny_warnings
+        // Normalize `deny` based on the provided `deny_warnings` value.
+        if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
             && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
@@ -2570,6 +2569,7 @@ impl Default for Config {
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
+            live_logs: false,
             allow_internal_expect_revert: false,
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,
@@ -2596,6 +2596,7 @@ impl Default for Config {
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
+            eth_rpc_curl: false,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
@@ -6864,6 +6865,156 @@ mod tests {
             assert!(
                 err_msg.contains("selected profile `nonexistent` does not exist"),
                 "Expected error about nonexistent profile, got: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: vyper config keys should not trigger unknown key warnings
+    #[test]
+    fn no_false_warnings_for_vyper_config_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [vyper]
+                optimize = "gas"
+                path = "/usr/bin/vyper"
+                experimental_codegen = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            // None of the valid vyper keys should trigger warnings
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
+                .collect();
+
+            assert!(
+                vyper_warnings.is_empty(),
+                "Valid vyper keys should not trigger warnings, got: {vyper_warnings:?}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: vyper config in profile should not trigger false warnings
+    #[test]
+    fn no_false_warnings_for_nested_vyper_config_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.default.vyper]
+                optimize = "codesize"
+                path = "/opt/vyper/bin/vyper"
+                experimental_codegen = false
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            // None of the valid vyper keys should trigger warnings
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
+                .collect();
+
+            assert!(
+                vyper_warnings.is_empty(),
+                "Valid nested vyper keys should not trigger warnings, got: {vyper_warnings:?}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: inline vyper config format should not trigger false warnings
+    // This matches the exact format used in https://github.com/pcaversaccio/snekmate
+    #[test]
+    fn no_false_warnings_for_inline_vyper_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+                vyper = { optimize = "gas" }
+
+                [profile.default-venom]
+                vyper = { experimental_codegen = true }
+
+                [profile.ci-venom]
+                vyper = { experimental_codegen = true }
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            let vyper_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "vyper"
+                    )
+                })
+                .collect();
+
+            assert!(
+                vyper_warnings.is_empty(),
+                "Valid inline vyper config should not trigger warnings, got: {vyper_warnings:?}"
+            );
+
+            Ok(())
+        });
+    }
+
+    // Test for issue #13316: unknown vyper keys should still warn
+    #[test]
+    fn warns_on_unknown_vyper_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [vyper]
+                optimize = "gas"
+                unknown_vyper_option = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownSectionKey { key, section, .. }
+                    if key == "unknown_vyper_option" && section == "vyper"
+                )),
+                "Unknown vyper key should trigger warning, got: {:?}",
+                cfg.warnings
             );
 
             Ok(())

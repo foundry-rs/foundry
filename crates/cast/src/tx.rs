@@ -19,12 +19,12 @@ use foundry_cli::{
     utils::{self, LoadConfig, get_provider_builder, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_tx_receipt_attr,
+    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr,
     provider::RetryProviderWithSigner, shell,
 };
 use foundry_config::{Chain, Config};
 use foundry_primitives::{FoundryTransactionRequest, FoundryTypedTx};
-use foundry_wallets::{WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, str::FromStr, time::Duration};
@@ -55,6 +55,10 @@ pub struct SendTxOpts {
     /// Ethereum options
     #[command(flatten)]
     pub eth: EthereumOpts,
+
+    /// Browser wallet options
+    #[command(flatten)]
+    pub browser: BrowserWalletOpts,
 }
 
 /// Different sender kinds used by [`CastTxBuilder`].
@@ -172,7 +176,7 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
 
     /// Sends a transaction and waits for receipt synchronously
     pub async fn send_sync(&self, tx: WithOtherFields<TransactionRequest>) -> Result<String> {
-        let mut receipt: TransactionReceiptWithRevertReason =
+        let mut receipt: TransactionReceiptWithRevertReason<AnyNetwork> =
             self.provider.send_transaction_sync(tx).await?.into();
 
         // Allow to fail silently
@@ -259,7 +263,7 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        let mut receipt: TransactionReceiptWithRevertReason =
+        let mut receipt: TransactionReceiptWithRevertReason<AnyNetwork> =
             match self.provider.get_transaction_receipt(tx_hash).await? {
                 Some(r) => r,
                 None => {
@@ -287,11 +291,11 @@ impl<P: Provider<AnyNetwork>> CastTxSender<P> {
     /// Helper method to format transaction receipts consistently
     fn format_receipt(
         &self,
-        receipt: TransactionReceiptWithRevertReason,
+        receipt: TransactionReceiptWithRevertReason<AnyNetwork>,
         field: Option<String>,
     ) -> Result<String> {
         Ok(if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt, field)
+            get_pretty_receipt_w_reason_attr(&receipt, field)
                 .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
@@ -682,8 +686,6 @@ where
             self.tx.set_blob_sidecar_7594(sidecar);
         }
 
-        self.tx.populate_blob_hashes();
-
         Ok(self)
     }
 }
@@ -707,17 +709,13 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
 }
 
 /// Creates a provider with wallet for signing transactions locally.
-///
-/// If `curl_mode` is true, the provider will print equivalent curl commands to stdout
-/// instead of executing RPC requests.
-pub(crate) async fn signing_provider_with_curl(
+pub(crate) async fn get_provider_with_wallet(
     tx_opts: &SendTxOpts,
-    curl_mode: bool,
 ) -> eyre::Result<RetryProviderWithSigner> {
     let config = tx_opts.eth.load_config()?;
     let signer = tx_opts.eth.wallet.signer().await?;
     let wallet = alloy_network::EthereumWallet::from(signer);
-    let provider = get_provider_builder(&config, curl_mode)?.build_with_wallet(wallet)?;
+    let provider = get_provider_builder(&config)?.build_with_wallet(wallet)?;
     if let Some(interval) = tx_opts.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }

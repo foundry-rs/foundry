@@ -101,47 +101,14 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
 
 /// Returns a [RetryProvider] instantiated using [Config]'s RPC settings.
 pub fn get_provider(config: &Config) -> Result<RetryProvider> {
-    get_provider_builder(config, false)?.build()
-}
-
-/// Returns a [RetryProvider] with curl mode option.
-///
-/// When `curl_mode` is true, the provider will print equivalent curl commands
-/// to stdout instead of executing RPC requests.
-pub fn get_provider_with_curl(config: &Config, curl_mode: bool) -> Result<RetryProvider> {
-    get_provider_builder(config, curl_mode)?.build()
+    get_provider_builder(config)?.build()
 }
 
 /// Returns a [ProviderBuilder] instantiated using [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-///
-/// When `curl_mode` is true, the provider will print equivalent curl commands
-/// to stdout instead of executing RPC requests.
-pub fn get_provider_builder(config: &Config, curl_mode: bool) -> Result<ProviderBuilder> {
-    let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = ProviderBuilder::new(url.as_ref());
-
-    builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
-    builder = builder.curl_mode(curl_mode);
-
-    if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
-        builder = builder.chain(chain);
-    }
-
-    if let Some(jwt) = config.get_rpc_jwt_secret()? {
-        builder = builder.jwt(jwt.as_ref());
-    }
-
-    if let Some(rpc_timeout) = config.eth_rpc_timeout {
-        builder = builder.timeout(Duration::from_secs(rpc_timeout));
-    }
-
-    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
-        builder = builder.headers(rpc_headers);
-    }
-
-    Ok(builder)
+pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
+    ProviderBuilder::from_config(config)
 }
 
 pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
@@ -314,7 +281,7 @@ impl CommandUtils for Command {
             };
             if !msg.is_empty() {
                 err.push(':');
-                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push(if msg.lines().count() == 1 { ' ' } else { '\n' });
                 err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
@@ -509,7 +476,7 @@ impl<'a> Git<'a> {
     }
 
     pub fn is_repo_root(self) -> Result<bool> {
-        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
+        self.cmd().args(["rev-parse", "--show-cdup"]).get_stdout_lossy().map(|s| s.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {

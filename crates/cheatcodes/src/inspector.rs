@@ -1,7 +1,7 @@
 //! Cheatcode EVM inspector.
 
 use crate::{
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
@@ -21,7 +21,6 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_evm::eth::EthEvmContext;
 use alloy_network::{TransactionBuilder4844, TransactionBuilder7594};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
@@ -37,11 +36,12 @@ use foundry_common::{
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, ContextExt, InspectorExt,
+    Breakpoints, Env, FoundryInspectorExt, FoundryTransaction,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{FoundryEvm, new_evm_with_existing_context},
+    env::FoundryContextExt,
+    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -51,13 +51,16 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
-    Inspector, Journal,
+    Inspector,
     bytecode::opcode as op,
-    context::{BlockEnv, JournalTr, LocalContext, TransactionType, result::EVMError},
+    context::{
+        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, result::EVMError,
+    },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
+    inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
@@ -79,90 +82,113 @@ mod utils;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
-pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
-
-/// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
-/// [Cheatcodes].
+/// Bounds for the generic `Inspector<CTX>` impl on `Cheatcodes`.
 ///
-/// This is needed for cases when inspector itself needs mutable access to [Cheatcodes] state and
-/// allows us to correctly execute arbitrary EVM frames from inside cheatcode implementations.
-pub trait CheatcodesExecutor {
-    /// Core trait method accepting mutable reference to [Cheatcodes] and returning
-    /// [revm::Inspector].
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
+/// Shorthand used internally to avoid repeating the full where-clause.
+/// Any `EthEvmContext<&mut dyn DatabaseExt>` satisfies these bounds, so all
+/// existing call-sites (e.g. `InspectorStackRefMut`) keep working unchanged.
+pub trait CheatsCtxExt:
+    FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+{
+}
+impl<CTX> CheatsCtxExt for CTX where
+    CTX: FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+{
+}
 
-    /// Obtains [FoundryEvm] instance and executes the given CREATE frame.
-    fn exec_create(
+/// Closure type used by [`CheatcodesExecutor`] methods that run nested EVM operations.
+pub type NestedEvmClosure<'a> =
+    &'a mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>;
+
+/// Helper trait for running nested EVM operations from inside cheatcode implementations.
+///
+/// The executor assembles the full inspector stack internally and never exposes it across the
+/// trait boundary. This keeps the trait free of `InspectorExt` (which is Eth-specific).
+pub trait CheatcodesExecutor<CTX> {
+    /// Runs a closure with a nested EVM built from the current context.
+    /// The inspector is assembled internally — never exposed to the caller.
+    fn with_nested_evm(
         &mut self,
-        inputs: CreateInputs,
-        ccx: &mut CheatsCtxt,
-    ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
-        with_evm(self, ccx, |evm| {
-            evm.journaled_state.depth += 1;
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>>
+    where
+        CTX: CheatsCtxExt;
 
-            let frame = FrameInput::Create(Box::new(inputs));
+    /// Replays a historical transaction on the database. Inspector is assembled internally.
+    fn transact_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        fork_id: Option<U256>,
+        transaction: B256,
+    ) -> eyre::Result<()>
+    where
+        CTX: CheatsCtxExt;
 
-            let outcome = match evm.run_execution(frame)? {
-                FrameResult::Call(_) => unreachable!(),
-                FrameResult::Create(create) => create,
-            };
+    /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
+    fn transact_from_tx_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        tx: &TransactionRequest,
+    ) -> eyre::Result<()>
+    where
+        CTX: CheatsCtxExt;
 
-            evm.journaled_state.depth -= 1;
+    /// Runs a closure with a fresh nested EVM built from a raw database and environment.
+    /// Unlike `with_nested_evm`, this does NOT clone from `ecx` and does NOT write back.
+    /// The caller is responsible for state merging. Used by `executeTransactionCall`.
+    fn with_fresh_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        db: &mut dyn DatabaseExt,
+        env: Env,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>>
+    where
+        CTX: CheatsCtxExt;
 
-            Ok(outcome)
-        })
-    }
-
-    fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
-        self.get_inspector(ccx.state).console_log(msg);
-    }
+    /// Simulates `console.log` invocation.
+    fn console_log(&mut self, cheats: &mut Cheatcodes, msg: &str);
 
     /// Returns a mutable reference to the tracing inspector if it is available.
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         None
     }
+
+    /// Marks that the next EVM frame is an "inner context" so that isolation mode does not
+    /// trigger a nested `transact_inner`. `original_origin` is stored for the existing
+    /// inner-context adjustment logic that restores `tx.origin`.
+    fn set_in_inner_context(&mut self, _enabled: bool, _original_origin: Option<Address>) {}
 }
 
-/// Constructs [FoundryEvm] and runs a given closure with it.
-fn with_evm<E, F, O>(
-    executor: &mut E,
-    ccx: &mut CheatsCtxt,
-    f: F,
-) -> Result<O, EVMError<DatabaseError>>
-where
-    E: CheatcodesExecutor + ?Sized,
-    F: for<'a, 'b> FnOnce(
-        &mut FoundryEvm<'a, &'b mut dyn InspectorExt>,
-    ) -> Result<O, EVMError<DatabaseError>>,
-{
-    let mut inspector = executor.get_inspector(ccx.state);
-    let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+/// Builds a sub-EVM from the current context and executes the given CREATE frame.
+pub(crate) fn exec_create<CTX: CheatsCtxExt>(
+    executor: &mut dyn CheatcodesExecutor<CTX>,
+    inputs: CreateInputs,
+    ccx: &mut CheatsCtxt<'_, CTX>,
+) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
+    let mut inputs = Some(inputs);
+    let mut outcome = None;
+    executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
+        let inputs = inputs.take().unwrap();
+        evm.journal_inner_mut().depth += 1;
 
-    let ctx = EthEvmContext {
-        block: ccx.ecx.block.clone(),
-        cfg: ccx.ecx.cfg.clone(),
-        tx: ccx.ecx.tx.clone(),
-        journaled_state: Journal {
-            inner: ccx.ecx.journaled_state.inner.clone(),
-            database: &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
-        },
-        local: LocalContext::default(),
-        chain: (),
-        error,
-    };
+        let frame = FrameInput::Create(Box::new(inputs));
 
-    let mut evm = new_evm_with_existing_context(ctx, &mut *inspector);
+        let result = match evm.run_execution(frame)? {
+            FrameResult::Call(_) => unreachable!(),
+            FrameResult::Create(create) => create,
+        };
 
-    let res = f(&mut evm)?;
+        evm.journal_inner_mut().depth -= 1;
 
-    let ctx = evm.into_context();
-    ccx.ecx.journaled_state.inner = ctx.journaled_state.inner;
-    ccx.ecx.block = ctx.block;
-    ccx.ecx.tx = ctx.tx;
-    ccx.ecx.cfg = ctx.cfg;
-    ccx.ecx.error = ctx.error;
-
-    Ok(res)
+        outcome = Some(result);
+        Ok(())
+    })?;
+    Ok(outcome.unwrap())
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
@@ -170,10 +196,58 @@ where
 #[derive(Debug, Default, Clone, Copy)]
 struct TransparentCheatcodesExecutor;
 
-impl CheatcodesExecutor for TransparentCheatcodesExecutor {
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
-        Box::new(cheats)
+impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor {
+    fn with_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>> {
+        with_cloned_context(ecx, |db, env, journal_inner| {
+            let mut evm = new_evm_with_inspector(db, env, cheats);
+            *evm.journal_inner_mut() = journal_inner;
+            f(&mut evm)?;
+            let sub_env = evm.to_env();
+            let sub_inner = evm.into_context().journaled_state.inner;
+            Ok(((), sub_env, sub_inner))
+        })
     }
+
+    fn with_fresh_nested_evm(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        db: &mut dyn DatabaseExt,
+        env: Env,
+        f: NestedEvmClosure<'_>,
+    ) -> Result<(), EVMError<DatabaseError>> {
+        let mut evm = new_evm_with_inspector(db, env, cheats);
+        f(&mut evm)
+    }
+
+    fn transact_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        fork_id: Option<U256>,
+        transaction: B256,
+    ) -> eyre::Result<()> {
+        let env = ecx.to_env();
+        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        db.transact(fork_id, transaction, env, inner, cheats)
+    }
+
+    fn transact_from_tx_on_db(
+        &mut self,
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+        tx: &TransactionRequest,
+    ) -> eyre::Result<()> {
+        let env = ecx.to_env();
+        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        db.transact_from_tx(tx, env, inner, cheats)
+    }
+
+    fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
 }
 
 macro_rules! try_or_return {
@@ -314,12 +388,17 @@ impl ArbitraryStorage {
     /// Saves arbitrary storage value for a given address:
     /// - store value in changed values cache.
     /// - update account's storage with given value.
-    pub fn save(&mut self, ecx: Ecx, address: Address, slot: U256, data: U256) {
+    pub fn save<CTX: ContextTr<Db: DatabaseExt>>(
+        &mut self,
+        ecx: &mut CTX,
+        address: Address,
+        slot: U256,
+        data: U256,
+    ) {
         self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
-        let (db, journal, _) = ecx.as_db_env_and_journal();
-        if journal.load_account(db, address).is_ok() {
-            journal
-                .sstore(db, address, slot, data, false)
+        if ecx.journal_mut().load_account(address).is_ok() {
+            ecx.journal_mut()
+                .sstore(address, slot, data)
                 .expect("could not set arbitrary storage value");
         }
     }
@@ -329,7 +408,13 @@ impl ArbitraryStorage {
     ///   existing value.
     /// - if no value was yet generated for given slot, then save new value in cache and update both
     ///   source and target storages.
-    pub fn copy(&mut self, ecx: Ecx, target: Address, slot: U256, new_value: U256) -> U256 {
+    pub fn copy<CTX: ContextTr<Db: DatabaseExt>>(
+        &mut self,
+        ecx: &mut CTX,
+        target: Address,
+        slot: U256,
+        new_value: U256,
+    ) -> U256 {
         let source = self.copies.get(&target).expect("missing arbitrary copy target entry");
         let storage_cache = self.values.get_mut(source).expect("missing arbitrary source storage");
         let value = match storage_cache.get(&slot) {
@@ -337,19 +422,17 @@ impl ArbitraryStorage {
             None => {
                 storage_cache.insert(slot, new_value);
                 // Update source storage with new value.
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if journal.load_account(db, *source).is_ok() {
-                    journal
-                        .sstore(db, *source, slot, new_value, false)
+                if ecx.journal_mut().load_account(*source).is_ok() {
+                    ecx.journal_mut()
+                        .sstore(*source, slot, new_value)
                         .expect("could not copy arbitrary storage value");
                 }
                 new_value
             }
         };
         // Update target storage with new value.
-        let (db, journal, _) = ecx.as_db_env_and_journal();
-        if journal.load_account(db, target).is_ok() {
-            journal.sstore(db, target, slot, value, false).expect("could not set storage");
+        if ecx.journal_mut().load_account(target).is_ok() {
+            ecx.journal_mut().sstore(target, slot, value).expect("could not set storage");
         }
         value
     }
@@ -610,11 +693,11 @@ impl Cheatcodes {
     }
 
     /// Decodes the input data and applies the cheatcode.
-    fn apply_cheatcode(
+    fn apply_cheatcode<CTX: CheatsCtxExt>(
         &mut self,
-        ecx: Ecx,
+        ecx: &mut CTX,
         call: &CallInputs,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         // decode the cheatcode call
         let decoded = Vm::VmCalls::abi_decode(&call.input.bytes(ecx)).map_err(|e| {
@@ -633,7 +716,7 @@ impl Cheatcodes {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        ecx.journaled_state.database.ensure_cheatcode_access_forking_mode(&caller)?;
+        ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
 
         apply_dispatch(
             &decoded,
@@ -647,11 +730,14 @@ impl Cheatcodes {
     ///
     /// There may be cheatcodes in the constructor of the new contract, in order to allow them
     /// automatically we need to determine the new address.
-    fn allow_cheatcodes_on_create(&self, ecx: Ecx, caller: Address, created_address: Address) {
-        if ecx.journaled_state.depth <= 1
-            || ecx.journaled_state.database.has_cheatcode_access(&caller)
-        {
-            ecx.journaled_state.database.allow_cheatcode_access(created_address);
+    fn allow_cheatcodes_on_create<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ecx: &mut CTX,
+        caller: Address,
+        created_address: Address,
+    ) {
+        if ecx.journal().depth() <= 1 || ecx.db().has_cheatcode_access(&caller) {
+            ecx.db_mut().allow_cheatcode_access(created_address);
         }
     }
 
@@ -660,12 +746,12 @@ impl Cheatcodes {
     /// If the transaction type is [TransactionType::Legacy] we need to upgrade it to
     /// [TransactionType::Eip2930] in order to use access lists. Other transaction types support
     /// access lists themselves.
-    fn apply_accesslist(&mut self, ecx: Ecx) {
+    fn apply_accesslist<CTX: FoundryContextExt>(&mut self, ecx: &mut CTX) {
         if let Some(access_list) = &self.access_list {
-            ecx.tx.access_list = access_list.clone();
+            ecx.tx_mut().set_access_list(access_list.clone());
 
-            if ecx.tx.tx_type == TransactionType::Legacy as u8 {
-                ecx.tx.tx_type = TransactionType::Eip2930 as u8;
+            if ecx.tx().tx_type() == TransactionType::Legacy as u8 {
+                ecx.tx_mut().set_tx_type(TransactionType::Eip2930 as u8);
             }
         }
     }
@@ -674,7 +760,7 @@ impl Cheatcodes {
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
-    pub fn on_revert(&mut self, ecx: Ecx) {
+    pub fn on_revert<CTX: ContextTr<Journal: JournalExt>>(&mut self, ecx: &mut CTX) {
         trace!(deals=?self.eth_deals.len(), "rolling back deals");
 
         // Delay revert clean up until expected revert is handled, if set.
@@ -683,7 +769,7 @@ impl Cheatcodes {
         }
 
         // we only want to apply cleanup top level
-        if ecx.journaled_state.depth() > 0 {
+        if ecx.journal().depth() > 0 {
             return;
         }
 
@@ -691,31 +777,31 @@ impl Cheatcodes {
         // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
         // which rolls back any transfers.
         while let Some(record) = self.eth_deals.pop() {
-            if let Some(acc) = ecx.journaled_state.state.get_mut(&record.address) {
+            if let Some(acc) = ecx.journal_mut().evm_state_mut().get_mut(&record.address) {
                 acc.info.balance = record.old_balance;
             }
         }
     }
 
-    pub fn call_with_executor(
+    pub fn call_with_executor<CTX: CheatsCtxExt>(
         &mut self,
-        ecx: Ecx,
+        ecx: &mut CTX,
         call: &mut CallInputs,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg.spec = spec_id;
+            ecx.cfg_mut().set_spec(spec_id);
         }
 
         let gas = Gas::new(call.gas_limit);
-        let curr_depth = ecx.journaled_state.depth();
+        let curr_depth = ecx.journal().depth();
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
         // broadcasting.
         if curr_depth == 0 {
-            let sender = ecx.tx.caller;
+            let sender = ecx.tx().caller();
             let account = match super::evm::journaled_account(ecx, sender) {
                 Ok(account) => account,
                 Err(err) => {
@@ -764,6 +850,13 @@ impl Cheatcodes {
 
         if call.target_address == HARDHAT_CONSOLE_ADDRESS {
             return None;
+        }
+
+        // `expectRevert`: track max call depth. This is also done in `initialize_interp`, but
+        // precompile calls don't create an interpreter frame so we must also track it here.
+        // The callee executes at `curr_depth + 1`.
+        if let Some(expected) = &mut self.expected_revert {
+            expected.max_depth = max(curr_depth + 1, expected.max_depth);
         }
 
         // Handle expected calls
@@ -837,7 +930,7 @@ impl Cheatcodes {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
                 if let Some(new_origin) = prank.new_origin {
-                    ecx.tx.caller = new_origin;
+                    ecx.tx_mut().set_caller(new_origin);
                 }
             }
 
@@ -854,7 +947,7 @@ impl Cheatcodes {
 
                 // At the target depth, or deeper, we set `tx.origin`
                 if let Some(new_origin) = prank.new_origin {
-                    ecx.tx.caller = new_origin;
+                    ecx.tx_mut().set_caller(new_origin);
                     prank_applied = true;
                 }
 
@@ -883,7 +976,7 @@ impl Cheatcodes {
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
                 // broadcast.origin.
-                ecx.tx.caller = broadcast.new_origin;
+                ecx.tx_mut().set_caller(broadcast.new_origin);
 
                 call.caller = broadcast.new_origin;
                 // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
@@ -891,8 +984,7 @@ impl Cheatcodes {
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
                 if !call.is_static {
-                    let (db, journal, _) = ecx.as_db_env_and_journal();
-                    if let Err(err) = journal.load_account(db, broadcast.new_origin) {
+                    if let Err(err) = ecx.journal_mut().load_account(broadcast.new_origin) {
                         return Some(CallOutcome {
                             result: InterpreterResult {
                                 result: InstructionResult::Revert,
@@ -906,9 +998,10 @@ impl Cheatcodes {
                     }
 
                     let input = TransactionInput::new(call.input.bytes(ecx));
-
+                    let chain_id = ecx.cfg().chain_id();
+                    let rpc = ecx.db().active_fork_url();
                     let account =
-                        ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
+                        ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
 
                     let mut tx_req = TransactionRequest {
                         from: Some(broadcast.new_origin),
@@ -916,7 +1009,7 @@ impl Cheatcodes {
                         value: call.transfer_value(),
                         input,
                         nonce: Some(account.info.nonce),
-                        chain_id: Some(ecx.cfg.chain_id),
+                        chain_id: Some(chain_id),
                         gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
                         ..Default::default()
                     };
@@ -960,10 +1053,8 @@ impl Cheatcodes {
                         tx_req.authorization_list = Some(active_delegations);
                     }
 
-                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.journaled_state.database.active_fork_url(),
-                        transaction: tx_req.into(),
-                    });
+                    self.broadcastable_transactions
+                        .push_back(BroadcastableTransaction { rpc, transaction: tx_req.into() });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     // Explicitly increment nonce if calls are not isolated.
@@ -996,11 +1087,10 @@ impl Cheatcodes {
             let old_balance;
             let old_nonce;
 
-            let (db, journal, _) = ecx.as_db_env_and_journal();
-            if let Ok(acc) = journal.load_account(db, call.target_address) {
-                initialized = acc.info.exists();
-                old_balance = acc.info.balance;
-                old_nonce = acc.info.nonce;
+            if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
+                initialized = acc.data.info.exists();
+                old_balance = acc.data.info.balance;
+                old_nonce = acc.data.info.nonce;
             } else {
                 initialized = false;
                 old_balance = U256::ZERO;
@@ -1021,8 +1111,8 @@ impl Cheatcodes {
             // as "warm" if the call from which they were accessed is reverted
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
-                    forkId: ecx.journaled_state.db().active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(ecx.cfg.chain_id),
+                    forkId: ecx.db().active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(ecx.cfg().chain_id()),
                 },
                 accessor: call.caller,
                 account: call.bytecode_address,
@@ -1037,11 +1127,7 @@ impl Cheatcodes {
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
-                depth: ecx
-                    .journaled_state
-                    .depth()
-                    .try_into()
-                    .expect("journaled state depth exceeds u64"),
+                depth: ecx.journal().depth().try_into().expect("journaled state depth exceeds u64"),
             }]);
         }
 
@@ -1118,15 +1204,15 @@ impl Cheatcodes {
     }
 }
 
-impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
-            ecx.block = block;
+            *ecx.block_mut() = block;
         }
         if let Some(gas_price) = self.gas_price.take() {
-            ecx.tx.gas_price = gas_price;
+            ecx.tx_mut().set_gas_price(gas_price);
         }
 
         // Record gas for current frame.
@@ -1136,11 +1222,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // `expectRevert`: track the max call depth during `expectRevert`
         if let Some(expected) = &mut self.expected_revert {
-            expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
+            expected.max_depth = max(ecx.journal().depth(), expected.max_depth);
         }
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         self.pc = interpreter.bytecode.pc();
 
         if self.broadcast.is_some() {
@@ -1171,7 +1257,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if !self.allowed_mem_writes.is_empty() {
             self.check_mem_opcodes(
                 interpreter,
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64"),
+                ecx.journal().depth().try_into().expect("journaled state depth exceeds u64"),
             );
         }
 
@@ -1186,7 +1272,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1201,7 +1287,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, _ecx: Ecx, log: Log) {
+    fn log(&mut self, _ecx: &mut CTX, log: Log) {
         if !self.expected_emits.is_empty()
             && let Some(err) = expect::handle_expect_emit(self, &log, None)
         {
@@ -1215,7 +1301,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         record_logs(&mut self.recorded_logs, &log);
     }
 
-    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
+    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX, log: Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, &log, Some(interpreter));
         }
@@ -1224,11 +1310,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         record_logs(&mut self.recorded_logs, &log);
     }
 
-    fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
-    fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
+    fn call_end(&mut self, ecx: &mut CTX, call: &CallInputs, outcome: &mut CallOutcome) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
@@ -1237,11 +1323,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
-            let curr_depth = ecx.journaled_state.depth();
+            let curr_depth = ecx.journal().depth();
             if let Some(prank) = &self.get_prank(curr_depth)
                 && curr_depth == prank.depth
             {
-                ecx.tx.caller = prank.prank_origin;
+                ecx.tx_mut().set_caller(prank.prank_origin);
 
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
@@ -1253,7 +1339,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             if let Some(broadcast) = &self.broadcast
                 && curr_depth == broadcast.depth
             {
-                ecx.tx.caller = broadcast.original_origin;
+                ecx.tx_mut().set_caller(broadcast.original_origin);
 
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
@@ -1271,7 +1357,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             }
 
             // allow multiple cheatcode calls at the same depth
-            let curr_depth = ecx.journaled_state.depth();
+            let curr_depth = ecx.journal().depth();
             if curr_depth <= assume_no_revert.depth && !cheatcode_call {
                 // Discard run if we're at the same depth as cheatcode, call reverted, and no
                 // specific reason was supplied
@@ -1318,7 +1404,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 }
             }
 
-            let curr_depth = ecx.journaled_state.depth();
+            let curr_depth = ecx.journal().depth();
             if curr_depth <= expected_revert.depth {
                 let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
@@ -1387,7 +1473,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if ecx.journaled_state.depth() > 0
+            if ecx.journal().depth() > 0
                 && let Some(mut last_recorded_depth) = recorded_account_diffs_stack.pop()
             {
                 // Update the reverted status of all deeper calls if this call reverted, in
@@ -1407,14 +1493,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     // changes. Depending on the depth the cheat was
                     // called at, there may not be any pending
                     // calls to update if execution has percolated up to a higher depth.
-                    let (db, journal, _) = ecx.as_db_env_and_journal();
-                    let curr_depth = journal.depth;
+                    let curr_depth = ecx.journal().depth();
                     if call_access.depth == curr_depth as u64
-                        && let Ok(acc) = journal.load_account(db, call.target_address)
+                        && let Ok(acc) = ecx.journal_mut().load_account(call.target_address)
                     {
                         debug_assert!(access_is_call(call_access.kind));
-                        call_access.newBalance = acc.info.balance;
-                        call_access.newNonce = acc.info.nonce;
+                        call_access.newBalance = acc.data.info.balance;
+                        call_access.newNonce = acc.data.info.nonce;
                     }
                     // Merge the last depth's AccountAccesses into the AccountAccesses at the
                     // current depth, or push them back onto the pending
@@ -1444,7 +1529,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             .expected_emits
             .iter()
             .any(|(expected, _)| {
-                let curr_depth = ecx.journaled_state.depth();
+                let curr_depth = ecx.journal().depth();
                 expected.depth == curr_depth
             }) &&
             // Ignore staticcalls
@@ -1521,21 +1606,20 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
         // not exist
-        if let TxKind::Call(test_contract) = ecx.tx.kind {
+        if let TxKind::Call(test_contract) = ecx.tx().kind() {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if ecx.journaled_state.db().is_forked_mode()
+            if ecx.db().is_forked_mode()
                 && outcome.result.result == InstructionResult::Stop
                 && call.target_address != test_contract
             {
-                let journaled_state = ecx.journaled_state.clone();
                 self.fork_revert_diagnostic =
-                    ecx.journaled_state.db().diagnose_revert(call.target_address, &journaled_state);
+                    ecx.db().diagnose_revert(call.target_address, ecx.journal().evm_state());
             }
         }
 
         // If the depth is 0, then this is the root call terminating
-        if ecx.journaled_state.depth() == 0 {
+        if ecx.journal().depth() == 0 {
             // If we already have a revert, we shouldn't run the below logic as it can obfuscate an
             // earlier error that happened first with unrelated information about
             // another error when using cheatcodes.
@@ -1632,10 +1716,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn create(&mut self, ecx: Ecx, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
+    fn create(&mut self, ecx: &mut CTX, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg.spec = spec_id;
+            ecx.cfg_mut().set_spec(spec_id);
         }
 
         let gas = Gas::new(input.gas_limit());
@@ -1654,7 +1738,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             });
         }
 
-        let curr_depth = ecx.journaled_state.depth();
+        let curr_depth = ecx.journal().depth();
 
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth)
@@ -1673,7 +1757,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // At the target depth, or deeper, we set `tx.origin`
             if let Some(new_origin) = prank.new_origin {
-                ecx.tx.caller = new_origin;
+                ecx.tx_mut().set_caller(new_origin);
                 prank_applied = true;
             }
 
@@ -1691,8 +1775,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
         {
-            let (db, journal, _) = ecx.as_db_env_and_journal();
-            if let Err(err) = journal.load_account(db, broadcast.new_origin) {
+            if let Err(err) = ecx.journal_mut().load_account(broadcast.new_origin) {
                 return Some(CreateOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
@@ -1703,7 +1786,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 });
             }
 
-            ecx.tx.caller = broadcast.new_origin;
+            ecx.tx_mut().set_caller(broadcast.new_origin);
 
             if curr_depth == broadcast.depth || broadcast.deploy_from_code {
                 // Reset deploy from code flag for upcoming calls;
@@ -1711,9 +1794,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
                 input.set_caller(broadcast.new_origin);
 
-                let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
+                let rpc = ecx.db().active_fork_url();
+                let account = &ecx.journal().evm_state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                    rpc: ecx.journaled_state.database.active_fork_url(),
+                    rpc,
                     transaction: TransactionRequest {
                         from: Some(broadcast.new_origin),
                         to: None,
@@ -1736,8 +1820,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
-                    forkId: ecx.journaled_state.db().active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(ecx.cfg.chain_id),
+                    forkId: ecx.db().active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(ecx.cfg().chain_id()),
                 },
                 accessor: input.caller(),
                 account: address,
@@ -1759,15 +1843,15 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         None
     }
 
-    fn create_end(&mut self, ecx: Ecx, call: &CreateInputs, outcome: &mut CreateOutcome) {
+    fn create_end(&mut self, ecx: &mut CTX, call: &CreateInputs, outcome: &mut CreateOutcome) {
         let call = Some(call);
-        let curr_depth = ecx.journaled_state.depth();
+        let curr_depth = ecx.journal().depth();
 
         // Clean up pranks
         if let Some(prank) = &self.get_prank(curr_depth)
             && curr_depth == prank.depth
         {
-            ecx.tx.caller = prank.prank_origin;
+            ecx.tx_mut().set_caller(prank.prank_origin);
 
             // Clean single-call prank once we have returned to the original depth
             if prank.single_call {
@@ -1779,7 +1863,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if let Some(broadcast) = &self.broadcast
             && curr_depth == broadcast.depth
         {
-            ecx.tx.caller = broadcast.original_origin;
+            ecx.tx_mut().set_caller(broadcast.original_origin);
 
             // Clean single-call broadcast once we have returned to the original depth
             if broadcast.single_call {
@@ -1843,20 +1927,24 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     // changes. Depending on what depth the cheat was called at, there
                     // may not be any pending calls to update if execution has
                     // percolated up to a higher depth.
-                    let depth = ecx.journaled_state.depth();
+                    let depth = ecx.journal().depth();
                     if create_access.depth == depth as u64 {
                         debug_assert_eq!(
                             create_access.kind as u8,
                             crate::Vm::AccountAccessKind::Create as u8
                         );
-                        let (db, journal, _) = ecx.as_db_env_and_journal();
                         if let Some(address) = outcome.address
-                            && let Ok(created_acc) = journal.load_account(db, address)
+                            && let Ok(created_acc) = ecx.journal_mut().load_account(address)
                         {
-                            create_access.newBalance = created_acc.info.balance;
-                            create_access.newNonce = created_acc.info.nonce;
-                            create_access.deployedCode =
-                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
+                            create_access.newBalance = created_acc.data.info.balance;
+                            create_access.newNonce = created_acc.data.info.nonce;
+                            create_access.deployedCode = created_acc
+                                .data
+                                .info
+                                .code
+                                .clone()
+                                .unwrap_or_default()
+                                .original_bytes();
                         }
                     }
                     // Merge the last depth's AccountAccesses into the AccountAccesses at the
@@ -1873,12 +1961,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
 
         // Match the create against expected_creates
-        let (db, journal, _) = ecx.as_db_env_and_journal();
         if !self.expected_creates.is_empty()
             && let (Some(address), Some(call)) = (outcome.address, call)
-            && let Ok(created_acc) = journal.load_account(db, address)
+            && let Ok(created_acc) = ecx.journal_mut().load_account(address)
         {
-            let bytecode = created_acc.info.code.clone().unwrap_or_default().original_bytes();
+            let bytecode = created_acc.data.info.code.clone().unwrap_or_default().original_bytes();
             if let Some((index, _)) =
                 self.expected_creates.iter().find_position(|expected_create| {
                     expected_create.deployer == call.caller()
@@ -1892,10 +1979,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 }
 
-impl InspectorExt for Cheatcodes {
-    fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &CreateInputs) -> bool {
+impl FoundryInspectorExt for Cheatcodes {
+    fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme() {
-            let depth = ecx.journaled_state.depth();
             let target_depth = if let Some(prank) = &self.get_prank(depth) {
                 prank.depth
             } else if let Some(broadcast) = &self.broadcast {
@@ -1933,10 +2019,14 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn meter_gas_record<CTX: CheatsCtxExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut CTX,
+    ) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
-                let curr_depth = ecx.journaled_state.depth();
+                let curr_depth = ecx.journal().depth();
                 if curr_depth == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
@@ -1997,7 +2087,11 @@ impl Cheatcodes {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn arbitrary_storage_end<CTX: CheatsCtxExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut CTX,
+    ) {
         let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
         } else {
@@ -2049,7 +2143,11 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn record_state_diffs(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn record_state_diffs<CTX: CheatsCtxExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut CTX,
+    ) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         match interpreter.bytecode.opcode() {
             op::SELFDESTRUCT => {
@@ -2059,11 +2157,15 @@ impl Cheatcodes {
                 // get previous balance, nonce and initialized status of the target account
                 let target = try_or_return!(interpreter.stack.peek(0));
                 let target = Address::from_word(B256::from(target));
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                let (initialized, old_balance, old_nonce) = journal
-                    .load_account(db, target)
+                let (initialized, old_balance, old_nonce) = ecx
+                    .journal_mut()
+                    .load_account(target)
                     .map(|account| {
-                        (account.info.exists(), account.info.balance, account.info.nonce)
+                        (
+                            account.data.info.exists(),
+                            account.data.info.balance,
+                            account.data.info.nonce,
+                        )
                     })
                     .unwrap_or_default();
 
@@ -2076,8 +2178,8 @@ impl Cheatcodes {
                 // register access for the target account
                 last.push(crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.journaled_state.database.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.cfg.chain_id),
+                        forkId: ecx.db().active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(ecx.cfg().chain_id()),
                     },
                     accessor: interpreter.input.target_address,
                     account: target,
@@ -2093,7 +2195,7 @@ impl Cheatcodes {
                     deployedCode: Bytes::new(),
                     storageAccesses: vec![],
                     depth: ecx
-                        .journaled_state
+                        .journal()
                         .depth()
                         .try_into()
                         .expect("journaled state depth exceeds u64"),
@@ -2110,8 +2212,7 @@ impl Cheatcodes {
                 // it's not set (zero value)
                 let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if journal.load_account(db, address).is_ok()
+                if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
                     present_value = previous.data;
@@ -2124,11 +2225,8 @@ impl Cheatcodes {
                     newValue: present_value.into(),
                     reverted: false,
                 };
-                let curr_depth = ecx
-                    .journaled_state
-                    .depth()
-                    .try_into()
-                    .expect("journaled state depth exceeds u64");
+                let curr_depth =
+                    ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 append_storage_access(last, access, curr_depth);
             }
             op::SSTORE => {
@@ -2140,8 +2238,7 @@ impl Cheatcodes {
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
                 let mut previous_value = U256::ZERO;
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if journal.load_account(db, address).is_ok()
+                if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
                     previous_value = previous.data;
@@ -2155,11 +2252,8 @@ impl Cheatcodes {
                     newValue: value.into(),
                     reverted: false,
                 };
-                let curr_depth = ecx
-                    .journaled_state
-                    .depth()
-                    .try_into()
-                    .expect("journaled state depth exceeds u64");
+                let curr_depth =
+                    ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 append_storage_access(last, access, curr_depth);
             }
 
@@ -2177,25 +2271,21 @@ impl Cheatcodes {
                 let initialized;
                 let balance;
                 let nonce;
-                let (db, journal, _) = ecx.as_db_env_and_journal();
-                if let Ok(acc) = journal.load_account(db, address) {
-                    initialized = acc.info.exists();
-                    balance = acc.info.balance;
-                    nonce = acc.info.nonce;
+                if let Ok(acc) = ecx.journal_mut().load_account(address) {
+                    initialized = acc.data.info.exists();
+                    balance = acc.data.info.balance;
+                    nonce = acc.data.info.nonce;
                 } else {
                     initialized = false;
                     balance = U256::ZERO;
                     nonce = 0;
                 }
-                let curr_depth = ecx
-                    .journaled_state
-                    .depth()
-                    .try_into()
-                    .expect("journaled state depth exceeds u64");
+                let curr_depth =
+                    ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.journaled_state.database.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.cfg.chain_id),
+                        forkId: ecx.db().active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(ecx.cfg().chain_id()),
                     },
                     accessor: interpreter.input.target_address,
                     account: address,
@@ -2507,29 +2597,61 @@ fn append_storage_access(
     }
 }
 
+/// Returns the [`spec::Cheatcode`] definition for a given [`spec::CheatcodeDef`] implementor.
+fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
+    T::CHEATCODE
+}
+
+fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
+    cheat.func.signature.split('(').next().unwrap()
+}
+
+fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
+    cheat.func.id
+}
+
+fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
+    cheat.func.signature
+}
+
 /// Dispatches the cheatcode call to the appropriate function.
-fn apply_dispatch(
+fn apply_dispatch<CTX: CheatsCtxExt>(
     calls: &Vm::VmCalls,
-    ccx: &mut CheatsCtxt,
-    executor: &mut dyn CheatcodesExecutor,
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    executor: &mut dyn CheatcodesExecutor<CTX>,
 ) -> Result {
-    let cheat = calls_as_dyn_cheatcode(calls);
+    // Extract metadata for logging/deprecation via CheatcodeDef.
+    macro_rules! get_cheatcode {
+        ($($variant:ident),*) => {
+            match calls {
+                $(Vm::VmCalls::$variant(cheat) => cheatcode_of(cheat),)*
+            }
+        };
+    }
+    let cheat = vm_calls!(get_cheatcode);
 
-    let _guard = debug_span!(target: "cheatcodes", "apply", id = %cheat.id()).entered();
-    trace!(target: "cheatcodes", ?cheat, "applying");
+    let _guard = debug_span!(target: "cheatcodes", "apply", id = %cheatcode_id(cheat)).entered();
+    trace!(target: "cheatcodes", cheat = %cheatcode_signature(cheat), "applying");
 
-    if let spec::Status::Deprecated(replacement) = *cheat.status() {
-        ccx.state.deprecated.insert(cheat.signature(), replacement);
+    if let spec::Status::Deprecated(replacement) = cheat.status {
+        ccx.state.deprecated.insert(cheatcode_signature(cheat), replacement);
     }
 
-    // Apply the cheatcode.
-    let mut result = cheat.dyn_apply(ccx, executor);
+    // Monomorphized dispatch: calls apply_full directly, no trait objects.
+    macro_rules! dispatch {
+        ($($variant:ident),*) => {
+            match calls {
+                $(Vm::VmCalls::$variant(cheat) => Cheatcode::apply_full(cheat, ccx, executor),)*
+            }
+        };
+    }
+    let mut result = vm_calls!(dispatch);
 
     // Format the error message to include the cheatcode name.
     if let Err(e) = &mut result
         && e.is_str()
     {
-        let name = cheat.name();
+        let name = cheatcode_name(cheat);
         // Skip showing the cheatcode name for:
         // - assertions: too verbose, and can already be inferred from the error message
         // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
@@ -2547,17 +2669,6 @@ fn apply_dispatch(
     );
 
     result
-}
-
-fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
-    macro_rules! as_dyn {
-        ($($variant:ident),*) => {
-            match calls {
-                $(Vm::VmCalls::$variant(cheat) => cheat,)*
-            }
-        };
-    }
-    vm_calls!(as_dyn)
 }
 
 /// Helper function to check if frame execution will exit.

@@ -2,64 +2,58 @@
 
 use alloy_consensus::{Transaction, TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network::AnyTransactionReceipt;
+use alloy_network::{
+    AnyTransactionReceipt, Ethereum, Network, TransactionBuilder7702, TransactionResponse,
+};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{
     Provider,
     network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
 };
 use alloy_rpc_types::{BlockId, TransactionRequest};
-use alloy_serde::WithOtherFields;
 use eyre::Result;
-use foundry_common_fmt::UIfmt;
+use foundry_common_fmt::{UIfmt, UIfmtReceiptExt, get_pretty_receipt_attr};
 use serde::{Deserialize, Serialize};
 
 /// Helper type to carry a transaction along with an optional revert reason
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TransactionReceiptWithRevertReason {
+pub struct TransactionReceiptWithRevertReason<N: Network> {
     /// The underlying transaction receipt
     #[serde(flatten)]
-    pub receipt: AnyTransactionReceipt,
+    pub receipt: N::ReceiptResponse,
 
     /// The revert reason string if the transaction status is failed
     #[serde(skip_serializing_if = "Option::is_none", rename = "revertReason")]
     pub revert_reason: Option<String>,
 }
 
-impl TransactionReceiptWithRevertReason {
-    /// Returns if the status of the transaction is 0 (failure)
-    pub fn is_failure(&self) -> bool {
-        !self.receipt.inner.inner.inner.receipt.status.coerce_status()
-    }
-
+impl<N: Network> TransactionReceiptWithRevertReason<N>
+where
+    N::TxEnvelope: Clone,
+    N::ReceiptResponse: UIfmtReceiptExt,
+{
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<P: Provider<AnyNetwork>>(
-        &mut self,
-        provider: &P,
-    ) -> Result<()> {
+    pub async fn update_revert_reason<P: Provider<N>>(&mut self, provider: &P) -> Result<()> {
         self.revert_reason = self.fetch_revert_reason(provider).await?;
         Ok(())
     }
 
-    async fn fetch_revert_reason<P: Provider<AnyNetwork>>(
-        &self,
-        provider: &P,
-    ) -> Result<Option<String>> {
-        if !self.is_failure() {
+    async fn fetch_revert_reason<P: Provider<N>>(&self, provider: &P) -> Result<Option<String>> {
+        // If the transaction succeeded, there is no revert reason to fetch
+        if self.receipt.status() {
             return Ok(None);
         }
 
         let transaction = provider
-            .get_transaction_by_hash(self.receipt.transaction_hash)
+            .get_transaction_by_hash(self.receipt.transaction_hash())
             .await
             .map_err(|err| eyre::eyre!("unable to fetch transaction: {err}"))?
             .ok_or_else(|| eyre::eyre!("transaction not found"))?;
 
-        if let Some(block_hash) = self.receipt.block_hash {
-            let mut call_request: WithOtherFields<TransactionRequest> =
-                transaction.inner.inner.clone_inner().into();
-            call_request.set_from(transaction.inner.inner.signer());
+        if let Some(block_hash) = self.receipt.block_hash() {
+            let mut call_request: N::TransactionRequest = transaction.as_ref().clone().into();
+            call_request.set_from(transaction.from());
             match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
@@ -69,19 +63,22 @@ impl TransactionReceiptWithRevertReason {
     }
 }
 
-impl From<AnyTransactionReceipt> for TransactionReceiptWithRevertReason {
+impl From<AnyTransactionReceipt> for TransactionReceiptWithRevertReason<AnyNetwork> {
     fn from(receipt: AnyTransactionReceipt) -> Self {
         Self { receipt, revert_reason: None }
     }
 }
 
-impl From<TransactionReceiptWithRevertReason> for AnyTransactionReceipt {
-    fn from(receipt_with_reason: TransactionReceiptWithRevertReason) -> Self {
+impl From<TransactionReceiptWithRevertReason<AnyNetwork>> for AnyTransactionReceipt {
+    fn from(receipt_with_reason: TransactionReceiptWithRevertReason<AnyNetwork>) -> Self {
         receipt_with_reason.receipt
     }
 }
 
-impl UIfmt for TransactionReceiptWithRevertReason {
+impl<N: Network> UIfmt for TransactionReceiptWithRevertReason<N>
+where
+    N::ReceiptResponse: UIfmt,
+{
     fn pretty(&self) -> String {
         if let Some(revert_reason) = &self.revert_reason {
             format!(
@@ -143,36 +140,20 @@ fn extract_revert_reason<S: AsRef<str>>(error_string: S) -> Option<String> {
         .map(|index| error_string.as_ref().split_at(index + message_substr.len()).1.to_string())
 }
 
-/// Returns the `UiFmt::pretty()` formatted attribute of the transaction receipt
-pub fn get_pretty_tx_receipt_attr(
-    receipt: &TransactionReceiptWithRevertReason,
+/// Returns the `UiFmt::pretty()` formatted attribute of the transaction receipt with revert reason
+pub fn get_pretty_receipt_w_reason_attr<N>(
+    receipt: &TransactionReceiptWithRevertReason<N>,
     attr: &str,
-) -> Option<String> {
-    match attr {
-        "blockHash" | "block_hash" => Some(receipt.receipt.block_hash.pretty()),
-        "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
-        "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
-        "cumulativeGasUsed" | "cumulative_gas_used" => {
-            Some(receipt.receipt.inner.inner.inner.receipt.cumulative_gas_used.pretty())
-        }
-        "effectiveGasPrice" | "effective_gas_price" => {
-            Some(receipt.receipt.effective_gas_price.to_string())
-        }
-        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.to_string()),
-        "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
-        "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
-        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root().pretty()),
-        "status" | "statusCode" | "status_code" => {
-            Some(receipt.receipt.inner.inner.inner.receipt.status.pretty())
-        }
-        "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
-        "transactionIndex" | "transaction_index" => {
-            Some(receipt.receipt.transaction_index.pretty())
-        }
-        "type" | "transaction_type" => Some(receipt.receipt.inner.inner.r#type.to_string()),
-        "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
-        _ => None,
+) -> Option<String>
+where
+    N: Network,
+    N::ReceiptResponse: UIfmtReceiptExt,
+{
+    // Handle revert reason first, then delegate to the receipt formatting function
+    if matches!(attr, "revertReason" | "revert_reason") {
+        return Some(receipt.revert_reason.pretty());
     }
+    get_pretty_receipt_attr::<N>(&receipt.receipt, attr)
 }
 
 /// Used for broadcasting transactions
@@ -180,25 +161,28 @@ pub fn get_pretty_tx_receipt_attr(
 /// or a [`TxEnvelope`], already signed
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum TransactionMaybeSigned {
+pub enum TransactionMaybeSigned<N: Network = Ethereum> {
     Signed {
         #[serde(flatten)]
-        tx: TxEnvelope,
+        tx: N::TxEnvelope,
         from: Address,
     },
-    Unsigned(WithOtherFields<TransactionRequest>),
+    Unsigned(N::TransactionRequest),
 }
 
-impl TransactionMaybeSigned {
+impl<N: Network> TransactionMaybeSigned<N> {
     /// Creates a new (unsigned) transaction for broadcast
-    pub fn new(tx: WithOtherFields<TransactionRequest>) -> Self {
+    pub fn new(tx: N::TransactionRequest) -> Self {
         Self::Unsigned(tx)
     }
 
     /// Creates a new signed transaction for broadcast.
     pub fn new_signed(
-        tx: TxEnvelope,
-    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError> {
+        tx: N::TxEnvelope,
+    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError>
+    where
+        N::TxEnvelope: SignerRecoverable,
+    {
         let from = tx.recover_signer()?;
         Ok(Self::Signed { tx, from })
     }
@@ -207,7 +191,7 @@ impl TransactionMaybeSigned {
         matches!(self, Self::Unsigned(_))
     }
 
-    pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {
+    pub fn as_unsigned_mut(&mut self) -> Option<&mut N::TransactionRequest> {
         match self {
             Self::Unsigned(tx) => Some(tx),
             _ => None,
@@ -217,28 +201,28 @@ impl TransactionMaybeSigned {
     pub fn from(&self) -> Option<Address> {
         match self {
             Self::Signed { from, .. } => Some(*from),
-            Self::Unsigned(tx) => tx.from,
+            Self::Unsigned(tx) => tx.from(),
         }
     }
 
     pub fn input(&self) -> Option<&Bytes> {
         match self {
             Self::Signed { tx, .. } => Some(tx.input()),
-            Self::Unsigned(tx) => tx.input.input(),
+            Self::Unsigned(tx) => tx.input(),
         }
     }
 
     pub fn to(&self) -> Option<TxKind> {
         match self {
             Self::Signed { tx, .. } => Some(tx.kind()),
-            Self::Unsigned(tx) => tx.to,
+            Self::Unsigned(tx) => tx.kind(),
         }
     }
 
     pub fn value(&self) -> Option<U256> {
         match self {
             Self::Signed { tx, .. } => Some(tx.value()),
-            Self::Unsigned(tx) => tx.value,
+            Self::Unsigned(tx) => tx.value(),
         }
     }
 
@@ -252,14 +236,17 @@ impl TransactionMaybeSigned {
     pub fn nonce(&self) -> Option<u64> {
         match self {
             Self::Signed { tx, .. } => Some(tx.nonce()),
-            Self::Unsigned(tx) => tx.nonce,
+            Self::Unsigned(tx) => tx.nonce(),
         }
     }
 
-    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>> {
+    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>>
+    where
+        N::TransactionRequest: TransactionBuilder7702,
+    {
         match self {
             Self::Signed { tx, .. } => tx.authorization_list().map(|auths| auths.to_vec()),
-            Self::Unsigned(tx) => tx.authorization_list.as_deref().map(|auths| auths.to_vec()),
+            Self::Unsigned(tx) => tx.authorization_list().map(|auths| auths.to_vec()),
         }
         .filter(|auths| !auths.is_empty())
     }
@@ -267,7 +254,7 @@ impl TransactionMaybeSigned {
 
 impl From<TransactionRequest> for TransactionMaybeSigned {
     fn from(tx: TransactionRequest) -> Self {
-        Self::new(WithOtherFields::new(tx))
+        Self::new(tx)
     }
 }
 

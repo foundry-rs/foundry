@@ -54,7 +54,7 @@ impl TraceArgs {
                 hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))?
             } else if is_json {
                 let tx: AnyRpcTransaction = serde_json::from_str(trimmed)?;
-                tx.inner.inner.encoded_2718().to_vec()
+                tx.as_ref().encoded_2718().to_vec()
             } else {
                 hex::decode(trimmed)?
             };

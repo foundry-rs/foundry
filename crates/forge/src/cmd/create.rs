@@ -316,6 +316,15 @@ impl CreateArgs {
             deployer.tx.set_value(value);
         }
 
+        // set access list if specified
+        if let Some(access_list) = match self.tx.access_list {
+            None => None,
+            Some(None) => Some(provider.create_access_list(&deployer.tx).await?.access_list),
+            Some(Some(ref access_list)) => Some(access_list.clone()),
+        } {
+            deployer.tx.set_access_list(access_list);
+        }
+
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
@@ -455,6 +464,14 @@ impl CreateArgs {
         constructor: &Constructor,
         constructor_args: &[String],
     ) -> Result<Vec<DynSolValue>> {
+        if constructor.inputs.len() != constructor_args.len() {
+            eyre::bail!(
+                "Constructor argument count mismatch: expected {} but got {}",
+                constructor.inputs.len(),
+                constructor_args.len()
+            );
+        }
+
         let mut params = Vec::with_capacity(constructor.inputs.len());
         for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
             // resolve the input type directly

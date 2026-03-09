@@ -1,7 +1,10 @@
 //! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
-use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxExt, CheatsCtxt, Result, Vm::*,
+    inspector::exec_create,
+};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_network::AnyTransactionReceipt;
@@ -13,7 +16,7 @@ use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use revm::{
-    context::{CreateScheme, JournalTr},
+    context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
 };
 use revm_inspectors::tracing::types::CallKind;
@@ -296,56 +299,88 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 impl Cheatcode for deployCode_0Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path } = self;
         deploy_code(ccx, executor, path, None, None, None)
     }
 }
 
 impl Cheatcode for deployCode_1Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args } = self;
         deploy_code(ccx, executor, path, Some(args), None, None)
     }
 }
 
 impl Cheatcode for deployCode_2Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path, value } = self;
         deploy_code(ccx, executor, path, None, Some(*value), None)
     }
 }
 
 impl Cheatcode for deployCode_3Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), None)
     }
 }
 
 impl Cheatcode for deployCode_4Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path, salt } = self;
         deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
     }
 }
 
 impl Cheatcode for deployCode_5Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, salt } = self;
         deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
     }
 }
 
 impl Cheatcode for deployCode_6Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path, value, salt } = self;
         deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
     }
 }
 
 impl Cheatcode for deployCode_7Call {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
     }
@@ -353,9 +388,9 @@ impl Cheatcode for deployCode_7Call {
 
 /// Helper function to deploy contract from artifact code.
 /// Uses CREATE2 scheme if salt specified.
-fn deploy_code(
-    ccx: &mut CheatsCtxt,
-    executor: &mut dyn CheatcodesExecutor,
+fn deploy_code<CTX: CheatsCtxExt>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    executor: &mut dyn CheatcodesExecutor<CTX>,
     path: &str,
     constructor_args: Option<&Bytes>,
     value: Option<U256>,
@@ -376,12 +411,11 @@ fn deploy_code(
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
     // If prank active at current depth, then use it as caller for create input.
-    let caller = ccx
-        .state
-        .get_prank(ccx.ecx.journaled_state.depth())
-        .map_or(ccx.caller, |prank| prank.new_caller);
+    let caller =
+        ccx.state.get_prank(ccx.ecx.journal().depth()).map_or(ccx.caller, |prank| prank.new_caller);
 
-    let outcome = executor.exec_create(
+    let outcome = exec_create(
+        executor,
         CreateInputs::new(
             caller,
             scheme,
@@ -786,9 +820,9 @@ impl Cheatcode for getBroadcasts_1Call {
 }
 
 impl Cheatcode for getDeployment_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.cfg.chain_id;
+        let chain_id = ccx.ecx.cfg().chain_id();
 
         let latest_broadcast = latest_broadcast(
             contractName,
@@ -937,7 +971,7 @@ mod tests {
         #[cfg(windows)]
         let args = vec!["cmd".to_string(), "/c".to_string(), "exit 1".to_string()];
 
-        let result = ffiCall { commandInput: args }.apply(&mut cheats);
+        let result = Cheatcode::apply(&ffiCall { commandInput: args }, &mut cheats);
 
         // Assert that the cheatcode returned an error.
         assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");

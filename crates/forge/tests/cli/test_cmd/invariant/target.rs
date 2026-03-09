@@ -627,6 +627,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 
     // Test TargetSelectors
@@ -669,6 +671,8 @@ Encountered 1 failing test in test/TargetSenders.t.sol:TargetSenders
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]],
     );
@@ -714,6 +718,8 @@ Encountered 1 failing test in test/TargetArtifactSelectors2.t.sol:TargetArtifact
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 
@@ -762,6 +768,8 @@ Encountered 1 failing test in test/TargetArtifacts.t.sol:TargetArtifacts
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });

@@ -149,9 +149,19 @@ impl InMemoryBlockStates {
                 // only write to disk if supported
                 if !self.is_memory_only() {
                     let state_snapshot = state.0.clear_into_state_snapshot();
-                    self.disk_cache.write(hash, state_snapshot);
-                    self.on_disk_states.insert(hash, state);
-                    self.oldest_on_disk.push_back(hash);
+                    if self.disk_cache.write(hash, &state_snapshot) {
+                        // Write succeeded, move state to on-disk tracking
+                        self.on_disk_states.insert(hash, state);
+                        self.oldest_on_disk.push_back(hash);
+                    } else {
+                        // Write failed, restore state to memory to avoid data loss
+                        state.init_from_state_snapshot(state_snapshot);
+                        self.states.insert(hash, state);
+                        self.present.push_front(hash);
+                        // Increase limit temporarily to prevent infinite retry loop
+                        self.in_memory_limit = self.in_memory_limit.saturating_add(1);
+                        break;
+                    }
                 }
             }
         }

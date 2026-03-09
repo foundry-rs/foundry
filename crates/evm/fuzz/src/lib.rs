@@ -317,8 +317,6 @@ impl FuzzTestResult {
 /// Data of a single fuzz test case
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct FuzzCase {
-    /// The calldata used for this fuzz test
-    pub calldata: Bytes,
     /// Consumed gas
     pub gas: u64,
     /// The initial gas stipend for the transaction

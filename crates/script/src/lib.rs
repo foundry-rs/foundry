@@ -134,7 +134,7 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
     #[arg(
         long,
-        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws"],
+        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws", "browser"],
     )]
     pub unlocked: bool,
 
@@ -233,6 +233,15 @@ impl ScriptArgs {
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
+        } else if self.evm.sender.is_none() {
+            // If no sender was explicitly set via --sender and there's exactly one signer
+            // (e.g. from --account or --keystore), use that signer's address as the sender.
+            // This makes --account behave consistently with --private-key.
+            if let Ok(signers) = script_wallets.signers()
+                && signers.len() == 1
+            {
+                evm_opts.sender = signers[0];
+            }
         }
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
@@ -650,6 +659,7 @@ impl ScriptConfig {
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
+                    .logs(self.config.live_logs)
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)

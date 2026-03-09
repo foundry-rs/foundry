@@ -1,6 +1,10 @@
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatsCtxExt, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use revm::context::JournalTr;
+use foundry_evm_core::backend::DatabaseExt;
+use revm::{
+    context::{ContextTr, JournalTr, Transaction},
+    inspector::JournalExt,
+};
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,71 +58,71 @@ impl Prank {
 }
 
 impl Cheatcode for prank_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, true, false)
     }
 }
 
 impl Cheatcode for startPrank_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, false, false)
     }
 }
 
 impl Cheatcode for prank_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), true, false)
     }
 }
 
 impl Cheatcode for startPrank_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), false, false)
     }
 }
 
 impl Cheatcode for prank_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, true, *delegateCall)
     }
 }
 
 impl Cheatcode for startPrank_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, false, *delegateCall)
     }
 }
 
 impl Cheatcode for prank_3Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
     }
 }
 
 impl Cheatcode for startPrank_3Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), false, *delegateCall)
     }
 }
 
 impl Cheatcode for stopPrankCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
-        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth());
+        ccx.state.pranks.remove(&ccx.ecx.journal().depth());
         Ok(Default::default())
     }
 }
 
-fn prank(
-    ccx: &mut CheatsCtxt,
+fn prank<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
     new_caller: &Address,
     new_origin: Option<&Address>,
     single_call: bool,
@@ -137,7 +141,7 @@ fn prank(
         );
     }
 
-    let depth = ccx.ecx.journaled_state.depth();
+    let depth = ccx.ecx.journal().depth();
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
@@ -151,7 +155,7 @@ fn prank(
 
     let prank = Prank::new(
         ccx.caller,
-        ccx.ecx.tx.caller,
+        ccx.ecx.tx().caller(),
         *new_caller,
         new_origin.copied(),
         depth,

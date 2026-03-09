@@ -259,7 +259,7 @@ impl VerifyBytecodeArgs {
                 gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
             }
 
-            configure_tx_req_env(&mut env.as_env_mut(), &gen_tx_req, None)
+            configure_tx_req_env(&mut env.as_env_mut(), &gen_tx_req)
                 .wrap_err("Failed to configure tx request env")?;
 
             // Seed deployer account with funds
@@ -335,6 +335,7 @@ impl VerifyBytecodeArgs {
             );
         };
 
+        let creation_block = transaction.block_number;
         let mut transaction: TransactionRequest = match transaction.inner.inner.inner() {
             AnyTxEnvelope::Ethereum(tx) => tx.clone().into(),
             AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
@@ -440,13 +441,7 @@ impl VerifyBytecodeArgs {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
                 Some(_) => eyre::bail!("Invalid block number"),
                 None => {
-                    let provider = utils::get_provider(&config)?;
-                    provider
-                    .get_transaction_by_hash(creation_data.transaction_hash)
-                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
-                        eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-                    })?
-                    .block_number.ok_or_else(|| {
+                    creation_block.ok_or_else(|| {
                         eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
                     })?
                 }
@@ -495,7 +490,7 @@ impl VerifyBytecodeArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+                    configure_tx_env(&mut env.as_env_mut(), tx);
 
                     if let TxKind::Call(_) = tx.inner.kind() {
                         executor.transact_with_env(env.clone()).wrap_err_with(|| {
@@ -538,7 +533,7 @@ impl VerifyBytecodeArgs {
             }
 
             // configure_req__env(&mut env, &transaction.inner);
-            configure_tx_req_env(&mut env.as_env_mut(), &transaction, None)
+            configure_tx_req_env(&mut env.as_env_mut(), &transaction)
                 .wrap_err("Failed to configure tx request env")?;
 
             let fork_address = crate::utils::deploy_contract(

@@ -416,11 +416,11 @@ impl SelectorsSubcommands {
 
                 table.set_header(["Type", "Signature", "Selector", "Contract"]);
 
+                let selector_str = selector.strip_prefix("0x").unwrap_or(selector.as_str());
+                let selector_bytes = hex::decode(selector_str)?;
+
                 for (_file, contract, artifact) in artifacts {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
-
-                    let selector_bytes =
-                        hex::decode(selector.strip_prefix("0x").unwrap_or(&selector))?;
 
                     for func in abi.functions() {
                         if func.selector().as_slice().starts_with(selector_bytes.as_slice()) {
