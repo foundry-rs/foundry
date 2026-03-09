@@ -1,5 +1,5 @@
 crates/cheatcodes/assets/*.json linguist-generated
-testdata/cheats/Vm.sol linguist-generated
+testdata/utils/Vm.sol linguist-generated
 bun.lock linguist-generated
 
 # See <https://git-scm.com/docs/gitattributes#_defining_a_custom_hunk_header>
@@ -9,5 +9,6 @@ testdata/fixtures/**/* eol=lf
 
 dprint.json linguist-language=JSON-with-Comments
 .devcontainer/devcontainer.json linguist-language=JSON-with-Comments
-
 .env.example linguist-language=Dotenv
+
+docs/dev linguist-documentation=true
