@@ -8,7 +8,7 @@ use std::{env, sync::OnceLock};
 /// Stores the forge execution context for the duration of the program.
 pub static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
-impl<CTX> Cheatcode<CTX> for setEnvCall {
+impl Cheatcode for setEnvCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name: key, value } = self;
         if key.is_empty() {
@@ -28,7 +28,7 @@ impl<CTX> Cheatcode<CTX> for setEnvCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for resolveEnvCall {
+impl Cheatcode for resolveEnvCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input } = self;
         let resolved = foundry_config::resolve::interpolate(input)
@@ -37,105 +37,105 @@ impl<CTX> Cheatcode<CTX> for resolveEnvCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envExistsCall {
+impl Cheatcode for envExistsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         Ok(env::var(name).is_ok().abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBool_0Call {
+impl Cheatcode for envBool_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bool)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envUint_0Call {
+impl Cheatcode for envUint_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Uint(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envInt_0Call {
+impl Cheatcode for envInt_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Int(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envAddress_0Call {
+impl Cheatcode for envAddress_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Address)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes32_0Call {
+impl Cheatcode for envBytes32_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::FixedBytes(32))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envString_0Call {
+impl Cheatcode for envString_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::String)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes_0Call {
+impl Cheatcode for envBytes_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bytes)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBool_1Call {
+impl Cheatcode for envBool_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bool)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envUint_1Call {
+impl Cheatcode for envUint_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Uint(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envInt_1Call {
+impl Cheatcode for envInt_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Int(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envAddress_1Call {
+impl Cheatcode for envAddress_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Address)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes32_1Call {
+impl Cheatcode for envBytes32_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::FixedBytes(32))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envString_1Call {
+impl Cheatcode for envString_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::String)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes_1Call {
+impl Cheatcode for envBytes_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bytes)
@@ -143,7 +143,7 @@ impl<CTX> Cheatcode<CTX> for envBytes_1Call {
 }
 
 // bool
-impl<CTX> Cheatcode<CTX> for envOr_0Call {
+impl Cheatcode for envOr_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bool)
@@ -151,7 +151,7 @@ impl<CTX> Cheatcode<CTX> for envOr_0Call {
 }
 
 // uint256
-impl<CTX> Cheatcode<CTX> for envOr_1Call {
+impl Cheatcode for envOr_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Uint(256))
@@ -159,7 +159,7 @@ impl<CTX> Cheatcode<CTX> for envOr_1Call {
 }
 
 // int256
-impl<CTX> Cheatcode<CTX> for envOr_2Call {
+impl Cheatcode for envOr_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Int(256))
@@ -167,7 +167,7 @@ impl<CTX> Cheatcode<CTX> for envOr_2Call {
 }
 
 // address
-impl<CTX> Cheatcode<CTX> for envOr_3Call {
+impl Cheatcode for envOr_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Address)
@@ -175,7 +175,7 @@ impl<CTX> Cheatcode<CTX> for envOr_3Call {
 }
 
 // bytes32
-impl<CTX> Cheatcode<CTX> for envOr_4Call {
+impl Cheatcode for envOr_4Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::FixedBytes(32))
@@ -183,7 +183,7 @@ impl<CTX> Cheatcode<CTX> for envOr_4Call {
 }
 
 // string
-impl<CTX> Cheatcode<CTX> for envOr_5Call {
+impl Cheatcode for envOr_5Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::String)
@@ -191,7 +191,7 @@ impl<CTX> Cheatcode<CTX> for envOr_5Call {
 }
 
 // bytes
-impl<CTX> Cheatcode<CTX> for envOr_6Call {
+impl Cheatcode for envOr_6Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bytes)
@@ -199,7 +199,7 @@ impl<CTX> Cheatcode<CTX> for envOr_6Call {
 }
 
 // bool[]
-impl<CTX> Cheatcode<CTX> for envOr_7Call {
+impl Cheatcode for envOr_7Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Bool)
@@ -207,7 +207,7 @@ impl<CTX> Cheatcode<CTX> for envOr_7Call {
 }
 
 // uint256[]
-impl<CTX> Cheatcode<CTX> for envOr_8Call {
+impl Cheatcode for envOr_8Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Uint(256))
@@ -215,7 +215,7 @@ impl<CTX> Cheatcode<CTX> for envOr_8Call {
 }
 
 // int256[]
-impl<CTX> Cheatcode<CTX> for envOr_9Call {
+impl Cheatcode for envOr_9Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Int(256))
@@ -223,7 +223,7 @@ impl<CTX> Cheatcode<CTX> for envOr_9Call {
 }
 
 // address[]
-impl<CTX> Cheatcode<CTX> for envOr_10Call {
+impl Cheatcode for envOr_10Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Address)
@@ -231,7 +231,7 @@ impl<CTX> Cheatcode<CTX> for envOr_10Call {
 }
 
 // bytes32[]
-impl<CTX> Cheatcode<CTX> for envOr_11Call {
+impl Cheatcode for envOr_11Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::FixedBytes(32))
@@ -239,7 +239,7 @@ impl<CTX> Cheatcode<CTX> for envOr_11Call {
 }
 
 // string[]
-impl<CTX> Cheatcode<CTX> for envOr_12Call {
+impl Cheatcode for envOr_12Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::String)
@@ -247,7 +247,7 @@ impl<CTX> Cheatcode<CTX> for envOr_12Call {
 }
 
 // bytes[]
-impl<CTX> Cheatcode<CTX> for envOr_13Call {
+impl Cheatcode for envOr_13Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         let default = defaultValue.to_vec();
@@ -255,7 +255,7 @@ impl<CTX> Cheatcode<CTX> for envOr_13Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for isContextCall {
+impl Cheatcode for isContextCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { context } = self;
         Ok((FORGE_CONTEXT.get() == Some(context)).abi_encode())

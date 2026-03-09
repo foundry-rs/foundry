@@ -243,7 +243,7 @@ impl Display for AccountStateDiffs {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for addrCall {
+impl Cheatcode for addrCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         let wallet = super::crypto::parse_wallet(privateKey)?;
@@ -251,22 +251,22 @@ impl<CTX> Cheatcode<CTX> for addrCall {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for getNonce_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getNonce_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account } = self;
         get_nonce(ccx, account)
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for getNonce_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getNonce_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { wallet } = self;
         get_nonce(ccx, &wallet.addr)
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for loadCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for loadCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot } = *self;
         ccx.ensure_not_precompile(&target)?;
 
@@ -307,8 +307,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for loadCall {
     }
 }
 
-impl<CTX: ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX> for loadAllocsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for loadAllocsCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { pathToAllocsJson } = self;
 
         let path = Path::new(pathToAllocsJson);
@@ -332,10 +332,8 @@ impl<CTX: ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX> for loadAllocsCa
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt, Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for cloneAccountCall
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for cloneAccountCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { source, target } = self;
 
         let account = ccx.ecx.journal_mut().load_account(*source)?;
@@ -348,8 +346,8 @@ impl<CTX: ContextTr<Db: DatabaseExt, Journal: FoundryJournalExt>> Cheatcode<CTX>
     }
 }
 
-impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for dumpStateCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for dumpStateCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { pathToStateJson } = self;
         let path = Path::new(pathToStateJson);
 
@@ -378,7 +376,7 @@ impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for dumpStateCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for recordCall {
+impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recording_accesses = true;
@@ -387,14 +385,14 @@ impl<CTX> Cheatcode<CTX> for recordCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for stopRecordCall {
+impl Cheatcode for stopRecordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         state.recording_accesses = false;
         Ok(Default::default())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for accessesCall {
+impl Cheatcode for accessesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { target } = *self;
         let result = (
@@ -405,7 +403,7 @@ impl<CTX> Cheatcode<CTX> for accessesCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for recordLogsCall {
+impl Cheatcode for recordLogsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recorded_logs = Some(Default::default());
@@ -413,14 +411,14 @@ impl<CTX> Cheatcode<CTX> for recordLogsCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getRecordedLogsCall {
+impl Cheatcode for getRecordedLogsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state.recorded_logs.replace(Default::default()).unwrap_or_default().abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getRecordedLogsJsonCall {
+impl Cheatcode for getRecordedLogsJsonCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         let logs = state.recorded_logs.replace(Default::default()).unwrap_or_default();
@@ -436,7 +434,7 @@ impl<CTX> Cheatcode<CTX> for getRecordedLogsJsonCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for pauseGasMeteringCall {
+impl Cheatcode for pauseGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.gas_metering.paused = true;
@@ -444,7 +442,7 @@ impl<CTX> Cheatcode<CTX> for pauseGasMeteringCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for resumeGasMeteringCall {
+impl Cheatcode for resumeGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.gas_metering.resume();
@@ -452,7 +450,7 @@ impl<CTX> Cheatcode<CTX> for resumeGasMeteringCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for resetGasMeteringCall {
+impl Cheatcode for resetGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.gas_metering.reset();
@@ -460,7 +458,7 @@ impl<CTX> Cheatcode<CTX> for resetGasMeteringCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for lastCallGasCall {
+impl Cheatcode for lastCallGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         let Some(last_call_gas) = &state.gas_metering.last_call_gas else {
@@ -470,15 +468,15 @@ impl<CTX> Cheatcode<CTX> for lastCallGasCall {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for getChainIdCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getChainIdCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(U256::from(ccx.ecx.cfg().chain_id()).abi_encode())
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for chainIdCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for chainIdCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
         ccx.ecx.cfg_mut().chain_id = newChainId.to();
@@ -486,16 +484,16 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for chainIdCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for coinbaseCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for coinbaseCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newCoinbase } = self;
         ccx.ecx.block_mut().beneficiary = *newCoinbase;
         Ok(Default::default())
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for difficultyCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for difficultyCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
             ccx.ecx.cfg().spec().into() < SpecId::MERGE,
@@ -507,8 +505,8 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for difficultyCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for feeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for feeCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newBasefee } = self;
         ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
         ccx.ecx.block_mut().basefee = newBasefee.saturating_to();
@@ -516,8 +514,8 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for feeCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for prevrandao_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for prevrandao_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
             ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
@@ -529,8 +527,8 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for prevrandao_0Call {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for prevrandao_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for prevrandao_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
             ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
@@ -542,8 +540,8 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for prevrandao_1Call {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for blobhashesCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for blobhashesCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { hashes } = self;
         ensure!(
             ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
@@ -557,8 +555,8 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for blobhashesCall {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for getBlobhashesCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getBlobhashesCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         ensure!(
             ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
@@ -569,23 +567,23 @@ impl<CTX: ContextTr> Cheatcode<CTX> for getBlobhashesCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for rollCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for rollCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newHeight } = self;
         ccx.ecx.block_mut().number = *newHeight;
         Ok(Default::default())
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for getBlockNumberCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getBlockNumberCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().number().abi_encode())
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for txGasPriceCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for txGasPriceCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newGasPrice } = self;
         ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
         ccx.ecx.tx_mut().gas_price = newGasPrice.saturating_to();
@@ -593,23 +591,23 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for txGasPriceCall {
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for warpCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for warpCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newTimestamp } = self;
         ccx.ecx.block_mut().timestamp = *newTimestamp;
         Ok(Default::default())
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for getBlockTimestampCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getBlockTimestampCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().timestamp().abi_encode())
     }
 }
 
-impl<CTX: FoundryContextExt> Cheatcode<CTX> for blobBaseFeeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for blobBaseFeeCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
             ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
@@ -626,15 +624,15 @@ impl<CTX: FoundryContextExt> Cheatcode<CTX> for blobBaseFeeCall {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for getBlobBaseFeeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getBlobBaseFeeCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().blob_excess_gas().unwrap_or(0).abi_encode())
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for dealCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for dealCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
         let account = journaled_account(ccx.ecx, address)?;
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
@@ -644,8 +642,8 @@ impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for de
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for etchCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for etchCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ccx.ensure_not_precompile(target)?;
         ccx.ecx.journal_mut().load_account(*target)?;
@@ -656,8 +654,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for etchCall {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for resetNonceCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for resetNonceCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account } = self;
         let account = journaled_account(ccx.ecx, *account)?;
         // Per EIP-161, EOA nonces start at 0, but contract nonces
@@ -671,8 +669,8 @@ impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for re
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for setNonceCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for setNonceCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account, newNonce } = *self;
         let account = journaled_account(ccx.ecx, account)?;
         // nonce must increment only
@@ -687,8 +685,8 @@ impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for se
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for setNonceUnsafeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for setNonceUnsafeCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account, newNonce } = *self;
         let account = journaled_account(ccx.ecx, account)?;
         account.info.nonce = newNonce;
@@ -696,8 +694,8 @@ impl<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX> for se
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for storeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for storeCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot, value } = *self;
         ccx.ensure_not_precompile(&target)?;
         ensure_loaded_account(ccx.ecx, target)?;
@@ -709,8 +707,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for storeCall {
     }
 }
 
-impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for coolCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for coolCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target } = self;
         if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(target) {
             account.unmark_touch();
@@ -720,7 +718,7 @@ impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for coolCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for accessListCall {
+impl Cheatcode for accessListCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { access } = self;
         let access_list = access
@@ -735,7 +733,7 @@ impl<CTX> Cheatcode<CTX> for accessListCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for noAccessListCall {
+impl Cheatcode for noAccessListCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         // Set to empty option in order to override previous applied access list.
@@ -746,45 +744,45 @@ impl<CTX> Cheatcode<CTX> for noAccessListCall {
     }
 }
 
-impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for warmSlotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for warmSlotCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), false);
         Ok(Default::default())
     }
 }
 
-impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for coolSlotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for coolSlotCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), true);
         Ok(Default::default())
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for readCallersCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for readCallersCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         read_callers(ccx.state, &ccx.ecx.tx().caller(), ccx.ecx.journal().depth())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for snapshotValue_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for snapshotValue_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name, value } = self;
         inner_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for snapshotValue_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for snapshotValue_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { group, name, value } = self;
         inner_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for snapshotGasLastCall_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for snapshotGasLastCall_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -793,8 +791,8 @@ impl<CTX> Cheatcode<CTX> for snapshotGasLastCall_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for snapshotGasLastCall_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for snapshotGasLastCall_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name, group } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -808,129 +806,117 @@ impl<CTX> Cheatcode<CTX> for snapshotGasLastCall_1Call {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for startSnapshotGas_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for startSnapshotGas_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name } = self;
         inner_start_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for startSnapshotGas_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for startSnapshotGas_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { group, name } = self;
         inner_start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for stopSnapshotGas_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for stopSnapshotGas_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_stop_gas_snapshot(ccx, None, None)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for stopSnapshotGas_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for stopSnapshotGas_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name } = self;
         inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for stopSnapshotGas_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for stopSnapshotGas_2Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { group, name } = self;
         inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
 // Deprecated in favor of `snapshotStateCall`
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for snapshotCall
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for snapshotCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for snapshotStateCall
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for snapshotStateCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
 }
 
 // Deprecated in favor of `revertToStateCall`
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for revertToCall
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for revertToCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for revertToStateCall
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for revertToStateCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
 // Deprecated in favor of `revertToStateAndDeleteCall`
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for revertToAndDeleteCall
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for revertToAndDeleteCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
-    for revertToStateAndDeleteCall
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for revertToStateAndDeleteCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
 // Deprecated in favor of `deleteStateSnapshotCall`
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for deleteSnapshotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for deleteSnapshotCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_delete_state_snapshot(ccx, *snapshotId)
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for deleteStateSnapshotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for deleteStateSnapshotCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_delete_state_snapshot(ccx, *snapshotId)
     }
 }
 
 // Deprecated in favor of `deleteStateSnapshotsCall`
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for deleteSnapshotsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for deleteSnapshotsCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_delete_state_snapshots(ccx)
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for deleteStateSnapshotsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for deleteStateSnapshotsCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_delete_state_snapshots(ccx)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for startStateDiffRecordingCall {
+impl Cheatcode for startStateDiffRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recorded_account_diffs_stack = Some(Default::default());
@@ -940,15 +926,15 @@ impl<CTX> Cheatcode<CTX> for startStateDiffRecordingCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for stopAndReturnStateDiffCall {
+impl Cheatcode for stopAndReturnStateDiffCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         get_state_diff(state)
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for getStateDiffCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getStateDiffCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let mut diffs = String::new();
         let state_diffs = get_recorded_state_diffs(ccx);
         for (address, state_diffs) in state_diffs {
@@ -959,15 +945,15 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for getStateDiffCall {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for getStateDiffJsonCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getStateDiffJsonCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for getStorageSlotsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getStorageSlotsCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, variableName } = self;
 
         let storage_layout = get_contract_data(ccx, *target)
@@ -1044,7 +1030,7 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for getStorageSlotsCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getStorageAccessesCall {
+impl Cheatcode for getStorageAccessesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let mut storage_accesses = Vec::new();
 
@@ -1058,8 +1044,8 @@ impl<CTX> Cheatcode<CTX> for getStorageAccessesCall {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for broadcastRawTransactionCall {
-    fn apply_full(
+impl Cheatcode for broadcastRawTransactionCall {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -1080,8 +1066,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for broadcastRawTransactionCall {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for setBlockhashCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for setBlockhashCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { blockNumber, blockHash } = *self;
         ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
         ensure!(
@@ -1095,8 +1081,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for setBlockhashCall {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for executeTransactionCall {
-    fn apply_full(
+impl Cheatcode for executeTransactionCall {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -1243,8 +1229,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for executeTransactionCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for startDebugTraceRecordingCall {
-    fn apply_full(
+impl Cheatcode for startDebugTraceRecordingCall {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -1273,8 +1259,8 @@ impl<CTX> Cheatcode<CTX> for startDebugTraceRecordingCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for stopAndReturnDebugTraceRecordingCall {
-    fn apply_full(
+impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -1312,8 +1298,8 @@ impl<CTX> Cheatcode<CTX> for stopAndReturnDebugTraceRecordingCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for setEvmVersionCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for setEvmVersionCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { evm } = self;
         let spec_id = evm_spec_id(
             EvmVersion::from_str(evm)
@@ -1324,8 +1310,8 @@ impl<CTX> Cheatcode<CTX> for setEvmVersionCall {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for getEvmVersionCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getEvmVersionCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let spec: SpecId = ccx.ecx.cfg().spec().into();
         Ok(spec.to_string().to_lowercase().abi_encode())
     }
