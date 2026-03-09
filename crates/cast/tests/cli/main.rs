@@ -311,16 +311,12 @@ Created new encrypted keystore file: [..]
 // tests that `cast wallet new -n 2` prompts before overwriting existing keystore files
 casttest!(new_wallet_keystore_overwrite_protection_multiple, |_prj, cmd| {
     // Create 2 keystores: test-account_1 and test-account_2
-    cmd.args([
-        "wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2",
-    ])
-    .assert_success();
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
+        .assert_success();
 
     // Attempt to overwrite with stdin "n" — should list both and cancel
     cmd.cast_fuse()
-        .args([
-            "wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2",
-        ])
+        .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
         .stdin("n\n")
         .assert_failure()
         .stderr_eq(str![[r#"
