@@ -41,7 +41,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{NestedEvm, with_cloned_context},
+    evm::with_cloned_context,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -93,9 +93,8 @@ impl<CTX> CheatsCtxExt for CTX where
 {
 }
 
-/// Closure type used by [`CheatcodesExecutor`] methods that run nested EVM operations.
-pub type NestedEvmClosure<'a> =
-    &'a mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>;
+/// Re-export from `foundry_evm_core`.
+pub use foundry_evm_core::evm::NestedEvmClosure;
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
 ///

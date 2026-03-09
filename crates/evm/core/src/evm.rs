@@ -14,6 +14,11 @@ use revm::{
     interpreter::FrameInput,
 };
 
+/// Closure type for [`FoundryEvmFactory::call_nested`] and [`CheatcodesExecutor`] methods
+/// that run nested EVM operations.
+pub type NestedEvmClosure<'a> =
+    &'a mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>;
+
 /// Factory trait for constructing and running network-specific EVMs.
 ///
 /// This abstracts over the concrete EVM type (`EthEvm` for Eth, `TempoEvm` for Tempo, etc.)
@@ -57,7 +62,7 @@ pub trait FoundryEvmFactory: Debug + Send + Sync {
         db: &mut dyn DatabaseExt,
         env: Env,
         inspector: &mut dyn FoundryInspectorExt,
-        f: &mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>,
+        f: NestedEvmClosure<'_>,
     ) -> eyre::Result<(Env, JournaledState)>;
 }
 

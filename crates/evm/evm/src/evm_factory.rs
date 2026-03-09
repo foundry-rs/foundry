@@ -9,13 +9,9 @@ use foundry_cheatcodes::Cheatcodes;
 use foundry_evm_core::{
     Env, FoundryInspectorDowncastExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmClosure},
 };
-use foundry_fork_db::DatabaseError;
-use revm::{
-    context::result::{EVMError, ResultAndState},
-    inspector::NoOpInspector,
-};
+use revm::{context::result::ResultAndState, inspector::NoOpInspector};
 
 /// Ethereum EVM factory — the default for Ethereum-based chains.
 ///
@@ -45,7 +41,7 @@ impl EthFoundryEvmFactory {
         db: &mut dyn DatabaseExt,
         env: Env,
         inspector: I,
-        f: &mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>,
+        f: NestedEvmClosure<'_>,
     ) -> eyre::Result<(Env, JournaledState)> {
         let mut evm = new_eth_evm(db, env, inspector);
         f(&mut evm).map_err(|e| eyre::eyre!("{e}"))?;
@@ -99,7 +95,7 @@ impl FoundryEvmFactory for EthFoundryEvmFactory {
         db: &mut dyn DatabaseExt,
         env: Env,
         inspector: &mut dyn FoundryInspectorExt,
-        f: &mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>,
+        f: NestedEvmClosure<'_>,
     ) -> eyre::Result<(Env, JournaledState)> {
         if let Some(cheats) = inspector.downcast_mut::<Cheatcodes>() {
             cheats.evm_factory.get_or_insert_with(|| Arc::new(EthFoundryEvmFactory));
