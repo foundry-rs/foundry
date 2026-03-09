@@ -314,11 +314,20 @@ edition = "2021"
                 self.check_file_contents(&path, &tokens)?;
                 write_mod_name(&mut super_contents, &name)?;
             }
-
-            let super_path =
-                if is_mod { crate_path.join("mod.rs") } else { crate_path.join("src/lib.rs") };
-            self.check_file_contents(&super_path, &super_contents)?;
+        } else {
+            for instance in &self.instances {
+                let tokens = instance
+                    .expansion
+                    .as_ref()
+                    .ok_or_eyre("TokenStream for single file does not exist")?
+                    .to_string();
+                write!(&mut super_contents, "{tokens}")?;
+            }
         }
+
+        let super_path =
+            if is_mod { crate_path.join("mod.rs") } else { crate_path.join("src/lib.rs") };
+        self.check_file_contents(&super_path, &super_contents)?;
 
         Ok(())
     }
