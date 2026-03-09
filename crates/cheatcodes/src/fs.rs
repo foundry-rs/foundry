@@ -7,9 +7,8 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{Bytes, U256, hex, map::Entry};
-use alloy_provider::network::ReceiptResponse;
+use alloy_rpc_types::TransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
@@ -885,7 +884,7 @@ fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
 }
 
 fn parse_broadcast_results(
-    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+    results: Vec<(TransactionWithMetadata, TransactionReceipt)>,
 ) -> Vec<BroadcastTxSummary> {
     results
         .into_iter()

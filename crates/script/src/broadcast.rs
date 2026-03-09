@@ -3,13 +3,13 @@ use std::{cmp::Ordering, sync::Arc, time::Duration};
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
     Address, TxHash,
     map::{AddressHashMap, AddressHashSet},
     utils::format_units,
 };
-use alloy_provider::{Provider, utils::Eip1559Estimation};
+use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
@@ -17,7 +17,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     TransactionMaybeSigned,
-    provider::{RetryProvider, get_http_provider, try_get_http_provider},
+    provider::{ProviderBuilder, try_get_http_provider},
     shell,
 };
 use foundry_config::Config;
@@ -30,7 +30,7 @@ use crate::{
     sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
 
-pub async fn estimate_gas<P: Provider<AnyNetwork>>(
+pub async fn estimate_gas<P: Provider<Ethereum>>(
     tx: &mut TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
@@ -40,7 +40,7 @@ pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx.clone().into()).await.wrap_err("Failed to estimate gas for tx")?
+        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
             / 100,
     );
@@ -77,7 +77,7 @@ impl<'a> SendTransactionKind<'a> {
     /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
     pub async fn prepare(
         &mut self,
-        provider: &RetryProvider,
+        provider: &RootProvider<Ethereum>,
         sequential_broadcast: bool,
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
@@ -131,13 +131,13 @@ impl<'a> SendTransactionKind<'a> {
     /// - Submit via `eth_sendTransaction` for unlocked accounts
     /// - Sign and submit via `eth_sendRawTransaction` for raw transactions
     /// - Submit pre-signed transaction via `eth_sendRawTransaction`
-    pub async fn send(self, provider: Arc<RetryProvider>) -> Result<TxHash> {
+    pub async fn send(self, provider: Arc<RootProvider<Ethereum>>) -> Result<TxHash> {
         match self {
             Self::Unlocked(tx) => {
                 debug!("sending transaction from unlocked account {:?}", tx);
 
                 // Submit the transaction
-                let pending = provider.send_transaction(tx.into()).await?;
+                let pending = provider.send_transaction(tx).await?;
                 Ok(*pending.tx_hash())
             }
             Self::Raw(tx, signer) => {
@@ -168,7 +168,7 @@ impl<'a> SendTransactionKind<'a> {
     /// [`send`](Self::send) into a single call.
     pub async fn prepare_and_send(
         mut self,
-        provider: Arc<RetryProvider>,
+        provider: Arc<RootProvider<Ethereum>>,
         sequential_broadcast: bool,
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
@@ -248,7 +248,7 @@ impl BundledState {
             .enumerate()
             .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
-                let provider = Arc::new(get_http_provider(rpc_url));
+                let provider = Arc::new(ProviderBuilder::new(rpc_url).build()?);
                 progress_ref
                     .wait_for_pending(
                         sequence_idx,
@@ -324,7 +324,7 @@ impl BundledState {
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
+            let provider = Arc::new(ProviderBuilder::new(sequence.rpc_url()).build()?);
             let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);
