@@ -298,19 +298,17 @@ pub fn with_cloned_context<CTX: FoundryContextExt, R>(
 where
     CTX::Journal: FoundryJournalExt,
 {
-    let (journal, env_mut) = ecx.journal_and_env_mut();
-    let env = env_mut.to_owned();
+    let env = Env::clone_from_context(ecx);
 
+    let journal = ecx.journal_mut();
     let (db, journal_inner) = journal.as_db_and_inner();
     let journal_inner_clone = journal_inner.clone();
 
     let (result, sub_env, sub_inner) = f(db, env, journal_inner_clone)?;
 
     // Write back modified state. The db borrow was released when f returned.
-    journal.set_inner(sub_inner);
-    *env_mut.block = sub_env.evm_env.block_env;
-    *env_mut.cfg = sub_env.evm_env.cfg_env;
-    *env_mut.tx = sub_env.tx;
+    ecx.journal_mut().set_inner(sub_inner);
+    sub_env.apply_to(ecx);
 
     Ok(result)
 }

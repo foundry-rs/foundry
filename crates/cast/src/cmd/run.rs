@@ -24,7 +24,6 @@ use foundry_config::{
 };
 use foundry_evm::{
     Env,
-    core::env::AsEnvMut,
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
@@ -200,7 +199,7 @@ impl RunArgs {
                 }
             }
             apply_chain_and_block_specific_env_changes::<AnyNetwork>(
-                env.as_env_mut(),
+                &mut env.evm_env,
                 block,
                 config.networks,
             );
@@ -259,7 +258,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env.as_env_mut(), tx);
+                    configure_tx_env(&mut env, tx);
 
                     env.evm_env.cfg_env.disable_balance_check = true;
 
@@ -300,7 +299,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env.as_env_mut(), &tx);
+            configure_tx_env(&mut env, &tx);
             if is_impersonated_tx(tx.as_ref()) {
                 env.evm_env.cfg_env.disable_balance_check = true;
             }
