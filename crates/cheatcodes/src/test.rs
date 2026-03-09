@@ -1,6 +1,6 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxExt, CheatsCtxt, Result, Vm::*};
 use alloy_chains::Chain as AlloyChain;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
@@ -14,28 +14,28 @@ pub(crate) mod assume;
 pub(crate) mod expect;
 pub(crate) mod revert_handlers;
 
-impl<CTX> Cheatcode<CTX> for breakpoint_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for breakpoint_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { char } = self;
         breakpoint(ccx.state, &ccx.caller, char, true)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for breakpoint_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for breakpoint_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { char, value } = self;
         breakpoint(ccx.state, &ccx.caller, char, *value)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getFoundryVersionCall {
+impl Cheatcode for getFoundryVersionCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(SEMVER_VERSION.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for rpcUrlCall {
+impl Cheatcode for rpcUrlCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { rpcAlias } = self;
         let url = state.config.rpc_endpoint(rpcAlias)?.url()?.abi_encode();
@@ -43,21 +43,21 @@ impl<CTX> Cheatcode<CTX> for rpcUrlCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for rpcUrlsCall {
+impl Cheatcode for rpcUrlsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for rpcUrlStructsCall {
+impl Cheatcode for rpcUrlStructsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for sleepCall {
+impl Cheatcode for sleepCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { duration } = self;
         let sleep_duration = std::time::Duration::from_millis(duration.saturating_to());
@@ -66,15 +66,15 @@ impl<CTX> Cheatcode<CTX> for sleepCall {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for skip_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for skip_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { skipTest } = *self;
         skip_1Call { skipTest, reason: String::new() }.apply_stateful(ccx)
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for skip_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for skip_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { skipTest, reason } = self;
         if *skipTest {
             // Skip should not work if called deeper than at test level.
@@ -87,14 +87,14 @@ impl<CTX: ContextTr> Cheatcode<CTX> for skip_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getChain_0Call {
+impl Cheatcode for getChain_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { chainAlias } = self;
         get_chain(state, chainAlias)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getChain_1Call {
+impl Cheatcode for getChain_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { chainId } = self;
         // Convert the chainId to a string and use the existing get_chain function

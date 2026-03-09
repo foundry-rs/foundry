@@ -1,4 +1,4 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxExt, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::backend::DatabaseExt;
 use revm::{
@@ -43,7 +43,7 @@ impl Ord for MockCallDataContext {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for clearMockedCallsCall {
+impl Cheatcode for clearMockedCallsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.mocked_calls = Default::default();
@@ -51,8 +51,8 @@ impl<CTX> Cheatcode<CTX> for clearMockedCallsCall {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCall_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -61,8 +61,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_0Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCall_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -71,8 +71,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_1Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCall_2Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -88,8 +88,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_2Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_3Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCall_3Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -105,8 +105,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCall_3Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCalls_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCalls_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -115,8 +115,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCalls_0Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCalls_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCalls_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -125,8 +125,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCalls_1Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCallRevert_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -135,8 +135,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_0Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCallRevert_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -145,8 +145,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_1Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCallRevert_2Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -162,8 +162,8 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_2Call {
     }
 }
 
-impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_3Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for mockCallRevert_3Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -179,7 +179,7 @@ impl<CTX: ContextTr<Db: DatabaseExt>> Cheatcode<CTX> for mockCallRevert_3Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for mockFunctionCall {
+impl Cheatcode for mockFunctionCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { callee, target, data } = self;
         state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);

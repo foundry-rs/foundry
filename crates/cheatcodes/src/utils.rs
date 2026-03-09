@@ -1,6 +1,6 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxExt, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
 use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
@@ -13,7 +13,7 @@ use foundry_evm_fuzz::strategies::BoundMutator;
 use proptest::prelude::Strategy;
 use rand::{Rng, RngCore, seq::SliceRandom};
 use revm::{
-    context::{ContextTr, JournalTr},
+    context::JournalTr,
     inspector::JournalExt,
 };
 use std::path::PathBuf;
@@ -32,7 +32,7 @@ pub struct IgnoredTraces {
     pub last_pause_call: Option<(usize, usize)>,
 }
 
-impl<CTX> Cheatcode<CTX> for labelCall {
+impl Cheatcode for labelCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { account, newLabel } = self;
         state.labels.insert(*account, newLabel.clone());
@@ -40,7 +40,7 @@ impl<CTX> Cheatcode<CTX> for labelCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getLabelCall {
+impl Cheatcode for getLabelCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { account } = self;
         Ok(match state.labels.get(account) {
@@ -50,7 +50,7 @@ impl<CTX> Cheatcode<CTX> for getLabelCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for computeCreateAddressCall {
+impl Cheatcode for computeCreateAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { nonce, deployer } = self;
         ensure!(*nonce <= U256::from(u64::MAX), "nonce must be less than 2^64");
@@ -58,28 +58,28 @@ impl<CTX> Cheatcode<CTX> for computeCreateAddressCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for computeCreate2Address_0Call {
+impl Cheatcode for computeCreate2Address_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { salt, initCodeHash, deployer } = self;
         Ok(deployer.create2(salt, initCodeHash).abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for computeCreate2Address_1Call {
+impl Cheatcode for computeCreate2Address_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { salt, initCodeHash } = self;
         Ok(DEFAULT_CREATE2_DEPLOYER.create2(salt, initCodeHash).abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for ensNamehashCall {
+impl Cheatcode for ensNamehashCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         Ok(namehash(name).abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for bound_0Call {
+impl Cheatcode for bound_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { current, min, max } = *self;
         let Some(mutated) = U256::bound(current, min, max, state.test_runner()) else {
@@ -89,7 +89,7 @@ impl<CTX> Cheatcode<CTX> for bound_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for bound_1Call {
+impl Cheatcode for bound_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { current, min, max } = *self;
         let Some(mutated) = I256::bound(current, min, max, state.test_runner()) else {
@@ -99,27 +99,27 @@ impl<CTX> Cheatcode<CTX> for bound_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomUint_0Call {
+impl Cheatcode for randomUint_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         random_uint(state, None, None)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomUint_1Call {
+impl Cheatcode for randomUint_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { min, max } = *self;
         random_uint(state, None, Some((min, max)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomUint_2Call {
+impl Cheatcode for randomUint_2Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { bits } = *self;
         random_uint(state, Some(bits), None)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomAddressCall {
+impl Cheatcode for randomAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         Ok(DynSolValue::type_strategy(&DynSolType::Address)
             .new_tree(state.test_runner())
@@ -129,27 +129,27 @@ impl<CTX> Cheatcode<CTX> for randomAddressCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomInt_0Call {
+impl Cheatcode for randomInt_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         random_int(state, None)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomInt_1Call {
+impl Cheatcode for randomInt_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { bits } = *self;
         random_int(state, Some(bits))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomBoolCall {
+impl Cheatcode for randomBoolCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let rand_bool: bool = state.rng().random();
         Ok(rand_bool.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomBytesCall {
+impl Cheatcode for randomBytesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { len } = *self;
         ensure!(
@@ -162,22 +162,22 @@ impl<CTX> Cheatcode<CTX> for randomBytesCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomBytes4Call {
+impl Cheatcode for randomBytes4Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let rand_u32 = state.rng().next_u32();
         Ok(B32::from(rand_u32).abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for randomBytes8Call {
+impl Cheatcode for randomBytes8Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let rand_u64 = state.rng().next_u64();
         Ok(B64::from(rand_u64).abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for pauseTracingCall {
-    fn apply_full(
+impl Cheatcode for pauseTracingCall {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -199,8 +199,8 @@ impl<CTX> Cheatcode<CTX> for pauseTracingCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for resumeTracingCall {
-    fn apply_full(
+impl Cheatcode for resumeTracingCall {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -222,7 +222,7 @@ impl<CTX> Cheatcode<CTX> for resumeTracingCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for interceptInitcodeCall {
+impl Cheatcode for interceptInitcodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         if !state.intercept_next_create_call {
@@ -234,8 +234,8 @@ impl<CTX> Cheatcode<CTX> for interceptInitcodeCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for setArbitraryStorage_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for setArbitraryStorage_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target } = self;
         ccx.state.arbitrary_storage().mark_arbitrary(target, false);
 
@@ -243,8 +243,8 @@ impl<CTX> Cheatcode<CTX> for setArbitraryStorage_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for setArbitraryStorage_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for setArbitraryStorage_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, overwrite } = self;
         ccx.state.arbitrary_storage().mark_arbitrary(target, *overwrite);
 
@@ -252,8 +252,8 @@ impl<CTX> Cheatcode<CTX> for setArbitraryStorage_1Call {
     }
 }
 
-impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for copyStorageCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for copyStorageCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { from, to } = self;
 
         ensure!(
@@ -276,7 +276,7 @@ impl<CTX: ContextTr<Journal: JournalExt>> Cheatcode<CTX> for copyStorageCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for sortCall {
+impl Cheatcode for sortCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { array } = self;
 
@@ -287,7 +287,7 @@ impl<CTX> Cheatcode<CTX> for sortCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for shuffleCall {
+impl Cheatcode for shuffleCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { array } = self;
 
@@ -299,8 +299,8 @@ impl<CTX> Cheatcode<CTX> for shuffleCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for setSeedCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for setSeedCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { seed } = self;
         ccx.state.set_seed(*seed);
         Ok(Default::default())
@@ -352,7 +352,7 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .abi_encode())
 }
 
-impl<CTX> Cheatcode<CTX> for eip712HashType_0Call {
+impl Cheatcode for eip712HashType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { typeNameOrDefinition } = self;
 
@@ -362,7 +362,7 @@ impl<CTX> Cheatcode<CTX> for eip712HashType_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for eip712HashType_1Call {
+impl Cheatcode for eip712HashType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { bindingsPath, typeName } = self;
 
@@ -373,7 +373,7 @@ impl<CTX> Cheatcode<CTX> for eip712HashType_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for eip712HashStruct_0Call {
+impl Cheatcode for eip712HashStruct_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { typeNameOrDefinition, abiEncodedData } = self;
 
@@ -384,7 +384,7 @@ impl<CTX> Cheatcode<CTX> for eip712HashStruct_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for eip712HashStruct_1Call {
+impl Cheatcode for eip712HashStruct_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { bindingsPath, typeName, abiEncodedData } = self;
 
@@ -395,7 +395,7 @@ impl<CTX> Cheatcode<CTX> for eip712HashStruct_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for eip712HashTypedDataCall {
+impl Cheatcode for eip712HashTypedDataCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { jsonData } = self;
         let typed_data: TypedData = serde_json::from_str(jsonData)?;
@@ -497,7 +497,7 @@ fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -
     Ok(keccak256(&bytes_to_hash).to_vec())
 }
 
-impl<CTX> Cheatcode<CTX> for toRlpCall {
+impl Cheatcode for toRlpCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { data } = self;
 
@@ -508,7 +508,7 @@ impl<CTX> Cheatcode<CTX> for toRlpCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for fromRlpCall {
+impl Cheatcode for fromRlpCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { rlp } = self;
 
