@@ -308,6 +308,30 @@ Created new encrypted keystore file: [..]
 "#]]);
 });
 
+// tests that `cast wallet new -n 2` prompts before overwriting existing keystore files
+casttest!(new_wallet_keystore_overwrite_protection_multiple, |_prj, cmd| {
+    // Create 2 keystores: test-account_1 and test-account_2
+    cmd.args([
+        "wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2",
+    ])
+    .assert_success();
+
+    // Attempt to overwrite with stdin "n" — should list both and cancel
+    cmd.cast_fuse()
+        .args([
+            "wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2",
+        ])
+        .stdin("n\n")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+The following keystore file(s) already exist:
+   - test-account_1
+   - test-account_2
+Error: Operation cancelled. No keystores were modified.
+
+"#]]);
+});
+
 // tests that we can create a new wallet with default keystore location
 casttest!(new_wallet_default_keystore, |_prj, cmd| {
     cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
