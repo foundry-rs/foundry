@@ -1190,10 +1190,15 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for executeTransactionCall {
         let (res, nested_env) = (res.unwrap(), nested_env.unwrap());
 
         // Restore env, preserving cheatcode cfg/block changes from the nested EVM
-        // but restoring the original tx and basefee (which we zeroed for the nested call).
+        // but restoring the original tx and basefee (which we zeroed for the nested call)
+        // as well as cfg overrides that were applied only for the nested execution.
         let mut restored_env = nested_env;
         restored_env.tx = cached_env.tx;
         restored_env.evm_env.block_env.basefee = cached_env.evm_env.block_env.basefee;
+        restored_env.evm_env.cfg_env.disable_nonce_check =
+            cached_env.evm_env.cfg_env.disable_nonce_check;
+        restored_env.evm_env.cfg_env.limit_contract_initcode_size =
+            cached_env.evm_env.cfg_env.limit_contract_initcode_size;
         ccx.ecx.apply_env(restored_env);
 
         // Reset inner context flag.
