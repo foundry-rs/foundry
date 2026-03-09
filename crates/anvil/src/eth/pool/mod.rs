@@ -269,7 +269,7 @@ impl PoolInner {
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         if self.contains(&tx.hash()) {
             warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
-            return Err(PoolError::AlreadyImported(Box::new(tx)));
+            return Err(PoolError::AlreadyImported(tx.hash()));
         }
 
         let tx = PendingPoolTransaction::new(tx, self.ready_transactions.provided_markers());
