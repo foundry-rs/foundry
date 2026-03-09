@@ -94,25 +94,25 @@ impl<DB: Database, J: JournalTr<Database = DB>, C> AsEnvMut
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
 pub trait FoundryBlock: Block {
     /// Sets the block number.
-    fn set_number(&mut self, _number: U256);
+    fn set_number(&mut self, number: U256);
 
     /// Sets the beneficiary (coinbase) address.
-    fn set_beneficiary(&mut self, _beneficiary: Address);
+    fn set_beneficiary(&mut self, beneficiary: Address);
 
     /// Sets the block timestamp.
-    fn set_timestamp(&mut self, _timestamp: U256);
+    fn set_timestamp(&mut self, timestamp: U256);
 
     /// Sets the gas limit.
-    fn set_gas_limit(&mut self, _gas_limit: u64);
+    fn set_gas_limit(&mut self, gas_limit: u64);
 
     /// Sets the base fee per gas.
-    fn set_basefee(&mut self, _basefee: u64);
+    fn set_basefee(&mut self, basefee: u64);
 
     /// Sets the block difficulty.
-    fn set_difficulty(&mut self, _difficulty: U256);
+    fn set_difficulty(&mut self, difficulty: U256);
 
     /// Sets the prevrandao value.
-    fn set_prevrandao(&mut self, _prevrandao: Option<B256>);
+    fn set_prevrandao(&mut self, prevrandao: Option<B256>);
 
     /// Sets the excess blob gas and blob gasprice.
     fn set_blob_excess_gas_and_price(
@@ -164,43 +164,43 @@ impl FoundryBlock for BlockEnv {
 /// fields.
 pub trait FoundryTransaction: Transaction {
     /// Sets the transaction type.
-    fn set_tx_type(&mut self, _tx_type: u8);
+    fn set_tx_type(&mut self, tx_type: u8);
 
     /// Sets the caller (sender) address.
-    fn set_caller(&mut self, _caller: Address);
+    fn set_caller(&mut self, caller: Address);
 
     /// Sets the gas limit.
-    fn set_gas_limit(&mut self, _gas_limit: u64);
+    fn set_gas_limit(&mut self, gas_limit: u64);
 
     /// Sets the gas price (or max fee per gas for EIP-1559).
-    fn set_gas_price(&mut self, _gas_price: u128);
+    fn set_gas_price(&mut self, gas_price: u128);
 
     /// Sets the transaction kind (call or create).
-    fn set_kind(&mut self, _kind: TxKind);
+    fn set_kind(&mut self, kind: TxKind);
 
     /// Sets the value sent with the transaction.
-    fn set_value(&mut self, _value: U256);
+    fn set_value(&mut self, value: U256);
 
     /// Sets the transaction input data.
-    fn set_data(&mut self, _data: Bytes);
+    fn set_data(&mut self, data: Bytes);
 
     /// Sets the nonce.
-    fn set_nonce(&mut self, _nonce: u64);
+    fn set_nonce(&mut self, nonce: u64);
 
     /// Sets the chain ID.
-    fn set_chain_id(&mut self, _chain_id: Option<u64>);
+    fn set_chain_id(&mut self, chain_id: Option<u64>);
 
     /// Sets the access list.
-    fn set_access_list(&mut self, _access_list: AccessList);
+    fn set_access_list(&mut self, access_list: AccessList);
 
     /// Sets the max priority fee per gas.
-    fn set_gas_priority_fee(&mut self, _gas_priority_fee: Option<u128>);
+    fn set_gas_priority_fee(&mut self, gas_priority_fee: Option<u128>);
 
     /// Sets the blob versioned hashes.
-    fn set_blob_hashes(&mut self, _blob_hashes: Vec<B256>);
+    fn set_blob_hashes(&mut self, blob_hashes: Vec<B256>);
 
     /// Sets the max fee per blob gas.
-    fn set_max_fee_per_blob_gas(&mut self, _max_fee_per_blob_gas: u128);
+    fn set_max_fee_per_blob_gas(&mut self, max_fee_per_blob_gas: u128);
 }
 
 impl FoundryTransaction for TxEnv {
@@ -261,28 +261,28 @@ impl FoundryTransaction for TxEnv {
 /// fields.
 pub trait FoundryCfg: Cfg {
     /// Sets the EVM spec (hardfork).
-    fn set_spec(&mut self, _spec: SpecId);
+    fn set_spec(&mut self, spec: SpecId);
 
     /// Sets the chain ID.
-    fn set_chain_id(&mut self, _chain_id: u64);
+    fn set_chain_id(&mut self, chain_id: u64);
 
     /// Sets the contract code size limit.
-    fn set_limit_contract_code_size(&mut self, _limit: Option<usize>);
+    fn set_limit_contract_code_size(&mut self, limit: Option<usize>);
 
     /// Sets the contract initcode size limit.
-    fn set_limit_contract_initcode_size(&mut self, _limit: Option<usize>);
+    fn set_limit_contract_initcode_size(&mut self, limit: Option<usize>);
 
     /// Sets whether nonce checks are disabled.
-    fn set_disable_nonce_check(&mut self, _disabled: bool);
+    fn set_disable_nonce_check(&mut self, disabled: bool);
 
     /// Sets the max blobs per transaction.
-    fn set_max_blobs_per_tx(&mut self, _max: Option<u64>);
+    fn set_max_blobs_per_tx(&mut self, max: Option<u64>);
 
     /// Sets the blob base fee update fraction.
-    fn set_blob_base_fee_update_fraction(&mut self, _fraction: Option<u64>);
+    fn set_blob_base_fee_update_fraction(&mut self, fraction: Option<u64>);
 
     /// Sets the transaction gas limit cap.
-    fn set_tx_gas_limit_cap(&mut self, _cap: Option<u64>);
+    fn set_tx_gas_limit_cap(&mut self, cap: Option<u64>);
 }
 
 impl FoundryCfg for CfgEnv {

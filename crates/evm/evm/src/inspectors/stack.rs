@@ -741,6 +741,9 @@ impl InspectorStackRefMut<'_> {
         let cached_env = ecx.to_env();
 
         ecx.block_mut().set_basefee(0);
+
+        let chain_id = ecx.cfg().chain_id();
+        ecx.tx_mut().set_chain_id(Some(chain_id));
         ecx.tx_mut().set_caller(caller);
         ecx.tx_mut().set_kind(kind);
         ecx.tx_mut().set_data(input);
