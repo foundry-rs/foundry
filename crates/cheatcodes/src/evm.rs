@@ -1120,7 +1120,7 @@ impl Cheatcode for executeTransactionCall {
         let tx_env = <TxEnv as FromRecoveredTx<FoundryTxEnvelope>>::from_recovered_tx(&tx, sender);
 
         // Save current env for restoration after execution.
-        let cached_env = Env::clone_from_context(ccx.ecx);
+        let (cached_evm_env, cached_tx_env) = Env::clone_evm_and_tx(ccx.ecx);
 
         // Override env for isolated execution.
         ccx.ecx.block_mut().set_basefee(0);
@@ -1137,7 +1137,7 @@ impl Cheatcode for executeTransactionCall {
             .set_limit_contract_initcode_size(Some(revm::primitives::eip3860::MAX_INITCODE_SIZE));
 
         // Snapshot the modified env for EVM construction.
-        let modified_env = Env::clone_from_context(ccx.ecx);
+        let (modified_evm_env, modified_tx_env) = Env::clone_evm_and_tx(ccx.ecx);
 
         // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
         // when the inner EVM executes calls at depth == 1.
@@ -1162,32 +1162,35 @@ impl Cheatcode for executeTransactionCall {
         let mut res = None;
         let mut nested_env = None;
         let mut cold_state = Some(cold_state);
-        let modified_tx = modified_env.tx.clone();
+        let modified_tx = modified_tx_env.clone();
         {
             let (db, _) = ccx.ecx.journal_mut().as_db_and_inner();
-            executor.with_fresh_nested_evm(ccx.state, db, modified_env, &mut |evm| {
-                // SAFETY: closure is called exactly once by the executor.
-                evm.journal_inner_mut().state = cold_state.take().expect("called once");
-                // Set depth to 1 for proper trace collection.
-                evm.journal_inner_mut().depth = 1;
-                res = Some(evm.transact(modified_tx.clone()));
-                nested_env = Some(evm.to_env());
-                Ok(())
-            })?;
+            executor.with_fresh_nested_evm(
+                ccx.state,
+                db,
+                modified_evm_env,
+                modified_tx_env,
+                &mut |evm| {
+                    // SAFETY: closure is called exactly once by the executor.
+                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                    // Set depth to 1 for proper trace collection.
+                    evm.journal_inner_mut().depth = 1;
+                    res = Some(evm.transact(modified_tx.clone()));
+                    nested_env = Some(evm.to_env());
+                    Ok(())
+                },
+            )?;
         }
-        let (res, nested_env) = (res.unwrap(), nested_env.unwrap());
+        let (res, (mut nested_evm_env, _)) = (res.unwrap(), nested_env.unwrap());
 
         // Restore env, preserving cheatcode cfg/block changes from the nested EVM
         // but restoring the original tx and basefee (which we zeroed for the nested call)
         // as well as cfg overrides that were applied only for the nested execution.
-        let mut restored_env = nested_env;
-        restored_env.tx = cached_env.tx;
-        restored_env.evm_env.block_env.basefee = cached_env.evm_env.block_env.basefee;
-        restored_env.evm_env.cfg_env.disable_nonce_check =
-            cached_env.evm_env.cfg_env.disable_nonce_check;
-        restored_env.evm_env.cfg_env.limit_contract_initcode_size =
-            cached_env.evm_env.cfg_env.limit_contract_initcode_size;
-        restored_env.apply_to(ccx.ecx);
+        nested_evm_env.block_env.basefee = cached_evm_env.block_env.basefee;
+        nested_evm_env.cfg_env.disable_nonce_check = cached_evm_env.cfg_env.disable_nonce_check;
+        nested_evm_env.cfg_env.limit_contract_initcode_size =
+            cached_evm_env.cfg_env.limit_contract_initcode_size;
+        Env::apply_evm_and_tx(ccx.ecx, nested_evm_env, cached_tx_env);
 
         // Reset inner context flag.
         executor.set_in_inner_context(false, None);
@@ -1335,10 +1338,9 @@ pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
 fn inner_snapshot_state<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
 ) -> Result {
-    let mut env = Env::clone_from_context(ccx.ecx);
+    let (evm_env, tx_env) = Env::clone_evm_and_tx(ccx.ecx);
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    let id = db.snapshot_state(inner, &mut env);
-    env.apply_to(ccx.ecx);
+    let id = db.snapshot_state(inner, &evm_env, &tx_env);
     Ok(id.abi_encode())
 }
 
@@ -1346,13 +1348,17 @@ fn inner_revert_to_state<CTX: FoundryContextExt + ContextTr<Journal: FoundryJour
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
-    let mut env = Env::clone_from_context(ccx.ecx);
+    let (mut evm_env, mut tx_env) = Env::clone_evm_and_tx(ccx.ecx);
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    if let Some(restored) =
-        db.revert_state(snapshot_id, inner, &mut env, RevertStateSnapshotAction::RevertKeep)
-    {
+    if let Some(restored) = db.revert_state(
+        snapshot_id,
+        inner,
+        &mut evm_env,
+        &mut tx_env,
+        RevertStateSnapshotAction::RevertKeep,
+    ) {
         *inner = restored;
-        env.apply_to(ccx.ecx);
+        Env::apply_evm_and_tx(ccx.ecx, evm_env, tx_env);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
@@ -1365,13 +1371,17 @@ fn inner_revert_to_state_and_delete<
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
-    let mut env = Env::clone_from_context(ccx.ecx);
+    let (mut evm_env, mut tx_env) = Env::clone_evm_and_tx(ccx.ecx);
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    if let Some(restored) =
-        db.revert_state(snapshot_id, inner, &mut env, RevertStateSnapshotAction::RevertRemove)
-    {
+    if let Some(restored) = db.revert_state(
+        snapshot_id,
+        inner,
+        &mut evm_env,
+        &mut tx_env,
+        RevertStateSnapshotAction::RevertRemove,
+    ) {
         *inner = restored;
-        env.apply_to(ccx.ecx);
+        Env::apply_evm_and_tx(ccx.ecx, evm_env, tx_env);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())

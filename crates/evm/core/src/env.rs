@@ -39,11 +39,24 @@ impl Env {
         Self::from(ecx.cfg_mut().clone(), ecx.block_mut().clone(), ecx.tx_mut().clone())
     }
 
+    /// Clones the evm env and tx env separately from a [`FoundryContextExt`] context.
+    pub fn clone_evm_and_tx(ecx: &mut impl FoundryContextExt) -> (EvmEnv, TxEnv) {
+        (
+            EvmEnv { cfg_env: ecx.cfg_mut().clone(), block_env: ecx.block_mut().clone() },
+            ecx.tx_mut().clone(),
+        )
+    }
+
+    /// Writes the split evm env and tx env back into a [`FoundryContextExt`] context.
+    pub fn apply_evm_and_tx(ecx: &mut impl FoundryContextExt, evm_env: EvmEnv, tx_env: TxEnv) {
+        *ecx.block_mut() = evm_env.block_env;
+        *ecx.cfg_mut() = evm_env.cfg_env;
+        *ecx.tx_mut() = tx_env;
+    }
+
     /// Writes this env back into a [`FoundryContextExt`] context.
     pub fn apply_to(self, ecx: &mut impl FoundryContextExt) {
-        *ecx.block_mut() = self.evm_env.block_env;
-        *ecx.cfg_mut() = self.evm_env.cfg_env;
-        *ecx.tx_mut() = self.tx;
+        Self::apply_evm_and_tx(ecx, self.evm_env, self.tx);
     }
 
     /// Mutable reference to the block environment.
