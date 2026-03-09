@@ -320,7 +320,7 @@ impl TestRunnerConfig {
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        self.spec_id = MonadSpecId::default();
+        self.spec_id = config.monad_spec_id();
         self.sender = config.sender;
         self.networks = config.networks;
         self.isolation = config.isolate;

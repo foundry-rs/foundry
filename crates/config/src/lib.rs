@@ -236,6 +236,11 @@ pub struct Config {
     /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// The Monad hardfork to use for EVM execution.
+    ///
+    /// Possible values: `"MonadEight"`, `"MonadNine"`, `"MonadNext"`.
+    /// Defaults to `MonadEight` (Monad mainnet launch spec) when not set.
+    pub monad_hardfork: Option<String>,
     /// List of contracts to generate gas reports for.
     pub gas_reports: Vec<String>,
     /// List of contracts to ignore for gas reports.
@@ -1283,11 +1288,15 @@ impl Config {
         evm_spec_id(self.evm_version)
     }
 
-    /// Returns the [MonadSpecId] derived from the configured [EvmVersion]
+    /// Returns the [`MonadSpecId`] for Monad EVM execution.
     ///
-    /// Used by forge/script/cast/chisel for Monad EVM execution.
+    /// If `monad_hardfork` is set in the config, parses it. Otherwise returns
+    /// [`MonadSpecId::default()`] (MonadEight).
     pub fn monad_spec_id(&self) -> MonadSpecId {
-        monad_spec_id(self.evm_version)
+        self.monad_hardfork
+            .as_deref()
+            .and_then(|s| s.parse::<MonadSpecId>().ok())
+            .unwrap_or_default()
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -2493,6 +2502,7 @@ impl Default for Config {
             include_paths: vec![],
             force: false,
             evm_version: EvmVersion::Prague,
+            monad_hardfork: None,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             gas_reports_include_tests: false,
