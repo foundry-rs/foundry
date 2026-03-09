@@ -400,7 +400,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()> {
-        let env = ecx.to_env();
+        let env = Env::clone_from_context(ecx);
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
         db.transact(fork_id, transaction, env, inner, &mut inspector)
@@ -412,7 +412,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         ecx: &mut CTX,
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
-        let env = ecx.to_env();
+        let env = Env::clone_from_context(ecx);
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
         db.transact_from_tx(tx, env, inner, &mut inspector)
@@ -738,7 +738,7 @@ impl InspectorStackRefMut<'_> {
     where
         CTX::Journal: FoundryJournalExt,
     {
-        let cached_env = ecx.to_env();
+        let cached_env = Env::clone_from_context(ecx);
 
         ecx.block_mut().set_basefee(0);
 
@@ -762,12 +762,11 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
-        let modified_env = ecx.to_env();
+        let modified_env = Env::clone_from_context(ecx);
 
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
-                let (journal, _env) = ecx.journal_and_env_mut();
-                let (db, journal) = journal.as_db_and_inner();
+                let (db, journal) = ecx.journal_mut().as_db_and_inner();
                 let mut evm = new_evm_with_inspector(db, modified_env.clone(), &mut inspector);
 
                 evm.journal_inner_mut().state = {
@@ -802,7 +801,7 @@ impl InspectorStackRefMut<'_> {
             let mut restored_env = nested_env;
             restored_env.tx = cached_env.tx;
             restored_env.evm_env.block_env.basefee = cached_env.evm_env.block_env.basefee;
-            ecx.apply_env(restored_env);
+            restored_env.apply_to(ecx);
 
             res
         });

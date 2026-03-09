@@ -23,7 +23,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
-    FoundryBlock, FoundryCfg, FoundryTransaction,
+    Env, FoundryBlock, FoundryCfg, FoundryTransaction,
     backend::{DatabaseExt, FoundryJournalExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
@@ -1120,7 +1120,7 @@ impl Cheatcode for executeTransactionCall {
         let tx_env = <TxEnv as FromRecoveredTx<FoundryTxEnvelope>>::from_recovered_tx(&tx, sender);
 
         // Save current env for restoration after execution.
-        let cached_env = ccx.ecx.to_env();
+        let cached_env = Env::clone_from_context(ccx.ecx);
 
         // Override env for isolated execution.
         ccx.ecx.block_mut().set_basefee(0);
@@ -1137,7 +1137,7 @@ impl Cheatcode for executeTransactionCall {
             .set_limit_contract_initcode_size(Some(revm::primitives::eip3860::MAX_INITCODE_SIZE));
 
         // Snapshot the modified env for EVM construction.
-        let modified_env = ccx.ecx.to_env();
+        let modified_env = Env::clone_from_context(ccx.ecx);
 
         // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
         // when the inner EVM executes calls at depth == 1.
@@ -1187,7 +1187,7 @@ impl Cheatcode for executeTransactionCall {
             cached_env.evm_env.cfg_env.disable_nonce_check;
         restored_env.evm_env.cfg_env.limit_contract_initcode_size =
             cached_env.evm_env.cfg_env.limit_contract_initcode_size;
-        ccx.ecx.apply_env(restored_env);
+        restored_env.apply_to(ccx.ecx);
 
         // Reset inner context flag.
         executor.set_in_inner_context(false, None);
@@ -1335,21 +1335,24 @@ pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
 fn inner_snapshot_state<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
 ) -> Result {
-    let (journal, mut env) = ccx.ecx.journal_and_env_mut();
-    let (db, inner) = journal.as_db_and_inner();
-    Ok(db.snapshot_state(inner, &mut env).abi_encode())
+    let mut env = Env::clone_from_context(ccx.ecx);
+    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    let id = db.snapshot_state(inner, &mut env);
+    env.apply_to(ccx.ecx);
+    Ok(id.abi_encode())
 }
 
 fn inner_revert_to_state<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
-    let (journal, mut env) = ccx.ecx.journal_and_env_mut();
-    let (db, inner) = journal.as_db_and_inner();
+    let mut env = Env::clone_from_context(ccx.ecx);
+    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
     if let Some(restored) =
         db.revert_state(snapshot_id, inner, &mut env, RevertStateSnapshotAction::RevertKeep)
     {
         *inner = restored;
+        env.apply_to(ccx.ecx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
@@ -1362,12 +1365,13 @@ fn inner_revert_to_state_and_delete<
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
-    let (journal, mut env) = ccx.ecx.journal_and_env_mut();
-    let (db, inner) = journal.as_db_and_inner();
+    let mut env = Env::clone_from_context(ccx.ecx);
+    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
     if let Some(restored) =
         db.revert_state(snapshot_id, inner, &mut env, RevertStateSnapshotAction::RevertRemove)
     {
         *inner = restored;
+        env.apply_to(ccx.ecx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())

@@ -231,7 +231,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()> {
-        let env = ecx.to_env();
+        let env = Env::clone_from_context(ecx);
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
         db.transact(fork_id, transaction, env, inner, cheats)
     }
@@ -242,7 +242,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         ecx: &mut CTX,
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
-        let env = ecx.to_env();
+        let env = Env::clone_from_context(ecx);
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
         db.transact_from_tx(tx, env, inner, cheats)
     }

@@ -2,7 +2,7 @@
 
 use super::BackendError;
 use crate::{
-    AsEnvMut, Env, EnvMut, InspectorExt,
+    Env, InspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
@@ -76,7 +76,7 @@ impl<'a> CowBackend<'a> {
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
-        *env = evm.as_env_mut().to_owned();
+        *env = Env::from(evm.cfg.clone(), evm.block.clone(), evm.tx.clone());
 
         Ok(res)
     }
@@ -91,7 +91,7 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend.
     ///
     /// If this is the first time this is called, the backed is cloned and initialized.
-    fn backend_mut(&mut self, env: &EnvMut<'_>) -> &mut Backend {
+    fn backend_mut(&mut self, env: &Env) -> &mut Backend {
         if let Some(spec_id) = self.spec_id.take() {
             let backend = self.backend.to_mut();
             let mut env = env.to_owned();
@@ -112,7 +112,7 @@ impl<'a> CowBackend<'a> {
 }
 
 impl DatabaseExt for CowBackend<'_> {
-    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &mut EnvMut<'_>) -> U256 {
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &mut Env) -> U256 {
         self.backend_mut(env).snapshot_state(journaled_state, env)
     }
 
@@ -120,7 +120,7 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
-        current: &mut EnvMut<'_>,
+        current: &mut Env,
         action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
         self.backend_mut(current).revert_state(id, journaled_state, current, action)
@@ -155,7 +155,7 @@ impl DatabaseExt for CowBackend<'_> {
     fn select_fork(
         &mut self,
         id: LocalForkId,
-        env: &mut EnvMut<'_>,
+        env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         self.backend_mut(env).select_fork(id, env, journaled_state)
@@ -165,7 +165,7 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        env: &mut EnvMut<'_>,
+        env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         self.backend_mut(env).roll_fork(id, block_number, env, journaled_state)
@@ -175,7 +175,7 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut EnvMut<'_>,
+        env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
@@ -185,32 +185,21 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        mut env: Env,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(&env.as_env_mut()).transact(
-            id,
-            transaction,
-            env,
-            journaled_state,
-            inspector,
-        )
+        self.backend_mut(&env).transact(id, transaction, env, journaled_state, inspector)
     }
 
     fn transact_from_tx(
         &mut self,
         transaction: &TransactionRequest,
-        mut env: Env,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(&env.as_env_mut()).transact_from_tx(
-            transaction,
-            env,
-            journaled_state,
-            inspector,
-        )
+        self.backend_mut(&env).transact_from_tx(transaction, env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
