@@ -229,6 +229,26 @@ out = "utils/JsonBindings.sol"
 include = []
 exclude = []
 
+[anvil]
+port = 8545
+accounts = 10
+balance = 10000
+no_mining = false
+mixed_mining = false
+slots_in_an_epoch = 32
+disable_block_gas_limit = false
+enable_tx_gas_limit = false
+disable_min_priority_fee = false
+no_rate_limit = false
+no_storage_caching = false
+disable_code_size_limit = false
+steps_tracing = false
+disable_console_log = false
+print_traces = false
+auto_impersonate = false
+disable_default_create2_deployer = false
+disable_pool_balance_checks = false
+
 "#;
 
 // tests all config values that are in use
@@ -362,6 +382,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         fmt: Default::default(),
         lint: Default::default(),
         doc: Default::default(),
+        anvil: Default::default(),
         bind_json: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
@@ -1399,6 +1420,26 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "book": "book.toml",
     "homepage": "README.md",
     "ignore": []
+  },
+  "anvil": {
+    "port": 8545,
+    "accounts": 10,
+    "balance": 10000,
+    "no_mining": false,
+    "mixed_mining": false,
+    "slots_in_an_epoch": 32,
+    "disable_block_gas_limit": false,
+    "enable_tx_gas_limit": false,
+    "disable_min_priority_fee": false,
+    "no_rate_limit": false,
+    "no_storage_caching": false,
+    "disable_code_size_limit": false,
+    "steps_tracing": false,
+    "disable_console_log": false,
+    "print_traces": false,
+    "auto_impersonate": false,
+    "disable_default_create2_deployer": false,
+    "disable_pool_balance_checks": false
   },
   "bind_json": {
     "out": "utils/JsonBindings.sol",
