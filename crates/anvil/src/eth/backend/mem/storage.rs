@@ -554,6 +554,7 @@ impl<N: Network> MinedTransaction<N> {
             block_hash: Some(self.block_hash),
             block_number: Some(self.block_number),
             base_fee: None,
+            block_timestamp: None,
         })
     }
 
