@@ -46,7 +46,6 @@ dialoguer.workspace = true
 indicatif.workspace = true
 
 alloy-signer.workspace = true
-alloy-serde.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-chains.workspace = true

@@ -11,8 +11,6 @@ use alloy_primitives::{
 };
 use alloy_provider::{Provider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
-use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
@@ -33,7 +31,7 @@ use crate::{
 };
 
 pub async fn estimate_gas<P: Provider<AnyNetwork>>(
-    tx: &mut WithOtherFields<TransactionRequest>,
+    tx: &mut TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
 ) -> Result<()> {
@@ -42,7 +40,7 @@ pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
+        provider.estimate_gas(tx.clone().into()).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
             / 100,
     );
@@ -64,9 +62,9 @@ pub async fn next_nonce(
 /// Represents how to send a single transaction.
 #[derive(Clone)]
 pub enum SendTransactionKind<'a> {
-    Unlocked(WithOtherFields<TransactionRequest>),
-    Raw(WithOtherFields<TransactionRequest>, &'a EthereumWallet),
-    Browser(WithOtherFields<TransactionRequest>, &'a BrowserSigner),
+    Unlocked(TransactionRequest),
+    Raw(TransactionRequest, &'a EthereumWallet),
+    Browser(TransactionRequest, &'a BrowserSigner),
     Signed(TxEnvelope),
 }
 
@@ -139,7 +137,7 @@ impl<'a> SendTransactionKind<'a> {
                 debug!("sending transaction from unlocked account {:?}", tx);
 
                 // Submit the transaction
-                let pending = provider.send_transaction(tx).await?;
+                let pending = provider.send_transaction(tx.into()).await?;
                 Ok(*pending.tx_hash())
             }
             Self::Raw(tx, signer) => {
@@ -159,7 +157,7 @@ impl<'a> SendTransactionKind<'a> {
                 debug!("sending transaction: {:?}", tx);
 
                 // Sign and send the transaction via the browser wallet
-                Ok(signer.send_transaction_via_browser(tx.into_inner()).await?)
+                Ok(signer.send_transaction_via_browser(tx).await?)
             }
         }
     }
@@ -204,7 +202,7 @@ impl SendTransactionsKind {
     pub fn for_sender(
         &self,
         addr: &Address,
-        tx: WithOtherFields<TransactionRequest>,
+        tx: TransactionRequest,
     ) -> Result<SendTransactionKind<'_>> {
         match self {
             Self::Unlocked(unlocked) => {

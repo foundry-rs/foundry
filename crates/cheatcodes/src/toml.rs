@@ -15,14 +15,14 @@ use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
-impl<CTX> Cheatcode<CTX> for keyExistsTomlCall {
+impl Cheatcode for keyExistsTomlCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         check_json_key_exists(&toml_to_json_string(toml)?, key)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseToml_0Call {
+impl Cheatcode for parseToml_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml } = self;
         parse_toml(
@@ -33,7 +33,7 @@ impl<CTX> Cheatcode<CTX> for parseToml_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseToml_1Call {
+impl Cheatcode for parseToml_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml(
@@ -44,105 +44,105 @@ impl<CTX> Cheatcode<CTX> for parseToml_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlUintCall {
+impl Cheatcode for parseTomlUintCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Uint(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlUintArrayCall {
+impl Cheatcode for parseTomlUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlIntCall {
+impl Cheatcode for parseTomlIntCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Int(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlIntArrayCall {
+impl Cheatcode for parseTomlIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlBoolCall {
+impl Cheatcode for parseTomlBoolCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Bool)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlBoolArrayCall {
+impl Cheatcode for parseTomlBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlAddressCall {
+impl Cheatcode for parseTomlAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Address)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlAddressArrayCall {
+impl Cheatcode for parseTomlAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlStringCall {
+impl Cheatcode for parseTomlStringCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::String)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlStringArrayCall {
+impl Cheatcode for parseTomlStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlBytesCall {
+impl Cheatcode for parseTomlBytesCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Bytes)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlBytesArrayCall {
+impl Cheatcode for parseTomlBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlBytes32Call {
+impl Cheatcode for parseTomlBytes32Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::FixedBytes(32))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlBytes32ArrayCall {
+impl Cheatcode for parseTomlBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlType_0Call {
+impl Cheatcode for parseTomlType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, typeDescription } = self;
         parse_toml_coerce(
@@ -157,7 +157,7 @@ impl<CTX> Cheatcode<CTX> for parseTomlType_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlType_1Call {
+impl Cheatcode for parseTomlType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key, typeDescription } = self;
         parse_toml_coerce(
@@ -172,7 +172,7 @@ impl<CTX> Cheatcode<CTX> for parseTomlType_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlTypeArrayCall {
+impl Cheatcode for parseTomlTypeArrayCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key, typeDescription } = self;
         let ty = resolve_type(
@@ -183,14 +183,14 @@ impl<CTX> Cheatcode<CTX> for parseTomlTypeArrayCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseTomlKeysCall {
+impl Cheatcode for parseTomlKeysCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_keys(toml, key)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for writeToml_0Call {
+impl Cheatcode for writeToml_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, path } = self;
         let value =
@@ -201,7 +201,7 @@ impl<CTX> Cheatcode<CTX> for writeToml_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for writeToml_1Call {
+impl Cheatcode for writeToml_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json: value, path, valueKey } = self;
 
