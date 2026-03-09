@@ -54,6 +54,10 @@ pub enum WalletSubcommands {
         /// Number of wallets to generate.
         #[arg(long, short, default_value = "1")]
         number: u32,
+
+        /// Overwrite existing keystore files without prompting.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -306,7 +310,7 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, account_name, unsafe_password, number, password } => {
+            Self::New { path, account_name, unsafe_password, number, password, force } => {
                 let mut rng = thread_rng();
 
                 let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
@@ -347,7 +351,7 @@ impl WalletSubcommands {
                         };
 
                         // Prevent accidental overwriting: check all target files upfront
-                        if let Some(ref acc_name) = account_name {
+                        if !force && let Some(ref acc_name) = account_name {
                             let mut existing_files = Vec::new();
 
                             for i in 0..number {
