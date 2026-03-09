@@ -201,7 +201,7 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
     }
 }
 
-// TODO: This is tmp implementation, remove it after Cast refactor being finished 
+// TODO: This is tmp implementation, remove it after Cast refactor being finished
 impl From<Signed<FoundryTypedTx>> for FoundryTxEnvelope {
     fn from(value: Signed<FoundryTypedTx>) -> Self {
         let (tx, sig, hash) = value.into_parts();
@@ -306,7 +306,7 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
     }
 }
 
-// TODO: This is tmp implementation, remove it after Cast refactor being finished 
+// TODO: This is tmp implementation, remove it after Cast refactor being finished
 impl alloy_consensus::transaction::RlpEcdsaEncodableTx for FoundryTypedTx {
     fn rlp_encoded_fields_length(&self) -> usize {
         match self {
