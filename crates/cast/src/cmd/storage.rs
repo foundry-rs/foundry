@@ -144,7 +144,22 @@ impl StorageArgs {
         let api_key = config.get_etherscan_api_key(Some(chain)).or_else(|| self.etherscan.key()).ok_or_else(|| {
             eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
         })?;
-        let client = Client::new(chain, api_key)?;
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+
+        let mut builder = Client::builder();
+        builder = if let Some(etherscan_config) = etherscan_config {
+            if !etherscan_config.api_url.is_empty() {
+                let api_url = etherscan_config.api_url.trim_end_matches('/');
+                let base_url = etherscan_config.browser_url.as_deref().unwrap_or(api_url);
+                builder.with_api_url(api_url)?.with_url(base_url)?
+            } else {
+                builder.chain(chain)?
+            }
+        } else {
+            builder.chain(chain)?
+        };
+
+        let client = builder.with_api_key(api_key).build()?;
         let source = if let Some(proxy) = self.proxy {
             find_source(client, proxy.resolve(&provider).await?).await?
         } else {

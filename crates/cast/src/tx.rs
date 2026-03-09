@@ -322,6 +322,7 @@ pub struct CastTxBuilder<P, S> {
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
+    etherscan_api_url: Option<String>,
     access_list: Option<Option<AccessList>>,
     state: S,
 }
@@ -334,7 +335,9 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
 
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
-        // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
+        let etherscan_api_url = etherscan_config.map(|c| c.api_url);
+        // mark it as requested or the chain is legacy and no 7702 is provided.
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
         if let Some(gas_limit) = tx_opts.gas_limit {
@@ -382,6 +385,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             eip4844: tx_opts.eip4844,
             chain,
             etherscan_api_key,
+            etherscan_api_url,
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
@@ -399,6 +403,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
@@ -424,6 +429,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
+                self.etherscan_api_url.as_deref(),
             )
             .await?
         } else {
@@ -456,6 +462,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             eip4844: self.eip4844,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
