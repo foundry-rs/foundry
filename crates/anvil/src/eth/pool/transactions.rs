@@ -38,7 +38,7 @@ pub enum TransactionOrder {
 
 impl TransactionOrder {
     /// Returns the priority of the transactions
-    pub fn priority(&self, tx: &FoundryTxEnvelope) -> TransactionPriority {
+    pub fn priority<T: Transaction>(&self, tx: &T) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
             Self::Fees => TransactionPriority(tx.max_fee_per_gas()),
