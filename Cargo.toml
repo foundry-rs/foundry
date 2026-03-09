@@ -389,6 +389,7 @@ evmole = "0.8"
 eyre = "0.6"
 figment = { package = "figment2", version = "0.11" }
 futures = { version = "0.3", default-features = false }
+gix = { version = "0.72", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "revision", "worktree-mutation"] }
 hyper = "1.8"
 indicatif = "0.18"
 itertools = "0.14"
