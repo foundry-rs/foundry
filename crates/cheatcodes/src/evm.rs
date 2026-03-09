@@ -1461,7 +1461,8 @@ fn inner_stop_gas_snapshot<CTX>(
     // If group and name are not provided, use the last snapshot group and name.
     let (group, name) = group
         .zip(name)
-        .unwrap_or_else(|| ccx.state.gas_metering.active_gas_snapshot.clone().unwrap());
+        .or_else(|| ccx.state.gas_metering.active_gas_snapshot.clone())
+        .ok_or_else(|| fmt_err!("no active gas snapshot; call `startGasSnapshot` first"))?;
 
     if let Some(record) = ccx
         .state
