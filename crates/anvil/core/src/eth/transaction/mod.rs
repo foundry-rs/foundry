@@ -127,23 +127,34 @@ impl<T> Deref for MaybeImpersonatedTransaction<T> {
 
 /// Queued transaction
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingTransaction {
+pub struct PendingTransaction<T = FoundryTxEnvelope> {
     /// The actual transaction
-    pub transaction: MaybeImpersonatedTransaction,
+    pub transaction: MaybeImpersonatedTransaction<T>,
     /// the recovered sender of this transaction
     sender: Address,
     /// hash of `transaction`, so it can easily be reused with encoding and hashing again
     hash: TxHash,
 }
 
-impl PendingTransaction {
-    pub fn new(transaction: FoundryTxEnvelope) -> Result<Self, RecoveryError> {
-        let sender = transaction.recover()?;
-        let hash = transaction.hash();
-        Ok(Self { transaction: MaybeImpersonatedTransaction::new(transaction), sender, hash })
+impl<T> PendingTransaction<T> {
+    pub fn hash(&self) -> &TxHash {
+        &self.hash
     }
 
-    pub fn with_impersonated(transaction: FoundryTxEnvelope, sender: Address) -> Self {
+    pub fn sender(&self) -> &Address {
+        &self.sender
+    }
+}
+
+impl<T: SignerRecoverable + TxHashRef + Encodable> PendingTransaction<T> {
+    pub fn new(transaction: T) -> Result<Self, RecoveryError> {
+        let transaction = MaybeImpersonatedTransaction::new(transaction);
+        let sender = transaction.recover()?;
+        let hash = transaction.hash();
+        Ok(Self { transaction, sender, hash })
+    }
+
+    pub fn with_impersonated(transaction: T, sender: Address) -> Self {
         let transaction = MaybeImpersonatedTransaction::impersonated(transaction, sender);
         let hash = transaction.hash();
         Self { transaction, sender, hash }
@@ -151,7 +162,7 @@ impl PendingTransaction {
 
     /// Converts a [`MaybeImpersonatedTransaction`] into a [`PendingTransaction`].
     pub fn from_maybe_impersonated(
-        transaction: MaybeImpersonatedTransaction,
+        transaction: MaybeImpersonatedTransaction<T>,
     ) -> Result<Self, RecoveryError> {
         if let Some(impersonated) = transaction.impersonated_sender {
             Ok(Self::with_impersonated(transaction.transaction, impersonated))
@@ -159,17 +170,11 @@ impl PendingTransaction {
             Self::new(transaction.transaction)
         }
     }
+}
 
+impl<T: Transaction> PendingTransaction<T> {
     pub fn nonce(&self) -> u64 {
         self.transaction.nonce()
-    }
-
-    pub fn hash(&self) -> &TxHash {
-        &self.hash
-    }
-
-    pub fn sender(&self) -> &Address {
-        &self.sender
     }
 }
 
