@@ -1190,11 +1190,10 @@ impl FoundryInspectorExt for InspectorStackRefMut<'_> {
         self.inner.create2_deployer
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         // InspectorStackRefMut borrows with a non-'static lifetime,
-        // so it can't implement Any. This is fine — only InspectorStack
-        // (not the RefMut wrapper) is passed to FoundryEvmFactory.
-        unimplemented!("InspectorStackRefMut is not passed to FoundryEvmFactory")
+        // so it can't be downcasted via Any.
+        None
     }
 }
 
@@ -1255,8 +1254,8 @@ impl FoundryInspectorExt for InspectorStack {
         self.create2_deployer
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 

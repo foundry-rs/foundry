@@ -77,14 +77,16 @@ pub trait FoundryInspectorExt {
     ///
     /// Used to recover the concrete inspector type (e.g. `InspectorStack`) from a
     /// `&mut dyn FoundryInspectorExt` trait object.
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    ///
+    /// Returns `None` for types that cannot be downcasted (e.g. non-`'static` borrows).
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any>;
 }
 
 /// Convenience extension for downcasting `dyn FoundryInspectorExt` to concrete types.
 pub trait FoundryInspectorDowncastExt: FoundryInspectorExt {
     /// Attempts to downcast to a concrete type `T`.
     fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        self.as_any_mut().downcast_mut::<T>()
+        self.as_any_mut()?.downcast_mut::<T>()
     }
 }
 
@@ -105,13 +107,13 @@ impl<T> InspectorExt for T where
 }
 
 impl FoundryInspectorExt for NoOpInspector {
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 
 impl FoundryInspectorExt for AccessListInspector {
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }

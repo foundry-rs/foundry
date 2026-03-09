@@ -102,8 +102,8 @@ impl FoundryInspectorExt for LogCollector {
         self.push_msg(msg);
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 
