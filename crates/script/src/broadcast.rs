@@ -368,16 +368,14 @@ impl BundledState {
                         //
                         // To prevent this, use eth_maxPriorityFeePerGas as a floor for
                         // the priority fee, and adjust maxFeePerGas to accommodate.
-                        if let Ok(suggested_tip) =
-                            provider.get_max_priority_fee_per_gas().await
+                        if let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+                            && suggested_tip > fees.max_priority_fee_per_gas
                         {
-                            if suggested_tip > fees.max_priority_fee_per_gas {
-                                // Adjust max_fee by the difference so it still covers
-                                // the higher priority fee.
-                                fees.max_fee_per_gas += suggested_tip -
-                                    fees.max_priority_fee_per_gas;
-                                fees.max_priority_fee_per_gas = suggested_tip;
-                            }
+                            // Adjust max_fee by the difference so it still covers
+                            // the higher priority fee.
+                            fees.max_fee_per_gas +=
+                                suggested_tip - fees.max_priority_fee_per_gas;
+                            fees.max_priority_fee_per_gas = suggested_tip;
                         }
 
                         if let Some(gas_price) = self.args.with_gas_price {
