@@ -497,7 +497,7 @@ alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "100a33
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "100a3325ac4d624f3eb0bd404125750e76edf8ca" }
 
 ## alloy-evm
-alloy-evm = { git = "https://github.com/mablr/evm.git", branch = "chore/bump_alloy2.0_rc" }
+alloy-evm = { git = "https://github.com/alloy-rs/evm.git", branch = "alloy-2.0" }
 
 ## op-alloy / alloy-op-evm (all in mablr's optimism monorepo)
 op-alloy-consensus = { git = "https://github.com/mablr/optimism", rev = "1ebf2dc0d2fd86137d97b485c7994e7404744c87" }
