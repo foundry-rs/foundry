@@ -161,22 +161,15 @@ pub struct InputState {
     func: Option<Function>,
 }
 
-pub struct CastTxSender<N, P>
-where
-    N: Network,
-    P: Provider<N>,
-{
+pub struct CastTxSender<N, P> {
     provider: P,
     _phantom: PhantomData<N>,
 }
 
-impl<N, P> CastTxSender<N, P>
+impl<N: Network, P: Provider<N>> CastTxSender<N, P>
 where
-    N: Network,
-    N::TxEnvelope: Clone,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
-    P: Provider<N>,
 {
     /// Creates a new Cast instance responsible for sending transactions.
     pub fn new(provider: P) -> Self {
@@ -319,12 +312,7 @@ where
 /// It is implemented as a stateful builder with expected state transition of [InitState] ->
 /// [ToState] -> [InputState].
 #[derive(Debug)]
-pub struct CastTxBuilder<N, P, S>
-where
-    N: Network,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-    P: Provider<N>,
-{
+pub struct CastTxBuilder<N: Network, P, S> {
     provider: P,
     tx: N::TransactionRequest,
     /// Whether the transaction should be sent as a legacy transaction.
@@ -337,14 +325,11 @@ where
     etherscan_api_key: Option<String>,
     access_list: Option<Option<AccessList>>,
     state: S,
-    _phantom: std::marker::PhantomData<N>,
 }
 
-impl<N: Network, P> CastTxBuilder<N, P, InitState>
+impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InitState>
 where
-    N: Network,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
-    P: Provider<N>,
 {
     /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
     /// provided [TransactionOpts].
@@ -404,7 +389,6 @@ where
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
-            _phantom: PhantomData,
         })
     }
 
@@ -422,16 +406,13 @@ where
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
-            _phantom: self._phantom,
         })
     }
 }
 
-impl<N, P> CastTxBuilder<N, P, ToState>
+impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, ToState>
 where
-    N: Network,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
-    P: Provider<N>,
 {
     /// Accepts user-provided code, sig and args params and constructs calldata for the transaction.
     /// If code is present, input will be set to code + encoded constructor arguments. If no code is
@@ -485,7 +466,6 @@ where
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
-            _phantom: self._phantom,
         })
     }
 }

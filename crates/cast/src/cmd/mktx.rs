@@ -89,9 +89,8 @@ impl MakeTxArgs {
         }
     }
 
-    pub async fn run_generic<N>(self) -> Result<()>
+    pub async fn run_generic<N: Network>(self) -> Result<()>
     where
-        N: Network,
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
