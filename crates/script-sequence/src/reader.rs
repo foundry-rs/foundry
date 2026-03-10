@@ -1,4 +1,5 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
+use alloy_network::ReceiptResponse;
 use alloy_rpc_types_eth::TransactionReceipt;
 use eyre::{Result, bail};
 use foundry_common::fs;
@@ -148,7 +149,7 @@ impl BroadcastReader {
         for tx in transactions.into_iter().filter(|tx| self.matches_filters(tx)) {
             let maybe_receipt = receipts
                 .iter()
-                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
+                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash()));
 
             if let Some(receipt) = maybe_receipt {
                 targets.push((tx, receipt.clone()));
@@ -156,7 +157,7 @@ impl BroadcastReader {
         }
 
         // Sort by descending block number
-        targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number));
+        targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number()));
 
         targets
     }

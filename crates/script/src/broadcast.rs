@@ -3,7 +3,7 @@ use std::{cmp::Ordering, sync::Arc, time::Duration};
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
     Address, TxHash,
     map::{AddressHashMap, AddressHashSet},
@@ -381,7 +381,7 @@ impl BundledState {
 
                                 // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
                                 // alloy
-                                if tx.to.is_none() {
+                                if tx.kind().is_none() {
                                     tx.set_create();
                                 }
 
@@ -511,8 +511,8 @@ impl BundledState {
 
             let (total_gas, total_gas_price, total_paid) =
                 sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
-                    let gas_used = receipt.gas_used;
-                    let gas_price = receipt.effective_gas_price as u64;
+                    let gas_used = receipt.gas_used();
+                    let gas_price = receipt.effective_gas_price() as u64;
                     (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
                 });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
