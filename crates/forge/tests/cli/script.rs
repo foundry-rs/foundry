@@ -3491,3 +3491,87 @@ Script ran successfully.
 
 "#]]);
 });
+
+// Tests that broadcasting uses eth_maxPriorityFeePerGas as a floor for the priority fee.
+// On chains like Base (OP Stack), eth_feeHistory returns empty reward arrays, causing alloy's
+// estimator to fall back to 1 wei. Browser wallets may then override this with their own
+// estimate from eth_maxPriorityFeePerGas without adjusting maxFeePerGas, breaking the
+// maxPriorityFeePerGas <= maxFeePerGas invariant. This test ensures foundry proactively uses
+// eth_maxPriorityFeePerGas as a floor.
+forgetest_async!(can_broadcast_with_priority_fee_floor, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external returns (bool success) {
+        vm.startBroadcast();
+        (success, ) = address(0).call("");
+    }
+}
+   "#,
+    );
+
+    // Start anvil with base_fee = 0 so that eth_feeHistory returns zero/empty rewards,
+    // mimicking OP Stack chains like Base. Anvil's eth_maxPriorityFeePerGas still returns
+    // MIN_SUGGESTED_PRIORITY_FEE (1 gwei), which is much higher than alloy's fallback of
+    // 1 wei. Without the fix, the estimated maxFeePerGas could be below the suggested
+    // priority fee.
+    let node_config = NodeConfig::test().with_base_fee(Some(0));
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+        "--non-interactive",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+Script ran successfully.
+
+== Return ==
+success: bool true
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
+
+"#]]);
+});
