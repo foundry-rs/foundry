@@ -23,13 +23,14 @@ mod tests {
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm::core::either_evm::EitherEvm;
+    use foundry_evm::hardfork::{FoundryHardfork, OpHardfork};
     use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
     use monad_revm::{MonadContext, MonadSpecId, precompiles::MonadPrecompiles};
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
         Journal,
-        context::{BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
+        context::{BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
         database::{EmptyDB, EmptyDBTyped},
         handler::{EthPrecompiles, instructions::EthInstructions},
         inspector::NoOpInspector,
@@ -127,6 +128,7 @@ mod tests {
                 ..Default::default()
             },
             networks: NetworkConfigs::with_optimism(),
+            hardfork: FoundryHardfork::Optimism(op_hardfork_from_spec(op_spec)),
         };
 
         let mut chain = L1BlockInfo::default();
@@ -185,6 +187,7 @@ mod tests {
                 ..Default::default()
             },
             networks: NetworkConfigs::with_monad(),
+            hardfork: FoundryHardfork::Monad(monad_spec),
         };
 
         let monad_cfg: monad_revm::MonadCfgEnv = CfgEnv::new_with_spec(monad_spec)
@@ -217,6 +220,22 @@ mod tests {
         ));
 
         (monad_env, monad_evm)
+    }
+
+    fn op_hardfork_from_spec(spec: OpSpecId) -> OpHardfork {
+        match spec {
+            OpSpecId::BEDROCK => OpHardfork::Bedrock,
+            OpSpecId::REGOLITH => OpHardfork::Regolith,
+            OpSpecId::CANYON => OpHardfork::Canyon,
+            OpSpecId::ECOTONE => OpHardfork::Ecotone,
+            OpSpecId::FJORD => OpHardfork::Fjord,
+            OpSpecId::GRANITE => OpHardfork::Granite,
+            OpSpecId::HOLOCENE => OpHardfork::Holocene,
+            OpSpecId::ISTHMUS => OpHardfork::Isthmus,
+            OpSpecId::INTEROP => OpHardfork::Interop,
+            OpSpecId::JOVIAN => OpHardfork::Jovian,
+            OpSpecId::OSAKA => OpHardfork::Jovian,
+        }
     }
 
     #[test]
@@ -334,5 +353,55 @@ mod tests {
 
         assert!(result.result.is_success());
         assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
+    }
+
+    #[test]
+    fn new_evm_with_inspector_uses_selected_optimism_hardfork() {
+        let env = crate::eth::backend::env::Env {
+            evm_env: EvmEnv {
+                block_env: Default::default(),
+                cfg_env: CfgEnv::new_with_spec(SpecId::OSAKA),
+            },
+            tx: OpTransaction::<TxEnv>::default(),
+            networks: NetworkConfigs::with_optimism(),
+            hardfork: FoundryHardfork::Optimism(OpHardfork::Bedrock),
+        };
+
+        let evm = crate::eth::backend::executor::new_evm_with_inspector(
+            EmptyDBTyped::<foundry_evm::backend::DatabaseError>::default(),
+            &env,
+            NoOpInspector,
+        );
+
+        match evm {
+            EitherEvm::Op(op_evm) => assert_eq!(*op_evm.ctx().cfg.spec(), OpSpecId::BEDROCK),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn new_evm_with_inspector_uses_selected_monad_hardfork() {
+        let env = crate::eth::backend::env::Env {
+            evm_env: EvmEnv {
+                block_env: Default::default(),
+                cfg_env: CfgEnv::new_with_spec(SpecId::OSAKA),
+            },
+            tx: OpTransaction::<TxEnv>::default(),
+            networks: NetworkConfigs::with_monad(),
+            hardfork: FoundryHardfork::Monad(MonadSpecId::MonadNine),
+        };
+
+        let evm = crate::eth::backend::executor::new_evm_with_inspector(
+            EmptyDBTyped::<foundry_evm::backend::DatabaseError>::default(),
+            &env,
+            NoOpInspector,
+        );
+
+        match evm {
+            EitherEvm::Monad(monad_evm) => {
+                assert_eq!(monad_evm.ctx().cfg.spec(), MonadSpecId::MonadNine)
+            }
+            _ => unreachable!(),
+        }
     }
 }

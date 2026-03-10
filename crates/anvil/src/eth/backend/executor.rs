@@ -37,6 +37,7 @@ use anvil_core::eth::{
 use foundry_evm::{
     backend::DatabaseError,
     core::{either_evm::EitherEvm, precompiles::EC_RECOVER},
+    hardfork::FoundryHardfork,
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -137,6 +138,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     pub blob_params: BlobParams,
     pub cheats: CheatsManager,
+    pub hardfork: FoundryHardfork,
 }
 
 impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
@@ -306,7 +308,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(tx.transaction.as_ref()).into());
         }
 
-        Env::new(self.evm_env.clone(), tx_env, self.networks)
+        Env::new(self.evm_env.clone(), tx_env, self.networks, self.hardfork)
     }
 }
 
@@ -501,20 +503,22 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
 {
     if env.networks.is_optimism() {
-        let cfg = env
-            .evm_env
-            .cfg_env
-            .clone()
-            .with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS);
+        let hardfork = match env.hardfork {
+            FoundryHardfork::Optimism(hardfork) => hardfork,
+            other => unreachable!("optimism env constructed with non-optimism hardfork: {other:?}"),
+        };
+        let cfg = env.evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(
+            foundry_evm::hardfork::spec_id_from_optimism_hardfork(hardfork),
+        );
         let evm_env = EvmEnv::new(cfg, env.evm_env.block_env.clone());
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
     } else if env.networks.is_monad() {
-        let cfg: monad_revm::MonadCfgEnv = env
-            .evm_env
-            .cfg_env
-            .clone()
-            .with_spec_and_mainnet_gas_params(monad_revm::MonadSpecId::default())
-            .into();
+        let hardfork = match env.hardfork {
+            FoundryHardfork::Monad(hardfork) => hardfork,
+            other => unreachable!("monad env constructed with non-monad hardfork: {other:?}"),
+        };
+        let cfg: monad_revm::MonadCfgEnv =
+            env.evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(hardfork).into();
         let evm_env = EvmEnv::new(cfg.into(), env.evm_env.block_env.clone());
         EitherEvm::Monad(
             MonadEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector),

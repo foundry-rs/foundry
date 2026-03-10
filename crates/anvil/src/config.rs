@@ -47,6 +47,7 @@ use foundry_evm::{
     utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
 use itertools::Itertools;
+use monad_revm::MonadSpecId;
 use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
@@ -553,6 +554,9 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
+        if self.networks.is_monad() {
+            return MonadSpecId::default().into();
+        }
         if self.networks.is_optimism() {
             return OpHardfork::default().into();
         }
@@ -1058,8 +1062,9 @@ impl NodeConfig {
     pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
         // configure the revm environment
 
+        let hardfork = self.get_hardfork();
         let mut cfg = CfgEnv::default();
-        cfg.spec = self.get_hardfork().into();
+        cfg.spec = hardfork.into();
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1092,6 +1097,7 @@ impl NodeConfig {
                 ..Default::default()
             },
             self.networks,
+            hardfork,
         );
 
         let fees = FeeManager::new(
@@ -1239,6 +1245,7 @@ impl NodeConfig {
                         ethereum_hardfork_from_block_tag(fork_block_number);
 
                     env.evm_env.cfg_env.spec = spec_id_from_ethereum_hardfork(hardfork);
+                    env.hardfork = FoundryHardfork::Ethereum(hardfork);
                     self.hardfork = Some(FoundryHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
@@ -1682,5 +1689,11 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[test]
+    fn test_monad_defaults_to_monad_eight_hardfork() {
+        let config = NodeConfig::default().with_networks(NetworkConfigs::with_monad());
+        assert_eq!(config.get_hardfork(), MonadSpecId::MonadEight.into());
     }
 }

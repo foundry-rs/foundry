@@ -14,6 +14,7 @@ use foundry_config::{Chain, Config, FigmentProviders};
 use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use futures::FutureExt;
+use monad_revm::MonadSpecId;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
     net::IpAddr,
@@ -80,6 +81,7 @@ pub struct NodeArgs {
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `prague`, `cancun`, `shanghai`, `paris`, `london`, etc...
+    /// When used with `--monad`, accepts `MonadEight`, `MonadNine`, or `MonadNext`.
     /// [default: latest]
     #[arg(long)]
     pub hardfork: Option<String>,
@@ -218,7 +220,9 @@ impl NodeArgs {
 
         let hardfork = match &self.hardfork {
             Some(hf) => {
-                if self.evm.networks.is_optimism() {
+                if self.evm.networks.is_monad() {
+                    Some(parse_monad_hardfork(hf)?.into())
+                } else if self.evm.networks.is_optimism() {
                     Some(OpHardfork::from_str(hf)?.into())
                 } else {
                     Some(EthereumHardfork::from_str(hf)?.into())
@@ -402,6 +406,22 @@ impl NodeArgs {
 
         Ok(handle.await??)
     }
+}
+
+fn parse_monad_hardfork(hardfork: &str) -> eyre::Result<MonadSpecId> {
+    if hardfork.eq_ignore_ascii_case("monadeight") {
+        return Ok(MonadSpecId::MonadEight);
+    }
+    if hardfork.eq_ignore_ascii_case("monadnine") {
+        return Ok(MonadSpecId::MonadNine);
+    }
+    if hardfork.eq_ignore_ascii_case("monadnext") {
+        return Ok(MonadSpecId::MonadNext);
+    }
+
+    eyre::bail!(
+        "invalid Monad hardfork `{hardfork}`. Valid values: MonadEight, MonadNine, MonadNext"
+    )
 }
 
 /// Anvil's EVM related arguments.
@@ -846,8 +866,22 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_monad_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--monad", "--hardfork", "monadnine"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(MonadSpecId::MonadNine.into()));
+    }
+
+    #[test]
     fn cant_parse_invalid_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "Regolith"]);
+        let config = args.into_node_config();
+        assert!(config.is_err());
+    }
+
+    #[test]
+    fn cant_parse_invalid_monad_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--monad", "--hardfork", "berlin"]);
         let config = args.into_node_config();
         assert!(config.is_err());
     }

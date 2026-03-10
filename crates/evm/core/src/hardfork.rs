@@ -1,4 +1,5 @@
 use alloy_rpc_types::BlockNumberOrTag;
+use monad_revm::MonadSpecId;
 use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 
@@ -9,6 +10,7 @@ pub use alloy_op_hardforks::OpHardfork;
 pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
     Optimism(OpHardfork),
+    Monad(MonadSpecId),
 }
 
 impl FoundryHardfork {
@@ -18,6 +20,35 @@ impl FoundryHardfork {
 
     pub fn optimism(h: OpHardfork) -> Self {
         Self::Optimism(h)
+    }
+
+    pub fn monad(h: MonadSpecId) -> Self {
+        Self::Monad(h)
+    }
+
+    pub const fn as_optimism(self) -> Option<OpHardfork> {
+        match self {
+            Self::Optimism(hardfork) => Some(hardfork),
+            _ => None,
+        }
+    }
+
+    pub const fn as_monad(self) -> Option<MonadSpecId> {
+        match self {
+            Self::Monad(hardfork) => Some(hardfork),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork).into(),
+            Self::Optimism(hardfork) => {
+                let spec_id: SpecId = spec_id_from_optimism_hardfork(hardfork).into();
+                spec_id.into()
+            }
+            Self::Monad(hardfork) => hardfork.into(),
+        }
     }
 }
 
@@ -33,11 +64,24 @@ impl From<OpHardfork> for FoundryHardfork {
     }
 }
 
+impl From<MonadSpecId> for FoundryHardfork {
+    fn from(value: MonadSpecId) -> Self {
+        Self::Monad(value)
+    }
+}
+
+impl Default for FoundryHardfork {
+    fn default() -> Self {
+        Self::Ethereum(EthereumHardfork::default())
+    }
+}
+
 impl From<FoundryHardfork> for SpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
             FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
+            FoundryHardfork::Monad(hardfork) => hardfork.into(),
         }
     }
 }
@@ -123,6 +167,18 @@ mod tests {
         // Test latest hardforks
         assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Holocene), OpSpecId::HOLOCENE);
         assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Interop), OpSpecId::INTEROP);
+    }
+
+    #[test]
+    fn test_monad_spec_id_mapping() {
+        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadEight)), SpecId::PRAGUE);
+        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadNine)), SpecId::OSAKA);
+    }
+
+    #[test]
+    fn test_monad_hardfork_name() {
+        assert_eq!(FoundryHardfork::Monad(MonadSpecId::MonadNine).name(), "MonadNine");
+        assert_eq!(FoundryHardfork::Monad(MonadSpecId::MonadNext).name(), "MonadNext");
     }
 
     #[test]

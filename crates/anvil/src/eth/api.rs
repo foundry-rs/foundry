@@ -2452,7 +2452,7 @@ impl EthApi {
         let env = self.backend.env().read();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
-        let hard_fork: &str = env.evm_env.cfg_env.spec.into();
+        let hard_fork = env.hardfork.name();
 
         Ok(NodeInfo {
             current_block_number: self.backend.best_number(),

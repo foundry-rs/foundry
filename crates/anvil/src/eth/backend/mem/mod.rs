@@ -1295,6 +1295,7 @@ impl Backend {
             networks: self.env.read().networks,
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
+            hardfork: self.env.read().hardfork,
         };
 
         // create a new pending block
@@ -1383,6 +1384,7 @@ impl Backend {
                     precompile_factory: self.precompile_factory.clone(),
                     blob_params: self.blob_params(),
                     cheats: self.cheats().clone(),
+                    hardfork: self.env.read().hardfork,
                 };
                 let executed_tx = executor.execute();
 
@@ -2770,6 +2772,7 @@ impl Backend {
                 networks: self.env.read().networks,
                 blob_params: self.blob_params(),
                 cheats: self.cheats().clone(),
+                hardfork: self.env.read().hardfork,
             };
 
             let _ = executor.execute();

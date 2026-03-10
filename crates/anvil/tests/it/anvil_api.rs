@@ -22,6 +22,8 @@ use anvil_core::{
     types::{ReorgOptions, TransactionData},
 };
 use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm_networks::NetworkConfigs;
+use monad_revm::MonadSpecId;
 
 use revm::primitives::hardfork::SpecId;
 use std::{
@@ -462,6 +464,19 @@ async fn can_get_node_info() {
     };
 
     assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_monad_node_info_with_selected_hardfork() {
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_monad())
+            .with_hardfork(Some(MonadSpecId::MonadNine.into())),
+    )
+    .await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.hard_fork, "MonadNine");
 }
 
 #[tokio::test(flavor = "multi_thread")]
