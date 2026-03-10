@@ -27,11 +27,6 @@ impl Env {
         Self::from(cfg, block, tx)
     }
 
-    /// Creates a clone of the env from a [`FoundryContextExt`] context.
-    pub fn clone_from_context(ecx: &mut impl FoundryContextExt) -> Self {
-        Self::from(ecx.cfg_mut().clone(), ecx.block_mut().clone(), ecx.tx_mut().clone())
-    }
-
     /// Clones the evm env and tx env separately from a [`FoundryContextExt`] context.
     pub fn clone_evm_and_tx(ecx: &mut impl FoundryContextExt) -> (EvmEnv, TxEnv) {
         (
@@ -281,7 +276,7 @@ impl FoundryCfg for CfgEnv {
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
 /// Cheatcodes like `vm.warp()`, `vm.roll()`, `vm.chainId()` need to mutate these fields.
 pub trait FoundryContextExt:
-    ContextTr<Block: FoundryBlock, Tx: FoundryTransaction, Cfg: FoundryCfg>
+    ContextTr<Block: FoundryBlock + Clone, Tx: FoundryTransaction + Clone, Cfg: FoundryCfg + Clone>
 {
     /// Mutable reference to the block environment.
     fn block_mut(&mut self) -> &mut BlockEnv;

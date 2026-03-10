@@ -817,7 +817,12 @@ impl Backend {
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(
+            self,
+            env.evm_env.to_owned(),
+            env.tx.to_owned(),
+            inspector,
+        );
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
@@ -1381,7 +1386,12 @@ impl DatabaseExt for Backend {
             configure_tx_req_env(&mut env, tx)?;
 
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
+            let mut evm = new_evm_with_inspector(
+                &mut db,
+                env.evm_env.to_owned(),
+                env.tx.to_owned(),
+                inspector,
+            );
             evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact(env.tx)?
         };
@@ -2039,7 +2049,12 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(
+            &mut db as _,
+            env.evm_env.to_owned(),
+            env.tx.to_owned(),
+            inspector,
+        );
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.journaled_state.depth = depth + 1;
         evm.transact(env.tx.clone()).wrap_err("backend: failed committing transaction")?
