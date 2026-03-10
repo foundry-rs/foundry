@@ -1,5 +1,5 @@
 use alloy_chains::{Chain, NamedChain};
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, ReceiptResponse};
 use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{
     PendingTransactionBuilder, PendingTransactionError, Provider, RootProvider, WatchTxError,
@@ -48,9 +48,9 @@ pub async fn check_tx_status(
             {
                 Ok(receipt) => {
                     // Check if the receipt is pending (missing block information)
-                    let is_pending = receipt.block_number.is_none()
-                        || receipt.block_hash.is_none()
-                        || receipt.transaction_index.is_none();
+                    let is_pending = receipt.block_number().is_none()
+                        || receipt.block_hash().is_none()
+                        || receipt.transaction_index().is_none();
 
                     if !is_pending {
                         return Ok(receipt.into());
@@ -94,16 +94,16 @@ pub fn format_receipt(
     receipt: &TransactionReceipt,
     sequence: Option<&ScriptSequence>,
 ) -> String {
-    let gas_used = receipt.gas_used;
-    let gas_price = receipt.effective_gas_price;
-    let block_number = receipt.block_number.unwrap_or_default();
+    let gas_used = receipt.gas_used();
+    let gas_price = receipt.effective_gas_price();
+    let block_number = receipt.block_number().unwrap_or_default();
     let success = receipt.status();
 
     let (contract_name, function) = sequence
         .and_then(|seq| {
             seq.transactions
                 .iter()
-                .find(|tx| tx.hash == Some(receipt.transaction_hash))
+                .find(|tx| tx.hash == Some(receipt.transaction_hash()))
                 .map(|tx| (tx.contract_name.clone(), tx.function.clone()))
         })
         .unwrap_or((None, None));
@@ -116,8 +116,8 @@ pub fn format_receipt(
             } else {
                 "failed"
             },
-            "tx_hash": receipt.transaction_hash,
-            "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
+            "tx_hash": receipt.transaction_hash(),
+            "contract_address": receipt.contract_address().map(|addr| addr.to_string()),
             "block_number": block_number,
             "gas_used": gas_used,
             "gas_price": gas_price,
@@ -151,8 +151,8 @@ pub fn format_receipt(
         format!(
             "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_info}{function_info}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
             status = if success { "✅  [Success]" } else { "❌  [Failed]" },
-            tx_hash = receipt.transaction_hash,
-            contract_address = if let Some(addr) = &receipt.contract_address {
+            tx_hash = receipt.transaction_hash(),
+            contract_address = if let Some(addr) = receipt.contract_address() {
                 format!("\nContract Address: {}", addr.to_checksum(None))
             } else {
                 String::new()
