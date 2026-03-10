@@ -7,6 +7,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
+use alloy_network::ReceiptResponse;
 use alloy_primitives::{Bytes, U256, hex, map::Entry};
 use alloy_rpc_types::TransactionReceipt;
 use alloy_sol_types::SolValue;
@@ -889,8 +890,8 @@ fn parse_broadcast_results(
     results
         .into_iter()
         .map(|(tx, receipt)| BroadcastTxSummary {
-            txHash: receipt.transaction_hash,
-            blockNumber: receipt.block_number.unwrap_or_default(),
+            txHash: receipt.transaction_hash(),
+            blockNumber: receipt.block_number().unwrap_or_default(),
             txType: match tx.opcode {
                 CallKind::Call => BroadcastTxType::Call,
                 CallKind::Create => BroadcastTxType::Create,
