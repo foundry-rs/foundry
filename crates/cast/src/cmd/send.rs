@@ -150,16 +150,8 @@ impl SendTxArgs {
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
-        // Check if this is a Tempo transaction - requires special handling for local signing
-        let is_tempo = builder.is_tempo();
-
         // Launch browser signer if `--browser` flag is set
         let browser = send_tx.browser.run::<N>().await?;
-
-        // Tempo transactions with browser signer are not supported
-        if is_tempo && browser.is_some() {
-            return Err(eyre!("Tempo transactions are not supported with browser wallets."));
-        }
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.

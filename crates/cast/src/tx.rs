@@ -504,11 +504,6 @@ where
         Ok(hex::encode_prefixed(typed_tx.encoded_for_signing()))
     }
 
-    /// Returns whether this builder will produce a Tempo transaction.
-    pub fn is_tempo(&self) -> bool {
-        self.tx.fee_token().is_some() || self.tx.nonce_key().is_some()
-    }
-
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
