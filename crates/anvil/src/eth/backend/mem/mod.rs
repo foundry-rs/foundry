@@ -190,7 +190,7 @@ pub struct Backend {
     /// executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory.
-    blockchain: Blockchain,
+    blockchain: Blockchain<FoundryNetwork>,
     /// Historic states of previous blocks.
     states: Arc<RwLock<InMemoryBlockStates>>,
     /// Env data of the chain
@@ -3154,7 +3154,10 @@ impl Backend {
     }
 
     /// Returns the transaction receipt for the given hash
-    pub(crate) fn mined_transaction_receipt(&self, hash: B256) -> Option<MinedTransactionReceipt> {
+    pub(crate) fn mined_transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
         let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
             self.blockchain.get_transaction_by_hash(&hash)?;
 
