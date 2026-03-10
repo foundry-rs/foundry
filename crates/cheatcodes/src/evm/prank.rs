@@ -1,6 +1,6 @@
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatsCtxExt, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use foundry_evm_core::{backend::DatabaseExt, env::FoundryContextExt};
+use foundry_evm_core::backend::DatabaseExt;
 use revm::{
     context::{ContextTr, JournalTr, Transaction},
     inspector::JournalExt,
@@ -57,80 +57,64 @@ impl Prank {
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for prank_0Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for prank_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, true, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for startPrank_0Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for startPrank_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, false, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for prank_1Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for prank_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), true, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for startPrank_1Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for startPrank_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), false, false)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for prank_2Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for prank_2Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, true, *delegateCall)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for startPrank_2Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for startPrank_2Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, false, *delegateCall)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for prank_3Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for prank_3Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
     }
 }
 
-impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: JournalExt>> Cheatcode<CTX>
-    for startPrank_3Call
-{
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for startPrank_3Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), false, *delegateCall)
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for stopPrankCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for stopPrankCall {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         ccx.state.pranks.remove(&ccx.ecx.journal().depth());
         Ok(Default::default())

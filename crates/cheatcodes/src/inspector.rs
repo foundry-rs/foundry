@@ -36,7 +36,7 @@ use foundry_common::{
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, Env, FoundryInspectorExt,
+    Breakpoints, Env, EvmEnv, FoundryInspectorExt, FoundryTransaction,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -54,7 +54,7 @@ use revm::{
     Inspector,
     bytecode::opcode as op,
     context::{
-        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, result::EVMError,
+        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, TxEnv, result::EVMError,
     },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
@@ -144,7 +144,8 @@ pub trait CheatcodesExecutor<CTX> {
         &mut self,
         cheats: &mut Cheatcodes,
         db: &mut dyn DatabaseExt,
-        env: Env,
+        evm_env: EvmEnv,
+        tx_env: TxEnv,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>>
     where
@@ -203,13 +204,13 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         ecx: &mut CTX,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        with_cloned_context(ecx, |db, env, journal_inner| {
-            let mut evm = new_evm_with_inspector(db, env, cheats);
+        with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
+            let mut evm = new_evm_with_inspector(db, Env { evm_env, tx: tx_env }, cheats);
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
-            let sub_env = evm.to_env();
+            let (sub_evm_env, sub_tx) = evm.to_env();
             let sub_inner = evm.into_context().journaled_state.inner;
-            Ok(((), sub_env, sub_inner))
+            Ok(((), sub_evm_env, sub_tx, sub_inner))
         })
     }
 
@@ -217,10 +218,11 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         &mut self,
         cheats: &mut Cheatcodes,
         db: &mut dyn DatabaseExt,
-        env: Env,
+        evm_env: EvmEnv,
+        tx_env: TxEnv,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        let mut evm = new_evm_with_inspector(db, env, cheats);
+        let mut evm = new_evm_with_inspector(db, Env { evm_env, tx: tx_env }, cheats);
         f(&mut evm)
     }
 
@@ -231,9 +233,9 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()> {
-        let env = ecx.to_env();
+        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact(fork_id, transaction, env, inner, cheats)
+        db.transact(fork_id, transaction, evm_env, tx_env, inner, cheats)
     }
 
     fn transact_from_tx_on_db(
@@ -242,9 +244,9 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         ecx: &mut CTX,
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
-        let env = ecx.to_env();
+        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, env, inner, cheats)
+        db.transact_from_tx(tx, evm_env, tx_env, inner, cheats)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
@@ -748,10 +750,10 @@ impl Cheatcodes {
     /// access lists themselves.
     fn apply_accesslist<CTX: FoundryContextExt>(&mut self, ecx: &mut CTX) {
         if let Some(access_list) = &self.access_list {
-            ecx.tx_mut().access_list = access_list.clone();
+            ecx.tx_mut().set_access_list(access_list.clone());
 
             if ecx.tx().tx_type() == TransactionType::Legacy as u8 {
-                ecx.tx_mut().tx_type = TransactionType::Eip2930 as u8;
+                ecx.tx_mut().set_tx_type(TransactionType::Eip2930 as u8);
             }
         }
     }
@@ -791,7 +793,7 @@ impl Cheatcodes {
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().spec = spec_id;
+            ecx.cfg_mut().set_spec(spec_id);
         }
 
         let gas = Gas::new(call.gas_limit);
@@ -930,7 +932,7 @@ impl Cheatcodes {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
                 if let Some(new_origin) = prank.new_origin {
-                    ecx.tx_mut().caller = new_origin;
+                    ecx.tx_mut().set_caller(new_origin);
                 }
             }
 
@@ -947,7 +949,7 @@ impl Cheatcodes {
 
                 // At the target depth, or deeper, we set `tx.origin`
                 if let Some(new_origin) = prank.new_origin {
-                    ecx.tx_mut().caller = new_origin;
+                    ecx.tx_mut().set_caller(new_origin);
                     prank_applied = true;
                 }
 
@@ -976,7 +978,7 @@ impl Cheatcodes {
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
                 // broadcast.origin.
-                ecx.tx_mut().caller = broadcast.new_origin;
+                ecx.tx_mut().set_caller(broadcast.new_origin);
 
                 call.caller = broadcast.new_origin;
                 // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
@@ -1212,7 +1214,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
             *ecx.block_mut() = block;
         }
         if let Some(gas_price) = self.gas_price.take() {
-            ecx.tx_mut().gas_price = gas_price;
+            ecx.tx_mut().set_gas_price(gas_price);
         }
 
         // Record gas for current frame.
@@ -1327,7 +1329,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
             if let Some(prank) = &self.get_prank(curr_depth)
                 && curr_depth == prank.depth
             {
-                ecx.tx_mut().caller = prank.prank_origin;
+                ecx.tx_mut().set_caller(prank.prank_origin);
 
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
@@ -1339,7 +1341,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
             if let Some(broadcast) = &self.broadcast
                 && curr_depth == broadcast.depth
             {
-                ecx.tx_mut().caller = broadcast.original_origin;
+                ecx.tx_mut().set_caller(broadcast.original_origin);
 
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
@@ -1719,7 +1721,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
     fn create(&mut self, ecx: &mut CTX, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().spec = spec_id;
+            ecx.cfg_mut().set_spec(spec_id);
         }
 
         let gas = Gas::new(input.gas_limit());
@@ -1757,7 +1759,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
 
             // At the target depth, or deeper, we set `tx.origin`
             if let Some(new_origin) = prank.new_origin {
-                ecx.tx_mut().caller = new_origin;
+                ecx.tx_mut().set_caller(new_origin);
                 prank_applied = true;
             }
 
@@ -1786,7 +1788,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
                 });
             }
 
-            ecx.tx_mut().caller = broadcast.new_origin;
+            ecx.tx_mut().set_caller(broadcast.new_origin);
 
             if curr_depth == broadcast.depth || broadcast.deploy_from_code {
                 // Reset deploy from code flag for upcoming calls;
@@ -1851,7 +1853,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
         if let Some(prank) = &self.get_prank(curr_depth)
             && curr_depth == prank.depth
         {
-            ecx.tx_mut().caller = prank.prank_origin;
+            ecx.tx_mut().set_caller(prank.prank_origin);
 
             // Clean single-call prank once we have returned to the original depth
             if prank.single_call {
@@ -1863,7 +1865,7 @@ impl<CTX: CheatsCtxExt> Inspector<CTX> for Cheatcodes {
         if let Some(broadcast) = &self.broadcast
             && curr_depth == broadcast.depth
         {
-            ecx.tx_mut().caller = broadcast.original_origin;
+            ecx.tx_mut().set_caller(broadcast.original_origin);
 
             // Clean single-call broadcast once we have returned to the original depth
             if broadcast.single_call {

@@ -30,7 +30,6 @@ use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::AsEnvMut,
     executors::EvmError,
     utils::{configure_tx_env, configure_tx_req_env},
 };
@@ -253,13 +252,13 @@ impl VerifyBytecodeArgs {
                 .into_create();
 
             if let Some(ref block) = genesis_block {
-                configure_env_block(&mut env.as_env_mut(), block, config.networks);
+                configure_env_block(&mut env, block, config.networks);
                 gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
                 gen_tx_req.gas = Some(block.header.gas_limit);
                 gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
             }
 
-            configure_tx_req_env(&mut env.as_env_mut(), &gen_tx_req)
+            configure_tx_req_env(&mut env, &gen_tx_req)
                 .wrap_err("Failed to configure tx request env")?;
 
             // Seed deployer account with funds
@@ -472,7 +471,7 @@ impl VerifyBytecodeArgs {
             transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
-                configure_env_block(&mut env.as_env_mut(), block, config.networks);
+                configure_env_block(&mut env, block, config.networks);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"));
@@ -490,7 +489,7 @@ impl VerifyBytecodeArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env.as_env_mut(), tx);
+                    configure_tx_env(&mut env, tx);
 
                     if let TxKind::Call(_) = tx.inner.kind() {
                         executor.transact_with_env(env.clone()).wrap_err_with(|| {
@@ -533,7 +532,7 @@ impl VerifyBytecodeArgs {
             }
 
             // configure_req__env(&mut env, &transaction.inner);
-            configure_tx_req_env(&mut env.as_env_mut(), &transaction)
+            configure_tx_req_env(&mut env, &transaction)
                 .wrap_err("Failed to configure tx request env")?;
 
             let fork_address = crate::utils::deploy_contract(

@@ -7,9 +7,9 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_network::AnyTransactionReceipt;
+use alloy_network::ReceiptResponse;
 use alloy_primitives::{Bytes, U256, hex, map::Entry};
-use alloy_provider::network::ReceiptResponse;
+use alloy_rpc_types::TransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
@@ -31,7 +31,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
-impl<CTX> Cheatcode<CTX> for existsCall {
+impl Cheatcode for existsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -39,7 +39,7 @@ impl<CTX> Cheatcode<CTX> for existsCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for fsMetadataCall {
+impl Cheatcode for fsMetadataCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -65,7 +65,7 @@ impl<CTX> Cheatcode<CTX> for fsMetadataCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for isDirCall {
+impl Cheatcode for isDirCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -73,7 +73,7 @@ impl<CTX> Cheatcode<CTX> for isDirCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for isFileCall {
+impl Cheatcode for isFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -81,14 +81,14 @@ impl<CTX> Cheatcode<CTX> for isFileCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for projectRootCall {
+impl Cheatcode for projectRootCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state.config.root.display().to_string().abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for unixTimeCall {
+impl Cheatcode for unixTimeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         let difference = SystemTime::now()
@@ -98,7 +98,7 @@ impl<CTX> Cheatcode<CTX> for unixTimeCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for closeFileCall {
+impl Cheatcode for closeFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -109,7 +109,7 @@ impl<CTX> Cheatcode<CTX> for closeFileCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for copyFileCall {
+impl Cheatcode for copyFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { from, to } = self;
         let from = state.config.ensure_path_allowed(from, FsAccessKind::Read)?;
@@ -121,7 +121,7 @@ impl<CTX> Cheatcode<CTX> for copyFileCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for createDirCall {
+impl Cheatcode for createDirCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -130,28 +130,28 @@ impl<CTX> Cheatcode<CTX> for createDirCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for readDir_0Call {
+impl Cheatcode for readDir_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         read_dir(state, path.as_ref(), 1, false)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for readDir_1Call {
+impl Cheatcode for readDir_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, maxDepth } = self;
         read_dir(state, path.as_ref(), *maxDepth, false)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for readDir_2Call {
+impl Cheatcode for readDir_2Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, maxDepth, followLinks } = self;
         read_dir(state, path.as_ref(), *maxDepth, *followLinks)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for readFileCall {
+impl Cheatcode for readFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -159,7 +159,7 @@ impl<CTX> Cheatcode<CTX> for readFileCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for readFileBinaryCall {
+impl Cheatcode for readFileBinaryCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -167,7 +167,7 @@ impl<CTX> Cheatcode<CTX> for readFileBinaryCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for readLineCall {
+impl Cheatcode for readLineCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -193,7 +193,7 @@ impl<CTX> Cheatcode<CTX> for readLineCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for readLinkCall {
+impl Cheatcode for readLinkCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { linkPath: path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
@@ -202,7 +202,7 @@ impl<CTX> Cheatcode<CTX> for readLinkCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for removeDirCall {
+impl Cheatcode for removeDirCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -211,7 +211,7 @@ impl<CTX> Cheatcode<CTX> for removeDirCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for removeFileCall {
+impl Cheatcode for removeFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -228,21 +228,21 @@ impl<CTX> Cheatcode<CTX> for removeFileCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for writeFileCall {
+impl Cheatcode for writeFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data.as_bytes())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for writeFileBinaryCall {
+impl Cheatcode for writeFileBinaryCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for writeLineCall {
+impl Cheatcode for writeLineCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path, data: line } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
@@ -256,7 +256,7 @@ impl<CTX> Cheatcode<CTX> for writeLineCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getArtifactPathByCodeCall {
+impl Cheatcode for getArtifactPathByCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { code } = self;
         let (artifact_id, _) = state
@@ -270,7 +270,7 @@ impl<CTX> Cheatcode<CTX> for getArtifactPathByCodeCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getArtifactPathByDeployedCodeCall {
+impl Cheatcode for getArtifactPathByDeployedCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { deployedCode } = self;
         let (artifact_id, _) = state
@@ -284,22 +284,22 @@ impl<CTX> Cheatcode<CTX> for getArtifactPathByDeployedCodeCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getCodeCall {
+impl Cheatcode for getCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, false)?.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getDeployedCodeCall {
+impl Cheatcode for getDeployedCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, true)?.abi_encode())
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_0Call {
-    fn apply_full(
+impl Cheatcode for deployCode_0Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -309,8 +309,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_0Call {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_1Call {
-    fn apply_full(
+impl Cheatcode for deployCode_1Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -320,8 +320,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_1Call {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_2Call {
-    fn apply_full(
+impl Cheatcode for deployCode_2Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -331,8 +331,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_2Call {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_3Call {
-    fn apply_full(
+impl Cheatcode for deployCode_3Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -342,8 +342,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_3Call {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_4Call {
-    fn apply_full(
+impl Cheatcode for deployCode_4Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -353,8 +353,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_4Call {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_5Call {
-    fn apply_full(
+impl Cheatcode for deployCode_5Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -364,8 +364,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_5Call {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_6Call {
-    fn apply_full(
+impl Cheatcode for deployCode_6Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -375,8 +375,8 @@ impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_6Call {
     }
 }
 
-impl<CTX: CheatsCtxExt> Cheatcode<CTX> for deployCode_7Call {
-    fn apply_full(
+impl Cheatcode for deployCode_7Call {
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -586,7 +586,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
     maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
 }
 
-impl<CTX> Cheatcode<CTX> for ffiCall {
+impl Cheatcode for ffiCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { commandInput: input } = self;
 
@@ -614,42 +614,42 @@ impl<CTX> Cheatcode<CTX> for ffiCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for tryFfiCall {
+impl Cheatcode for tryFfiCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { commandInput: input } = self;
         ffi(state, input).map(|res| res.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for promptCall {
+impl Cheatcode for promptCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_input).map(|res| res.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for promptSecretCall {
+impl Cheatcode for promptSecretCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_password).map(|res| res.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for promptSecretUintCall {
+impl Cheatcode for promptSecretUintCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for promptAddressCall {
+impl Cheatcode for promptAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Address)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for promptUintCall {
+impl Cheatcode for promptUintCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Uint(256))
@@ -763,7 +763,7 @@ fn prompt(
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getBroadcastCall {
+impl Cheatcode for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
@@ -778,7 +778,7 @@ impl<CTX> Cheatcode<CTX> for getBroadcastCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getBroadcasts_0Call {
+impl Cheatcode for getBroadcasts_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
@@ -799,7 +799,7 @@ impl<CTX> Cheatcode<CTX> for getBroadcasts_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getBroadcasts_1Call {
+impl Cheatcode for getBroadcasts_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
@@ -819,8 +819,8 @@ impl<CTX> Cheatcode<CTX> for getBroadcasts_1Call {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for getDeployment_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for getDeployment_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { contractName } = self;
         let chain_id = ccx.ecx.cfg().chain_id();
 
@@ -835,7 +835,7 @@ impl<CTX: ContextTr> Cheatcode<CTX> for getDeployment_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getDeployment_1Call {
+impl Cheatcode for getDeployment_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
@@ -850,7 +850,7 @@ impl<CTX> Cheatcode<CTX> for getDeployment_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getDeploymentsCall {
+impl Cheatcode for getDeploymentsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
@@ -885,13 +885,13 @@ fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
 }
 
 fn parse_broadcast_results(
-    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+    results: Vec<(TransactionWithMetadata, TransactionReceipt)>,
 ) -> Vec<BroadcastTxSummary> {
     results
         .into_iter()
         .map(|(tx, receipt)| BroadcastTxSummary {
-            txHash: receipt.transaction_hash,
-            blockNumber: receipt.block_number.unwrap_or_default(),
+            txHash: receipt.transaction_hash(),
+            blockNumber: receipt.block_number().unwrap_or_default(),
             txType: match tx.opcode {
                 CallKind::Call => BroadcastTxType::Call,
                 CallKind::Create => BroadcastTxType::Create,
@@ -931,7 +931,7 @@ fn latest_broadcast(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AnyCtx, CheatsConfig};
+    use crate::CheatsConfig;
     use std::sync::Arc;
 
     fn cheats() -> Cheatcodes {
@@ -971,7 +971,7 @@ mod tests {
         #[cfg(windows)]
         let args = vec!["cmd".to_string(), "/c".to_string(), "exit 1".to_string()];
 
-        let result = Cheatcode::<AnyCtx>::apply(&ffiCall { commandInput: args }, &mut cheats);
+        let result = Cheatcode::apply(&ffiCall { commandInput: args }, &mut cheats);
 
         // Assert that the cheatcode returned an error.
         assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");

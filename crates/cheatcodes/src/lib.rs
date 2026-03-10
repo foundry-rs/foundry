@@ -64,7 +64,7 @@ mod toml;
 mod utils;
 
 /// Cheatcode implementation.
-pub(crate) trait Cheatcode<CTX>: CheatcodeDef {
+pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode to the given state.
     ///
     /// Implement this function if you don't need access to the EVM data.
@@ -77,7 +77,7 @@ pub(crate) trait Cheatcode<CTX>: CheatcodeDef {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         self.apply(ccx.state)
     }
 
@@ -85,7 +85,7 @@ pub(crate) trait Cheatcode<CTX>: CheatcodeDef {
     ///
     /// Implement this function if you need access to the executor.
     #[inline(always)]
-    fn apply_full(
+    fn apply_full<CTX: CheatsCtxExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -106,11 +106,6 @@ pub struct CheatsCtxt<'a, CTX> {
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
 }
-
-/// Placeholder context type for cheatcodes that don't need EVM context access
-/// (i.e., they only use `apply`, not `apply_stateful` or `apply_full`).
-#[cfg(test)]
-pub(crate) type AnyCtx = ();
 
 impl<CTX> std::ops::Deref for CheatsCtxt<'_, CTX> {
     type Target = CTX;

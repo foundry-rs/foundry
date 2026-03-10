@@ -21,7 +21,7 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -631,8 +631,8 @@ pub struct SerializableTransaction {
     pub block_number: u64,
 }
 
-impl From<MinedTransaction> for SerializableTransaction {
-    fn from(transaction: MinedTransaction) -> Self {
+impl From<MinedTransaction<FoundryNetwork>> for SerializableTransaction {
+    fn from(transaction: MinedTransaction<FoundryNetwork>) -> Self {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
@@ -642,7 +642,7 @@ impl From<MinedTransaction> for SerializableTransaction {
     }
 }
 
-impl From<SerializableTransaction> for MinedTransaction {
+impl From<SerializableTransaction> for MinedTransaction<FoundryNetwork> {
     fn from(transaction: SerializableTransaction) -> Self {
         Self {
             info: transaction.info,

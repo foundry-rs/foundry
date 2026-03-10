@@ -1,4 +1,4 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxExt, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
 use revm::context::{ContextTr, JournalTr};
@@ -44,21 +44,21 @@ impl AcceptableRevertParameters {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for assumeCall {
+impl Cheatcode for assumeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { condition } = self;
         if *condition { Ok(Default::default()) } else { Err(Error::from(MAGIC_ASSUME)) }
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for assumeNoRevert_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for assumeNoRevert_0Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         assume_no_revert(ccx.state, ccx.ecx.journal().depth(), vec![])
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for assumeNoRevert_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for assumeNoRevert_1Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { potentialRevert } = self;
         assume_no_revert(
             ccx.state,
@@ -68,8 +68,8 @@ impl<CTX: ContextTr> Cheatcode<CTX> for assumeNoRevert_1Call {
     }
 }
 
-impl<CTX: ContextTr> Cheatcode<CTX> for assumeNoRevert_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+impl Cheatcode for assumeNoRevert_2Call {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { potentialReverts } = self;
         assume_no_revert(
             ccx.state,

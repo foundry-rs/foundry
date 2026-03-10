@@ -30,7 +30,9 @@ pub struct TransactionWithMetadata {
     #[serde(skip)]
     pub rpc: String,
     pub transaction: TransactionMaybeSigned,
+    #[serde(default)]
     pub additional_contracts: Vec<AdditionalContract>,
+    #[serde(default)]
     pub is_fixed_gas_limit: bool,
 }
 

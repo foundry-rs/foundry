@@ -1,13 +1,15 @@
 use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_receipt};
 use alloy_chains::Chain;
+use alloy_network::{Ethereum, ReceiptResponse};
 use alloy_primitives::{
     B256,
     map::{B256HashMap, HashMap},
 };
+use alloy_provider::RootProvider;
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
-use foundry_common::{provider::RetryProvider, shell};
+use foundry_common::shell;
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
@@ -185,7 +187,7 @@ impl ScriptProgress {
         &self,
         sequence_idx: usize,
         deployment_sequence: &mut ScriptSequence,
-        provider: &RetryProvider,
+        provider: &RootProvider<Ethereum>,
         timeout: u64,
     ) -> Result<()> {
         if deployment_sequence.pending.is_empty() {
@@ -249,7 +251,7 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
-                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    deployment_sequence.remove_pending(receipt.transaction_hash());
                     deployment_sequence.add_receipt(receipt);
                 }
                 Ok(TxStatus::Revert(receipt)) => {
@@ -257,7 +259,7 @@ impl ScriptProgress {
                     // if this is not removed from pending, then the script becomes
                     // un-resumable. Is this desirable on reverts?
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
-                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    deployment_sequence.remove_pending(receipt.transaction_hash());
 
                     let msg = format_receipt(
                         deployment_sequence.chain.into(),
@@ -266,7 +268,7 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
-                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
+                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
                 }
             }
         }
