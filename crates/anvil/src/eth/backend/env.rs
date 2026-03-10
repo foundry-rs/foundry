@@ -1,6 +1,5 @@
 use alloy_evm::EvmEnv;
-use foundry_evm::hardfork::FoundryHardfork;
-use foundry_evm::{EnvMut, core::AsEnvMut};
+use foundry_evm::{EnvMut, core::AsEnvMut, hardfork::FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use op_revm::OpTransaction;
 use revm::{context::TxEnv, primitives::hardfork::SpecId};

@@ -22,8 +22,10 @@ mod tests {
     use alloy_monad_evm::MonadEvm;
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
-    use foundry_evm::core::either_evm::EitherEvm;
-    use foundry_evm::hardfork::{FoundryHardfork, OpHardfork};
+    use foundry_evm::{
+        core::either_evm::EitherEvm,
+        hardfork::{FoundryHardfork, OpHardfork},
+    };
     use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
     use monad_revm::{MonadContext, MonadSpecId, precompiles::MonadPrecompiles};
