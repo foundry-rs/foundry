@@ -499,15 +499,15 @@ alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "100a332
 ## alloy-evm
 alloy-evm = { git = "https://github.com/alloy-rs/evm.git", branch = "alloy-2.0" }
 
-## op-alloy / alloy-op-evm (all in mablr's optimism monorepo)
-op-alloy-consensus = { git = "https://github.com/mablr/optimism", rev = "1ebf2dc0d2fd86137d97b485c7994e7404744c87" }
-op-alloy-rpc-types = { git = "https://github.com/mablr/optimism", rev = "1ebf2dc0d2fd86137d97b485c7994e7404744c87" }
-op-alloy = { git = "https://github.com/mablr/optimism", rev = "1ebf2dc0d2fd86137d97b485c7994e7404744c87" }
-alloy-op-evm = { git = "https://github.com/mablr/optimism", rev = "1ebf2dc0d2fd86137d97b485c7994e7404744c87" }
-alloy-op-hardforks = { git = "https://github.com/mablr/optimism", rev = "1ebf2dc0d2fd86137d97b485c7994e7404744c87" }
+## op-alloy / alloy-op-evm
+op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+op-alloy = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
 
 ## revm
-revm-inspectors = { git = "https://github.com/stevencartavia/revm-inspectors.git", branch = "alloy-2.0" }
+revm-inspectors = { git = "https://github.com/stevencartavia/revm-inspectors", branch = "alloy-2.0" }
 
 ## foundry
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", branch = "alloy-2.0" }

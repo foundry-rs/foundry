@@ -463,7 +463,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.26.3"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "alloy-consensus 2.0.0-rc.0",
  "alloy-eips 2.0.0-rc.0",
@@ -480,7 +480,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-hardforks"
 version = "0.4.7"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "alloy-chains",
  "alloy-hardforks",
@@ -7345,7 +7345,7 @@ dependencies = [
 [[package]]
 name = "op-alloy"
 version = "0.24.0"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "op-alloy-consensus 0.24.0",
  "op-alloy-network",
@@ -7373,7 +7373,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-consensus"
 version = "0.24.0"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "alloy-consensus 2.0.0-rc.0",
  "alloy-eips 2.0.0-rc.0",
@@ -7397,7 +7397,7 @@ checksum = "a79f352fc3893dcd670172e615afef993a41798a1d3fc0db88a3e60ef2e70ecc"
 [[package]]
 name = "op-alloy-network"
 version = "0.24.0"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "alloy-consensus 2.0.0-rc.0",
  "alloy-network",
@@ -7411,7 +7411,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-provider"
 version = "0.24.0"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
@@ -7425,7 +7425,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types"
 version = "0.24.0"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "alloy-consensus 2.0.0-rc.0",
  "alloy-eips 2.0.0-rc.0",
@@ -7443,7 +7443,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types-engine"
 version = "0.24.0"
-source = "git+https://github.com/mablr/optimism?rev=1ebf2dc0d2fd86137d97b485c7994e7404744c87#1ebf2dc0d2fd86137d97b485c7994e7404744c87"
+source = "git+https://github.com/foundry-rs/optimism?branch=alloy-2.0#af02c7fbcf6e60dc1f7b386b754e792c51d9883a"
 dependencies = [
  "alloy-consensus 2.0.0-rc.0",
  "alloy-eips 2.0.0-rc.0",
@@ -8896,7 +8896,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.34.2"
-source = "git+https://github.com/stevencartavia/revm-inspectors.git?branch=alloy-2.0#2df784f6d62723dd3e4812c7f2c579335e849dd3"
+source = "git+https://github.com/stevencartavia/revm-inspectors?branch=alloy-2.0#2df784f6d62723dd3e4812c7f2c579335e849dd3"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth 2.0.0-rc.0",
