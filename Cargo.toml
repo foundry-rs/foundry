@@ -344,7 +344,7 @@ alloy-op-evm = "0.26.3"
 
 # revm
 revm = { version = "34.0.0", default-features = false }
-revm-inspectors = { version = "0.34.2", features = ["serde"] }
+revm-inspectors = { version = "0.36.0", features = ["serde"] }
 op-revm = { version = "15.0.0", default-features = false }
 
 ## cli
@@ -507,7 +507,9 @@ alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "alloy
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
 
 ## revm
-revm-inspectors = { git = "https://github.com/stevencartavia/revm-inspectors", branch = "alloy-2.0" }
+# revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
+# op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", branch = "alloy-2.0" }
 
 ## foundry
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", branch = "alloy-2.0" }
