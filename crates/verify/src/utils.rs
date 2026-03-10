@@ -13,10 +13,7 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
 };
-use foundry_common::{
-    abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, provider::RetryProvider,
-    shell,
-};
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, shell};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
@@ -356,7 +353,7 @@ pub fn deploy_contract(
 
 pub async fn get_runtime_codes(
     executor: &mut TracingExecutor,
-    provider: &RetryProvider,
+    provider: &impl Provider<AnyNetwork>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,
