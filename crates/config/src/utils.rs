@@ -301,5 +301,3 @@ pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
         EvmVersion::Osaka => SpecId::OSAKA,
     }
 }
-
-

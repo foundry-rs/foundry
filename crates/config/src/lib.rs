@@ -240,7 +240,8 @@ pub struct Config {
     ///
     /// Possible values: `"MonadEight"`, `"MonadNine"`, `"MonadNext"`.
     /// Defaults to `MonadEight` (Monad mainnet launch spec) when not set.
-    pub monad_hardfork: Option<String>,
+    #[serde(default, with = "from_opt_monad_spec_id")]
+    pub monad_hardfork: Option<MonadSpecId>,
     /// List of contracts to generate gas reports for.
     pub gas_reports: Vec<String>,
     /// List of contracts to ignore for gas reports.
@@ -1290,22 +1291,10 @@ impl Config {
 
     /// Returns the [`MonadSpecId`] for Monad EVM execution.
     ///
-    /// If `monad_hardfork` is set in the config, parses it. Otherwise returns
+    /// If `monad_hardfork` is set in the config, returns it. Otherwise returns
     /// [`MonadSpecId::default()`] (MonadEight).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `monad_hardfork` is set to an unrecognized value.
     pub fn monad_spec_id(&self) -> MonadSpecId {
-        match self.monad_hardfork.as_deref() {
-            Some(s) => s.parse::<MonadSpecId>().unwrap_or_else(|_| {
-                panic!(
-                    "invalid `monad_hardfork` value: \"{s}\". \
-                     Valid values: MonadEight, MonadNine, MonadNext"
-                )
-            }),
-            None => MonadSpecId::default(),
-        }
+        self.monad_hardfork.unwrap_or_default()
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -2442,6 +2431,39 @@ pub(crate) mod from_opt_glob {
     }
 }
 
+/// Ser/de `Option<MonadSpecId>` through its string form.
+pub(crate) mod from_opt_monad_spec_id {
+    use monad_revm::MonadSpecId;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+    use std::str::FromStr;
+
+    pub fn serialize<S>(value: &Option<MonadSpecId>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(spec_id) => serializer.serialize_str((*spec_id).into()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<MonadSpecId>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Option::<String>::deserialize(deserializer)?;
+        value
+            .map(|value| {
+                MonadSpecId::from_str(&value).map_err(|_| {
+                    D::Error::custom(format!(
+                        "invalid `monad_hardfork` value: \"{value}\". valid values: MonadEight, MonadNine, MonadNext"
+                    ))
+                })
+            })
+            .transpose()
+    }
+}
+
 /// Parses a config profile
 ///
 /// All `Profile` date is ignored by serde, however the `Config::to_string_pretty` includes it and
@@ -2788,6 +2810,46 @@ mod tests {
     #[test]
     fn default_sender() {
         assert_eq!(Config::DEFAULT_SENDER, address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"));
+    }
+
+    #[test]
+    fn test_monad_hardfork_parses_from_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad_hardfork = "MonadNine"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.monad_hardfork, Some(MonadSpecId::MonadNine));
+            assert_eq!(config.monad_spec_id(), MonadSpecId::MonadNine);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invalid_monad_hardfork_is_rejected_during_config_load() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                monad_hardfork = "MonadNien"
+            "#,
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("MonadNien"));
+            assert!(err.contains("MonadEight"));
+            assert!(err.contains("MonadNine"));
+            assert!(err.contains("MonadNext"));
+
+            Ok(())
+        });
     }
 
     #[test]
