@@ -1,4 +1,5 @@
 use crate::transaction::TransactionWithMetadata;
+use alloy_network::ReceiptResponse;
 use alloy_primitives::{TxHash, hex, map::HashMap};
 use alloy_rpc_types_eth::TransactionReceipt;
 use eyre::{ContextCompat, Result, WrapErr};
@@ -146,7 +147,7 @@ impl ScriptSequence {
 
     /// Sorts all receipts with ascending transaction index
     pub fn sort_receipts(&mut self) {
-        self.receipts.sort_by_key(|r| (r.block_number, r.transaction_index));
+        self.receipts.sort_by_key(|r| (r.block_number(), r.transaction_index()));
     }
 
     pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
