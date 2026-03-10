@@ -83,7 +83,7 @@ pub enum SendTxSubcommands {
 
 impl SendTxArgs {
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.fee_token.is_some() || self.tx.tempo.sequence_key.is_some() {
+        if self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>().await
         } else {
             self.run_generic::<AnyNetwork>().await
@@ -98,6 +98,8 @@ impl SendTxArgs {
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
         let Self { to, mut sig, mut args, data, send_tx, tx, command, unlocked, path } = self;
+
+        let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -147,6 +149,17 @@ impl SendTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
+
+        // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
+        if print_sponsor_hash {
+            let from = send_tx.eth.wallet.from.unwrap_or(config.sender);
+            let (tx, _) = builder.build(from).await?;
+            let hash = tx
+                .compute_sponsor_hash(from)
+                .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
+            sh_println!("{hash:?}")?;
+            return Ok(());
+        }
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 

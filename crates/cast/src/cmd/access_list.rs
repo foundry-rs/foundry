@@ -72,7 +72,8 @@ impl AccessListArgs {
             .await?
             .with_code_sig_and_args(None, sig, args)
             .await?
-            .build_raw(sender)
+            .raw()
+            .build(sender)
             .await?;
 
         let cast = Cast::new(&provider);

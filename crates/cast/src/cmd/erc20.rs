@@ -339,7 +339,7 @@ impl Erc20Subcommand {
 
     pub async fn run(self) -> eyre::Result<()> {
         if let Some(erc20) = self.erc20_opts()
-            && (erc20.tempo.fee_token.is_some() || erc20.tempo.sequence_key.is_some())
+            && erc20.tempo.is_tempo()
         {
             self.run_generic::<TempoNetwork>().await
         } else {
