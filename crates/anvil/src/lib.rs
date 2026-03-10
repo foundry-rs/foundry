@@ -184,7 +184,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         _ => Miner::new(mode),
     };
 
-    let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
+    let dev_signer: Box<dyn EthSigner<foundry_primitives::FoundryNetwork>> =
+        Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
     if let Some(genesis) = genesis {
         let genesis_signers = genesis

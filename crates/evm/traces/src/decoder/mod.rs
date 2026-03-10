@@ -230,6 +230,7 @@ impl CallTraceDecoder {
 
         self.receive_contracts.clear();
         self.fallback_contracts.clear();
+        self.non_fallback_contracts.clear();
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.

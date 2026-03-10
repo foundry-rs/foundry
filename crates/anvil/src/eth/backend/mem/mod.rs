@@ -24,7 +24,7 @@ use crate::{
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
-        sign::build_typed_transaction,
+        sign::build_impersonated,
     },
     mem::{
         inspector::AnvilInspector,
@@ -75,7 +75,6 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use alloy_signer::Signature;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
@@ -98,8 +97,8 @@ use foundry_evm::{
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_primitives::{
-    FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt,
-    get_deposit_tx_parts,
+    FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
+    FoundryTxReceipt, get_deposit_tx_parts,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
@@ -191,7 +190,7 @@ pub struct Backend {
     /// executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory.
-    blockchain: Blockchain,
+    blockchain: Blockchain<FoundryNetwork>,
     /// Historic states of previous blocks.
     states: Arc<RwLock<InMemoryBlockStates>>,
     /// Env data of the chain
@@ -1703,10 +1702,7 @@ impl Backend {
 
                     let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
 
-                    let tx = build_typed_transaction(
-                        typed_tx,
-                        Signature::new(Default::default(), Default::default(), false),
-                    )?;
+                    let tx = build_impersonated(typed_tx);
                     let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
@@ -2600,7 +2596,7 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub(crate) fn mined_transaction(&self, hash: B256) -> Option<MinedTransaction> {
+    pub(crate) fn mined_transaction(&self, hash: B256) -> Option<MinedTransaction<FoundryNetwork>> {
         self.blockchain.storage.read().transactions.get(&hash).cloned()
     }
 
@@ -2840,7 +2836,7 @@ impl Backend {
 
     fn geth_trace(
         &self,
-        tx: &MinedTransaction,
+        tx: &MinedTransaction<FoundryNetwork>,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
@@ -3158,7 +3154,10 @@ impl Backend {
     }
 
     /// Returns the transaction receipt for the given hash
-    pub(crate) fn mined_transaction_receipt(&self, hash: B256) -> Option<MinedTransactionReceipt> {
+    pub(crate) fn mined_transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
         let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
             self.blockchain.get_transaction_by_hash(&hash)?;
 
@@ -3678,10 +3677,10 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::NoBlobHashes);
             }
 
-            // Ensure the tx does not exceed the max blobs per block.
-            let max_blob_count = self.blob_params().max_blob_count as usize;
-            if blob_count > max_blob_count {
-                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blob_count));
+            // Ensure the tx does not exceed the max blobs per transaction.
+            let max_blobs_per_tx = self.blob_params().max_blobs_per_tx as usize;
+            if blob_count > max_blobs_per_tx {
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blobs_per_tx));
             }
 
             // Check for any blob validation errors if not impersonating.
@@ -3866,20 +3865,23 @@ pub fn transaction_build(
         }
     }
 
-    let transaction = eth_transaction.into_rpc_transaction();
-    let effective_gas_price = transaction.effective_gas_price(base_fee);
-
-    let envelope = transaction.inner;
-    let from = envelope.signer();
+    let from = eth_transaction.recover().unwrap_or_default();
+    let effective_gas_price = eth_transaction.effective_gas_price(base_fee);
 
     // if a specific hash was provided we update the transaction's hash
     // This is important for impersonated transactions since they all use the
     // `BYPASS_SIGNATURE` which would result in different hashes
     // Note: for impersonated transactions this only concerns pending transactions because
-    // there's // no `info` yet.
-    let hash = tx_hash.unwrap_or(*envelope.tx_hash());
+    // there's no `info` yet.
+    let hash = tx_hash.unwrap_or_else(|| eth_transaction.hash());
 
-    let envelope = match envelope.into_inner() {
+    // TODO: this panics for non-standard tx types (e.g. Tempo) that aren't handled above
+    // (pre-existing issue from the original `into_rpc_transaction`).
+    let eth_envelope = FoundryTxEnvelope::from(eth_transaction)
+        .try_into_eth()
+        .expect("deposit transactions are handled above");
+
+    let envelope = match eth_envelope {
         TxEnvelope::Legacy(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);

@@ -18,10 +18,10 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
-use alloy_network::{AnyNetwork, TransactionResponse};
+use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
 use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
-use alloy_rpc_types::{Block, BlockNumberOrTag};
+use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
 use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
@@ -38,7 +38,6 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::AsEnvMut,
     hardfork::{
         FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
         spec_id_from_ethereum_hardfork,
@@ -1365,7 +1364,7 @@ latest block number: {latest_block}"
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
         apply_chain_and_block_specific_env_changes::<AnyNetwork>(
-            env.as_env_mut(),
+            &mut env.evm_env,
             &block,
             self.networks,
         );
@@ -1419,15 +1418,12 @@ latest block number: {latest_block}"
     /// we only use the gas limit value of the block if it is non-zero and the block gas
     /// limit is enabled, since there are networks where this is not used and is always
     /// `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-    pub(crate) fn fork_gas_limit<T: TransactionResponse, H: BlockHeader>(
-        &self,
-        block: &Block<T, H>,
-    ) -> u64 {
+    pub(crate) fn fork_gas_limit<B: BlockResponse<Header: BlockHeader>>(&self, block: &B) -> u64 {
         if !self.disable_block_gas_limit {
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
-            } else if block.header.gas_limit() > 0 {
-                return block.header.gas_limit();
+            } else if block.header().gas_limit() > 0 {
+                return block.header().gas_limit();
             }
         }
 

@@ -1,5 +1,11 @@
+use std::time::Duration;
+
+use alloy_network::Network;
 use clap::Parser;
+use eyre::Result;
 use serde::Serialize;
+
+use crate::wallet_browser::signer::BrowserSigner;
 
 /// Browser wallet options
 #[derive(Clone, Debug, Default, Serialize, Parser)]
@@ -23,4 +29,22 @@ pub struct BrowserWalletOpts {
     /// **WARNING**: This should only be used in a development environment.
     #[arg(long, hide = true)]
     pub browser_development: bool,
+}
+
+impl BrowserWalletOpts {
+    pub async fn run<N: Network>(&self) -> Result<Option<BrowserSigner<N>>> {
+        Ok(if self.browser {
+            Some(
+                BrowserSigner::new(
+                    self.browser_port,
+                    !self.browser_disable_open,
+                    Duration::from_secs(300),
+                    self.browser_development,
+                )
+                .await?,
+            )
+        } else {
+            None
+        })
+    }
 }

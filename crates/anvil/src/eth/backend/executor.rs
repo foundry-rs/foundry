@@ -28,10 +28,11 @@ use alloy_evm::{
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
+use alloy_network::Network;
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{B256, Bloom, BloomInput, Bytes, Log};
 use anvil_core::eth::{
-    block::{BlockInfo, create_block},
+    block::{TypedBlockInfo, create_block},
     transaction::{PendingTransaction, TransactionInfo},
 };
 use foundry_evm::{
@@ -40,7 +41,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, Inspector,
@@ -103,10 +104,10 @@ impl ExecutedTransaction {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Clone, Debug)]
-pub struct ExecutedTransactions {
+#[derive(Debug)]
+pub struct ExecutedTransactions<N: Network> {
     /// The block created after executing the `included` transactions
-    pub block: BlockInfo,
+    pub block: TypedBlockInfo<N>,
     /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction>>,
     /// All transactions that were invalid at the point of their execution and were not included in
@@ -142,7 +143,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
 
 impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
-    pub fn execute(mut self) -> ExecutedTransactions {
+    pub fn execute(mut self) -> ExecutedTransactions<FoundryNetwork> {
         let mut transactions = Vec::new();
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
@@ -288,7 +289,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         };
 
         let block = create_block(header, transactions);
-        let block = BlockInfo { block, transactions: transaction_infos, receipts };
+        let block = TypedBlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
 

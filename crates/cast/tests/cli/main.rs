@@ -274,6 +274,63 @@ Created new encrypted keystore file: [..]
 "#]]);
 });
 
+// tests that `cast wallet new` prompts before overwriting an existing keystore file
+casttest!(new_wallet_keystore_overwrite_protection, |prj, cmd| {
+    // Create the initial keystore
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"]).assert_success();
+
+    // Attempt to overwrite with stdin "n" — should be cancelled
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
+        .stdin("n\n")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+The following keystore file(s) already exist:
+   - test-account
+Error: Operation cancelled. No keystores were modified.
+
+"#]]);
+});
+
+// tests that `cast wallet new --force` overwrites existing keystore files without prompting
+casttest!(new_wallet_keystore_overwrite_force, |prj, cmd| {
+    // Create the initial keystore
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"]).assert_success();
+
+    // Overwrite with --force — should succeed without prompting
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#]]);
+});
+
+// tests that `cast wallet new -n 2` prompts before overwriting existing keystore files
+casttest!(new_wallet_keystore_overwrite_protection_multiple, |prj, cmd| {
+    // Create 2 keystores: test-account_1 and test-account_2
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
+        .assert_success();
+
+    // Attempt to overwrite with stdin "n" — should list both and cancel
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
+        .stdin("n\n")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+The following keystore file(s) already exist:
+   - test-account_1
+   - test-account_2
+Error: Operation cancelled. No keystores were modified.
+
+"#]]);
+});
+
 // tests that we can create a new wallet with default keystore location
 casttest!(new_wallet_default_keystore, |_prj, cmd| {
     cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
@@ -2025,19 +2082,19 @@ blockNumber          22287055
 from                 0x4648451b5F87FF8F0F7D622bD40574bb97E25980
 transactionIndex     230
 effectiveGasPrice    363392048
-accessList           []
-chainId              1
-gasLimit             350000
 hash                 0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594
-input                0xa9059cbb000000000000000000000000568766d218d82333dd4dae933ddfcda5da26625000000000000000000000000000000000000000000000000000000000cc3ed109
+type                 2
+chainId              1
+nonce                113642
+gasLimit             350000
 maxFeePerGas         675979146
 maxPriorityFeePerGas 1337
-nonce                113642
+to                   0xdAC17F958D2ee523a2206206994597C13D831ec7
+value                0
+accessList           []
+input                0xa9059cbb000000000000000000000000568766d218d82333dd4dae933ddfcda5da26625000000000000000000000000000000000000000000000000000000000cc3ed109
 r                    0x1e92d3e1ca69109a1743fc4b3cf9dff58630bc9f429cea3c3fe311506264e36c
 s                    0x793947d4bbdce56a1a5b2b3525c46f01569414a22355f4883b5429668ab0f51a
-to                   0xdAC17F958D2ee523a2206206994597C13D831ec7
-type                 2
-value                0
 yParity              1
 ...
 "#]]);

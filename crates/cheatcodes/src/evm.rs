@@ -1,12 +1,11 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
-    Vm::*,
-    inspector::{Ecx, RecordDebugStepInfo},
+    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxExt, CheatsCtxt,
+    Error, Result, Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::TxEnvelope;
-use alloy_evm::{Evm as _, FromRecoveredTx};
+use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
@@ -24,10 +23,10 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
-    ContextExt,
-    backend::{DatabaseExt, RevertStateSnapshotAction},
+    Env, FoundryBlock, FoundryCfg, FoundryTransaction,
+    backend::{DatabaseExt, FoundryJournalExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
-    evm::new_evm_with_inspector,
+    env::FoundryContextExt,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceMode;
@@ -36,7 +35,7 @@ use itertools::Itertools;
 use rand::Rng;
 use revm::{
     bytecode::Bytecode,
-    context::{Block, ContextTr, JournalTr, TxEnv, result::ExecutionResult},
+    context::{Block, Cfg, ContextTr, JournalTr, Transaction, TxEnv, result::ExecutionResult},
     inspector::JournalExt,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountStatus},
@@ -254,21 +253,21 @@ impl Cheatcode for addrCall {
 }
 
 impl Cheatcode for getNonce_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account } = self;
         get_nonce(ccx, account)
     }
 }
 
 impl Cheatcode for getNonce_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { wallet } = self;
         get_nonce(ccx, &wallet.addr)
     }
 }
 
 impl Cheatcode for loadCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot } = *self;
         ccx.ensure_not_precompile(&target)?;
 
@@ -310,7 +309,7 @@ impl Cheatcode for loadCall {
 }
 
 impl Cheatcode for loadAllocsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { pathToAllocsJson } = self;
 
         let path = Path::new(pathToAllocsJson);
@@ -327,21 +326,21 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
-        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-        db.load_allocs(&allocs, journal)
+        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+        db.load_allocs(&allocs, inner)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
 }
 
 impl Cheatcode for cloneAccountCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { source, target } = self;
 
-        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
-        let account = journal.load_account(db, *source)?;
-        let genesis = &genesis_account(account.data);
-        db.clone_account(genesis, target, journal)?;
+        let account = ccx.ecx.journal_mut().load_account(*source)?;
+        let genesis = genesis_account(account.data);
+        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+        db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
         Ok(Default::default())
@@ -349,7 +348,7 @@ impl Cheatcode for cloneAccountCall {
 }
 
 impl Cheatcode for dumpStateCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { pathToStateJson } = self;
         let path = Path::new(pathToStateJson);
 
@@ -471,169 +470,170 @@ impl Cheatcode for lastCallGasCall {
 }
 
 impl Cheatcode for getChainIdCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
-        Ok(U256::from(ccx.ecx.cfg().chain_id).abi_encode())
+        Ok(U256::from(ccx.ecx.cfg().chain_id()).abi_encode())
     }
 }
 
 impl Cheatcode for chainIdCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
-        ccx.ecx.cfg.chain_id = newChainId.to();
+        ccx.ecx.cfg_mut().set_chain_id(newChainId.to());
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for coinbaseCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newCoinbase } = self;
-        ccx.ecx.block.beneficiary = *newCoinbase;
+        ccx.ecx.block_mut().set_beneficiary(*newCoinbase);
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for difficultyCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            ccx.ecx.cfg().spec < SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.block.difficulty = *newDifficulty;
+        ccx.ecx.block_mut().set_difficulty(*newDifficulty);
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for feeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newBasefee } = self;
         ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
-        ccx.ecx.block.basefee = newBasefee.saturating_to();
+        ccx.ecx.block_mut().set_basefee(newBasefee.saturating_to());
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for prevrandao_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.cfg().spec >= SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.block.prevrandao = Some(*newPrevrandao);
+        ccx.ecx.block_mut().set_prevrandao(Some(*newPrevrandao));
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for prevrandao_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.cfg().spec >= SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.block.prevrandao = Some((*newPrevrandao).into());
+        ccx.ecx.block_mut().set_prevrandao(Some((*newPrevrandao).into()));
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for blobhashesCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { hashes } = self;
         ensure!(
-            ccx.ecx.cfg().spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.tx.blob_hashes.clone_from(hashes);
+        ccx.ecx.tx_mut().set_blob_hashes(hashes.clone());
         // force this as 4844 txtype
-        ccx.ecx.tx.tx_type = EIP4844_TX_TYPE_ID;
+        ccx.ecx.tx_mut().set_tx_type(EIP4844_TX_TYPE_ID);
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for getBlobhashesCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         ensure!(
-            ccx.ecx.cfg().spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        Ok(ccx.ecx.tx().blob_hashes.clone().abi_encode())
+        Ok(ccx.ecx.tx().blob_versioned_hashes().to_vec().abi_encode())
     }
 }
 
 impl Cheatcode for rollCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newHeight } = self;
-        ccx.ecx.block.number = *newHeight;
+        ccx.ecx.block_mut().set_number(*newHeight);
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for getBlockNumberCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.block().number.abi_encode())
+        Ok(ccx.ecx.block().number().abi_encode())
     }
 }
 
 impl Cheatcode for txGasPriceCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newGasPrice } = self;
         ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
-        ccx.ecx.tx.gas_price = newGasPrice.saturating_to();
+        ccx.ecx.tx_mut().set_gas_price(newGasPrice.saturating_to());
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for warpCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newTimestamp } = self;
-        ccx.ecx.block.timestamp = *newTimestamp;
+        ccx.ecx.block_mut().set_timestamp(*newTimestamp);
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for getBlockTimestampCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.block().timestamp.abi_encode())
+        Ok(ccx.ecx.block().timestamp().abi_encode())
     }
 }
 
 impl Cheatcode for blobBaseFeeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
-            ccx.ecx.cfg().spec >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        ccx.ecx.block.set_blob_excess_gas_and_price(
+        let spec: SpecId = ccx.ecx.cfg().spec().into();
+        ccx.ecx.block_mut().set_blob_excess_gas_and_price(
             (*newBlobBaseFee).to(),
-            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg().spec),
+            get_blob_base_fee_update_fraction_by_spec_id(spec),
         );
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for getBlobBaseFeeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().blob_excess_gas().unwrap_or(0).abi_encode())
     }
 }
 
 impl Cheatcode for dealCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
         let account = journaled_account(ccx.ecx, address)?;
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
@@ -644,7 +644,7 @@ impl Cheatcode for dealCall {
 }
 
 impl Cheatcode for etchCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ccx.ensure_not_precompile(target)?;
         ccx.ecx.journal_mut().load_account(*target)?;
@@ -656,7 +656,7 @@ impl Cheatcode for etchCall {
 }
 
 impl Cheatcode for resetNonceCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account } = self;
         let account = journaled_account(ccx.ecx, *account)?;
         // Per EIP-161, EOA nonces start at 0, but contract nonces
@@ -671,7 +671,7 @@ impl Cheatcode for resetNonceCall {
 }
 
 impl Cheatcode for setNonceCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account, newNonce } = *self;
         let account = journaled_account(ccx.ecx, account)?;
         // nonce must increment only
@@ -687,7 +687,7 @@ impl Cheatcode for setNonceCall {
 }
 
 impl Cheatcode for setNonceUnsafeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { account, newNonce } = *self;
         let account = journaled_account(ccx.ecx, account)?;
         account.info.nonce = newNonce;
@@ -696,7 +696,7 @@ impl Cheatcode for setNonceUnsafeCall {
 }
 
 impl Cheatcode for storeCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot, value } = *self;
         ccx.ensure_not_precompile(&target)?;
         ensure_loaded_account(ccx.ecx, target)?;
@@ -709,7 +709,7 @@ impl Cheatcode for storeCall {
 }
 
 impl Cheatcode for coolCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target } = self;
         if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(target) {
             account.unmark_touch();
@@ -746,7 +746,7 @@ impl Cheatcode for noAccessListCall {
 }
 
 impl Cheatcode for warmSlotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), false);
         Ok(Default::default())
@@ -754,7 +754,7 @@ impl Cheatcode for warmSlotCall {
 }
 
 impl Cheatcode for coolSlotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), true);
         Ok(Default::default())
@@ -762,28 +762,28 @@ impl Cheatcode for coolSlotCall {
 }
 
 impl Cheatcode for readCallersCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.tx().caller, ccx.ecx.journal().depth())
+        read_callers(ccx.state, &ccx.ecx.tx().caller(), ccx.ecx.journal().depth())
     }
 }
 
 impl Cheatcode for snapshotValue_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name, value } = self;
         inner_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { group, name, value } = self;
         inner_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotGasLastCall_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -793,7 +793,7 @@ impl Cheatcode for snapshotGasLastCall_0Call {
 }
 
 impl Cheatcode for snapshotGasLastCall_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name, group } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -808,35 +808,35 @@ impl Cheatcode for snapshotGasLastCall_1Call {
 }
 
 impl Cheatcode for startSnapshotGas_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name } = self;
         inner_start_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for startSnapshotGas_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { group, name } = self;
         inner_start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_stop_gas_snapshot(ccx, None, None)
     }
 }
 
 impl Cheatcode for stopSnapshotGas_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { name } = self;
         inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { group, name } = self;
         inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
@@ -844,14 +844,14 @@ impl Cheatcode for stopSnapshotGas_2Call {
 
 // Deprecated in favor of `snapshotStateCall`
 impl Cheatcode for snapshotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
 }
 
 impl Cheatcode for snapshotStateCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
@@ -859,14 +859,14 @@ impl Cheatcode for snapshotStateCall {
 
 // Deprecated in favor of `revertToStateCall`
 impl Cheatcode for revertToCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
@@ -874,14 +874,14 @@ impl Cheatcode for revertToStateCall {
 
 // Deprecated in favor of `revertToStateAndDeleteCall`
 impl Cheatcode for revertToAndDeleteCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateAndDeleteCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
@@ -889,14 +889,14 @@ impl Cheatcode for revertToStateAndDeleteCall {
 
 // Deprecated in favor of `deleteStateSnapshotCall`
 impl Cheatcode for deleteSnapshotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_delete_state_snapshot(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for deleteStateSnapshotCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_delete_state_snapshot(ccx, *snapshotId)
     }
@@ -904,14 +904,14 @@ impl Cheatcode for deleteStateSnapshotCall {
 
 // Deprecated in favor of `deleteStateSnapshotsCall`
 impl Cheatcode for deleteSnapshotsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_delete_state_snapshots(ccx)
     }
 }
 
 impl Cheatcode for deleteStateSnapshotsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_delete_state_snapshots(ccx)
     }
@@ -935,7 +935,7 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 }
 
 impl Cheatcode for getStateDiffCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let mut diffs = String::new();
         let state_diffs = get_recorded_state_diffs(ccx);
         for (address, state_diffs) in state_diffs {
@@ -947,14 +947,14 @@ impl Cheatcode for getStateDiffCall {
 }
 
 impl Cheatcode for getStateDiffJsonCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
     }
 }
 
 impl Cheatcode for getStorageSlotsCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, variableName } = self;
 
         let storage_layout = get_contract_data(ccx, *target)
@@ -1046,17 +1046,15 @@ impl Cheatcode for getStorageAccessesCall {
 }
 
 impl Cheatcode for broadcastRawTransactionCall {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
-        db.transact_from_tx(
-            &tx.clone().into(),
-            env.to_owned(),
-            journal,
-            &mut *executor.get_inspector(ccx.state),
-        )?;
+        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, &tx.clone().into())?;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1070,11 +1068,11 @@ impl Cheatcode for broadcastRawTransactionCall {
 }
 
 impl Cheatcode for setBlockhashCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { blockNumber, blockHash } = *self;
         ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
         ensure!(
-            blockNumber <= U256::from(ccx.ecx.block().number),
+            blockNumber <= U256::from(ccx.ecx.block().number()),
             "block number must be less than or equal to the current block number"
         );
 
@@ -1085,7 +1083,11 @@ impl Cheatcode for setBlockhashCall {
 }
 
 impl Cheatcode for executeTransactionCall {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         use crate::env::FORGE_CONTEXT;
 
         // Block in script contexts.
@@ -1117,66 +1119,78 @@ impl Cheatcode for executeTransactionCall {
         // Build TxEnv from the recovered transaction.
         let tx_env = <TxEnv as FromRecoveredTx<FoundryTxEnvelope>>::from_recovered_tx(&tx, sender);
 
+        // Save current env for restoration after execution.
+        let (cached_evm_env, cached_tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+
+        // Override env for isolated execution.
+        ccx.ecx.block_mut().set_basefee(0);
+        *ccx.ecx.tx_mut() = tx_env;
+        ccx.ecx.tx_mut().set_gas_price(0);
+        ccx.ecx.tx_mut().set_gas_priority_fee(None);
+
+        // Enable nonce checks for realistic simulation.
+        ccx.ecx.cfg_mut().set_disable_nonce_check(false);
+
+        // EIP-3860: enforce initcode size limit.
+        ccx.ecx
+            .cfg_mut()
+            .set_limit_contract_initcode_size(Some(revm::primitives::eip3860::MAX_INITCODE_SIZE));
+
+        // Snapshot the modified env for EVM construction.
+        let (modified_evm_env, modified_tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+
         // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
         // when the inner EVM executes calls at depth == 1.
         executor.set_in_inner_context(true, Some(sender));
 
-        let res = {
-            let mut inspector = executor.get_inspector(ccx.state);
-
-            let res = {
-                let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
-                let cached_env =
-                    foundry_evm_core::Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone());
-
-                // Override env for isolated execution.
-                env.block.basefee = 0;
-                *env.tx = tx_env;
-                env.tx.gas_price = 0;
-                env.tx.gas_priority_fee = None;
-
-                // Enable nonce checks for realistic simulation.
-                env.cfg.disable_nonce_check = false;
-
-                // EIP-3860: enforce initcode size limit.
-                env.cfg.limit_contract_initcode_size =
-                    Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
-
-                // Create a new EVM instance with the inspector.
-                let mut evm = new_evm_with_inspector(db, env.to_owned(), &mut *inspector);
-
-                // Clone journaled state and mark all accounts/slots cold.
-                evm.journaled_state.state = {
-                    let mut state = journal.state.clone();
-                    for (addr, acc_mut) in &mut state {
-                        if journal.warm_addresses.is_cold(addr) {
-                            acc_mut.mark_cold();
-                        }
-                        for slot_mut in acc_mut.storage.values_mut() {
-                            slot_mut.is_cold = true;
-                            slot_mut.original_value = slot_mut.present_value;
-                        }
-                    }
-                    state
-                };
-
-                // Set depth to 1 for proper trace collection.
-                evm.journaled_state.depth = 1;
-
-                let res = evm.transact(env.tx.clone());
-
-                // Restore the original environment.
-                *env.tx = cached_env.tx;
-                *env.cfg = cached_env.evm_env.cfg_env;
-                env.block.basefee = cached_env.evm_env.block_env.basefee;
-
-                res
-            };
-
-            // Inspector must be dropped before we can call set_in_inner_context again.
-            drop(inspector);
-            res
+        // Clone journaled state and mark all accounts/slots cold.
+        let cold_state = {
+            let (_, journal) = ccx.ecx.journal_mut().as_db_and_inner();
+            let mut state = journal.state.clone();
+            for (addr, acc_mut) in &mut state {
+                if journal.warm_addresses.is_cold(addr) {
+                    acc_mut.mark_cold();
+                }
+                for slot_mut in acc_mut.storage.values_mut() {
+                    slot_mut.is_cold = true;
+                    slot_mut.original_value = slot_mut.present_value;
+                }
+            }
+            state
         };
+
+        let mut res = None;
+        let mut nested_env = None;
+        let mut cold_state = Some(cold_state);
+        let modified_tx = modified_tx_env.clone();
+        {
+            let (db, _) = ccx.ecx.journal_mut().as_db_and_inner();
+            executor.with_fresh_nested_evm(
+                ccx.state,
+                db,
+                modified_evm_env,
+                modified_tx_env,
+                &mut |evm| {
+                    // SAFETY: closure is called exactly once by the executor.
+                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                    // Set depth to 1 for proper trace collection.
+                    evm.journal_inner_mut().depth = 1;
+                    res = Some(evm.transact(modified_tx.clone()));
+                    nested_env = Some(evm.to_env());
+                    Ok(())
+                },
+            )?;
+        }
+        let (res, (mut nested_evm_env, _)) = (res.unwrap(), nested_env.unwrap());
+
+        // Restore env, preserving cheatcode cfg/block changes from the nested EVM
+        // but restoring the original tx and basefee (which we zeroed for the nested call)
+        // as well as cfg overrides that were applied only for the nested execution.
+        nested_evm_env.block_env.basefee = cached_evm_env.block_env.basefee;
+        nested_evm_env.cfg_env.disable_nonce_check = cached_evm_env.cfg_env.disable_nonce_check;
+        nested_evm_env.cfg_env.limit_contract_initcode_size =
+            cached_evm_env.cfg_env.limit_contract_initcode_size;
+        Env::apply_evm_and_tx(ccx.ecx, nested_evm_env, cached_tx_env);
 
         // Reset inner context flag.
         executor.set_in_inner_context(false, None);
@@ -1226,7 +1240,11 @@ impl Cheatcode for executeTransactionCall {
 }
 
 impl Cheatcode for startDebugTraceRecordingCall {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
@@ -1252,7 +1270,11 @@ impl Cheatcode for startDebugTraceRecordingCall {
 }
 
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full<CTX: CheatsCtxExt>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
+    ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
@@ -1287,7 +1309,7 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 }
 
 impl Cheatcode for setEvmVersionCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { evm } = self;
         let spec_id = evm_spec_id(
             EvmVersion::from_str(evm)
@@ -1299,62 +1321,90 @@ impl Cheatcode for setEvmVersionCall {
 }
 
 impl Cheatcode for getEvmVersionCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        Ok(ccx.ecx.cfg().spec.to_string().to_lowercase().abi_encode())
+    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+        let spec: SpecId = ccx.ecx.cfg().spec().into();
+        Ok(spec.to_string().to_lowercase().abi_encode())
     }
 }
 
-pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
+pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    address: &Address,
+) -> Result {
     let account = ccx.ecx.journal_mut().load_account(*address)?;
     Ok(account.data.info.nonce.abi_encode())
 }
 
-fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
-    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
-    Ok(db.snapshot_state(journal, &mut env).abi_encode())
+fn inner_snapshot_state<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+) -> Result {
+    let (evm_env, tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    let id = db.snapshot_state(inner, &evm_env, &tx_env);
+    Ok(id.abi_encode())
 }
 
-fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
-    let result = if let Some(journaled_state) =
-        db.revert_state(snapshot_id, &*journal, &mut env, RevertStateSnapshotAction::RevertKeep)
-    {
-        // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.journaled_state.inner = journaled_state;
-        true
+fn inner_revert_to_state<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    snapshot_id: U256,
+) -> Result {
+    let (mut evm_env, mut tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    if let Some(restored) = db.revert_state(
+        snapshot_id,
+        inner,
+        &mut evm_env,
+        &mut tx_env,
+        RevertStateSnapshotAction::RevertKeep,
+    ) {
+        *inner = restored;
+        Env::apply_evm_and_tx(ccx.ecx, evm_env, tx_env);
+        Ok(true.abi_encode())
     } else {
-        false
-    };
-    Ok(result.abi_encode())
+        Ok(false.abi_encode())
+    }
 }
 
-fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
-
-    let result = if let Some(journaled_state) =
-        db.revert_state(snapshot_id, &*journal, &mut env, RevertStateSnapshotAction::RevertRemove)
-    {
-        // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.journaled_state.inner = journaled_state;
-        true
+fn inner_revert_to_state_and_delete<
+    CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>,
+>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    snapshot_id: U256,
+) -> Result {
+    let (mut evm_env, mut tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    if let Some(restored) = db.revert_state(
+        snapshot_id,
+        inner,
+        &mut evm_env,
+        &mut tx_env,
+        RevertStateSnapshotAction::RevertRemove,
+    ) {
+        *inner = restored;
+        Env::apply_evm_and_tx(ccx.ecx, evm_env, tx_env);
+        Ok(true.abi_encode())
     } else {
-        false
-    };
-    Ok(result.abi_encode())
+        Ok(false.abi_encode())
+    }
 }
 
-fn inner_delete_state_snapshot(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
+fn inner_delete_state_snapshot<CTX: ContextTr<Db: DatabaseExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    snapshot_id: U256,
+) -> Result {
     let result = ccx.ecx.db_mut().delete_state_snapshot(snapshot_id);
     Ok(result.abi_encode())
 }
 
-fn inner_delete_state_snapshots(ccx: &mut CheatsCtxt) -> Result {
+fn inner_delete_state_snapshots<CTX: ContextTr<Db: DatabaseExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+) -> Result {
     ccx.ecx.db_mut().delete_state_snapshots();
     Ok(Default::default())
 }
 
-fn inner_value_snapshot(
-    ccx: &mut CheatsCtxt,
+fn inner_value_snapshot<CTX>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
     group: Option<String>,
     name: Option<String>,
     value: String,
@@ -1366,8 +1416,8 @@ fn inner_value_snapshot(
     Ok(Default::default())
 }
 
-fn inner_last_gas_snapshot(
-    ccx: &mut CheatsCtxt,
+fn inner_last_gas_snapshot<CTX>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
     group: Option<String>,
     name: Option<String>,
     value: u64,
@@ -1379,8 +1429,8 @@ fn inner_last_gas_snapshot(
     Ok(value.abi_encode())
 }
 
-fn inner_start_gas_snapshot(
-    ccx: &mut CheatsCtxt,
+fn inner_start_gas_snapshot<CTX: ContextTr>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
@@ -1405,15 +1455,16 @@ fn inner_start_gas_snapshot(
     Ok(Default::default())
 }
 
-fn inner_stop_gas_snapshot(
-    ccx: &mut CheatsCtxt,
+fn inner_stop_gas_snapshot<CTX>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
     // If group and name are not provided, use the last snapshot group and name.
     let (group, name) = group
         .zip(name)
-        .unwrap_or_else(|| ccx.state.gas_metering.active_gas_snapshot.clone().unwrap());
+        .or_else(|| ccx.state.gas_metering.active_gas_snapshot.clone())
+        .ok_or_else(|| fmt_err!("no active gas snapshot; call `startGasSnapshot` first"))?;
 
     if let Some(record) = ccx
         .state
@@ -1456,8 +1507,8 @@ fn inner_stop_gas_snapshot(
 }
 
 // Derives the snapshot group and name from the provided group and name or the running contract.
-fn derive_snapshot_name(
-    ccx: &CheatsCtxt,
+fn derive_snapshot_name<CTX>(
+    ccx: &CheatsCtxt<'_, CTX>,
     group: Option<String>,
     name: Option<String>,
 ) -> (String, String) {
@@ -1515,17 +1566,20 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: usize)
 }
 
 /// Ensures the `Account` is loaded and touched.
-pub(super) fn journaled_account<'a>(
-    ecx: Ecx<'a, '_, '_>,
+pub(super) fn journaled_account<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+    ecx: &mut CTX,
     addr: Address,
-) -> Result<&'a mut Account> {
+) -> Result<&mut Account> {
     ensure_loaded_account(ecx, addr)?;
     Ok(ecx.journal_mut().evm_state_mut().get_mut(&addr).expect("account is loaded"))
 }
 
-pub(super) fn ensure_loaded_account(ecx: Ecx, addr: Address) -> Result<()> {
+pub(super) fn ensure_loaded_account<CTX: ContextTr<Db: DatabaseExt>>(
+    ecx: &mut CTX,
+    addr: Address,
+) -> Result<()> {
     ecx.journal_mut().load_account(addr)?;
-    ecx.journal_mut().touch(addr);
+    ecx.journal_mut().touch_account(addr);
     Ok(())
 }
 
@@ -1565,7 +1619,9 @@ fn genesis_account(account: &Account) -> GenesisAccount {
 }
 
 /// Helper function to returns state diffs recorded for each changed account.
-fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountStateDiffs> {
+fn get_recorded_state_diffs<CTX: ContextTr<Db: DatabaseExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+) -> BTreeMap<Address, AccountStateDiffs> {
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
 
     // First, collect all unique addresses we need to look up
@@ -1742,8 +1798,8 @@ const EIP1822_PROXIABLE_SLOT: &str =
     "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
 
 /// Helper function to get the contract data from the deployed code at an address.
-fn get_contract_data<'a>(
-    ccx: &'a mut CheatsCtxt,
+fn get_contract_data<'a, CTX: ContextTr<Db: DatabaseExt>>(
+    ccx: &'a mut CheatsCtxt<'_, CTX>,
     address: Address,
 ) -> Option<(&'a foundry_compilers::ArtifactId, &'a foundry_common::contracts::ContractData)> {
     // Check if we have available artifacts to match against
@@ -1785,7 +1841,12 @@ fn get_contract_data<'a>(
 }
 
 /// Helper function to set / unset cold storage slot of the target address.
-fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
+fn set_cold_slot<CTX: ContextTr<Journal: JournalExt>>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    target: Address,
+    slot: U256,
+    cold: bool,
+) {
     if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(&target)
         && let Some(storage_slot) = account.storage.get_mut(&slot)
     {

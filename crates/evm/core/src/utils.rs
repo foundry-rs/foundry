@@ -1,10 +1,10 @@
-use crate::EnvMut;
+use crate::{Env, EvmEnv};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyRpcTransaction, TransactionResponse};
-use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
+use alloy_primitives::{B256, ChainId, Selector, TxKind, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use alloy_rpc_types::TransactionRequest;
 use foundry_config::NamedChain;
@@ -29,20 +29,21 @@ pub fn cold_path() {
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided).
 pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    env: EnvMut<'_>,
+    evm_env: &mut EvmEnv,
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
     use NamedChain::*;
 
-    if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
+    if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
         let block_number = block.header().number();
 
         match chain {
             Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
-                    env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
+                    evm_env.block_env.difficulty =
+                        evm_env.block_env.prevrandao.unwrap_or_default().into();
                 }
 
                 return;
@@ -54,7 +55,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
                 // specification. This will confuse revm and causes emulation
                 // failure.
-                env.block.prevrandao = Some(env.block.difficulty.into());
+                evm_env.block_env.prevrandao = Some(evm_env.block_env.difficulty.into());
                 return;
             }
             c if c.is_arbitrum() => {
@@ -67,21 +68,22 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                         serde_json::from_value::<U256>(l1_block_number).ok()
                     })
                 {
-                    env.block.number = l1_block_number.to();
+                    evm_env.block_env.number = l1_block_number.to();
                 }
             }
             _ => {}
         }
     }
 
-    if configs.bypass_prevrandao(env.cfg.chain_id) && env.block.prevrandao.is_none() {
+    if configs.bypass_prevrandao(evm_env.cfg_env.chain_id) && evm_env.block_env.prevrandao.is_none()
+    {
         // <https://github.com/foundry-rs/foundry/issues/4232>
-        env.block.prevrandao = Some(B256::random());
+        evm_env.block_env.prevrandao = Some(B256::random());
     }
 
     // if difficulty is `0` we assume it's past merge
     if block.header().difficulty().is_zero() {
-        env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
+        evm_env.block_env.difficulty = evm_env.block_env.prevrandao.unwrap_or_default().into();
     }
 }
 
@@ -138,26 +140,19 @@ pub fn get_function<'a>(
 
 /// Configures the env for the given RPC transaction.
 /// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
-pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &AnyRpcTransaction) {
+pub fn configure_tx_env(env: &mut Env, tx: &AnyRpcTransaction) {
     let from = tx.from();
     if let Some(tx) = tx.as_envelope() {
         configure_tx_req_env(
             env,
             &TransactionRequest::from_transaction_with_sender(tx.clone(), from),
-            Some(from),
         )
         .expect("cannot fail");
     }
 }
 
 /// Configures the env for the given RPC transaction request.
-/// `impersonated_from` is the address of the impersonated account. This helps account for an
-/// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
-pub fn configure_tx_req_env(
-    env: &mut EnvMut<'_>,
-    tx: &TransactionRequest,
-    impersonated_from: Option<Address>,
-) -> eyre::Result<()> {
+pub fn configure_tx_req_env(env: &mut Env, tx: &TransactionRequest) -> eyre::Result<()> {
     // If no transaction type is provided, we need to infer it from the other fields.
     let tx_type = tx.transaction_type.unwrap_or_else(|| tx.minimal_tx_type() as u8);
     env.tx.tx_type = tx_type;
@@ -183,13 +178,7 @@ pub fn configure_tx_req_env(
 
     // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
     env.tx.kind = to.unwrap_or(TxKind::Create);
-    // If the transaction is impersonated, we need to set the caller to the from
-    // address Ref: https://github.com/foundry-rs/foundry/issues/9541
-    env.tx.caller = if let Some(caller) = impersonated_from {
-        caller
-    } else {
-        from.ok_or_else(|| eyre::eyre!("missing `from` field"))?
-    };
+    env.tx.caller = from.ok_or_else(|| eyre::eyre!("missing `from` field"))?;
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
     env.tx.nonce = nonce.unwrap_or_default();
     env.tx.value = value.unwrap_or_default();

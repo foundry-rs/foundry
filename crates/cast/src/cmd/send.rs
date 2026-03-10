@@ -13,7 +13,7 @@ use foundry_cli::{
     opts::TransactionOpts,
     utils::{LoadConfig, get_provider},
 };
-use foundry_wallets::WalletSigner;
+use foundry_primitives::FoundryNetwork;
 
 use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
 
@@ -139,8 +139,11 @@ impl SendTxArgs {
         // Check if this is a Tempo transaction - requires special handling for local signing
         let is_tempo = builder.is_tempo();
 
-        // Tempo transactions with browser wallets are not supported
-        if is_tempo && send_tx.eth.wallet.browser.browser {
+        // Launch browser signer if `--browser` flag is set
+        let browser = send_tx.browser.run::<FoundryNetwork>().await?;
+
+        // Tempo transactions with browser signer are not supported
+        if is_tempo && browser.is_some() {
             return Err(eyre!("Tempo transactions are not supported with browser wallets."));
         }
 
@@ -148,7 +151,7 @@ impl SendTxArgs {
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
-        if unlocked && !send_tx.eth.wallet.browser.browser {
+        if unlocked && browser.is_none() {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
                 let current_chain_id = provider.get_chain_id().await?;
@@ -184,19 +187,10 @@ impl SendTxArgs {
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
         } else {
-            // Retrieve the signer, and bail if it can't be constructed.
-            let signer = send_tx.eth.wallet.signer().await?;
-            let from = signer.address();
-
-            tx::validate_from_address(send_tx.eth.wallet.from, from)?;
-
-            // Browser wallets work differently as they sign and send the transaction in one step.
-            if send_tx.eth.wallet.browser.browser
-                && let WalletSigner::Browser(ref browser_signer) = signer
-            {
-                let (tx_request, _) = builder.build(from).await?;
-                let tx_hash =
-                    browser_signer.send_transaction_via_browser(tx_request.into_inner()).await?;
+            // Browser wallet work differently as it sign and send the transaction in one step.
+            if let Some(browser) = browser {
+                let (tx_request, _) = builder.build(browser.address()).await?;
+                let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;
@@ -216,6 +210,11 @@ impl SendTxArgs {
                 return Ok(());
             }
 
+            // Retrieve the signer, and bail if it can't be constructed.
+            let signer = send_tx.eth.wallet.signer().await?;
+            let from = signer.address();
+
+            tx::validate_from_address(send_tx.eth.wallet.from, from)?;
             // Tempo transactions need to be signed locally and sent as raw transactions
             // because EthereumWallet doesn't understand type 0x76
             // TODO(onbjerg): All of this is a side effect of a few things, most notably that we do
