@@ -38,7 +38,6 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::AsEnvMut,
     hardfork::{
         FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
         spec_id_from_ethereum_hardfork,
@@ -1365,7 +1364,7 @@ latest block number: {latest_block}"
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
         apply_chain_and_block_specific_env_changes::<AnyNetwork>(
-            env.as_env_mut(),
+            &mut env.evm_env,
             &block,
             self.networks,
         );
@@ -1468,7 +1467,7 @@ async fn derive_block_and_transactions(
                 .get_transaction_by_hash(transaction_hash.0.into())
                 .await?
                 .ok_or_else(|| eyre::eyre!("failed to get fork transaction by hash"))?;
-            let transaction_block_number = transaction.block_number.ok_or_else(|| {
+            let transaction_block_number = transaction.block_number().ok_or_else(|| {
                 eyre::eyre!("fork transaction is not mined yet (no block number)")
             })?;
 

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use alloy_network::Network;
 use clap::Parser;
 use eyre::Result;
 use serde::Serialize;
@@ -31,7 +32,7 @@ pub struct BrowserWalletOpts {
 }
 
 impl BrowserWalletOpts {
-    pub async fn run(&self) -> Result<Option<BrowserSigner>> {
+    pub async fn run<N: Network>(&self) -> Result<Option<BrowserSigner<N>>> {
         Ok(if self.browser {
             Some(
                 BrowserSigner::new(

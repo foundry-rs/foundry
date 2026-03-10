@@ -12,133 +12,133 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-impl<CTX> Cheatcode<CTX> for keyExistsCall {
+impl Cheatcode for keyExistsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         check_json_key_exists(json, key)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for keyExistsJsonCall {
+impl Cheatcode for keyExistsJsonCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         check_json_key_exists(json, key)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJson_0Call {
+impl Cheatcode for parseJson_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json } = self;
         parse_json(json, "$", state.struct_defs())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJson_1Call {
+impl Cheatcode for parseJson_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json(json, key, state.struct_defs())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonUintCall {
+impl Cheatcode for parseJsonUintCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Uint(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonUintArrayCall {
+impl Cheatcode for parseJsonUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonIntCall {
+impl Cheatcode for parseJsonIntCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Int(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonIntArrayCall {
+impl Cheatcode for parseJsonIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonBoolCall {
+impl Cheatcode for parseJsonBoolCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Bool)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonBoolArrayCall {
+impl Cheatcode for parseJsonBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonAddressCall {
+impl Cheatcode for parseJsonAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Address)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonAddressArrayCall {
+impl Cheatcode for parseJsonAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonStringCall {
+impl Cheatcode for parseJsonStringCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::String)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonStringArrayCall {
+impl Cheatcode for parseJsonStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonBytesCall {
+impl Cheatcode for parseJsonBytesCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Bytes)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonBytesArrayCall {
+impl Cheatcode for parseJsonBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonBytes32Call {
+impl Cheatcode for parseJsonBytes32Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonBytes32ArrayCall {
+impl Cheatcode for parseJsonBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonType_0Call {
+impl Cheatcode for parseJsonType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, typeDescription } = self;
         parse_json_coerce(json, "$", &resolve_type(typeDescription, state.struct_defs())?)
@@ -146,7 +146,7 @@ impl<CTX> Cheatcode<CTX> for parseJsonType_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonType_1Call {
+impl Cheatcode for parseJsonType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
         parse_json_coerce(json, key, &resolve_type(typeDescription, state.struct_defs())?)
@@ -154,7 +154,7 @@ impl<CTX> Cheatcode<CTX> for parseJsonType_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonTypeArrayCall {
+impl Cheatcode for parseJsonTypeArrayCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
@@ -162,14 +162,14 @@ impl<CTX> Cheatcode<CTX> for parseJsonTypeArrayCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for parseJsonKeysCall {
+impl Cheatcode for parseJsonKeysCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_keys(json, key)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeJsonCall {
+impl Cheatcode for serializeJsonCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, value } = self;
         *state.serialized_jsons.entry(objectKey.into()).or_default() = serde_json::from_str(value)?;
@@ -177,56 +177,56 @@ impl<CTX> Cheatcode<CTX> for serializeJsonCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeBool_0Call {
+impl Cheatcode for serializeBool_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeUint_0Call {
+impl Cheatcode for serializeUint_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeInt_0Call {
+impl Cheatcode for serializeInt_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeAddress_0Call {
+impl Cheatcode for serializeAddress_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeBytes32_0Call {
+impl Cheatcode for serializeBytes32_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, DynSolValue::FixedBytes(*value, 32))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeString_0Call {
+impl Cheatcode for serializeString_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, value.clone().into())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeBytes_0Call {
+impl Cheatcode for serializeBytes_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, value.to_vec().into())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeBool_1Call {
+impl Cheatcode for serializeBool_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
@@ -238,7 +238,7 @@ impl<CTX> Cheatcode<CTX> for serializeBool_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeUint_1Call {
+impl Cheatcode for serializeUint_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
@@ -250,7 +250,7 @@ impl<CTX> Cheatcode<CTX> for serializeUint_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeInt_1Call {
+impl Cheatcode for serializeInt_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
@@ -262,7 +262,7 @@ impl<CTX> Cheatcode<CTX> for serializeInt_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeAddress_1Call {
+impl Cheatcode for serializeAddress_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
@@ -274,7 +274,7 @@ impl<CTX> Cheatcode<CTX> for serializeAddress_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeBytes32_1Call {
+impl Cheatcode for serializeBytes32_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
@@ -286,7 +286,7 @@ impl<CTX> Cheatcode<CTX> for serializeBytes32_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeString_1Call {
+impl Cheatcode for serializeString_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
@@ -298,7 +298,7 @@ impl<CTX> Cheatcode<CTX> for serializeString_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeBytes_1Call {
+impl Cheatcode for serializeBytes_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
@@ -312,7 +312,7 @@ impl<CTX> Cheatcode<CTX> for serializeBytes_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeJsonType_0Call {
+impl Cheatcode for serializeJsonType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
@@ -322,7 +322,7 @@ impl<CTX> Cheatcode<CTX> for serializeJsonType_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeJsonType_1Call {
+impl Cheatcode for serializeJsonType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
@@ -331,7 +331,7 @@ impl<CTX> Cheatcode<CTX> for serializeJsonType_1Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for serializeUintToHexCall {
+impl Cheatcode for serializeUintToHexCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         let hex = format!("0x{value:x}");
@@ -339,7 +339,7 @@ impl<CTX> Cheatcode<CTX> for serializeUintToHexCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for writeJson_0Call {
+impl Cheatcode for writeJson_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, path } = self;
         let json = serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.to_owned()));
@@ -348,7 +348,7 @@ impl<CTX> Cheatcode<CTX> for writeJson_0Call {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for writeJson_1Call {
+impl Cheatcode for writeJson_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json: value, path, valueKey } = self;
 

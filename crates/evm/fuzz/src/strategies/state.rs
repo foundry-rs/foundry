@@ -319,7 +319,8 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let storage_layout = storage_layouts.get(address).cloned();
+                let slot_identifier =
+                    storage_layouts.get(address).map(|layout| SlotIdentifier::new(layout.clone()));
                 trace!(
                     "{address:?} has mapping_slots {}",
                     mapping_slots.is_some_and(|m| m.contains_key(address))
@@ -329,7 +330,7 @@ impl FuzzDictionary {
                     self.insert_storage_value(
                         slot,
                         &value.present_value,
-                        storage_layout.as_deref(),
+                        slot_identifier.as_ref(),
                         mapping_slots,
                     );
                 }
@@ -372,7 +373,7 @@ impl FuzzDictionary {
         &mut self,
         slot: &U256,
         value: &U256,
-        layout: Option<&StorageLayout>,
+        slot_identifier: Option<&SlotIdentifier>,
         mapping_slots: Option<&MappingSlots>,
     ) {
         let slot = B256::from(*slot);
@@ -381,11 +382,11 @@ impl FuzzDictionary {
         // Always insert the slot itself
         self.insert_value(slot);
 
-        // If we have a storage layout, use SlotIdentifier for better type identification
-        if let Some(slot_identifier) =
-            layout.map(|l| SlotIdentifier::new(l.clone().into()))
-            // Identify Slot Type
-            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
+        // If we have a storage layout, use SlotIdentifier for better type identification.
+        if let Some(slot_identifier) = slot_identifier
+            // Identify slot type.
+            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots)
+            && slot_info.decode(value).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
             if !self.samples_seeded {

@@ -13,19 +13,12 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
 };
-use foundry_common::{
-    abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, provider::RetryProvider,
-    shell,
-};
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, shell};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, EnvMut,
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    core::{AsEnvMut, decode::RevertDecoder},
-    executors::TracingExecutor,
-    opts::EvmOpts,
-    traces::TraceMode,
+    Env, constants::DEFAULT_CREATE2_DEPLOYER, core::decode::RevertDecoder,
+    executors::TracingExecutor, opts::EvmOpts, traces::TraceMode,
     utils::apply_chain_and_block_specific_env_changes,
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -292,14 +285,14 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock, config: NetworkConfigs) {
-    env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.beneficiary = block.header.beneficiary;
-    env.block.difficulty = block.header.difficulty;
-    env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-    env.block.gas_limit = block.header.gas_limit;
-    apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block, config);
+pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock, config: NetworkConfigs) {
+    env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
+    env.evm_env.block_env.beneficiary = block.header.beneficiary;
+    env.evm_env.block_env.difficulty = block.header.difficulty;
+    env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+    env.evm_env.block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+    env.evm_env.block_env.gas_limit = block.header.gas_limit;
+    apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env.evm_env, block, config);
 }
 
 pub fn deploy_contract(
@@ -360,7 +353,7 @@ pub fn deploy_contract(
 
 pub async fn get_runtime_codes(
     executor: &mut TracingExecutor,
-    provider: &RetryProvider,
+    provider: &impl Provider<AnyNetwork>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,

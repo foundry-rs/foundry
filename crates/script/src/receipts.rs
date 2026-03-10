@@ -1,10 +1,13 @@
 use alloy_chains::{Chain, NamedChain};
-use alloy_network::{AnyTransactionReceipt, ReceiptResponse};
+use alloy_network::{Ethereum, ReceiptResponse};
 use alloy_primitives::{TxHash, U256, utils::format_units};
-use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
+use alloy_provider::{
+    PendingTransactionBuilder, PendingTransactionError, Provider, RootProvider, WatchTxError,
+};
+use alloy_rpc_types::TransactionReceipt;
 use eyre::{Result, eyre};
 use forge_script_sequence::ScriptSequence;
-use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
+use foundry_common::{retry, retry::RetryError, shell};
 use std::time::Duration;
 
 /// Marker error type for pending receipts
@@ -19,12 +22,12 @@ pub struct PendingReceiptError {
 /// Convenience enum for internal signalling of transaction status
 pub enum TxStatus {
     Dropped,
-    Success(AnyTransactionReceipt),
-    Revert(AnyTransactionReceipt),
+    Success(TransactionReceipt),
+    Revert(TransactionReceipt),
 }
 
-impl From<AnyTransactionReceipt> for TxStatus {
-    fn from(receipt: AnyTransactionReceipt) -> Self {
+impl From<TransactionReceipt> for TxStatus {
+    fn from(receipt: TransactionReceipt) -> Self {
         if !receipt.status() { Self::Revert(receipt) } else { Self::Success(receipt) }
     }
 }
@@ -32,7 +35,7 @@ impl From<AnyTransactionReceipt> for TxStatus {
 /// Checks the status of a txhash by first polling for a receipt, then for
 /// mempool inclusion. Returns the tx hash, and a status
 pub async fn check_tx_status(
-    provider: &RetryProvider,
+    provider: &RootProvider<Ethereum>,
     hash: TxHash,
     timeout: u64,
 ) -> (TxHash, Result<TxStatus, eyre::Report>) {
@@ -45,9 +48,9 @@ pub async fn check_tx_status(
             {
                 Ok(receipt) => {
                     // Check if the receipt is pending (missing block information)
-                    let is_pending = receipt.block_number.is_none()
-                        || receipt.block_hash.is_none()
-                        || receipt.transaction_index.is_none();
+                    let is_pending = receipt.block_number().is_none()
+                        || receipt.block_hash().is_none()
+                        || receipt.transaction_index().is_none();
 
                     if !is_pending {
                         return Ok(receipt.into());
@@ -88,19 +91,19 @@ pub async fn check_tx_status(
 /// Prints parts of the receipt to stdout
 pub fn format_receipt(
     chain: Chain,
-    receipt: &AnyTransactionReceipt,
+    receipt: &TransactionReceipt,
     sequence: Option<&ScriptSequence>,
 ) -> String {
-    let gas_used = receipt.gas_used;
-    let gas_price = receipt.effective_gas_price;
-    let block_number = receipt.block_number.unwrap_or_default();
-    let success = receipt.inner.inner.inner.receipt.status.coerce_status();
+    let gas_used = receipt.gas_used();
+    let gas_price = receipt.effective_gas_price();
+    let block_number = receipt.block_number().unwrap_or_default();
+    let success = receipt.status();
 
     let (contract_name, function) = sequence
         .and_then(|seq| {
             seq.transactions
                 .iter()
-                .find(|tx| tx.hash == Some(receipt.transaction_hash))
+                .find(|tx| tx.hash == Some(receipt.transaction_hash()))
                 .map(|tx| (tx.contract_name.clone(), tx.function.clone()))
         })
         .unwrap_or((None, None));
@@ -113,8 +116,8 @@ pub fn format_receipt(
             } else {
                 "failed"
             },
-            "tx_hash": receipt.transaction_hash,
-            "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
+            "tx_hash": receipt.transaction_hash(),
+            "contract_address": receipt.contract_address().map(|addr| addr.to_string()),
             "block_number": block_number,
             "gas_used": gas_used,
             "gas_price": gas_price,
@@ -148,8 +151,8 @@ pub fn format_receipt(
         format!(
             "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_info}{function_info}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
             status = if success { "✅  [Success]" } else { "❌  [Failed]" },
-            tx_hash = receipt.transaction_hash,
-            contract_address = if let Some(addr) = &receipt.contract_address {
+            tx_hash = receipt.transaction_hash(),
+            contract_address = if let Some(addr) = receipt.contract_address() {
                 format!("\nContract Address: {}", addr.to_checksum(None))
             } else {
                 String::new()
@@ -182,7 +185,7 @@ mod tests {
     use alloy_primitives::B256;
     use std::collections::VecDeque;
 
-    fn mock_receipt(tx_hash: B256, success: bool) -> AnyTransactionReceipt {
+    fn mock_receipt(tx_hash: B256, success: bool) -> TransactionReceipt {
         serde_json::from_value(serde_json::json!({
             "type": "0x02", "status": if success { "0x1" } else { "0x0" },
             "cumulativeGasUsed": "0x5208", "logs": [], "transactionHash": tx_hash,

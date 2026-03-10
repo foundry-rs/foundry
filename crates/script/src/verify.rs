@@ -3,6 +3,7 @@ use crate::{
     build::LinkedBuildData,
     sequence::{ScriptSequenceKind, get_commit_hash},
 };
+use alloy_network::ReceiptResponse;
 use alloy_primitives::{Address, hex};
 use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
@@ -207,7 +208,7 @@ async fn verify_contracts(
             }
 
             // Verify contract created directly from the transaction
-            if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
+            if let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input()) {
                 match verify.get_verify_args(
                     address,
                     offset,

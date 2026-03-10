@@ -28,10 +28,11 @@ use alloy_evm::{
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
+use alloy_network::Network;
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{B256, Bloom, BloomInput, Bytes, Log};
 use anvil_core::eth::{
-    block::{BlockInfo, create_block},
+    block::{TypedBlockInfo, create_block},
     transaction::{PendingTransaction, TransactionInfo},
 };
 use foundry_evm::{
@@ -40,7 +41,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, Inspector,
@@ -49,18 +50,27 @@ use revm::{
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,
 };
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt, fmt::Debug, sync::Arc};
 
 /// Represents an executed transaction (transacted on the DB)
-#[derive(Debug)]
-pub struct ExecutedTransaction {
-    transaction: Arc<PoolTransaction>,
+pub struct ExecutedTransaction<T = FoundryTxEnvelope> {
+    transaction: Arc<PoolTransaction<T>>,
     exit_reason: InstructionResult,
     out: Option<Output>,
     gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
     nonce: u64,
+}
+
+impl<T> fmt::Debug for ExecutedTransaction<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExecutedTransaction")
+            .field("exit_reason", &self.exit_reason)
+            .field("gas_used", &self.gas_used)
+            .field("nonce", &self.nonce)
+            .finish_non_exhaustive()
+    }
 }
 
 // == impl ExecutedTransaction ==
@@ -103,25 +113,33 @@ impl ExecutedTransaction {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Clone, Debug)]
-pub struct ExecutedTransactions {
+pub struct ExecutedTransactions<N: Network, T = FoundryTxEnvelope> {
     /// The block created after executing the `included` transactions
-    pub block: BlockInfo,
+    pub block: TypedBlockInfo<N>,
     /// All transactions included in the block
-    pub included: Vec<Arc<PoolTransaction>>,
+    pub included: Vec<Arc<PoolTransaction<T>>>,
     /// All transactions that were invalid at the point of their execution and were not included in
     /// the block
-    pub invalid: Vec<Arc<PoolTransaction>>,
+    pub invalid: Vec<Arc<PoolTransaction<T>>>,
+}
+
+impl<N: Network, T> fmt::Debug for ExecutedTransactions<N, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExecutedTransactions")
+            .field("included", &self.included.len())
+            .field("invalid", &self.invalid.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// An executor for a series of transactions
-pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
+pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator<T>, T = FoundryTxEnvelope> {
     /// where to insert the transactions
     pub db: &'a mut Db,
     /// type used to validate before inclusion
     pub validator: &'a V,
     /// all pending transactions
-    pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
+    pub pending: std::vec::IntoIter<Arc<PoolTransaction<T>>>,
     pub evm_env: EvmEnv,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
@@ -142,7 +160,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
 
 impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
-    pub fn execute(mut self) -> ExecutedTransactions {
+    pub fn execute(mut self) -> ExecutedTransactions<FoundryNetwork> {
         let mut transactions = Vec::new();
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
@@ -288,7 +306,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         };
 
         let block = create_block(header, transactions);
-        let block = BlockInfo { block, transactions: transaction_infos, receipts };
+        let block = TypedBlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
 
@@ -334,20 +352,32 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
 }
 
 /// Represents the result of a single transaction execution attempt
-#[derive(Debug)]
-pub enum TransactionExecutionOutcome {
+pub enum TransactionExecutionOutcome<T = FoundryTxEnvelope> {
     /// Transaction successfully executed
-    Executed(ExecutedTransaction),
+    Executed(ExecutedTransaction<T>),
     /// Invalid transaction not executed
-    Invalid(Arc<PoolTransaction>, InvalidTransactionError),
+    Invalid(Arc<PoolTransaction<T>>, InvalidTransactionError),
     /// Execution skipped because could exceed block gas limit
-    BlockGasExhausted(Arc<PoolTransaction>),
+    BlockGasExhausted(Arc<PoolTransaction<T>>),
     /// Execution skipped because it exceeded the blob gas limit
-    BlobGasExhausted(Arc<PoolTransaction>),
+    BlobGasExhausted(Arc<PoolTransaction<T>>),
     /// Execution skipped because it exceeded the transaction gas limit
-    TransactionGasExhausted(Arc<PoolTransaction>),
+    TransactionGasExhausted(Arc<PoolTransaction<T>>),
     /// When an error occurred during execution
-    DatabaseError(Arc<PoolTransaction>, DatabaseError),
+    DatabaseError(Arc<PoolTransaction<T>>, DatabaseError),
+}
+
+impl<T> fmt::Debug for TransactionExecutionOutcome<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Executed(_) => write!(f, "Executed(..)"),
+            Self::Invalid(_, err) => write!(f, "Invalid({err:?})"),
+            Self::BlockGasExhausted(_) => write!(f, "BlockGasExhausted(..)"),
+            Self::BlobGasExhausted(_) => write!(f, "BlobGasExhausted(..)"),
+            Self::TransactionGasExhausted(_) => write!(f, "TransactionGasExhausted(..)"),
+            Self::DatabaseError(_, err) => write!(f, "DatabaseError({err:?})"),
+        }
+    }
 }
 
 impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExecutor<'_, DB, V> {

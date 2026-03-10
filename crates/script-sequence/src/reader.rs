@@ -1,5 +1,6 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
-use alloy_network::AnyTransactionReceipt;
+use alloy_network::ReceiptResponse;
+use alloy_rpc_types_eth::TransactionReceipt;
 use eyre::{Result, bail};
 use foundry_common::fs;
 use revm_inspectors::tracing::types::CallKind;
@@ -141,14 +142,14 @@ impl BroadcastReader {
     pub fn into_tx_receipts(
         &self,
         broadcast: ScriptSequence,
-    ) -> Vec<(TransactionWithMetadata, AnyTransactionReceipt)> {
+    ) -> Vec<(TransactionWithMetadata, TransactionReceipt)> {
         let ScriptSequence { transactions, receipts, .. } = broadcast;
 
         let mut targets = Vec::new();
         for tx in transactions.into_iter().filter(|tx| self.matches_filters(tx)) {
             let maybe_receipt = receipts
                 .iter()
-                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
+                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash()));
 
             if let Some(receipt) = maybe_receipt {
                 targets.push((tx, receipt.clone()));
@@ -156,7 +157,7 @@ impl BroadcastReader {
         }
 
         // Sort by descending block number
-        targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number));
+        targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number()));
 
         targets
     }

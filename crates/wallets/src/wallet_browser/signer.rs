@@ -3,19 +3,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::SignableTransaction;
-use alloy_dyn_abi::TypedData;
-use alloy_network::{Ethereum, Network, TransactionBuilder, TxSigner};
-use alloy_primitives::{Address, B256, ChainId, hex};
-use alloy_signer::{Result, Signature, Signer, SignerSync};
-use alloy_sol_types::{Eip712Domain, SolStruct};
-use async_trait::async_trait;
+use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_primitives::{Address, B256, ChainId};
+use alloy_signer::Result;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::wallet_browser::{
     server::BrowserWalletServer,
-    types::{BrowserSignRequest, BrowserTransactionRequest, Connection, SignRequest, SignType},
+    types::{BrowserTransactionRequest, Connection},
 };
 
 #[derive(Clone, Debug)]
@@ -89,101 +85,9 @@ impl<N: Network> BrowserSigner<N> {
 
         Ok(tx_hash)
     }
-}
 
-impl<N: Network> SignerSync for BrowserSigner<N> {
-    fn sign_hash_sync(&self, _hash: &B256) -> Result<Signature> {
-        Err(alloy_signer::Error::other(
-            "Browser wallets cannot sign raw hashes. Use sign_message or send_transaction instead.",
-        ))
-    }
-
-    fn sign_message_sync(&self, _message: &[u8]) -> Result<Signature> {
-        Err(alloy_signer::Error::other(
-            "Browser signer requires async operations. Use sign_message instead.",
-        ))
-    }
-
-    fn chain_id_sync(&self) -> Option<ChainId> {
-        Some(self.chain_id)
-    }
-}
-
-#[async_trait]
-impl<N: Network> Signer for BrowserSigner<N> {
-    async fn sign_hash(&self, _hash: &B256) -> Result<Signature> {
-        Err(alloy_signer::Error::other(
-            "Browser wallets sign and send transactions in one step. Use eth_sendTransaction instead.",
-        ))
-    }
-
-    async fn sign_typed_data<T: SolStruct + Send + Sync>(
-        &self,
-        _payload: &T,
-        _domain: &Eip712Domain,
-    ) -> Result<Signature>
-    where
-        Self: Sized,
-    {
-        // Not directly supported - use sign_dynamic_typed_data instead
-        Err(alloy_signer::Error::other(
-            "Browser wallets cannot sign typed data directly. Use sign_dynamic_typed_data instead.",
-        ))
-    }
-
-    async fn sign_message(&self, message: &[u8]) -> Result<Signature> {
-        let request = BrowserSignRequest {
-            id: Uuid::new_v4(),
-            sign_type: SignType::PersonalSign,
-            request: SignRequest { message: hex::encode_prefixed(message), address: self.address },
-        };
-
-        let server = self.server.lock().await;
-        let signature =
-            server.request_signing(request).await.map_err(alloy_signer::Error::other)?;
-
-        Signature::try_from(signature.as_ref())
-            .map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {e}")))
-    }
-
-    async fn sign_dynamic_typed_data(&self, payload: &TypedData) -> Result<Signature> {
-        let server = self.server.lock().await;
-        let signature = server
-            .request_typed_data_signing(self.address, payload.clone())
-            .await
-            .map_err(alloy_signer::Error::other)?;
-
-        // Parse the signature
-        Signature::try_from(signature.as_ref())
-            .map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {e}")))
-    }
-
-    fn address(&self) -> Address {
+    pub fn address(&self) -> Address {
         self.address
-    }
-
-    fn chain_id(&self) -> Option<ChainId> {
-        Some(self.chain_id)
-    }
-
-    fn set_chain_id(&mut self, chain_id: Option<ChainId>) {
-        if let Some(id) = chain_id {
-            self.chain_id = id;
-        }
-    }
-}
-
-#[async_trait]
-impl<N: Network> TxSigner<Signature> for BrowserSigner<N> {
-    fn address(&self) -> Address {
-        Signer::address(self)
-    }
-
-    async fn sign_transaction(
-        &self,
-        _tx: &mut dyn SignableTransaction<Signature>,
-    ) -> Result<Signature> {
-        Err(alloy_signer::Error::other("Use send_transaction_via_browser for browser wallets"))
     }
 }
 
