@@ -79,11 +79,13 @@ impl InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        if field == ContractArtifactField::Linearization && project.compiler.solc.is_none() {
-            eyre::bail!("linearization inspection is only supported for Solidity contracts");
+        let target_path = find_target_path(&project, &contract)?;
+        if field == ContractArtifactField::Linearization && !is_solidity_source(&target_path) {
+            eyre::bail!(
+                "linearization inspection is only supported for Solidity contracts (.sol targets)"
+            );
         }
         let compiler = ProjectCompiler::new().quiet(true);
-        let target_path = find_target_path(&project, &contract)?;
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
@@ -429,11 +431,11 @@ fn print_linearization(
     should_wrap: bool,
 ) -> Result<()> {
     let mut chain = Vec::new();
+    let mut lowered = false;
     let compiler = output.parser_mut().solc_mut().compiler_mut();
     compiler.enter_mut(|compiler| -> Result<()> {
-        let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
-            eyre::bail!("unable to inspect linearization. Solar only supports Solidity versions >=0.8.0");
-        };
+        let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
+        lowered = true;
 
         let hir = &compiler.gcx().hir;
         let matching_contracts = hir
@@ -486,10 +488,30 @@ fn print_linearization(
         Ok(())
     })?;
 
+    // `compiler.sess()` inside of `ProjectCompileOutput` is built with `with_buffer_emitter`.
+    let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
+    if compiler.sess().dcx.has_errors().is_err() {
+        eyre::bail!("{diags}");
+    } else {
+        let _ = sh_eprint!("{diags}");
+    }
+    if !lowered {
+        eyre::bail!(
+            "unable to inspect linearization: failed to lower Solidity ASTs for `{}`",
+            target_path.display()
+        );
+    }
+
     if shell::is_json() {
         let contracts = chain
             .into_iter()
-            .map(|(_, source, contract)| format!("{source}:{contract}"))
+            .map(|(order, source, contract)| {
+                serde_json::json!({
+                    "order": order,
+                    "source": source,
+                    "contract": contract,
+                })
+            })
             .collect::<Vec<_>>();
         return print_json(&contracts);
     }
@@ -741,6 +763,10 @@ fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String
         Some(s) => s.to_string(),
         None => format!("{value:#}"),
     })
+}
+
+fn is_solidity_source(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("sol"))
 }
 
 fn missing_error(field: &str) -> eyre::Error {

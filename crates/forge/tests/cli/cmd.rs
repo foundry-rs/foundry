@@ -1254,9 +1254,21 @@ forgetest!(can_inspect_linearization_json, |prj, cmd| {
     cmd.forge_fuse().args(["inspect", "C", "linearization", "--json"]).assert_success().stdout_eq(
         str![[r#"
 [
-  "src/C.sol:C",
-  "src/B.sol:B",
-  "src/A.sol:A"
+  {
+    "order": 0,
+    "source": "src/C.sol",
+    "contract": "C"
+  },
+  {
+    "order": 1,
+    "source": "src/B.sol",
+    "contract": "B"
+  },
+  {
+    "order": 2,
+    "source": "src/A.sol",
+    "contract": "A"
+  }
 ]
 
 "#]],
@@ -1281,9 +1293,29 @@ forgetest!(can_inspect_linearization_path_qualified_contract, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 [
-  "src/two/Target.sol:Target",
-  "src/two/Base.sol:Base"
+  {
+    "order": 0,
+    "source": "src/two/Target.sol",
+    "contract": "Target"
+  },
+  {
+    "order": 1,
+    "source": "src/two/Base.sol",
+    "contract": "Base"
+  }
 ]
+
+"#]]);
+});
+
+forgetest!(cannot_inspect_linearization_non_solidity_target, |prj, cmd| {
+    prj.create_file("src/NotSol.vy", "x: uint256");
+
+    cmd.forge_fuse()
+        .args(["inspect", "src/NotSol.vy", "linearization"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: linearization inspection is only supported for Solidity contracts (.sol targets)
 
 "#]]);
 });
