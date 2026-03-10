@@ -41,6 +41,7 @@ Monad is a Layer-1 blockchain delivering high performance, true decentralization
 ### Anvil
 - Supports both standard Ethereum EVM and Monad EVM.
 - Use `anvil --monad` to run a local node with Monad EVM.
+- Use `anvil --monad --hardfork MonadNine` to select a specific Monad hardfork. Supported values: `MonadEight`, `MonadNine`, `MonadNext`.
 - Monad EVM also enables automatically when forking a Monad RPC (chain ID detection).
 
 ### Cast & Chisel
