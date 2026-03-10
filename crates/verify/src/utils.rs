@@ -275,7 +275,7 @@ pub async fn get_tracing_executor(
     let executor = TracingExecutor::new(
         env.clone(),
         fork,
-        Some(fork_config.evm_version),
+        fork_config.monad_spec_id(),
         TraceMode::Call,
         networks,
         create2_deployer,

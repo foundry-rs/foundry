@@ -1292,11 +1292,20 @@ impl Config {
     ///
     /// If `monad_hardfork` is set in the config, parses it. Otherwise returns
     /// [`MonadSpecId::default()`] (MonadEight).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `monad_hardfork` is set to an unrecognized value.
     pub fn monad_spec_id(&self) -> MonadSpecId {
-        self.monad_hardfork
-            .as_deref()
-            .and_then(|s| s.parse::<MonadSpecId>().ok())
-            .unwrap_or_default()
+        match self.monad_hardfork.as_deref() {
+            Some(s) => s.parse::<MonadSpecId>().unwrap_or_else(|_| {
+                panic!(
+                    "invalid `monad_hardfork` value: \"{s}\". \
+                     Valid values: MonadEight, MonadNine, MonadNext"
+                )
+            }),
+            None => MonadSpecId::default(),
+        }
     }
 
     /// Returns whether the compiler version should be auto-detected

@@ -223,7 +223,7 @@ impl CallArgs {
             command,
             block,
             trace,
-            evm_version,
+            evm_version: _,
             debug,
             decode_internal,
             labels,
@@ -304,7 +304,7 @@ impl CallArgs {
             let mut executor = TracingExecutor::new(
                 env,
                 fork,
-                evm_version,
+                config.monad_spec_id(),
                 trace_mode,
                 networks,
                 create2_deployer,

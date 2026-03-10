@@ -5,7 +5,6 @@ use crate::{
 use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
-use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use foundry_evm_networks::NetworkConfigs;
@@ -23,7 +22,7 @@ impl TracingExecutor {
     pub fn new(
         env: Env,
         fork: CreateFork,
-        _version: Option<EvmVersion>,
+        spec_id: MonadSpecId,
         trace_mode: TraceMode,
         networks: NetworkConfigs,
         create2_deployer: Address,
@@ -36,8 +35,7 @@ impl TracingExecutor {
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
-            // Monad uses the default MonadSpecId (hardforks are independent of evm_version)
-            .spec_id(MonadSpecId::default())
+            .spec_id(spec_id)
             .build(env, db);
 
         // Apply the state overrides.

@@ -165,8 +165,6 @@ impl RunArgs {
             TracingExecutor::get_fork_material(&mut config, evm_opts)
         )?;
 
-        let mut evm_version = self.evm_version;
-
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
@@ -186,15 +184,6 @@ impl RunArgs {
             env.evm_env.block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
             env.evm_env.block_env.gas_limit = block.header.gas_limit;
 
-            // TODO: we need a smarter way to map the block to the corresponding evm_version for
-            // commonly used chains
-            if evm_version.is_none() {
-                // if the block has the excess_blob_gas field, we assume it's a Cancun block
-                if block.header.excess_blob_gas.is_some() {
-                    evm_version = Some(EvmVersion::Prague);
-                }
-            }
-
             // Note: apply_chain_and_block_specific_env_changes is not called for Monad
             let _ = config.networks;
         }
@@ -210,7 +199,7 @@ impl RunArgs {
         let mut executor = TracingExecutor::new(
             env.clone(),
             fork,
-            evm_version,
+            config.monad_spec_id(),
             trace_mode,
             networks,
             create2_deployer,

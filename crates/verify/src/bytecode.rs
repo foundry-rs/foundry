@@ -34,7 +34,6 @@ use foundry_evm::{
     executors::EvmError,
     utils::{configure_tx_env, configure_tx_req_env},
 };
-use monad_revm::MonadSpecId;
 use revm::state::AccountInfo;
 use std::path::PathBuf;
 
@@ -274,8 +273,7 @@ impl VerifyBytecodeArgs {
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
                 &env,
-                // Use Monad's default spec (hardforks are independent of evm_version)
-                MonadSpecId::default(),
+                config.monad_spec_id(),
                 gen_tx_req.to,
             )?;
 
@@ -546,8 +544,7 @@ impl VerifyBytecodeArgs {
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
                 &env,
-                // Use Monad's default spec (hardforks are independent of evm_version)
-                MonadSpecId::default(),
+                config.monad_spec_id(),
                 transaction.to,
             )?;
 
