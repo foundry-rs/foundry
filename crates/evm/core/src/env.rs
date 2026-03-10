@@ -16,13 +16,6 @@ pub struct Env {
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
 impl Env {
-    pub fn default_with_spec_id(spec_id: SpecId) -> Self {
-        let mut cfg = CfgEnv::default();
-        cfg.spec = spec_id;
-
-        Self::from(cfg, BlockEnv::default(), TxEnv::default())
-    }
-
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
         Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
     }
@@ -52,21 +45,6 @@ impl Env {
         *ecx.block_mut() = evm_env.block_env;
         *ecx.cfg_mut() = evm_env.cfg_env;
         *ecx.tx_mut() = tx_env;
-    }
-
-    /// Writes this env back into a [`FoundryContextExt`] context.
-    pub fn apply_to(self, ecx: &mut impl FoundryContextExt) {
-        Self::apply_evm_and_tx(ecx, self.evm_env, self.tx);
-    }
-
-    /// Mutable reference to the block environment.
-    pub fn block_mut(&mut self) -> &mut BlockEnv {
-        &mut self.evm_env.block_env
-    }
-
-    /// Mutable reference to the cfg environment.
-    pub fn cfg_mut(&mut self) -> &mut CfgEnv {
-        &mut self.evm_env.cfg_env
     }
 }
 
