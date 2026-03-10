@@ -25,5 +25,6 @@ walkdir.workspace = true
 
 revm-inspectors.workspace = true
 
+alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
