@@ -4,7 +4,7 @@ use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::Po
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{
-    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
+    AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
     primitives::HeaderResponse,
 };
 use alloy_primitives::{
@@ -18,14 +18,12 @@ use alloy_provider::{
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
     FeeHistory, Filter, Log,
-    request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
     },
 };
-use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_primitives::FoundryTxReceipt;
@@ -267,10 +265,7 @@ impl<N: Network> ClientFork<N> {
         let params = (number, trace_types.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>());
         self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
     }
-}
 
-/// Methods that are specific to `AnyNetwork` (the default network type).
-impl ClientFork {
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub async fn reset(
         &self,
@@ -324,7 +319,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn call(
         &self,
-        request: &WithOtherFields<TransactionRequest>,
+        request: &N::TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
@@ -338,7 +333,7 @@ impl ClientFork {
         &self,
         request: &SimulatePayload,
         block: Option<BlockNumber>,
-    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, TransportError> {
+    ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
         let mut simulate_call = self.provider().simulate(request);
         if let Some(n) = block {
             simulate_call = simulate_call.number(n.as_number().unwrap());
@@ -352,7 +347,7 @@ impl ClientFork {
     /// Sends `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
-        request: &WithOtherFields<TransactionRequest>,
+        request: &N::TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<u128, TransportError> {
         let block = block.unwrap_or_default();
@@ -364,7 +359,7 @@ impl ClientFork {
     /// Sends `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        request: &WithOtherFields<TransactionRequest>,
+        request: &N::TransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<AccessListResult, TransportError> {
         self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
@@ -374,7 +369,7 @@ impl ClientFork {
         &self,
         number: u64,
         index: usize,
-    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
         if let Some(block) = self.block_by_number(number).await? {
             #[allow(clippy::collapsible_match)]
             match block.transactions() {
@@ -399,7 +394,7 @@ impl ClientFork {
         &self,
         hash: B256,
         index: usize,
-    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
         if let Some(block) = self.block_by_hash(hash).await? {
             #[allow(clippy::collapsible_match)]
             match block.transactions() {
@@ -423,7 +418,7 @@ impl ClientFork {
     pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
         trace!(target: "backend::fork", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.storage_read().transactions.get(&hash).cloned() {
             return Ok(tx);
@@ -437,6 +432,105 @@ impl ClientFork {
         Ok(tx)
     }
 
+    pub async fn block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(mut block) = self.storage_read().blocks.get(&hash).cloned() {
+            block.transactions_mut().convert_to_hashes();
+            return Ok(Some(block));
+        }
+
+        Ok(self.fetch_full_block(hash).await?.map(|mut b| {
+            b.transactions_mut().convert_to_hashes();
+            b
+        }))
+    }
+
+    pub async fn block_by_hash_full(
+        &self,
+        hash: B256,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
+            return Ok(Some(self.convert_to_full_block(block)));
+        }
+        self.fetch_full_block(hash).await
+    }
+
+    pub async fn block_by_number(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(mut block) = self
+            .storage_read()
+            .hashes
+            .get(&block_number)
+            .and_then(|hash| self.storage_read().blocks.get(hash).cloned())
+        {
+            block.transactions_mut().convert_to_hashes();
+            return Ok(Some(block));
+        }
+
+        let mut block = self.fetch_full_block(block_number).await?;
+        if let Some(block) = &mut block {
+            block.transactions_mut().convert_to_hashes();
+        }
+        Ok(block)
+    }
+
+    pub async fn block_by_number_full(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(block) = self
+            .storage_read()
+            .hashes
+            .get(&block_number)
+            .copied()
+            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+        {
+            return Ok(Some(self.convert_to_full_block(block)));
+        }
+
+        self.fetch_full_block(block_number).await
+    }
+
+    async fn fetch_full_block(
+        &self,
+        block_id: impl Into<BlockId>,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
+            let hash = block.header().hash();
+            let block_number = block.header().number();
+            let mut storage = self.storage_write();
+            // also insert all transactions
+            let block_txs = match block.transactions() {
+                BlockTransactions::Full(txs) => txs.to_owned(),
+                _ => vec![],
+            };
+            storage.transactions.extend(block_txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
+            storage.hashes.insert(block_number, hash);
+            storage.blocks.insert(hash, block.clone());
+            return Ok(Some(block));
+        }
+
+        Ok(None)
+    }
+
+    /// Converts a block of hashes into a full block
+    fn convert_to_full_block(&self, mut block: N::BlockResponse) -> N::BlockResponse {
+        let storage = self.storage.read();
+        let transactions = block
+            .transactions()
+            .hashes()
+            .filter_map(|hash| storage.transactions.get(&hash).cloned())
+            .collect();
+        *block.transactions_mut() = BlockTransactions::Full(transactions);
+        block
+    }
+}
+
+impl ClientFork {
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -491,88 +585,6 @@ impl ClientFork {
         Ok(None)
     }
 
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(mut block) = self.storage_read().blocks.get(&hash).cloned() {
-            block.transactions_mut().convert_to_hashes();
-            return Ok(Some(block));
-        }
-
-        Ok(self.fetch_full_block(hash).await?.map(|mut b| {
-            b.transactions_mut().convert_to_hashes();
-            b
-        }))
-    }
-
-    pub async fn block_by_hash_full(
-        &self,
-        hash: B256,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
-            return Ok(Some(self.convert_to_full_block(block)));
-        }
-        self.fetch_full_block(hash).await
-    }
-
-    pub async fn block_by_number(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(mut block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .and_then(|hash| self.storage_read().blocks.get(hash).cloned())
-        {
-            block.transactions_mut().convert_to_hashes();
-            return Ok(Some(block));
-        }
-
-        let mut block = self.fetch_full_block(block_number).await?;
-        if let Some(block) = &mut block {
-            block.transactions_mut().convert_to_hashes();
-        }
-        Ok(block)
-    }
-
-    pub async fn block_by_number_full(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .copied()
-            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
-        {
-            return Ok(Some(self.convert_to_full_block(block)));
-        }
-
-        self.fetch_full_block(block_number).await
-    }
-
-    async fn fetch_full_block(
-        &self,
-        block_id: impl Into<BlockId>,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
-            let hash = block.header().hash();
-            let block_number = block.header().number();
-            let mut storage = self.storage_write();
-            // also insert all transactions
-            let block_txs = match block.transactions() {
-                BlockTransactions::Full(txs) => txs.to_owned(),
-                _ => vec![],
-            };
-            storage.transactions.extend(block_txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
-            storage.hashes.insert(block_number, hash);
-            storage.blocks.insert(hash, block.clone());
-            return Ok(Some(block));
-        }
-
-        Ok(None)
-    }
-
     pub async fn uncle_by_block_hash_and_index(
         &self,
         hash: B256,
@@ -617,18 +629,6 @@ impl ClientFork {
         }
         self.storage_write().uncles.insert(block_hash, uncles.clone());
         Ok(uncles.get(index).cloned())
-    }
-
-    /// Converts a block of hashes into a full block
-    fn convert_to_full_block(&self, mut block: AnyRpcBlock) -> AnyRpcBlock {
-        let storage = self.storage.read();
-        let transactions = block
-            .transactions()
-            .hashes()
-            .filter_map(|hash| storage.transactions.get(&hash).cloned())
-            .collect();
-        *block.transactions_mut() = BlockTransactions::Full(transactions);
-        block
     }
 }
 
