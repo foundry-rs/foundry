@@ -46,7 +46,7 @@ impl VerificationContext {
         Ok(Self { config, project, target_name, target_path, compiler_version, compiler_settings })
     }
 
-    pub fn get_standard_json_input(&self) -> Result<StandardJsonCompilerInput> {
+    pub fn get_solc_standard_json_input(&self) -> Result<StandardJsonCompilerInput> {
         let mut input: StandardJsonCompilerInput = self
             .project
             .standard_json_input(&self.target_path)

@@ -235,7 +235,7 @@ impl SourcifyVerificationProvider {
 
         match lang {
             ContractLanguage::Solidity => {
-                let input = context.get_standard_json_input()?;
+                let input = context.get_solc_standard_json_input()?;
 
                 let std_json_input = serde_json::to_value(&input)
                     .wrap_err("Failed to serialize standard json input")?;

@@ -22,7 +22,7 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
 
         let source = match lang {
             ContractLanguage::Solidity => {
-                let input = context.get_standard_json_input()?;
+                let input = context.get_solc_standard_json_input()?;
                 serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?
             }
             ContractLanguage::Vyper => {
