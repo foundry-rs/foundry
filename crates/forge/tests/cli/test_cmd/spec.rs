@@ -1,9 +1,9 @@
 use foundry_test_utils::rpc;
+use monad_revm::MonadSpecId;
 
 // Test evm version behavior during tests / scripts.
-// Monad starts with MONAD_EIGHT spec which is Prague-compatible, so setEvmVersion
-// to older versions has no effect — all Prague features (including CREATE2) remain available.
-// Future Monad specs will only be newer than Prague, never older.
+// On Monad, Ethereum evm_version strings are compatibility no-ops, while Monad hardfork names can
+// explicitly select a Monad execution spec.
 // Original upstream refs:
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
@@ -142,6 +142,53 @@ contract TestConstructorEvmVersion is Test {
         .stdout_eq(str![[r#"
 ...
 [PASS] test_evm_version_in_constructor() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.monad_hardfork = Some(MonadSpecId::MonadNine);
+    });
+    prj.add_test(
+        "TestMonadHardforkEvmVersion.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+contract TestMonadHardforkEvmVersion is Test {
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function test_monad_hardfork_override() public {
+        assertEq(evm.getEvmVersion(), "monadnine");
+
+        evm.setEvmVersion("istanbul");
+        assertEq(evm.getEvmVersion(), "monadnine");
+
+        evm.setEvmVersion("MonadEight");
+        assertEq(evm.getEvmVersion(), "monadeight");
+
+        evm.setEvmVersion("paris");
+        assertEq(evm.getEvmVersion(), "monadeight");
+
+        evm.setEvmVersion("MonadNine");
+        assertEq(evm.getEvmVersion(), "monadnine");
+    }
+}
+   "#,
+    );
+    cmd.forge_fuse()
+        .args(["test", "--mc", "TestMonadHardforkEvmVersion", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] test_monad_hardfork_override() ([GAS])
 ...
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 

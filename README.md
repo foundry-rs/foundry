@@ -47,6 +47,12 @@ Monad is a Layer-1 blockchain delivering high performance, true decentralization
 ### Cast & Chisel
 - Execute with Monad EVM by default.
 
+### Monad `vm.setEvmVersion`
+- Standard Foundry uses `vm.setEvmVersion(...)` to switch Ethereum execution hardforks.
+- Monad Foundry also accepts Monad hardfork names: `MonadEight`, `MonadNine`, `MonadNext`.
+- On Monad, Ethereum hardfork names like `istanbul` or `shanghai` are accepted for compatibility but do not change the active Monad hardfork, because Monad hardfork selection is independent from Ethereum `evm_version`.
+- Prefer `monad_hardfork` in `foundry.toml` for project defaults, and use `vm.setEvmVersion("MonadNine")` only when a test or script needs to switch Monad execution behavior explicitly.
+
 ## Installation
 
 Install the Monad Foundry installer:

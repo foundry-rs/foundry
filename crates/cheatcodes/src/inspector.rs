@@ -47,7 +47,7 @@ use foundry_evm_traces::{
 };
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
-use monad_revm::{MonadContext, MonadSpecId};
+use monad_revm::{MonadContext, MonadSpecId, instructions::monad_gas_params};
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
@@ -705,6 +705,7 @@ impl Cheatcodes {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
             ecx.cfg.spec = spec_id;
+            ecx.cfg.set_gas_params(monad_gas_params(spec_id));
         }
 
         let gas = Gas::new(call.gas_limit);
@@ -1666,6 +1667,7 @@ impl Inspector<MonadContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
             ecx.cfg.spec = spec_id;
+            ecx.cfg.set_gas_params(monad_gas_params(spec_id));
         }
 
         let gas = Gas::new(input.gas_limit());

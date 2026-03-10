@@ -1116,12 +1116,15 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 impl Cheatcode for setEvmVersionCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { evm } = self;
-        // Validate the EVM version string is valid
+        if let Ok(spec_id) = MonadSpecId::from_str(evm) {
+            ccx.state.execution_evm_version = Some(spec_id);
+            return Ok(Default::default());
+        }
+
+        // Ethereum EVM versions remain accepted for compatibility, but on Monad they do not
+        // change the active Monad hardfork.
         let _ = EvmVersion::from_str(evm)
             .map_err(|_| Error::from(format!("invalid evm version {evm}")))?;
-        // For Monad, always use the default MonadSpecId (currently MonadEight, equivalent to
-        // PRAGUE) since Monad hardforks are independent of Ethereum's evm_version
-        ccx.state.execution_evm_version = Some(MonadSpecId::default());
         Ok(Default::default())
     }
 }

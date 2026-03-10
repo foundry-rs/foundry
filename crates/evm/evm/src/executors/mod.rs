@@ -31,7 +31,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
-use monad_revm::MonadSpecId;
+use monad_revm::{MonadSpecId, instructions::monad_gas_params};
 use revm::{
     bytecode::Bytecode,
     context::{BlockEnv, TxEnv},
@@ -195,6 +195,7 @@ impl Executor {
     /// Sets the EVM spec ID.
     pub fn set_spec_id(&mut self, spec_id: MonadSpecId) {
         self.env.evm_env.cfg_env.spec = spec_id;
+        self.env.evm_env.cfg_env.set_gas_params(monad_gas_params(spec_id));
     }
 
     /// Returns the gas limit for calls and deployments.

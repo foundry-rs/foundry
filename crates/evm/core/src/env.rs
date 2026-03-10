@@ -1,5 +1,5 @@
 pub use alloy_evm::EvmEnv;
-use monad_revm::{MonadCfgEnv, MonadSpecId};
+use monad_revm::{MonadCfgEnv, MonadSpecId, instructions::monad_gas_params};
 use revm::{
     Context, Database, Journal, JournalEntry,
     context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
@@ -23,6 +23,7 @@ impl Env {
     pub fn default_with_spec_id(spec_id: MonadSpecId) -> Self {
         let mut cfg = MonadCfg::default();
         cfg.spec = spec_id;
+        cfg.set_gas_params(monad_gas_params(spec_id));
 
         Self::from(cfg, BlockEnv::default(), TxEnv::default())
     }
@@ -39,6 +40,7 @@ impl Env {
     ) -> Self {
         let mut cfg = cfg;
         cfg.spec = spec_id;
+        cfg.set_gas_params(monad_gas_params(spec_id));
 
         Self::from(cfg, block, tx)
     }
