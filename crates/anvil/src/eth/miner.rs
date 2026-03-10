@@ -2,6 +2,7 @@
 
 use crate::eth::pool::{Pool, transactions::PoolTransaction};
 use alloy_primitives::TxHash;
+use foundry_primitives::FoundryTxEnvelope;
 use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, StreamExt},
@@ -16,8 +17,7 @@ use std::{
 };
 use tokio::time::{Interval, MissedTickBehavior};
 
-#[derive(Clone, Debug)]
-pub struct Miner {
+pub struct Miner<T = FoundryTxEnvelope> {
     /// The mode this miner currently operates in
     mode: Arc<RwLock<MiningMode>>,
     /// used for task wake up when the mining mode was forcefully changed
@@ -26,10 +26,29 @@ pub struct Miner {
     inner: Arc<MinerInner>,
     /// Transactions included into the pool before any others are.
     /// Done once on startup.
-    force_transactions: Option<Vec<Arc<PoolTransaction>>>,
+    force_transactions: Option<Vec<Arc<PoolTransaction<T>>>>,
 }
 
-impl Miner {
+impl<T> Clone for Miner<T> {
+    fn clone(&self) -> Self {
+        Self {
+            mode: self.mode.clone(),
+            inner: self.inner.clone(),
+            force_transactions: self.force_transactions.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for Miner<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Miner")
+            .field("mode", &self.mode)
+            .field("force_transactions", &self.force_transactions.as_ref().map(|txs| txs.len()))
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> Miner<T> {
     /// Returns a new miner with that operates in the given `mode`.
     pub fn new(mode: MiningMode) -> Self {
         Self {
@@ -45,7 +64,7 @@ impl Miner {
     /// there are not other transactions in the pool.
     pub fn with_forced_transactions(
         mut self,
-        force_transactions: Option<Vec<PoolTransaction>>,
+        force_transactions: Option<Vec<PoolTransaction<T>>>,
     ) -> Self {
         self.force_transactions =
             force_transactions.map(|tx| tx.into_iter().map(Arc::new).collect());
@@ -85,9 +104,9 @@ impl Miner {
     /// May return an empty list, if no transactions are ready.
     pub fn poll(
         &mut self,
-        pool: &Arc<Pool>,
+        pool: &Arc<Pool<T>>,
         cx: &mut Context<'_>,
-    ) -> Poll<Vec<Arc<PoolTransaction>>> {
+    ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         self.inner.register(cx);
         let next = ready!(self.mode.write().poll(pool, cx));
         if let Some(mut transactions) = self.force_transactions.take() {
@@ -160,11 +179,11 @@ impl MiningMode {
     }
 
     /// polls the [Pool] and returns those transactions that should be put in a block, if any.
-    pub fn poll(
+    pub fn poll<T>(
         &mut self,
-        pool: &Arc<Pool>,
+        pool: &Arc<Pool<T>>,
         cx: &mut Context<'_>,
-    ) -> Poll<Vec<Arc<PoolTransaction>>> {
+    ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         match self {
             Self::None => Poll::Pending,
             Self::Auto(miner) => miner.poll(pool, cx),
@@ -217,7 +236,11 @@ impl FixedBlockTimeMiner {
         Self { interval }
     }
 
-    fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
+    fn poll<T>(
+        &mut self,
+        pool: &Arc<Pool<T>>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         if self.interval.poll_tick(cx).is_ready() {
             // drain the pool
             return Poll::Ready(pool.ready_transactions().collect());
@@ -243,7 +266,11 @@ pub struct ReadyTransactionMiner {
 }
 
 impl ReadyTransactionMiner {
-    fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
+    fn poll<T>(
+        &mut self,
+        pool: &Arc<Pool<T>>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         // always drain the notification stream so that we're woken up as soon as there's a new tx
         while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
             self.has_pending_txs = Some(true);
