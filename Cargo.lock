@@ -4485,8 +4485,8 @@ dependencies = [
 name = "forge-script-sequence"
 version = "1.6.0"
 dependencies = [
- "alloy-network",
  "alloy-primitives",
+ "alloy-rpc-types-eth",
  "eyre",
  "foundry-common",
  "foundry-compilers",

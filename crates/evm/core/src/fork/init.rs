@@ -1,4 +1,4 @@
-use crate::{AsEnvMut, Env, EvmEnv, utils::apply_chain_and_block_specific_env_changes};
+use crate::{Env, EvmEnv, utils::apply_chain_and_block_specific_env_changes};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Network, Provider, network::BlockResponse};
@@ -87,7 +87,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
         },
     };
 
-    apply_chain_and_block_specific_env_changes::<N>(env.as_env_mut(), &block, configs);
+    apply_chain_and_block_specific_env_changes::<N>(&mut env.evm_env, &block, configs);
 
     Ok((env, block))
 }

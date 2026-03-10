@@ -190,7 +190,7 @@ pub struct Backend {
     /// executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory.
-    blockchain: Blockchain,
+    blockchain: Blockchain<FoundryNetwork>,
     /// Historic states of previous blocks.
     states: Arc<RwLock<InMemoryBlockStates>>,
     /// Env data of the chain
@@ -3155,7 +3155,10 @@ impl Backend {
     }
 
     /// Returns the transaction receipt for the given hash
-    pub(crate) fn mined_transaction_receipt(&self, hash: B256) -> Option<MinedTransactionReceipt> {
+    pub(crate) fn mined_transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
         let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
             self.blockchain.get_transaction_by_hash(&hash)?;
 
@@ -3675,10 +3678,10 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::NoBlobHashes);
             }
 
-            // Ensure the tx does not exceed the max blobs per block.
-            let max_blob_count = self.blob_params().max_blob_count as usize;
-            if blob_count > max_blob_count {
-                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blob_count));
+            // Ensure the tx does not exceed the max blobs per transaction.
+            let max_blobs_per_tx = self.blob_params().max_blobs_per_tx as usize;
+            if blob_count > max_blobs_per_tx {
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blobs_per_tx));
             }
 
             // Check for any blob validation errors if not impersonating.

@@ -1,5 +1,5 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
-use alloy_network::AnyTransactionReceipt;
+use alloy_rpc_types_eth::TransactionReceipt;
 use eyre::{Result, bail};
 use foundry_common::fs;
 use revm_inspectors::tracing::types::CallKind;
@@ -141,7 +141,7 @@ impl BroadcastReader {
     pub fn into_tx_receipts(
         &self,
         broadcast: ScriptSequence,
-    ) -> Vec<(TransactionWithMetadata, AnyTransactionReceipt)> {
+    ) -> Vec<(TransactionWithMetadata, TransactionReceipt)> {
         let ScriptSequence { transactions, receipts, .. } = broadcast;
 
         let mut targets = Vec::new();

@@ -1,6 +1,6 @@
 use crate::transaction::TransactionWithMetadata;
-use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{TxHash, hex, map::HashMap};
+use alloy_rpc_types_eth::TransactionReceipt;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, fs, shell};
 use foundry_compilers::ArtifactId;
@@ -25,7 +25,7 @@ pub struct NestedValue {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
-    pub receipts: Vec<AnyTransactionReceipt>,
+    pub receipts: Vec<TransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
     #[serde(skip)]
@@ -140,7 +140,7 @@ impl ScriptSequence {
         Ok(())
     }
 
-    pub fn add_receipt(&mut self, receipt: AnyTransactionReceipt) {
+    pub fn add_receipt(&mut self, receipt: TransactionReceipt) {
         self.receipts.push(receipt);
     }
 

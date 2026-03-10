@@ -275,12 +275,13 @@ Created new encrypted keystore file: [..]
 });
 
 // tests that `cast wallet new` prompts before overwriting an existing keystore file
-casttest!(new_wallet_keystore_overwrite_protection, |_prj, cmd| {
+casttest!(new_wallet_keystore_overwrite_protection, |prj, cmd| {
     // Create the initial keystore
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"]).assert_success();
 
     // Attempt to overwrite with stdin "n" — should be cancelled
     cmd.cast_fuse()
+        .current_dir(prj.root())
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
         .stdin("n\n")
         .assert_failure()
@@ -293,12 +294,13 @@ Error: Operation cancelled. No keystores were modified.
 });
 
 // tests that `cast wallet new --force` overwrites existing keystore files without prompting
-casttest!(new_wallet_keystore_overwrite_force, |_prj, cmd| {
+casttest!(new_wallet_keystore_overwrite_force, |prj, cmd| {
     // Create the initial keystore
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"]).assert_success();
 
     // Overwrite with --force — should succeed without prompting
     cmd.cast_fuse()
+        .current_dir(prj.root())
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--force"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -309,13 +311,14 @@ Created new encrypted keystore file: [..]
 });
 
 // tests that `cast wallet new -n 2` prompts before overwriting existing keystore files
-casttest!(new_wallet_keystore_overwrite_protection_multiple, |_prj, cmd| {
+casttest!(new_wallet_keystore_overwrite_protection_multiple, |prj, cmd| {
     // Create 2 keystores: test-account_1 and test-account_2
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
         .assert_success();
 
     // Attempt to overwrite with stdin "n" — should list both and cancel
     cmd.cast_fuse()
+        .current_dir(prj.root())
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
         .stdin("n\n")
         .assert_failure()
