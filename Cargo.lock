@@ -341,7 +341,7 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.2.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm?branch=feat%2Fmip-3-linear-memory#d8b12861b29cd8fad429054e43379989c45d5cf2"
+source = "git+https://github.com/category-labs/alloy-monad-evm?branch=main#2b0a7e31aa26ec9de2cef30f0bd733eb016b6aef"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -6768,7 +6768,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.2.0"
-source = "git+https://github.com/category-labs/monad-revm?branch=feat%2Fmip-3-linear-memory#dae6b77757549f75ae8a38d9643032828294f785"
+source = "git+https://github.com/category-labs/monad-revm?branch=main#b2107569dc6ac38fc299d3b6fd41963006ca31fa"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
