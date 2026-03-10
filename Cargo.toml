@@ -510,7 +510,7 @@ alloy-op-hardforks = { git = "https://github.com/mablr/optimism", rev = "1ebf2dc
 revm-inspectors = { git = "https://github.com/stevencartavia/revm-inspectors.git", branch = "alloy-2.0" }
 
 ## foundry
-foundry-fork-db = { git = "https://github.com/stevencartavia/foundry-fork-db", branch = "alloy-2.0" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", branch = "alloy-2.0" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
