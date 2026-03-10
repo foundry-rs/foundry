@@ -325,7 +325,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.28.1"
-source = "git+https://github.com/mablr/evm.git?branch=chore%2Fbump_alloy2.0_rc#588011064ac9b0110fb29e58f84c036d2f1faa16"
+source = "git+https://github.com/alloy-rs/evm.git?branch=alloy-2.0#57106d2da0bc0b0a4a7042d0bff20fa29cb9978d"
 dependencies = [
  "alloy-consensus 2.0.0-rc.0",
  "alloy-eips 2.0.0-rc.0",
@@ -4486,7 +4486,7 @@ name = "forge-script-sequence"
 version = "1.6.0"
 dependencies = [
  "alloy-primitives",
- "alloy-rpc-types-eth",
+ "alloy-rpc-types-eth 2.0.0-rc.0",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -5128,7 +5128,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.23.0"
-source = "git+https://github.com/stevencartavia/foundry-fork-db?branch=alloy-2.0#33482efa696ebc19e803dd5ad6314a947cfeea79"
+source = "git+https://github.com/foundry-rs/foundry-fork-db?branch=alloy-2.0#294a520b9277e7f12d3d7267d7cdd86dc5e56297"
 dependencies = [
  "alloy-chains",
  "alloy-consensus 2.0.0-rc.0",
