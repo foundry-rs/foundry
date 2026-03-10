@@ -252,8 +252,8 @@ pub trait NestedEvm {
         tx: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
 
-    /// Returns a snapshot of the current environment (cfg, block, tx).
-    fn to_env(&self) -> Env;
+    /// Returns a snapshot of the current environment (cfg + block, tx).
+    fn to_env(&self) -> (EvmEnv, TxEnv);
 }
 
 impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
@@ -272,14 +272,11 @@ impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
         Evm::transact_raw(self, tx)
     }
 
-    fn to_env(&self) -> Env {
-        Env {
-            evm_env: EvmEnv {
-                cfg_env: self.inner.ctx.cfg.clone(),
-                block_env: self.inner.ctx.block.clone(),
-            },
-            tx: self.inner.ctx.tx.clone(),
-        }
+    fn to_env(&self) -> (EvmEnv, TxEnv) {
+        (
+            EvmEnv { cfg_env: self.inner.ctx.cfg.clone(), block_env: self.inner.ctx.block.clone() },
+            self.inner.ctx.tx.clone(),
+        )
     }
 }
 
@@ -291,24 +288,25 @@ pub fn with_cloned_context<CTX: FoundryContextExt, R>(
     ecx: &mut CTX,
     f: impl FnOnce(
         &mut dyn DatabaseExt,
-        Env,
+        EvmEnv,
+        TxEnv,
         JournaledState,
-    ) -> Result<(R, Env, JournaledState), EVMError<DatabaseError>>,
+    ) -> Result<(R, EvmEnv, TxEnv, JournaledState), EVMError<DatabaseError>>,
 ) -> Result<R, EVMError<DatabaseError>>
 where
     CTX::Journal: FoundryJournalExt,
 {
-    let env = Env::clone_from_context(ecx);
+    let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
 
     let journal = ecx.journal_mut();
     let (db, journal_inner) = journal.as_db_and_inner();
     let journal_inner_clone = journal_inner.clone();
 
-    let (result, sub_env, sub_inner) = f(db, env, journal_inner_clone)?;
+    let (result, sub_evm_env, sub_tx, sub_inner) = f(db, evm_env, tx_env, journal_inner_clone)?;
 
     // Write back modified state. The db borrow was released when f returned.
     ecx.journal_mut().set_inner(sub_inner);
-    sub_env.apply_to(ecx);
+    Env::apply_evm_and_tx(ecx, sub_evm_env, sub_tx);
 
     Ok(result)
 }
