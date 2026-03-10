@@ -32,7 +32,7 @@ use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_primitives::FoundryNetwork;
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -524,15 +524,34 @@ impl<N: Network> Blockchain<N> {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Clone, Debug)]
-pub struct MinedBlockOutcome {
+pub struct MinedBlockOutcome<T = FoundryTxEnvelope> {
     /// The block that was mined
     pub block_number: u64,
     /// All transactions included in the block
-    pub included: Vec<Arc<PoolTransaction>>,
+    pub included: Vec<Arc<PoolTransaction<T>>>,
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
-    pub invalid: Vec<Arc<PoolTransaction>>,
+    pub invalid: Vec<Arc<PoolTransaction<T>>>,
+}
+
+impl<T> Clone for MinedBlockOutcome<T> {
+    fn clone(&self) -> Self {
+        Self {
+            block_number: self.block_number,
+            included: self.included.clone(),
+            invalid: self.invalid.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for MinedBlockOutcome<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MinedBlockOutcome")
+            .field("block_number", &self.block_number)
+            .field("included", &self.included.len())
+            .field("invalid", &self.invalid.len())
+            .finish()
+    }
 }
 
 /// Container type for a mined transaction
@@ -602,7 +621,6 @@ mod tests {
     use crate::eth::backend::db::Db;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
-    use foundry_primitives::FoundryTxEnvelope;
     use revm::{database::DatabaseRef, state::AccountInfo};
 
     #[test]
