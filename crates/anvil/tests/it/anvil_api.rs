@@ -708,7 +708,8 @@ async fn flaky_test_reorg() {
 
     // Verify that historic blocks are still accessible
     for num in (0..14).rev() {
-        let _ = provider.get_block_by_number(num.into()).full().await.unwrap();
+        let block = provider.get_block_by_number(num.into()).full().await.unwrap();
+        assert!(block.is_some(), "Historic block {num} should be accessible after reorg");
     }
 
     // Send a few more transaction to verify the chain can still progress
@@ -817,10 +818,20 @@ async fn test_reorg_blockhash_opcode_consistency() {
 
     api.mine_one().await;
 
-    for (block_num, _rpc_before, _opcode_before) in &cached_hashes {
+    for (block_num, rpc_before, opcode_before) in &cached_hashes {
         let rpc_after =
             provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
         let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap();
+        if *block_num <= tip_before_reorg.saturating_sub(5) {
+            assert_eq!(
+                rpc_after, *rpc_before,
+                "Block {block_num}: hash should not change for non-reorged blocks"
+            );
+            assert_eq!(
+                opcode_after, *opcode_before,
+                "Block {block_num}: BLOCKHASH should not change for non-reorged blocks"
+            );
+        }
         assert_eq!(
             rpc_after, opcode_after,
             "Block {block_num}: RPC ({rpc_after}) and BLOCKHASH opcode ({opcode_after}) should match after reorg"
@@ -866,7 +877,7 @@ async fn test_reorg_deep_blockhash_consistency() {
     let tip_after_reorg = api.block_number().unwrap().to::<u64>();
 
     // Verify blocks still in the 256 window have consistent hashes
-    for (block_num, _rpc_before) in &cached_hashes {
+    for (block_num, rpc_before) in &cached_hashes {
         // Skip blocks that were reorged
         if *block_num > tip_after_reorg - 50 {
             continue;
@@ -874,6 +885,10 @@ async fn test_reorg_deep_blockhash_consistency() {
         let rpc_after =
             provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
         let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap();
+        assert_eq!(
+            rpc_after, *rpc_before,
+            "Block {block_num}: hash should not change for non-reorged blocks"
+        );
         assert_eq!(
             rpc_after, opcode_after,
             "Block {block_num}: RPC and BLOCKHASH should match after deep reorg"
@@ -1004,8 +1019,7 @@ async fn test_increase_time_by_zero() {
     let next_blk_timestamp = block.header.timestamp;
 
     assert_eq!(next_blk_num, init_number + 1);
-    // With strictly increasing timestamps, increase_time(0) + mine gives +1
-    assert!(next_blk_timestamp > init_timestamp, "{next_blk_timestamp} <= {init_timestamp}");
+    assert!(next_blk_timestamp > init_timestamp, "{next_blk_timestamp} should be > {init_timestamp}");
 }
 
 // evm_mine(MineOptions::Timestamp(prev_block_timestamp + 1))
@@ -1059,9 +1073,9 @@ async fn test_mine_blk_with_same_timestamp() {
         .map(|blk| blk.unwrap().unwrap().header.timestamp)
         .collect::<Vec<_>>();
 
-    // All timestamps should be strictly increasing.
-    assert!(timestamps.windows(2).all(|w| w[1] > w[0]), "{timestamps:#?}");
-    assert!(timestamps[0] > init_timestamp, "{timestamps:#?} != {init_timestamp}");
+    // All timestamps should be strictly increasing by 1.
+    assert!(timestamps.windows(2).all(|w| w[1] == w[0] + 1), "{timestamps:#?}");
+    assert_eq!(timestamps[0], init_timestamp + 1, "{timestamps:#?} != {init_timestamp}");
 }
 
 // <https://github.com/foundry-rs/foundry/issues/8962>
