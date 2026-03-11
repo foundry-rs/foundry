@@ -213,6 +213,21 @@ where
     deserialize_u64_or_max(deserializer)?.try_into().map_err(D::Error::custom)
 }
 
+/// Serialize a `usize` as `"max"` if it equals `usize::MAX`, as a string if it exceeds
+/// `i64::MAX` (TOML integer limit), or as a plain number otherwise.
+pub(crate) fn serialize_usize_or_max<S>(value: &usize, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if *value == usize::MAX {
+        serializer.serialize_str("max")
+    } else if *value > i64::MAX as usize {
+        serializer.serialize_str(&value.to_string())
+    } else {
+        serializer.serialize_u64(*value as u64)
+    }
+}
+
 /// Deserialize into `U256` from either a `u64`, a `U256` hex string, or a decimal string.
 pub fn deserialize_u64_to_u256<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
