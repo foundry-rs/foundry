@@ -3,7 +3,8 @@
 #![allow(rustdoc::private_doc_tests)]
 
 use crate::{EthApi, shutdown::Shutdown, tasks::block_listener::BlockListener};
-use alloy_network::{AnyHeader, AnyNetwork};
+use alloy_consensus::BlockHeader;
+use alloy_network::{BlockResponse, Network};
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::anvil::Forking;
@@ -65,12 +66,13 @@ impl TaskManager {
     ///
     /// let provider = RootProvider::connect(endpoint).await.unwrap();
     ///
-    /// handle.task_manager().spawn_reset_on_new_polled_blocks(provider, api);
+    /// handle.task_manager().spawn_reset_on_new_polled_blocks::<Ethereum, _>(provider, api);
     /// # }
     /// ```
-    pub fn spawn_reset_on_new_polled_blocks<P>(&self, provider: P, api: EthApi)
+    pub fn spawn_reset_on_new_polled_blocks<N, P>(&self, provider: P, api: EthApi)
     where
-        P: Provider<AnyNetwork> + Clone + Unpin + 'static,
+        N: Network,
+        P: Provider<N> + Clone + Unpin + 'static,
     {
         self.spawn_block_poll_listener(provider.clone(), move |hash| {
             let provider = provider.clone();
@@ -80,7 +82,7 @@ impl TaskManager {
                     let _ = api
                         .anvil_reset(Some(Forking {
                             json_rpc_url: None,
-                            block_number: Some(block.header.number),
+                            block_number: Some(block.header().number()),
                         }))
                         .await;
                 }
@@ -91,9 +93,10 @@ impl TaskManager {
     /// Spawns a new [`BlockListener`] task that listens for new blocks (poll-based) See also
     /// [`Provider::watch_blocks`] and executes the future the `task_factory` returns for the new
     /// block hash
-    pub fn spawn_block_poll_listener<P, F, Fut>(&self, provider: P, task_factory: F)
+    pub fn spawn_block_poll_listener<N, P, F, Fut>(&self, provider: P, task_factory: F)
     where
-        P: Provider<AnyNetwork> + 'static,
+        N: Network,
+        P: Provider<N> + 'static,
         F: Fn(B256) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
@@ -122,21 +125,22 @@ impl TaskManager {
     ///
     /// let provider = RootProvider::connect("ws://...").await.unwrap();
     ///
-    /// handle.task_manager().spawn_reset_on_subscribed_blocks(provider, api);
+    /// handle.task_manager().spawn_reset_on_subscribed_blocks::<Ethereum, _>(provider, api);
     ///
     /// # }
     /// ```
-    pub fn spawn_reset_on_subscribed_blocks<P>(&self, provider: P, api: EthApi)
+    pub fn spawn_reset_on_subscribed_blocks<N, P>(&self, provider: P, api: EthApi)
     where
-        P: Provider<AnyNetwork> + 'static,
+        N: Network,
+        P: Provider<N> + 'static,
     {
-        self.spawn_block_subscription(provider, move |header| {
+        self.spawn_block_subscription(provider, move |header: N::HeaderResponse| {
             let api = api.clone();
             async move {
                 let _ = api
                     .anvil_reset(Some(Forking {
                         json_rpc_url: None,
-                        block_number: Some(header.number),
+                        block_number: Some(header.number()),
                     }))
                     .await;
             }
@@ -146,10 +150,11 @@ impl TaskManager {
     /// Spawns a new [`BlockListener`] task that listens for new blocks (via subscription) See also
     /// [`Provider::subscribe_blocks()`] and executes the future the `task_factory` returns for the
     /// new block hash
-    pub fn spawn_block_subscription<P, F, Fut>(&self, provider: P, task_factory: F)
+    pub fn spawn_block_subscription<N, P, F, Fut>(&self, provider: P, task_factory: F)
     where
-        P: Provider<AnyNetwork> + 'static,
-        F: Fn(alloy_rpc_types::Header<AnyHeader>) -> Fut + Unpin + Send + Sync + 'static,
+        N: Network,
+        P: Provider<N> + 'static,
+        F: Fn(N::HeaderResponse) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
         let shutdown = self.on_shutdown.clone();
