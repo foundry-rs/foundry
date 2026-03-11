@@ -136,6 +136,7 @@ quote_style = "double"
 number_underscore = "preserve"
 hex_underscore = "remove"
 single_line_statement_blocks = "preserve"
+brace_style = "same_line"
 override_spacing = false
 wrap_comments = false
 docs_style = "preserve"
@@ -1357,6 +1358,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "number_underscore": "preserve",
     "hex_underscore": "remove",
     "single_line_statement_blocks": "preserve",
+    "brace_style": "same_line",
     "override_spacing": false,
     "wrap_comments": false,
     "docs_style": "preserve",

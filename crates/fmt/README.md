@@ -121,6 +121,7 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `number_underscore` | `preserve` | The style of underscores in number literals. Options: `preserve`, `remove`, `thousands`. |
 | `hex_underscore` | `remove` | The style of underscores in hex literals. Options: `preserve`, `remove`, `bytes`. |
 | `single_line_statement_blocks` | `preserve` | The style of single-line blocks in statements. Options: `preserve`, `single`, `multi`. |
+| `brace_style` | `same_line` | The style of opening braces for code blocks. Options: `same_line`, `allman`. |
 | `override_spacing` | `false` | Print a space in the `override` attribute. |
 | `wrap_comments` | `false` | Wrap comments when `line_length` is reached. |
 | `docs_style` | `preserve` | Enforces the style of doc (natspec) comments. Options: `preserve`, `line`, `block`. |
