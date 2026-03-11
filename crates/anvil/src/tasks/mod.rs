@@ -66,7 +66,7 @@ impl TaskManager {
     ///
     /// let provider = RootProvider::connect(endpoint).await.unwrap();
     ///
-    /// handle.task_manager().spawn_reset_on_new_polled_blocks(provider, api);
+    /// handle.task_manager().spawn_reset_on_new_polled_blocks::<Ethereum, _>(provider, api);
     /// # }
     /// ```
     pub fn spawn_reset_on_new_polled_blocks<N, P>(&self, provider: P, api: EthApi)
@@ -125,7 +125,7 @@ impl TaskManager {
     ///
     /// let provider = RootProvider::connect("ws://...").await.unwrap();
     ///
-    /// handle.task_manager().spawn_reset_on_subscribed_blocks(provider, api);
+    /// handle.task_manager().spawn_reset_on_subscribed_blocks::<Ethereum, _>(provider, api);
     ///
     /// # }
     /// ```
