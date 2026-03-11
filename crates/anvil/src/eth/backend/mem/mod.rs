@@ -518,10 +518,10 @@ impl Backend {
                     env.evm_env.cfg_env.chain_id = fork.chain_id();
                     env.evm_env.block_env = BlockEnv {
                         number: U256::from(fork_block_number),
-                        timestamp: U256::from(fork_block.header.timestamp),
+                        timestamp: U256::from(fork_block.header.timestamp()),
                         gas_limit,
-                        difficulty: fork_block.header.difficulty,
-                        prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
+                        difficulty: fork_block.header.difficulty(),
+                        prevrandao: Some(fork_block.header.mix_hash().unwrap_or_default()),
                         // Keep previous `beneficiary` and `basefee` value
                         beneficiary: env.evm_env.block_env.beneficiary,
                         basefee: env.evm_env.block_env.basefee,
@@ -531,16 +531,16 @@ impl Backend {
                     // this is the base fee of the current block, but we need the base fee of
                     // the next block
                     let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                        fork_block.header.gas_used,
+                        fork_block.header.gas_used(),
                         gas_limit,
-                        fork_block.header.base_fee_per_gas.unwrap_or_default(),
+                        fork_block.header.base_fee_per_gas().unwrap_or_default(),
                     );
 
                     self.fees.set_base_fee(next_block_base_fee);
                 }
 
                 // reset the time to the timestamp of the forked block
-                self.time.reset(fork_block.header.timestamp);
+                self.time.reset(fork_block.header.timestamp());
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
@@ -946,17 +946,17 @@ impl Backend {
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-            let reset_time = block.header.timestamp;
+            let reset_time = block.header.timestamp();
             self.time.reset(reset_time);
 
             let mut env = self.env.write();
             env.evm_env.block_env = BlockEnv {
                 number: U256::from(num),
-                timestamp: U256::from(block.header.timestamp),
-                difficulty: block.header.difficulty,
+                timestamp: U256::from(block.header.timestamp()),
+                difficulty: block.header.difficulty(),
                 // ensures prevrandao is set
-                prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
-                gas_limit: block.header.gas_limit,
+                prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
+                gas_limit: block.header.gas_limit(),
                 // Keep previous `beneficiary` and `basefee` value
                 beneficiary: env.evm_env.block_env.beneficiary,
                 basefee: env.evm_env.block_env.basefee,
@@ -1062,16 +1062,16 @@ impl Backend {
             }
         }
 
-        if let Some(latest) = state.blocks.iter().max_by_key(|b| b.header.number) {
+        if let Some(latest) = state.blocks.iter().max_by_key(|b| b.header.number()) {
             let header = &latest.header;
             let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                header.gas_used,
-                header.gas_limit,
-                header.base_fee_per_gas.unwrap_or_default(),
+                header.gas_used(),
+                header.gas_limit(),
+                header.base_fee_per_gas().unwrap_or_default(),
             );
             let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-                header.excess_blob_gas.unwrap_or_default(),
-                header.blob_gas_used.unwrap_or_default(),
+                header.excess_blob_gas().unwrap_or_default(),
+                header.blob_gas_used().unwrap_or_default(),
             );
 
             // update next base fee
@@ -1346,7 +1346,10 @@ impl Backend {
 
                 // we also need to update the new blockhash in the db itself
                 let block_hash = executed_tx.block.block.header.hash_slow();
-                db.insert_block_hash(U256::from(executed_tx.block.block.header.number), block_hash);
+                db.insert_block_hash(
+                    U256::from(executed_tx.block.block.header.number()),
+                    block_hash,
+                );
 
                 (executed_tx, block_hash)
             };
@@ -2089,8 +2092,8 @@ impl Backend {
                     all_logs.push(Log {
                         inner: log.clone(),
                         block_hash: Some(block_hash),
-                        block_number: Some(block.header.number),
-                        block_timestamp: Some(block.header.timestamp),
+                        block_number: Some(block.header.number()),
+                        block_timestamp: Some(block.header.timestamp()),
                         transaction_hash: Some(transaction_hash),
                         transaction_index: Some(tx.info.transaction_index),
                         log_index: Some(block_log_index as u64),
@@ -2209,7 +2212,7 @@ impl Backend {
         block: &Block,
     ) -> Option<Vec<AnyRpcTransaction>> {
         let mut transactions = Vec::with_capacity(block.body.transactions.len());
-        let base_fee = block.header.base_fee_per_gas;
+        let base_fee = block.header.base_fee_per_gas();
         let storage = self.blockchain.storage.read();
         for hash in block.body.transactions.iter().map(|tx| tx.hash()) {
             let info = storage.transactions.get(&hash)?.info.clone();
@@ -2417,13 +2420,13 @@ impl Backend {
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         let block = BlockEnv {
-                            number: U256::from(block.header.number),
-                            beneficiary: block.header.beneficiary,
-                            timestamp: U256::from(block.header.timestamp),
-                            difficulty: block.header.difficulty,
-                            prevrandao: Some(block.header.mix_hash),
-                            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                            gas_limit: block.header.gas_limit,
+                            number: U256::from(block.header.number()),
+                            beneficiary: block.header.beneficiary(),
+                            timestamp: U256::from(block.header.timestamp()),
+                            difficulty: block.header.difficulty(),
+                            prevrandao: block.header.mix_hash(),
+                            basefee: block.header.base_fee_per_gas().unwrap_or_default(),
+                            gas_limit: block.header.gas_limit(),
                             ..Default::default()
                         };
                         f(state, block)
@@ -2700,13 +2703,13 @@ impl Backend {
             let mut env = self.env.read().clone();
 
             env.evm_env.block_env = BlockEnv {
-                number: U256::from(block.header.number),
-                beneficiary: block.header.beneficiary,
-                timestamp: U256::from(block.header.timestamp),
-                difficulty: block.header.difficulty,
-                prevrandao: Some(block.header.mix_hash),
-                basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                gas_limit: block.header.gas_limit,
+                number: U256::from(block.header.number()),
+                beneficiary: block.header.beneficiary(),
+                timestamp: U256::from(block.header.timestamp()),
+                difficulty: block.header.difficulty(),
+                prevrandao: block.header.mix_hash(),
+                basefee: block.header.base_fee_per_gas().unwrap_or_default(),
+                gas_limit: block.header.gas_limit(),
                 ..Default::default()
             };
 
@@ -3018,13 +3021,13 @@ impl Backend {
         // Configure the block environment
         let mut env = self.env.read().clone();
         env.evm_env.block_env = BlockEnv {
-            number: U256::from(block.header.number),
-            beneficiary: block.header.beneficiary,
-            timestamp: U256::from(block.header.timestamp),
-            difficulty: block.header.difficulty,
-            prevrandao: Some(block.header.mix_hash),
-            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-            gas_limit: block.header.gas_limit,
+            number: U256::from(block.header.number()),
+            beneficiary: block.header.beneficiary(),
+            timestamp: U256::from(block.header.timestamp()),
+            difficulty: block.header.difficulty(),
+            prevrandao: block.header.mix_hash(),
+            basefee: block.header.base_fee_per_gas().unwrap_or_default(),
+            gas_limit: block.header.gas_limit(),
             ..Default::default()
         };
 
@@ -3174,19 +3177,19 @@ impl Backend {
         let transaction = block.body.transactions[index].clone();
 
         // Cancun specific
-        let excess_blob_gas = block.header.excess_blob_gas;
+        let excess_blob_gas = block.header.excess_blob_gas();
         let blob_gas_price =
             alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas_used();
 
-        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas);
+        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
         let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
         let tx_receipt = tx_receipt.convert_logs_rpc(
-            BlockNumHash::new(block.header.number, block_hash),
-            block.header.timestamp,
+            BlockNumHash::new(block.header.number(), block_hash),
+            block.header.timestamp(),
             info.transaction_hash,
             info.transaction_index,
             next_log_index,
@@ -3196,7 +3199,7 @@ impl Backend {
             inner: tx_receipt,
             transaction_hash: info.transaction_hash,
             transaction_index: Some(info.transaction_index),
-            block_number: Some(block.header.number),
+            block_number: Some(block.header.number()),
             gas_used: info.gas_used,
             contract_address: info.contract_address,
             effective_gas_price,
@@ -3208,7 +3211,7 @@ impl Backend {
         };
 
         // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
-        let inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp);
+        let inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
@@ -3293,7 +3296,7 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            block.header.base_fee_per_gas,
+            block.header.base_fee_per_gas(),
         ))
     }
 
@@ -3331,7 +3334,7 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            block.header.base_fee_per_gas,
+            block.header.base_fee_per_gas(),
         ))
     }
 
@@ -3539,15 +3542,15 @@ impl Backend {
             self.blockchain
                 .storage
                 .write()
-                .unwind_to(common_block.header.number, common_block.header.hash_slow());
+                .unwind_to(common_block.header.number(), common_block.header.hash_slow());
 
             // Set environment back to common block
             let mut env = self.env.write();
-            env.evm_env.block_env.number = U256::from(common_block.header.number);
-            env.evm_env.block_env.timestamp = U256::from(common_block.header.timestamp);
-            env.evm_env.block_env.gas_limit = common_block.header.gas_limit;
-            env.evm_env.block_env.difficulty = common_block.header.difficulty;
-            env.evm_env.block_env.prevrandao = Some(common_block.header.mix_hash);
+            env.evm_env.block_env.number = U256::from(common_block.header.number());
+            env.evm_env.block_env.timestamp = U256::from(common_block.header.timestamp());
+            env.evm_env.block_env.gas_limit = common_block.header.gas_limit();
+            env.evm_env.block_env.difficulty = common_block.header.difficulty();
+            env.evm_env.block_env.prevrandao = common_block.header.mix_hash();
 
             self.time.reset(env.evm_env.block_env.timestamp.saturating_to());
         }
@@ -3558,7 +3561,7 @@ impl Backend {
             // access.
             let block_hashes: Vec<_> = {
                 let storage = self.blockchain.storage.read();
-                let min_block = common_block.header.number.saturating_sub(256);
+                let min_block = common_block.header.number().saturating_sub(256);
                 storage
                     .hashes
                     .iter()
@@ -3596,12 +3599,12 @@ where
 {
     let block = BlockEnv {
         number: U256::from(block_number),
-        beneficiary: block.header.beneficiary,
-        timestamp: U256::from(block.header.timestamp),
-        difficulty: block.header.difficulty,
-        prevrandao: block.header.mix_hash,
-        basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-        gas_limit: block.header.gas_limit,
+        beneficiary: block.header.beneficiary(),
+        timestamp: U256::from(block.header.timestamp()),
+        difficulty: block.header.difficulty(),
+        prevrandao: block.header.mix_hash(),
+        basefee: block.header.base_fee_per_gas().unwrap_or_default(),
+        gas_limit: block.header.gas_limit(),
         ..Default::default()
     };
     f(Box::new(state), block)
@@ -3860,7 +3863,7 @@ pub fn transaction_build(
                     block_hash: block
                         .as_ref()
                         .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
-                    block_number: block.as_ref().map(|block| block.header.number),
+                    block_number: block.as_ref().map(|block| block.header.number()),
                     transaction_index: info.as_ref().map(|info| info.transaction_index),
                     effective_gas_price: None,
                 };
@@ -3920,7 +3923,7 @@ pub fn transaction_build(
     let tx = Transaction {
         inner: Recovered::new_unchecked(envelope, from),
         block_hash: block.as_ref().map(|block| block.header.hash_slow()),
-        block_number: block.as_ref().map(|block| block.header.number),
+        block_number: block.as_ref().map(|block| block.header.number()),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
         // deprecated
         effective_gas_price: Some(effective_gas_price),

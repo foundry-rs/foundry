@@ -8,7 +8,7 @@ use crate::{
     state_snapshot::StateSnapshots,
     utils::{configure_tx_env, configure_tx_req_env, get_blob_base_fee_update_fraction},
 };
-use alloy_consensus::Typed2718;
+use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_evm::{Evm, EvmEnv};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
@@ -908,7 +908,7 @@ impl Backend {
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
-            let number = block.header.number;
+            let number = block.header.number();
 
             Ok((number, block))
         }
@@ -2013,18 +2013,18 @@ fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
 /// Updates the evm env's block with the block's data
 fn update_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock) {
     let block_env = &mut evm_env.block_env;
-    block_env.timestamp = U256::from(block.header.timestamp);
-    block_env.beneficiary = block.header.beneficiary;
-    block_env.difficulty = block.header.difficulty;
-    block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-    block_env.gas_limit = block.header.gas_limit;
-    block_env.number = U256::from(block.header.number);
+    block_env.timestamp = U256::from(block.header.timestamp());
+    block_env.beneficiary = block.header.beneficiary();
+    block_env.difficulty = block.header.difficulty();
+    block_env.prevrandao = Some(block.header.mix_hash().unwrap_or_default());
+    block_env.basefee = block.header.base_fee_per_gas().unwrap_or_default();
+    block_env.gas_limit = block.header.gas_limit();
+    block_env.number = U256::from(block.header.number());
 
-    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
+    if let Some(excess_blob_gas) = block.header.excess_blob_gas() {
         evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
             excess_blob_gas,
-            get_blob_base_fee_update_fraction(evm_env.cfg_env.chain_id, block.header.timestamp),
+            get_blob_base_fee_update_fraction(evm_env.cfg_env.chain_id, block.header.timestamp()),
         ));
     }
 }
