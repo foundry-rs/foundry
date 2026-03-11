@@ -321,7 +321,7 @@ impl TestArgs {
             evm_opts.verbosity = 3;
         }
 
-        let env = evm_opts.evm_env().await?;
+        let env = evm_opts.env().await?;
 
         // Enable internal tracing for more informative flamegraph.
         if should_draw && !self.decode_internal {

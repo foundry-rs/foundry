@@ -2103,7 +2103,7 @@ fn apply_state_changeset(
 
 #[cfg(test)]
 mod tests {
-    use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
+    use crate::{backend::Backend, opts::EvmOpts};
     use alloy_primitives::{U256, address};
     use alloy_provider::Provider;
     use foundry_common::provider::get_http_provider;
@@ -2118,18 +2118,13 @@ mod tests {
 
         let block_num = provider.get_block_number().await.unwrap();
 
-        let config = Config::figment();
-        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.to_string());
         evm_opts.fork_block_number = Some(block_num);
 
-        let (env, _) = evm_opts.fork_evm_env(endpoint).await.unwrap();
+        let env = evm_opts.env().await.unwrap();
 
-        let fork = CreateFork {
-            enable_caching: true,
-            url: endpoint.to_string(),
-            env: env.clone(),
-            evm_opts,
-        };
+        let fork = evm_opts.get_fork(&Config::default(), env.clone()).unwrap();
 
         let backend = Backend::spawn(Some(fork)).unwrap();
 

@@ -199,7 +199,7 @@ impl SessionSource {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
-        let env = self.config.evm_opts.evm_env().await?;
+        let env = self.config.evm_opts.env().await?;
 
         let backend = match self.config.backend.clone() {
             Some(backend) => backend,

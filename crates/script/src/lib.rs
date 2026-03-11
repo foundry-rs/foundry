@@ -636,7 +636,7 @@ impl ScriptConfig {
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
-        let env = self.evm_opts.evm_env().await?;
+        let env = self.evm_opts.env().await?;
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
