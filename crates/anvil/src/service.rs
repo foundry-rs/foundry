@@ -20,6 +20,9 @@ use std::{
 };
 use tokio::{task::JoinHandle, time::Interval};
 
+/// The result of a block mining task.
+type MiningResult<T> = (MinedBlockOutcome<T>, Arc<Backend<T>>);
+
 /// The type that drives the blockchain's state
 ///
 /// This service is basically an endless future that continuously polls the miner which returns
@@ -105,9 +108,9 @@ impl Future for NodeService {
 #[must_use = "streams do nothing unless polled"]
 struct BlockProducer<T = FoundryTxEnvelope> {
     /// Holds the backend if no block is being mined
-    idle_backend: Option<Arc<Backend>>,
+    idle_backend: Option<Arc<Backend<T>>>,
     /// Single active future that mines a new block
-    block_mining: Option<JoinHandle<(MinedBlockOutcome<T>, Arc<Backend>)>>,
+    block_mining: Option<JoinHandle<MiningResult<T>>>,
     /// backlog of sets of transactions ready to be mined
     queued: VecDeque<Vec<Arc<PoolTransaction<T>>>>,
 }

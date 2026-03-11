@@ -121,6 +121,7 @@ use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
     io::{Read, Write},
+    marker::PhantomData,
     ops::{Mul, Not},
     path::PathBuf,
     sync::Arc,
@@ -175,8 +176,7 @@ impl<T> BlockRequest<T> {
 }
 
 /// Gives access to the [revm::Database]
-#[derive(Clone, Debug)]
-pub struct Backend {
+pub struct Backend<T = FoundryTxEnvelope> {
     /// Access to [`revm::Database`] abstraction.
     ///
     /// This will be used in combination with [`alloy_evm::Evm`] and is responsible for feeding
@@ -235,9 +235,46 @@ pub struct Backend {
     mining: Arc<tokio::sync::Mutex<()>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
+    _tx: PhantomData<fn() -> T>,
 }
 
-impl Backend {
+impl<T> Clone for Backend<T> {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            blockchain: self.blockchain.clone(),
+            states: self.states.clone(),
+            env: self.env.clone(),
+            fork: self.fork.clone(),
+            time: self.time.clone(),
+            cheats: self.cheats.clone(),
+            fees: self.fees.clone(),
+            genesis: self.genesis.clone(),
+            new_block_listeners: self.new_block_listeners.clone(),
+            active_state_snapshots: self.active_state_snapshots.clone(),
+            enable_steps_tracing: self.enable_steps_tracing,
+            print_logs: self.print_logs,
+            print_traces: self.print_traces,
+            call_trace_decoder: self.call_trace_decoder.clone(),
+            prune_state_history_config: self.prune_state_history_config,
+            transaction_block_keeper: self.transaction_block_keeper,
+            node_config: self.node_config.clone(),
+            slots_in_an_epoch: self.slots_in_an_epoch,
+            precompile_factory: self.precompile_factory.clone(),
+            mining: self.mining.clone(),
+            disable_pool_balance_checks: self.disable_pool_balance_checks,
+            _tx: PhantomData,
+        }
+    }
+}
+
+impl<T> fmt::Debug for Backend<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Backend").finish_non_exhaustive()
+    }
+}
+
+impl<T> Backend<T> {
     /// Initialises the balance of the given accounts
     #[expect(clippy::too_many_arguments)]
     pub async fn with_genesis(
@@ -332,6 +369,7 @@ impl Backend {
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
             disable_pool_balance_checks,
+            _tx: PhantomData,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -943,8 +981,10 @@ impl Backend {
                 storage.best_hash = hash;
                 hash
             };
-            let block =
-                self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+            let block = self
+                .blockchain
+                .get_block_by_hash(&best_block_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
 
             let reset_time = block.header.timestamp();
             self.time.reset(reset_time);
@@ -1166,7 +1206,9 @@ impl Backend {
 
         evm
     }
+}
 
+impl Backend {
     /// executes the transactions without writing to the underlying database
     pub async fn inspect_tx(
         &self,
