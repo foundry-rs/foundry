@@ -87,12 +87,9 @@ pub use analysis::CheatcodeAnalysis;
 /// Shorthand used internally to avoid repeating the full where-clause.
 /// Any `EthEvmContext<&mut dyn DatabaseExt>` satisfies these bounds, so all
 /// existing call-sites (e.g. `InspectorStackRefMut`) keep working unchanged.
-pub trait CheatsCtxExt:
-    FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
-{
-}
+pub trait CheatsCtxExt: FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt> {}
 impl<CTX> CheatsCtxExt for CTX where
-    CTX: FoundryContextExt<Journal: JournalExt + FoundryJournalExt, Db: DatabaseExt>
+    CTX: FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt>
 {
 }
 
@@ -112,9 +109,7 @@ pub trait CheatcodesExecutor<CTX> {
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
         f: NestedEvmClosure<'_>,
-    ) -> Result<(), EVMError<DatabaseError>>
-    where
-        CTX: CheatsCtxExt;
+    ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
     fn transact_on_db(
@@ -123,9 +118,7 @@ pub trait CheatcodesExecutor<CTX> {
         ecx: &mut CTX,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<()>
-    where
-        CTX: CheatsCtxExt;
+    ) -> eyre::Result<()>;
 
     /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
     fn transact_from_tx_on_db(
@@ -133,9 +126,7 @@ pub trait CheatcodesExecutor<CTX> {
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
         tx: &TransactionRequest,
-    ) -> eyre::Result<()>
-    where
-        CTX: CheatsCtxExt;
+    ) -> eyre::Result<()>;
 
     /// Runs a closure with a fresh nested EVM built from a raw database and environment.
     /// Unlike `with_nested_evm`, this does NOT clone from `ecx` and does NOT write back.
@@ -147,9 +138,7 @@ pub trait CheatcodesExecutor<CTX> {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         f: NestedEvmClosure<'_>,
-    ) -> Result<(), EVMError<DatabaseError>>
-    where
-        CTX: CheatsCtxExt;
+    ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
     fn console_log(&mut self, cheats: &mut Cheatcodes, msg: &str);
@@ -166,7 +155,7 @@ pub trait CheatcodesExecutor<CTX> {
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
-pub(crate) fn exec_create<CTX: CheatsCtxExt>(
+pub(crate) fn exec_create<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
     executor: &mut dyn CheatcodesExecutor<CTX>,
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, CTX>,
@@ -197,7 +186,9 @@ pub(crate) fn exec_create<CTX: CheatsCtxExt>(
 #[derive(Debug, Default, Clone, Copy)]
 struct TransparentCheatcodesExecutor;
 
-impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor {
+impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
+    for TransparentCheatcodesExecutor
+{
     fn with_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes,
@@ -390,7 +381,7 @@ impl ArbitraryStorage {
     /// Saves arbitrary storage value for a given address:
     /// - store value in changed values cache.
     /// - update account's storage with given value.
-    pub fn save<CTX: ContextTr<Db: DatabaseExt>>(
+    pub fn save<CTX: ContextTr>(
         &mut self,
         ecx: &mut CTX,
         address: Address,
@@ -410,7 +401,7 @@ impl ArbitraryStorage {
     ///   existing value.
     /// - if no value was yet generated for given slot, then save new value in cache and update both
     ///   source and target storages.
-    pub fn copy<CTX: ContextTr<Db: DatabaseExt>>(
+    pub fn copy<CTX: ContextTr>(
         &mut self,
         ecx: &mut CTX,
         target: Address,
@@ -2021,11 +2012,7 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn meter_gas_record<CTX: CheatsCtxExt>(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut CTX,
-    ) {
+    fn meter_gas_record<CTX: ContextTr>(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 let curr_depth = ecx.journal().depth();
@@ -2089,7 +2076,7 @@ impl Cheatcodes {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end<CTX: CheatsCtxExt>(
+    fn arbitrary_storage_end<CTX: ContextTr>(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut CTX,
@@ -2145,7 +2132,7 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn record_state_diffs<CTX: CheatsCtxExt>(
+    fn record_state_diffs<CTX: ContextTr<Db: DatabaseExt>>(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut CTX,

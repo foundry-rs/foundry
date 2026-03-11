@@ -13,7 +13,10 @@ use foundry_evm_core::{Env, FoundryContextExt, backend::FoundryJournalExt, fork:
 use revm::context::ContextTr;
 
 impl Cheatcode for activeForkCall {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self {} = self;
         ccx.ecx
             .db()
@@ -24,21 +27,30 @@ impl Cheatcode for activeForkCall {
 }
 
 impl Cheatcode for createFork_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { urlOrAlias } = self;
         create_fork(ccx, urlOrAlias, None)
     }
 }
 
 impl Cheatcode for createFork_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { urlOrAlias, blockNumber } = self;
         create_fork(ccx, urlOrAlias, Some(blockNumber.saturating_to()))
     }
 }
 
 impl Cheatcode for createFork_2Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { urlOrAlias, txHash } = self;
         create_fork_at_transaction(ccx, urlOrAlias, txHash)
     }
@@ -127,7 +139,7 @@ impl Cheatcode for selectForkCall {
 }
 
 impl Cheatcode for transact_0Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -138,7 +150,7 @@ impl Cheatcode for transact_0Call {
 }
 
 impl Cheatcode for transact_1Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -149,7 +161,10 @@ impl Cheatcode for transact_1Call {
 }
 
 impl Cheatcode for allowCheatcodesCall {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { account } = self;
         ccx.ecx.db_mut().allow_cheatcode_access(*account);
         Ok(Default::default())
@@ -157,7 +172,10 @@ impl Cheatcode for allowCheatcodesCall {
 }
 
 impl Cheatcode for makePersistent_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { account } = self;
         ccx.ecx.db_mut().add_persistent_account(*account);
         Ok(Default::default())
@@ -165,7 +183,10 @@ impl Cheatcode for makePersistent_0Call {
 }
 
 impl Cheatcode for makePersistent_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { account0, account1 } = self;
         ccx.ecx.db_mut().add_persistent_account(*account0);
         ccx.ecx.db_mut().add_persistent_account(*account1);
@@ -174,7 +195,10 @@ impl Cheatcode for makePersistent_1Call {
 }
 
 impl Cheatcode for makePersistent_2Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { account0, account1, account2 } = self;
         ccx.ecx.db_mut().add_persistent_account(*account0);
         ccx.ecx.db_mut().add_persistent_account(*account1);
@@ -184,7 +208,10 @@ impl Cheatcode for makePersistent_2Call {
 }
 
 impl Cheatcode for makePersistent_3Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { accounts } = self;
         for account in accounts {
             ccx.ecx.db_mut().add_persistent_account(*account);
@@ -194,7 +221,10 @@ impl Cheatcode for makePersistent_3Call {
 }
 
 impl Cheatcode for revokePersistent_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { account } = self;
         ccx.ecx.db_mut().remove_persistent_account(account);
         Ok(Default::default())
@@ -202,7 +232,10 @@ impl Cheatcode for revokePersistent_0Call {
 }
 
 impl Cheatcode for revokePersistent_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { accounts } = self;
         for account in accounts {
             ccx.ecx.db_mut().remove_persistent_account(account);
@@ -212,14 +245,20 @@ impl Cheatcode for revokePersistent_1Call {
 }
 
 impl Cheatcode for isPersistentCall {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { account } = self;
         Ok(ccx.ecx.db().is_persistent(account).abi_encode())
     }
 }
 
 impl Cheatcode for rpc_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { method, params } = self;
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
@@ -236,7 +275,10 @@ impl Cheatcode for rpc_1Call {
 }
 
 impl Cheatcode for eth_getLogsCall {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { fromBlock, toBlock, target, topics } = self;
         let (Ok(from_block), Ok(to_block)) = (u64::try_from(fromBlock), u64::try_from(toBlock))
         else {
@@ -278,7 +320,10 @@ impl Cheatcode for eth_getLogsCall {
 }
 
 impl Cheatcode for getRawBlockHeaderCall {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { blockNumber } = self;
         let url = ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork"))?;
         let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
@@ -300,9 +345,7 @@ impl Cheatcode for getRawBlockHeaderCall {
 }
 
 /// Creates and then also selects the new fork
-fn create_select_fork<
-    CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournalExt>,
->(
+fn create_select_fork<CTX: CheatsCtxExt>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     url_or_alias: &str,
     block: Option<u64>,
@@ -318,7 +361,7 @@ fn create_select_fork<
 }
 
 /// Creates a new fork
-fn create_fork<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt>>(
+fn create_fork<CTX: FoundryContextExt<Db: DatabaseExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     url_or_alias: &str,
     block: Option<u64>,
@@ -329,9 +372,7 @@ fn create_fork<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt>>(
 }
 
 /// Creates and then also selects the new fork at the given transaction
-fn create_select_fork_at_transaction<
-    CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournalExt>,
->(
+fn create_select_fork_at_transaction<CTX: CheatsCtxExt>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     url_or_alias: &str,
     transaction: &B256,
@@ -348,7 +389,7 @@ fn create_select_fork_at_transaction<
 }
 
 /// Creates a new fork at the given transaction
-fn create_fork_at_transaction<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt>>(
+fn create_fork_at_transaction<CTX: FoundryContextExt<Db: DatabaseExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     url_or_alias: &str,
     transaction: &B256,
@@ -359,7 +400,7 @@ fn create_fork_at_transaction<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt
 }
 
 /// Creates the request object for a new fork request
-fn create_fork_request<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt>>(
+fn create_fork_request<CTX: FoundryContextExt<Db: DatabaseExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     url_or_alias: &str,
     block: Option<u64>,
@@ -396,7 +437,7 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     }
 }
 
-fn transact<CTX: CheatsCtxExt>(
+fn transact<CTX: ContextTr<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     transaction: B256,

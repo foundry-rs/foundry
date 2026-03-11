@@ -1,11 +1,15 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxExt, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_chains::Chain as AlloyChain;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
-use foundry_evm_core::constants::MAGIC_SKIP;
+use foundry_evm_core::{
+    backend::{DatabaseExt, FoundryJournalExt},
+    constants::MAGIC_SKIP,
+    env::FoundryContextExt,
+};
 use revm::context::{ContextTr, JournalTr};
 use std::str::FromStr;
 
@@ -15,14 +19,14 @@ pub(crate) mod expect;
 pub(crate) mod revert_handlers;
 
 impl Cheatcode for breakpoint_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { char } = self;
         breakpoint(ccx.state, &ccx.caller, char, true)
     }
 }
 
 impl Cheatcode for breakpoint_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { char, value } = self;
         breakpoint(ccx.state, &ccx.caller, char, *value)
     }
@@ -67,14 +71,20 @@ impl Cheatcode for sleepCall {
 }
 
 impl Cheatcode for skip_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { skipTest } = *self;
         skip_1Call { skipTest, reason: String::new() }.apply_stateful(ccx)
     }
 }
 
 impl Cheatcode for skip_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { skipTest, reason } = self;
         if *skipTest {
             // Skip should not work if called deeper than at test level.
