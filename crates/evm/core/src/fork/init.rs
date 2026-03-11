@@ -20,7 +20,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
     disable_block_gas_limit: bool,
     enable_tx_gas_limit: bool,
     configs: NetworkConfigs,
-) -> eyre::Result<(Env, N::BlockResponse)> {
+) -> eyre::Result<(Env, u64)> {
     trace!(
         %memory_limit,
         ?override_gas_price,
@@ -89,7 +89,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
 
     apply_chain_and_block_specific_env_changes::<N>(&mut env.evm_env, &block, configs);
 
-    Ok((env, block))
+    Ok((env, block.header().number()))
 }
 
 async fn option_try_or_else<T, E>(

@@ -5,10 +5,8 @@
 
 use super::CreateFork;
 use crate::Env;
-use alloy_consensus::BlockHeader;
 use alloy_network::Network;
 use alloy_primitives::{U256, map::HashMap};
-use alloy_provider::network::BlockResponse;
 use foundry_config::Config;
 use foundry_fork_db::{BackendHandler, BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use futures::{
@@ -538,14 +536,12 @@ async fn create_fork<N: Network>(
     let provider = fork.evm_opts.fork_provider_with_url(&fork.url)?;
 
     // Initialise the fork environment.
-    let (env, block) =
+    // The block number is returned separately because on some L2s (e.g. Arbitrum) the env's
+    // block number can differ from the actual block number.
+    let (env, number) =
         fork.evm_opts.fork_evm_env_with_provider::<_, N>(&fork.url, &provider).await?;
     fork.env = env;
     let meta = BlockchainDbMeta::new(fork.env.evm_env.block_env.clone(), fork.url.clone());
-
-    // We need to use the block number from the block because the env's number can be different on
-    // some L2s (e.g. Arbitrum).
-    let number = block.header().number();
 
     // Determine the cache path if caching is enabled.
     let cache_path = if fork.enable_caching {
