@@ -119,13 +119,6 @@ pub(crate) async fn post_transaction_response<N: Network>(
         if hash.is_zero() {
             return Json(BrowserApiResponse::error("Invalid (zero) transaction hash"));
         }
-
-        // Sanity check: ensure the hash is exactly 32 bytes
-        if hash.as_slice().len() != 32 {
-            return Json(BrowserApiResponse::error(
-                "Malformed transaction hash (expected 32 bytes)",
-            ));
-        }
     }
 
     state.add_transaction_response(body).await;
