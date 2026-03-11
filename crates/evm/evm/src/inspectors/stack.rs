@@ -372,7 +372,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
-            let mut evm = new_evm_with_inspector(db, Env { evm_env, tx: tx_env }, &mut inspector);
+            let mut evm = new_evm_with_inspector(db, evm_env, tx_env, &mut inspector);
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
             let (sub_evm_env, sub_tx) = evm.to_env();
@@ -390,7 +390,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = new_evm_with_inspector(db, Env { evm_env, tx: tx_env }, &mut inspector);
+        let mut evm = new_evm_with_inspector(db, evm_env, tx_env, &mut inspector);
         f(&mut evm)
     }
 
@@ -763,12 +763,12 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_tx_env.caller });
         self.in_inner_context = true;
 
-        let modified_env = Env::clone_from_context(ecx);
+        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
 
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
                 let (db, journal) = ecx.journal_mut().as_db_and_inner();
-                let mut evm = new_evm_with_inspector(db, modified_env.clone(), &mut inspector);
+                let mut evm = new_evm_with_inspector(db, evm_env, tx_env.clone(), &mut inspector);
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();
@@ -792,7 +792,7 @@ impl InspectorStackRefMut<'_> {
                 // set depth to 1 to make sure traces are collected correctly
                 evm.journal_inner_mut().depth = 1;
 
-                let res = evm.transact(modified_env.tx);
+                let res = evm.transact(tx_env);
                 let (nested_evm_env, _) = evm.to_env();
                 (res, nested_evm_env)
             };
