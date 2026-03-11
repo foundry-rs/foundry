@@ -8,7 +8,7 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::{DocCommentStyle, IndentStyle};
+use foundry_config::fmt::{BraceStyle, DocCommentStyle, IndentStyle};
 use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, SourceMap},
@@ -257,6 +257,21 @@ impl<'sess> State<'sess, '_> {
         self.config
             .line_length
             .saturating_sub(self.block_depth * self.config.tab_width + prefix_len)
+    }
+
+    #[inline]
+    fn uses_allman_braces(&self) -> bool {
+        self.config.brace_style == BraceStyle::Allman
+    }
+
+    #[inline]
+    fn force_newline_before_brace(&mut self, offset: isize) {
+        if let Some(Token::Break(last)) = self.last_token_still_buffered() {
+            let break_offset = last.offset + offset;
+            self.replace_last_token_still_buffered(pp::Printer::hardbreak_tok_offset(break_offset));
+            return;
+        }
+        self.break_offset_if_not_bol(SIZE_INFINITY as usize, offset, false);
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {

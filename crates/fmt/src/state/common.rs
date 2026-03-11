@@ -574,7 +574,7 @@ impl<'ast> State<'_, 'ast> {
         pos_hi: BytePos,
     ) {
         // Attempt to print in a single line.
-        if block_format.attempt_single_line() && block.len() == 1 {
+        if !self.uses_allman_braces() && block_format.attempt_single_line() && block.len() == 1 {
             self.print_single_line_block(block, block_format, print, get_block_span);
             return;
         }
@@ -739,6 +739,21 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_empty_block(&mut self, block_format: BlockFormat, pos_hi: BytePos) {
         let has_braces = block_format.with_braces();
+
+        if self.uses_allman_braces() && has_braces {
+            self.word("{");
+            self.hardbreak();
+            self.print_comments(
+                pos_hi,
+                self.cmnt_config().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+            );
+            if !self.last_token_is_break() {
+                self.hardbreak();
+            }
+            self.word("}");
+            self.print_comments(pos_hi, CommentConfig::skip_ws());
+            return;
+        }
 
         // Trailing comments are printed after the block
         if self.peek_comment_before(pos_hi).is_none_or(|c| c.style.is_trailing()) {

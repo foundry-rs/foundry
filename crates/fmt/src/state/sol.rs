@@ -311,6 +311,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_contract(&mut self, c: &'ast ast::ItemContract<'ast>, span: Span) {
         let ast::ItemContract { kind, name, layout, bases, body } = c;
+        let has_header_suffix = layout.is_some() || !bases.is_empty();
         self.contract = Some(c);
         self.cursor.advance_to(span.lo(), true);
 
@@ -319,7 +320,9 @@ impl<'ast> State<'_, 'ast> {
         self.cbox(0);
         self.word_nbsp(kind.to_str());
         self.print_ident(name);
-        self.nbsp();
+        if !self.uses_allman_braces() || has_header_suffix {
+            self.nbsp();
+        }
 
         if let Some(layout) = layout
             && !self.handle_span(layout.span, false)
@@ -355,13 +358,20 @@ impl<'ast> State<'_, 'ast> {
                     }
                 }
             }
-            if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
-                self.space();
+            if self.uses_allman_braces() {
+                _ = self.print_trailing_comment(bases.last().unwrap().span().hi(), None);
+            } else {
+                if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+                    self.space();
+                }
+                self.s.offset(-self.ind);
             }
-            self.s.offset(-self.ind);
         }
         self.end();
 
+        if self.uses_allman_braces() {
+            self.force_newline_before_brace(-self.ind);
+        }
         self.print_word("{");
         self.end();
         if !body.is_empty() {
@@ -406,6 +416,9 @@ impl<'ast> State<'_, 'ast> {
             // restore block depth
             self.block_depth -= 1;
         } else {
+            if self.uses_allman_braces() {
+                self.hardbreak();
+            }
             if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
                 // Adjust the offset of the trailing break from comment printing
                 // so the closing brace is not indented
@@ -428,9 +441,16 @@ impl<'ast> State<'_, 'ast> {
         self.word("struct");
         self.space();
         self.print_ident(name);
-        self.word(" {");
+        if self.uses_allman_braces() {
+            self.force_newline_before_brace(-self.ind);
+            self.word("{");
+        } else {
+            self.word(" {");
+        }
         if !fields.is_empty() {
             self.break_offset(SIZE_INFINITY as usize, ind);
+        } else if self.uses_allman_braces() {
+            self.hardbreak();
         }
         self.s.ibox(0);
         for var in fields.iter() {
@@ -453,8 +473,17 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
         self.word("enum ");
         self.print_ident(name);
-        self.word(" {");
-        self.hardbreak_if_nonempty();
+        if self.uses_allman_braces() {
+            self.force_newline_before_brace(-self.ind);
+            self.word("{");
+        } else {
+            self.word(" {");
+        }
+        if variants.is_empty() && self.uses_allman_braces() {
+            self.hardbreak();
+        } else {
+            self.hardbreak_if_nonempty();
+        }
         for (pos, ident) in variants.iter().delimited() {
             self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
@@ -626,11 +655,18 @@ impl<'ast> State<'_, 'ast> {
                         self.space();
                         self.s.offset(-self.ind);
                         self.print_comments(body_span.lo(), CommentConfig::skip_ws());
+                        if self.uses_allman_braces() && !self.is_beginning_of_line() {
+                            self.s.offset(-self.ind);
+                            self.force_newline_before_brace(-self.ind);
+                        }
                     } else {
                         self.zerobreak();
                         self.s.offset(-self.ind);
                         self.print_comments(body_span.lo(), CommentConfig::skip_ws());
                         self.s.offset(-self.ind);
+                        if self.uses_allman_braces() && !self.is_beginning_of_line() {
+                            self.force_newline_before_brace(-self.ind);
+                        }
                     }
                 } else {
                     // If there are no modifiers, overrides, nor returns never break
@@ -639,7 +675,13 @@ impl<'ast> State<'_, 'ast> {
                         && returns.as_ref().is_none_or(|r| r.is_empty())
                         && (header.visibility().is_none() || body.is_empty())
                     {
-                        self.nbsp();
+                        if !self.uses_allman_braces() {
+                            self.nbsp();
+                        } else {
+                            self.force_newline_before_brace(-self.ind);
+                        }
+                    } else if self.uses_allman_braces() {
+                        self.force_newline_before_brace(-self.ind);
                     } else {
                         self.space();
                         self.s.offset(-self.ind);
@@ -648,6 +690,9 @@ impl<'ast> State<'_, 'ast> {
                 self.cursor.advance_to(body_span.lo(), true);
             }
             self.print_word("{");
+            if body.is_empty() && self.uses_allman_braces() {
+                self.hardbreak();
+            }
             self.end();
             if attrib_box {
                 self.end();
@@ -1859,7 +1904,11 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Break => self.word("break"),
             ast::StmtKind::Continue => self.word("continue"),
             ast::StmtKind::DoWhile(stmt, cond) => {
-                self.word("do ");
+                if self.uses_allman_braces() {
+                    self.word("do");
+                } else {
+                    self.word("do ");
+                }
                 self.print_stmt_as_block(stmt, cond.span.lo(), false);
                 self.nbsp();
                 self.print_if_cond("while", cond, cond.span.hi());
@@ -1876,7 +1925,12 @@ impl<'ast> State<'_, 'ast> {
                 self.print_try_stmt(expr, clauses)
             }
             ast::StmtKind::UncheckedBlock(block) => {
-                self.word("unchecked ");
+                if self.uses_allman_braces() {
+                    self.word("unchecked");
+                    self.force_newline_before_brace(-self.ind);
+                } else {
+                    self.word("unchecked ");
+                }
                 self.print_block(block, stmt.span);
             }
             ast::StmtKind::While(cond, stmt) => {
@@ -1888,7 +1942,9 @@ impl<'ast> State<'_, 'ast> {
 
                 // Print while cond and its statement
                 self.print_if_cond("while", cond, stmt.span.lo());
-                self.nbsp();
+                if !self.uses_allman_braces() {
+                    self.nbsp();
+                }
                 self.print_stmt_as_block(stmt, stmt.span.hi(), inline.outcome);
 
                 // Clear cache if necessary
@@ -1923,12 +1979,13 @@ impl<'ast> State<'_, 'ast> {
         _ = self.handle_span(self.cursor.span(span.lo()), false);
         if !self.handle_span(span.until(block.span), false) {
             self.cursor.advance_to(span.lo(), true);
-            self.print_word("assembly "); // 9 chars
+            self.print_word("assembly"); // 8 chars
             if let Some(dialect) = dialect {
-                self.print_ast_str_lit(dialect);
                 self.print_sep(Separator::Nbsp);
+                self.print_ast_str_lit(dialect);
             }
             if !flags.is_empty() {
+                self.print_sep(Separator::Nbsp);
                 self.print_tuple(
                     flags,
                     span.lo(),
@@ -1937,6 +1994,8 @@ impl<'ast> State<'_, 'ast> {
                     get_span!(),
                     ListFormat::consistent(),
                 );
+            }
+            if !self.uses_allman_braces() {
                 self.print_sep(Separator::Nbsp);
             }
         }
@@ -2034,7 +2093,11 @@ impl<'ast> State<'_, 'ast> {
         // Close head.
         self.break_offset_if_not_bol(0, -self.ind, false);
         self.end();
-        self.print_word(") ");
+        if self.uses_allman_braces() {
+            self.print_word(")");
+        } else {
+            self.print_word(") ");
+        }
         self.neverbreak();
         self.end();
 
@@ -2102,14 +2165,20 @@ impl<'ast> State<'_, 'ast> {
                 };
             }
 
-            self.ibox(0);
-            self.print_word("else ");
             match &els.kind {
                 ast::StmtKind::If(cond, then, next_else) => {
+                    self.ibox(0);
+                    self.print_word("else ");
                     self.print_if_no_else(cond, then, inline.outcome);
                     current_else = next_else.as_deref();
                 }
                 _ => {
+                    self.ibox(0);
+                    if self.uses_allman_braces() {
+                        self.print_word("else");
+                    } else {
+                        self.print_word("else ");
+                    }
                     self.print_stmt_as_block(els, span.hi(), inline.outcome);
                     self.end(); // end ibox for final else
                     break;
@@ -2186,7 +2255,7 @@ impl<'ast> State<'_, 'ast> {
                 args.first().map(|p| p.span.lo()).unwrap_or_else(|| expr.span.lo()),
                 CommentConfig::skip_ws(),
             );
-            if !self.is_beginning_of_line() {
+            if !self.is_beginning_of_line() && (!self.uses_allman_braces() || !args.is_empty()) {
                 self.nbsp();
             }
 
@@ -2205,9 +2274,14 @@ impl<'ast> State<'_, 'ast> {
                     ListFormat::compact().with_delimiters(false),
                 );
                 self.print_word(")");
-                self.nbsp();
+                if !self.uses_allman_braces() {
+                    self.nbsp();
+                }
             } else {
                 self.end();
+            }
+            if self.uses_allman_braces() {
+                self.force_newline_before_brace(0);
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
@@ -2255,8 +2329,9 @@ impl<'ast> State<'_, 'ast> {
                     CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
                 );
 
-                self.print_word("catch ");
+                self.print_word("catch");
                 if !args.is_empty() {
+                    self.nbsp();
                     self.print_comments(
                         args[0].span.lo(),
                         CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
@@ -2269,11 +2344,17 @@ impl<'ast> State<'_, 'ast> {
                         args.span.with_hi(block.span.lo()),
                         ListFormat::inline(),
                     );
+                }
+                if self.uses_allman_braces() {
+                    self.force_newline_before_brace(0);
+                } else {
                     self.nbsp();
                 }
                 self.print_word("{");
                 self.end();
-                if !block.is_empty() {
+                if block.is_empty() && self.uses_allman_braces() {
+                    self.hardbreak();
+                } else if !block.is_empty() {
                     self.print_trailing_comment_no_break(catch_span.lo(), None);
                 }
                 self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
@@ -2296,15 +2377,17 @@ impl<'ast> State<'_, 'ast> {
     ) {
         if !self.handle_span(cond.span.until(then.span), true) {
             self.print_if_cond("if", cond, then.span.lo());
-            // if empty block without comments, ensure braces are inlined
-            if let ast::StmtKind::Block(block) = &then.kind
-                && block.is_empty()
-                && self.peek_comment_before(then.span.hi()).is_none()
-            {
-                self.neverbreak();
-                self.print_sep(Separator::Nbsp);
-            } else {
-                self.print_sep(Separator::Space);
+            if !self.uses_allman_braces() {
+                // if empty block without comments, ensure braces are inlined
+                if let ast::StmtKind::Block(block) = &then.kind
+                    && block.is_empty()
+                    && self.peek_comment_before(then.span.hi()).is_none()
+                {
+                    self.neverbreak();
+                    self.print_sep(Separator::Nbsp);
+                } else {
+                    self.print_sep(Separator::Space);
+                }
             }
         }
         self.end();
@@ -2392,13 +2475,22 @@ impl<'ast> State<'_, 'ast> {
         };
 
         if inline && !stmts.is_empty() {
+            if self.uses_allman_braces() && !self.is_bol_or_only_ind() {
+                self.nbsp();
+            }
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
             // Reset cache for nested (child) stmts within this (parent) block.
             let inline_parent = self.single_line_stmt.take();
 
+            if self.uses_allman_braces() {
+                self.force_newline_before_brace(0);
+            }
             self.print_word("{");
+            if stmts.is_empty() && self.uses_allman_braces() {
+                self.hardbreak();
+            }
             self.print_block_without_braces(stmts, pos_hi, Some(self.ind));
             self.print_word("}");
 
