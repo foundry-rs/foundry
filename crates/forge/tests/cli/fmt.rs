@@ -24,6 +24,48 @@ contract Test {
 }
 "#;
 
+const ALLMAN_UNFORMATTED: &str = r#"pragma solidity =0.8.33;
+
+contract Test {
+    uint256 public value;
+
+    function setValue(uint256 _value) public {
+        if (_value > 0) {
+            value = this.identity({value: _value});
+        }
+    }
+
+    function identity(uint256 value) public pure returns (uint256) {
+        return value;
+    }
+}
+"#;
+
+const ALLMAN_FORMATTED: &str = r#"pragma solidity =0.8.33;
+
+contract Test
+{
+    uint256 public value;
+
+    function setValue(uint256 _value)
+        public
+    {
+        if (_value > 0)
+        {
+            value = this.identity({value: _value});
+        }
+    }
+
+    function identity(uint256 value)
+        public
+        pure
+        returns (uint256)
+    {
+        return value;
+    }
+}
+"#;
+
 forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
     prj.update_config(|config| config.fmt.ignore = vec!["src/ignore/".to_string()]);
 
@@ -137,6 +179,31 @@ Diff in src/FmtTest.sol:
 ...
 
 "#]]);
+});
+
+forgetest_init!(fmt_file_config_allman, |prj, cmd| {
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[fmt]
+brace_style = "allman"
+"#,
+    );
+    prj.add_raw_source("FmtAllman.sol", ALLMAN_UNFORMATTED);
+
+    cmd.forge_fuse().arg("fmt").arg("src/FmtAllman.sol");
+    cmd.assert_success().stdout_eq(str![[r#"
+Formatted [..]/src/FmtAllman.sol
+
+"#]]);
+
+    assert_data_eq!(
+        std::fs::read_to_string(prj.root().join("src/FmtAllman.sol")).unwrap(),
+        ALLMAN_FORMATTED,
+    );
+
+    cmd.forge_fuse().args(["fmt", "--check", "src/FmtAllman.sol"]);
+    cmd.assert_success().stderr_eq("").stdout_eq("");
 });
 
 // https://github.com/foundry-rs/foundry/issues/12000

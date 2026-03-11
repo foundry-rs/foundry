@@ -167,6 +167,7 @@ fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
     ArrayExpressions,
+    BraceStyle,
     BlockComments,
     BlockCommentsFunction,
     CommentEmptyLine,
