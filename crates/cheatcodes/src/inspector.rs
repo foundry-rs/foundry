@@ -205,7 +205,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
-            let mut evm = new_evm_with_inspector(db, Env { evm_env, tx: tx_env }, cheats);
+            let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
             let (sub_evm_env, sub_tx) = evm.to_env();
@@ -222,7 +222,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecuto
         tx_env: TxEnv,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        let mut evm = new_evm_with_inspector(db, Env { evm_env, tx: tx_env }, cheats);
+        let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
         f(&mut evm)
     }
 

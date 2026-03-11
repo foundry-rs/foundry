@@ -8,7 +8,7 @@ use crate::{
     state_snapshot::StateSnapshots,
     utils::{configure_tx_env, configure_tx_req_env, get_blob_base_fee_update_fraction},
 };
-use alloy_consensus::Typed2718;
+use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_evm::{Evm, EvmEnv};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
@@ -817,7 +817,12 @@ impl Backend {
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(
+            self,
+            env.evm_env.to_owned(),
+            env.tx.to_owned(),
+            inspector,
+        );
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
@@ -903,7 +908,7 @@ impl Backend {
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
-            let number = block.header.number;
+            let number = block.header.number();
 
             Ok((number, block))
         }
@@ -1381,7 +1386,12 @@ impl DatabaseExt for Backend {
             configure_tx_req_env(&mut env, tx)?;
 
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
+            let mut evm = new_evm_with_inspector(
+                &mut db,
+                env.evm_env.to_owned(),
+                env.tx.to_owned(),
+                inspector,
+            );
             evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact(env.tx)?
         };
@@ -2003,18 +2013,18 @@ fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
 /// Updates the evm env's block with the block's data
 fn update_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock) {
     let block_env = &mut evm_env.block_env;
-    block_env.timestamp = U256::from(block.header.timestamp);
-    block_env.beneficiary = block.header.beneficiary;
-    block_env.difficulty = block.header.difficulty;
-    block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-    block_env.gas_limit = block.header.gas_limit;
-    block_env.number = U256::from(block.header.number);
+    block_env.timestamp = U256::from(block.header.timestamp());
+    block_env.beneficiary = block.header.beneficiary();
+    block_env.difficulty = block.header.difficulty();
+    block_env.prevrandao = Some(block.header.mix_hash().unwrap_or_default());
+    block_env.basefee = block.header.base_fee_per_gas().unwrap_or_default();
+    block_env.gas_limit = block.header.gas_limit();
+    block_env.number = U256::from(block.header.number());
 
-    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
+    if let Some(excess_blob_gas) = block.header.excess_blob_gas() {
         evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
             excess_blob_gas,
-            get_blob_base_fee_update_fraction(evm_env.cfg_env.chain_id, block.header.timestamp),
+            get_blob_base_fee_update_fraction(evm_env.cfg_env.chain_id, block.header.timestamp()),
         ));
     }
 }
@@ -2039,7 +2049,12 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(
+            &mut db as _,
+            env.evm_env.to_owned(),
+            env.tx.to_owned(),
+            inspector,
+        );
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.journaled_state.depth = depth + 1;
         evm.transact(env.tx.clone()).wrap_err("backend: failed committing transaction")?
@@ -2107,7 +2122,7 @@ mod tests {
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
         evm_opts.fork_block_number = Some(block_num);
 
-        let (env, _block) = evm_opts.fork_evm_env(endpoint).await.unwrap();
+        let (env, _) = evm_opts.fork_evm_env(endpoint).await.unwrap();
 
         let fork = CreateFork {
             enable_caching: true,

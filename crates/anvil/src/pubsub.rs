@@ -2,7 +2,7 @@ use crate::{
     StorageInfo,
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
 };
-use alloy_consensus::TxReceipt;
+use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
@@ -160,7 +160,7 @@ where
         params: &FilteredParams,
     ) -> bool {
         if params.filter.is_some() {
-            let block_number = block.header.number;
+            let block_number = block.header.number();
             if !params.filter_block_range(block_number)
                 || !params.filter_block_hash(block_hash)
                 || !params.filter_address(&l.address)
@@ -182,12 +182,12 @@ where
                 logs.push(Log {
                     inner: log.clone(),
                     block_hash: Some(block_hash),
-                    block_number: Some(block.header.number),
+                    block_number: Some(block.header.number()),
                     transaction_hash: Some(transaction_hash),
                     transaction_index: Some(receipt_index as u64),
                     log_index: Some(log_index as u64),
                     removed: false,
-                    block_timestamp: Some(block.header.timestamp),
+                    block_timestamp: Some(block.header.timestamp()),
                 });
             }
             log_index += 1;

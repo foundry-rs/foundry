@@ -1,11 +1,8 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, U256, map::HashMap};
-use alloy_provider::{Provider, network::AnyNetwork};
+use alloy_provider::{Provider, RootProvider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
-use foundry_common::{
-    provider::{ProviderBuilder, RetryProvider},
-    shell,
-};
+use foundry_common::{provider::ProviderBuilder, shell};
 use foundry_config::{Chain, Config};
 use itertools::Itertools;
 use path_slash::PathExt;
@@ -99,8 +96,8 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
     filter
 }
 
-/// Returns a [RetryProvider] instantiated using [Config]'s RPC settings.
-pub fn get_provider(config: &Config) -> Result<RetryProvider> {
+/// Returns a [`RootProvider`] instantiated using [Config]'s RPC settings.
+pub fn get_provider(config: &Config) -> Result<RootProvider<AnyNetwork>> {
     get_provider_builder(config)?.build()
 }
 

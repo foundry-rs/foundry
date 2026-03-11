@@ -10,7 +10,7 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
+use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_network::Network;
 use alloy_primitives::{
@@ -32,7 +32,7 @@ use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_primitives::FoundryNetwork;
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -439,7 +439,7 @@ impl BlockchainStorage<FoundryNetwork> {
         for serializable_block in &serializable_blocks {
             let block: Block = serializable_block.clone().into();
             let block_hash = block.header.hash_slow();
-            let block_number = block.header.number;
+            let block_number = block.header.number();
             self.blocks.insert(block_hash, block);
             self.hashes.insert(block_number, block_hash);
 
@@ -524,15 +524,34 @@ impl<N: Network> Blockchain<N> {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Clone, Debug)]
-pub struct MinedBlockOutcome {
+pub struct MinedBlockOutcome<T = FoundryTxEnvelope> {
     /// The block that was mined
     pub block_number: u64,
     /// All transactions included in the block
-    pub included: Vec<Arc<PoolTransaction>>,
+    pub included: Vec<Arc<PoolTransaction<T>>>,
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
-    pub invalid: Vec<Arc<PoolTransaction>>,
+    pub invalid: Vec<Arc<PoolTransaction<T>>>,
+}
+
+impl<T> Clone for MinedBlockOutcome<T> {
+    fn clone(&self) -> Self {
+        Self {
+            block_number: self.block_number,
+            included: self.included.clone(),
+            invalid: self.invalid.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for MinedBlockOutcome<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MinedBlockOutcome")
+            .field("block_number", &self.block_number)
+            .field("included", &self.included.len())
+            .field("invalid", &self.invalid.len())
+            .finish()
+    }
 }
 
 /// Container type for a mined transaction
@@ -602,7 +621,6 @@ mod tests {
     use crate::eth::backend::db::Db;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
-    use foundry_primitives::FoundryTxEnvelope;
     use revm::{database::DatabaseRef, state::AccountInfo};
 
     #[test]
@@ -723,7 +741,7 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, { header.gas_limit });
+        assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }

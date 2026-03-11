@@ -29,7 +29,9 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
 };
-use alloy_consensus::{Blob, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered};
+use alloy_consensus::{
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered,
+};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
@@ -103,10 +105,9 @@ pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
-#[derive(Clone)]
-pub struct EthApi {
+pub struct EthApi<T = FoundryTxEnvelope> {
     /// The transaction pool
-    pool: Arc<Pool>,
+    pool: Arc<Pool<T>>,
     /// Holds all blockchain related data
     /// In-Memory only for now
     pub backend: Arc<backend::mem::Backend>,
@@ -122,7 +123,7 @@ pub struct EthApi {
     ///
     /// This access is required in order to adjust miner settings based on requests received from
     /// custom RPC endpoints
-    miner: Miner,
+    miner: Miner<T>,
     /// allows to enabled/disable logging
     logger: LoggingManager,
     /// Tracks all active filters
@@ -135,16 +136,37 @@ pub struct EthApi {
     instance_id: Arc<RwLock<B256>>,
 }
 
-impl EthApi {
+impl<T> Clone for EthApi<T> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            backend: self.backend.clone(),
+            is_mining: self.is_mining,
+            signers: self.signers.clone(),
+            fee_history_cache: self.fee_history_cache.clone(),
+            fee_history_limit: self.fee_history_limit,
+            miner: self.miner.clone(),
+            logger: self.logger.clone(),
+            filters: self.filters.clone(),
+            transaction_order: self.transaction_order.clone(),
+            net_listening: self.net_listening,
+            instance_id: self.instance_id.clone(),
+        }
+    }
+}
+
+// == impl EthApi<T> generic methods ==
+
+impl<T> EthApi<T> {
     /// Creates a new instance
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        pool: Arc<Pool>,
+        pool: Arc<Pool<T>>,
         backend: Arc<backend::mem::Backend>,
         signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
         fee_history_cache: FeeHistoryCache,
         fee_history_limit: u64,
-        miner: Miner,
+        miner: Miner<T>,
         logger: LoggingManager,
         filters: Filters,
         transactions_order: TransactionOrder,
@@ -165,6 +187,692 @@ impl EthApi {
         }
     }
 
+    async fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest<T>> {
+        let block_request = match block_number {
+            Some(BlockId::Number(BlockNumber::Pending)) => {
+                let pending_txs = self.pool.ready_transactions().collect();
+                BlockRequest::Pending(pending_txs)
+            }
+            _ => {
+                let number = self.backend.ensure_block_number(block_number).await?;
+                BlockRequest::Number(number)
+            }
+        };
+        Ok(block_request)
+    }
+
+    /// Returns the current gas price
+    pub fn gas_price(&self) -> u128 {
+        if self.backend.is_eip1559() {
+            if self.backend.is_min_priority_fee_enforced() {
+                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+            } else {
+                self.backend.base_fee() as u128
+            }
+        } else {
+            self.backend.fees().raw_gas_price()
+        }
+    }
+
+    /// Returns the suggested fee cap.
+    ///
+    /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
+    fn lowest_suggestion_tip(&self) -> u128 {
+        let block_number = self.backend.best_number();
+        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
+
+        match latest_cached_block {
+            Some(block) => block.rewards.iter().copied().min(),
+            None => self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min(),
+        }
+        .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
+        .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
+    }
+
+    /// Returns true if auto mining is enabled, and false.
+    ///
+    /// Handler for ETH RPC call: `anvil_getAutomine`
+    pub fn anvil_get_auto_mine(&self) -> Result<bool> {
+        node_info!("anvil_getAutomine");
+        Ok(self.miner.is_auto_mine())
+    }
+
+    /// Returns the value of mining interval, if set.
+    ///
+    /// Handler for ETH RPC call: `anvil_getIntervalMining`.
+    pub fn anvil_get_interval_mining(&self) -> Result<Option<u64>> {
+        node_info!("anvil_getIntervalMining");
+        Ok(self.miner.get_interval())
+    }
+
+    /// Enables or disables, based on the single boolean argument, the automatic mining of new
+    /// blocks with each new transaction submitted to the network.
+    ///
+    /// Handler for ETH RPC call: `evm_setAutomine`
+    pub async fn anvil_set_auto_mine(&self, enable_automine: bool) -> Result<()> {
+        node_info!("evm_setAutomine");
+        if self.miner.is_auto_mine() {
+            if enable_automine {
+                return Ok(());
+            }
+            self.miner.set_mining_mode(MiningMode::None);
+        } else if enable_automine {
+            let listener = self.pool.add_ready_listener();
+            let mode = MiningMode::instant(1_000, listener);
+            self.miner.set_mining_mode(mode);
+        }
+        Ok(())
+    }
+
+    /// Sets the mining behavior to interval with the given interval (seconds)
+    ///
+    /// Handler for ETH RPC call: `evm_setIntervalMining`
+    pub fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
+        node_info!("evm_setIntervalMining");
+        let mining_mode = if secs == 0 {
+            MiningMode::None
+        } else {
+            let block_time = Duration::from_secs(secs);
+
+            // This ensures that memory limits are stricter in interval-mine mode
+            self.backend.update_interval_mine_block_time(block_time);
+
+            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(block_time))
+        };
+        self.miner.set_mining_mode(mining_mode);
+        Ok(())
+    }
+
+    /// Removes transactions from the pool
+    ///
+    /// Handler for RPC call: `anvil_dropTransaction`
+    pub async fn anvil_drop_transaction(&self, tx_hash: B256) -> Result<Option<B256>> {
+        node_info!("anvil_dropTransaction");
+        Ok(self.pool.drop_transaction(tx_hash).map(|tx| tx.hash()))
+    }
+
+    /// Removes all transactions from the pool
+    ///
+    /// Handler for RPC call: `anvil_dropAllTransactions`
+    pub async fn anvil_drop_all_transactions(&self) -> Result<()> {
+        node_info!("anvil_dropAllTransactions");
+        self.pool.clear();
+        Ok(())
+    }
+
+    /// Reset the fork to a fresh forked state, and optionally update the fork config.
+    ///
+    /// If `forking` is `None` then this will disable forking entirely.
+    ///
+    /// Handler for RPC call: `anvil_reset`
+    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
+        self.reset_instance_id();
+        node_info!("anvil_reset");
+        if let Some(forking) = forking {
+            // if we're resetting the fork we need to reset the instance id
+            self.backend.reset_fork(forking).await?;
+        } else {
+            // Reset to a fresh in-memory state
+            self.backend.reset_to_in_mem().await?;
+        }
+        // Clear pending transactions since they reference the old chain state.
+        self.pool.clear();
+        Ok(())
+    }
+
+    pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
+        node_info!("anvil_setChainId");
+        self.backend.set_chain_id(chain_id);
+        Ok(())
+    }
+
+    /// Modifies the balance of an account.
+    ///
+    /// Handler for RPC call: `anvil_setBalance`
+    pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
+        node_info!("anvil_setBalance");
+        self.backend.set_balance(address, balance).await?;
+        Ok(())
+    }
+
+    /// Increases the balance of an account.
+    ///
+    /// Handler for RPC call: `anvil_addBalance`
+    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
+        node_info!("anvil_addBalance");
+        let current_balance = self.backend.get_balance(address, None).await?;
+        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
+        Ok(())
+    }
+
+    /// Sets the code of a contract.
+    ///
+    /// Handler for RPC call: `anvil_setCode`
+    pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
+        node_info!("anvil_setCode");
+        self.backend.set_code(address, code).await?;
+        Ok(())
+    }
+
+    /// Sets the nonce of an address.
+    ///
+    /// Handler for RPC call: `anvil_setNonce`
+    pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
+        node_info!("anvil_setNonce");
+        self.backend.set_nonce(address, nonce).await?;
+        Ok(())
+    }
+
+    /// Writes a single slot of the account's storage.
+    ///
+    /// Handler for RPC call: `anvil_setStorageAt`
+    pub async fn anvil_set_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        val: B256,
+    ) -> Result<bool> {
+        node_info!("anvil_setStorageAt");
+        self.backend.set_storage_at(address, slot, val).await?;
+        Ok(true)
+    }
+
+    /// Enable or disable logging.
+    ///
+    /// Handler for RPC call: `anvil_setLoggingEnabled`
+    pub async fn anvil_set_logging(&self, enable: bool) -> Result<()> {
+        node_info!("anvil_setLoggingEnabled");
+        self.logger.set_enabled(enable);
+        Ok(())
+    }
+
+    /// Set the minimum gas price for the node.
+    ///
+    /// Handler for RPC call: `anvil_setMinGasPrice`
+    pub async fn anvil_set_min_gas_price(&self, gas: U256) -> Result<()> {
+        node_info!("anvil_setMinGasPrice");
+        if self.backend.is_eip1559() {
+            return Err(RpcError::invalid_params(
+                "anvil_setMinGasPrice is not supported when EIP-1559 is active",
+            )
+            .into());
+        }
+        self.backend.set_gas_price(gas.to());
+        Ok(())
+    }
+
+    /// Sets the base fee of the next block.
+    ///
+    /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
+    pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
+        node_info!("anvil_setNextBlockBaseFeePerGas");
+        if !self.backend.is_eip1559() {
+            return Err(RpcError::invalid_params(
+                "anvil_setNextBlockBaseFeePerGas is only supported when EIP-1559 is active",
+            )
+            .into());
+        }
+        self.backend.set_base_fee(basefee.to());
+        Ok(())
+    }
+
+    /// Sets the coinbase address.
+    ///
+    /// Handler for RPC call: `anvil_setCoinbase`
+    pub async fn anvil_set_coinbase(&self, address: Address) -> Result<()> {
+        node_info!("anvil_setCoinbase");
+        self.backend.set_coinbase(address);
+        Ok(())
+    }
+
+    /// Create a buffer that represents all state on the chain, which can be loaded to separate
+    /// process by calling `anvil_loadState`
+    ///
+    /// Handler for RPC call: `anvil_dumpState`
+    pub async fn anvil_dump_state(
+        &self,
+        preserve_historical_states: Option<bool>,
+    ) -> Result<Bytes> {
+        node_info!("anvil_dumpState");
+        self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
+    }
+
+    /// Returns the current state
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState> {
+        self.backend.serialized_state(preserve_historical_states).await
+    }
+
+    /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
+    /// storage.
+    ///
+    /// Handler for RPC call: `anvil_loadState`
+    pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
+        node_info!("anvil_loadState");
+        self.backend.load_state_bytes(buf).await
+    }
+
+    /// Retrieves the Anvil node configuration params.
+    ///
+    /// Handler for RPC call: `anvil_nodeInfo`
+    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
+        node_info!("anvil_nodeInfo");
+
+        let env = self.backend.env().read();
+        let fork_config = self.backend.get_fork();
+        let tx_order = self.transaction_order.read();
+        let hard_fork: &str = env.evm_env.cfg_env.spec.into();
+
+        Ok(NodeInfo {
+            current_block_number: self.backend.best_number(),
+            current_block_timestamp: env.evm_env.block_env.timestamp.saturating_to(),
+            current_block_hash: self.backend.best_hash(),
+            hard_fork: hard_fork.to_string(),
+            transaction_order: match *tx_order {
+                TransactionOrder::Fifo => "fifo".to_string(),
+                TransactionOrder::Fees => "fees".to_string(),
+            },
+            environment: NodeEnvironment {
+                base_fee: self.backend.base_fee() as u128,
+                chain_id: self.backend.chain_id().to::<u64>(),
+                gas_limit: self.backend.gas_limit(),
+                gas_price: self.gas_price(),
+            },
+            fork_config: fork_config
+                .map(|fork| {
+                    let config = fork.config.read();
+
+                    NodeForkConfig {
+                        fork_url: Some(config.eth_rpc_url.clone()),
+                        fork_block_number: Some(config.block_number),
+                        fork_retry_backoff: Some(config.backoff.as_millis()),
+                    }
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    /// Retrieves metadata about the Anvil instance.
+    ///
+    /// Handler for RPC call: `anvil_metadata`
+    pub async fn anvil_metadata(&self) -> Result<Metadata> {
+        node_info!("anvil_metadata");
+        let fork_config = self.backend.get_fork();
+
+        Ok(Metadata {
+            client_version: CLIENT_VERSION.to_string(),
+            chain_id: self.backend.chain_id().to::<u64>(),
+            latest_block_hash: self.backend.best_hash(),
+            latest_block_number: self.backend.best_number(),
+            instance_id: *self.instance_id.read(),
+            forked_network: fork_config.map(|cfg| ForkedNetwork {
+                chain_id: cfg.chain_id(),
+                fork_block_number: cfg.block_number(),
+                fork_block_hash: cfg.block_hash(),
+            }),
+            snapshots: self.backend.list_state_snapshots(),
+        })
+    }
+
+    pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
+        node_info!("anvil_removePoolTransactions");
+        self.pool.remove_transactions_by_address(address);
+        Ok(())
+    }
+
+    /// Rollback the chain to a specific depth.
+    ///
+    /// e.g depth = 3
+    ///     A  -> B  -> C  -> D  -> E
+    ///     A  -> B
+    ///
+    /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
+    /// chain height, i.e. can't rollback past the genesis block.
+    ///
+    /// Handler for RPC call: `anvil_rollback`
+    pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
+        node_info!("anvil_rollback");
+        let depth = depth.unwrap_or(1);
+
+        // Check reorg depth doesn't exceed current chain height
+        let current_height = self.backend.best_number();
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params(format!(
+                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
+            )),
+        ))?;
+
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        self.backend.rollback(common_block).await?;
+        Ok(())
+    }
+
+    /// Snapshot the state of the blockchain at the current block.
+    ///
+    /// Handler for RPC call: `evm_snapshot`
+    pub async fn evm_snapshot(&self) -> Result<U256> {
+        node_info!("evm_snapshot");
+        Ok(self.backend.create_state_snapshot().await)
+    }
+
+    /// Revert the state of the blockchain to a previous snapshot.
+    /// Takes a single parameter, which is the snapshot id to revert to.
+    ///
+    /// Handler for RPC call: `evm_revert`
+    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
+        node_info!("evm_revert");
+        self.backend.revert_state_snapshot(id).await
+    }
+
+    /// Jump forward in time by the given amount of time, in seconds.
+    ///
+    /// Handler for RPC call: `evm_increaseTime`
+    pub async fn evm_increase_time(&self, seconds: U256) -> Result<i64> {
+        node_info!("evm_increaseTime");
+        Ok(self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX)) as i64)
+    }
+
+    /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
+    ///
+    /// Handler for RPC call: `evm_setNextBlockTimestamp`
+    pub fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
+        node_info!("evm_setNextBlockTimestamp");
+        self.backend.time().set_next_block_timestamp(seconds)
+    }
+
+    /// Sets the specific timestamp and returns the number of seconds between the given timestamp
+    /// and the current time.
+    ///
+    /// Handler for RPC call: `evm_setTime`
+    pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
+        node_info!("evm_setTime");
+        let now = self.backend.time().current_call_timestamp();
+        self.backend.time().reset(timestamp);
+
+        // number of seconds between the given timestamp and the current time.
+        let offset = timestamp.saturating_sub(now);
+        Ok(Duration::from_millis(offset).as_secs())
+    }
+
+    /// Set the next block gas limit
+    ///
+    /// Handler for RPC call: `evm_setBlockGasLimit`
+    pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
+        node_info!("evm_setBlockGasLimit");
+        self.backend.set_gas_limit(gas_limit.to());
+        Ok(true)
+    }
+
+    /// Sets an interval for the block timestamp
+    ///
+    /// Handler for RPC call: `anvil_setBlockTimestampInterval`
+    pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
+        node_info!("anvil_setBlockTimestampInterval");
+        self.backend.time().set_block_timestamp_interval(seconds);
+        Ok(())
+    }
+
+    /// Sets an interval for the block timestamp
+    ///
+    /// Handler for RPC call: `anvil_removeBlockTimestampInterval`
+    pub fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
+        node_info!("anvil_removeBlockTimestampInterval");
+        Ok(self.backend.time().remove_block_timestamp_interval())
+    }
+
+    /// Sets the backend rpc url
+    ///
+    /// Handler for ETH RPC call: `anvil_setRpcUrl`
+    pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
+        node_info!("anvil_setRpcUrl");
+        if let Some(fork) = self.backend.get_fork() {
+            let mut config = fork.config.write();
+            // let interval = config.provider.get_interval();
+            let new_provider = Arc::new(
+                ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000).build().map_err(
+                    |_| {
+                        TransportErrorKind::custom_str(
+                            format!("Failed to parse invalid url {url}").as_str(),
+                        )
+                    },
+                    // TODO: Add interval
+                )?, // .interval(interval),
+            );
+            config.provider = new_provider;
+            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
+            config.eth_rpc_url = url;
+        }
+        Ok(())
+    }
+
+    /// Returns the number of transactions currently pending for inclusion in the next block(s), as
+    /// well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
+    ///
+    /// Handler for ETH RPC call: `txpool_status`
+    pub async fn txpool_status(&self) -> Result<TxpoolStatus> {
+        node_info!("txpool_status");
+        Ok(self.pool.txpool_status())
+    }
+
+    /// Executes the future on a new blocking task.
+    async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
+    where
+        C: FnOnce(Self) -> F,
+        F: Future<Output = Result<R>> + Send + 'static,
+        R: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        let this = self.clone();
+        let f = c(this);
+        tokio::task::spawn_blocking(move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                let res = f.await;
+                let _ = tx.send(res);
+            })
+        });
+        rx.await.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
+    }
+
+    /// Estimates the gas usage of the `request` with the state.
+    ///
+    /// This will execute the transaction request and find the best gas limit via binary search.
+    fn do_estimate_gas_with_state(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+        state: &dyn DatabaseRef,
+        block_env: BlockEnv,
+    ) -> Result<u128> {
+        // If the request is a simple native token transfer we can optimize
+        // We assume it's a transfer if we have no input data.
+        let to = request.to.as_ref().and_then(TxKind::to);
+
+        // check certain fields to see if the request could be a simple transfer
+        let maybe_transfer = (request.input.input().is_none()
+            || request.input.input().is_some_and(|data| data.is_empty()))
+            && request.authorization_list.is_none()
+            && request.access_list.is_none()
+            && request.blob_versioned_hashes.is_none();
+
+        if maybe_transfer
+            && let Some(to) = to
+            && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
+            && target_code.as_ref().is_empty()
+        {
+            return Ok(MIN_TRANSACTION_GAS);
+        }
+
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
+        )?
+        .or_zero_fees();
+
+        // get the highest possible gas limit, either the request's set value or the currently
+        // configured gas limit
+        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
+
+        let gas_price = fees.gas_price.unwrap_or_default();
+        // If we have non-zero gas price, cap gas limit by sender balance
+        if gas_price > 0
+            && let Some(from) = request.from
+        {
+            let mut available_funds = self.backend.get_balance_with_state(state, from)?;
+            if let Some(value) = request.value {
+                if value > available_funds {
+                    return Err(InvalidTransactionError::InsufficientFunds.into());
+                }
+                // safe: value < available_funds
+                available_funds -= value;
+            }
+            // amount of gas the sender can afford with the `gas_price`
+            let allowance = available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+            highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
+        }
+
+        let mut call_to_estimate = request.clone();
+        call_to_estimate.gas = Some(highest_gas_limit as u64);
+
+        // execute the call without writing to db
+        let ethres =
+            self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
+
+        let gas_used = match ethres.try_into()? {
+            GasEstimationCallResult::Success(gas) => Ok(gas),
+            GasEstimationCallResult::OutOfGas => {
+                Err(InvalidTransactionError::BasicOutOfGas(highest_gas_limit).into())
+            }
+            GasEstimationCallResult::Revert(output) => {
+                Err(InvalidTransactionError::Revert(output).into())
+            }
+            GasEstimationCallResult::EvmError(err) => {
+                warn!(target: "node", "estimation failed due to {:?}", err);
+                Err(BlockchainError::EvmError(err))
+            }
+        }?;
+
+        // at this point we know the call succeeded but want to find the _best_ (lowest) gas the
+        // transaction succeeds with. we find this by doing a binary search over the
+        // possible range NOTE: this is the gas the transaction used, which is less than the
+        // transaction requires to succeed
+
+        // Get the starting lowest gas needed depending on the transaction kind.
+        let mut lowest_gas_limit = determine_base_gas_by_kind(&request);
+
+        // pick a point that's close to the estimated gas
+        let mut mid_gas_limit =
+            std::cmp::min(gas_used * 3, (highest_gas_limit + lowest_gas_limit) / 2);
+
+        // Binary search for the ideal gas limit
+        while (highest_gas_limit - lowest_gas_limit) > 1 {
+            request.gas = Some(mid_gas_limit as u64);
+            let ethres = self.backend.call_with_state(
+                &state,
+                request.clone(),
+                fees.clone(),
+                block_env.clone(),
+            );
+
+            match ethres.try_into()? {
+                GasEstimationCallResult::Success(_) => {
+                    // If the transaction succeeded, we can set a ceiling for the highest gas limit
+                    // at the current midpoint, as spending any more gas would
+                    // make no sense (as the TX would still succeed).
+                    highest_gas_limit = mid_gas_limit;
+                }
+                GasEstimationCallResult::OutOfGas
+                | GasEstimationCallResult::Revert(_)
+                | GasEstimationCallResult::EvmError(_) => {
+                    // If the transaction failed, we can set a floor for the lowest gas limit at the
+                    // current midpoint, as spending any less gas would make no
+                    // sense (as the TX would still revert due to lack of gas).
+                    //
+                    // We don't care about the reason here, as we known that transaction is correct
+                    // as it succeeded earlier
+                    lowest_gas_limit = mid_gas_limit;
+                }
+            };
+            // new midpoint
+            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+        }
+
+        trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
+
+        Ok(highest_gas_limit)
+    }
+
+    /// Updates the `TransactionOrder`
+    pub fn set_transaction_order(&self, order: TransactionOrder) {
+        *self.transaction_order.write() = order;
+    }
+
+    /// Returns the chain ID used for transaction
+    pub fn chain_id(&self) -> u64 {
+        self.backend.chain_id().to::<u64>()
+    }
+
+    /// Returns the configured fork, if any.
+    pub fn get_fork(&self) -> Option<ClientFork> {
+        self.backend.get_fork()
+    }
+
+    /// Returns the current instance's ID.
+    pub fn instance_id(&self) -> B256 {
+        *self.instance_id.read()
+    }
+
+    /// Resets the instance ID.
+    pub fn reset_instance_id(&self) {
+        *self.instance_id.write() = B256::random();
+    }
+
+    /// Returns the first signer that can sign for the given address
+    #[expect(clippy::borrowed_box)]
+    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<FoundryNetwork>>> {
+        self.signers.iter().find(|signer| signer.is_signer_for(address))
+    }
+
+    /// Returns a new block event stream that yields Notifications when a new block was added
+    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+        self.backend.new_block_notifications()
+    }
+
+    /// Returns a new listeners for ready transactions
+    pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
+        self.pool.add_ready_listener()
+    }
+
+    /// Returns a new accessor for certain storage elements
+    pub fn storage_info(&self) -> StorageInfo {
+        StorageInfo::new(Arc::clone(&self.backend))
+    }
+
+    /// Returns true if forked
+    pub fn is_fork(&self) -> bool {
+        self.backend.is_fork()
+    }
+
+    /// Returns the current state root
+    pub async fn state_root(&self) -> Option<B256> {
+        self.backend.get_db().read().await.maybe_state_root()
+    }
+
+    /// Returns true if the `addr` is currently impersonated
+    pub fn is_impersonated(&self, addr: Address) -> bool {
+        self.backend.cheats().is_impersonated(addr)
+    }
+}
+
+// == impl EthApi anvil endpoints ==
+
+impl EthApi {
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
@@ -539,20 +1247,6 @@ impl EthApi {
         Err(BlockchainError::NoSignerAvailable)
     }
 
-    async fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest> {
-        let block_request = match block_number {
-            Some(BlockId::Number(BlockNumber::Pending)) => {
-                let pending_txs = self.pool.ready_transactions().collect();
-                BlockRequest::Pending(pending_txs)
-            }
-            _ => {
-                let number = self.backend.ensure_block_number(block_number).await?;
-                BlockRequest::Number(number)
-            }
-        };
-        Ok(block_request)
-    }
-
     async fn inner_raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
@@ -643,19 +1337,6 @@ impl EthApi {
     fn eth_gas_price(&self) -> Result<U256> {
         node_info!("eth_gasPrice");
         Ok(U256::from(self.gas_price()))
-    }
-
-    /// Returns the current gas price
-    pub fn gas_price(&self) -> u128 {
-        if self.backend.is_eip1559() {
-            if self.backend.is_min_priority_fee_enforced() {
-                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
-            } else {
-                self.backend.base_fee() as u128
-            }
-        } else {
-            self.backend.fees().raw_gas_price()
-        }
     }
 
     /// Returns the excess blob gas and current blob gas price
@@ -1777,21 +2458,6 @@ impl EthApi {
         Ok(U256::from(self.lowest_suggestion_tip()))
     }
 
-    /// Returns the suggested fee cap.
-    ///
-    /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
-    fn lowest_suggestion_tip(&self) -> u128 {
-        let block_number = self.backend.best_number();
-        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
-
-        match latest_cached_block {
-            Some(block) => block.rewards.iter().copied().min(),
-            None => self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min(),
-        }
-        .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
-        .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
-    }
-
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
     ///
     /// Handler for ETH RPC call: `eth_newFilter`
@@ -2032,41 +2698,6 @@ impl EthApi {
         self.backend.impersonate_signature(signature, address).await
     }
 
-    /// Returns true if auto mining is enabled, and false.
-    ///
-    /// Handler for ETH RPC call: `anvil_getAutomine`
-    pub fn anvil_get_auto_mine(&self) -> Result<bool> {
-        node_info!("anvil_getAutomine");
-        Ok(self.miner.is_auto_mine())
-    }
-
-    /// Returns the value of mining interval, if set.
-    ///
-    /// Handler for ETH RPC call: `anvil_getIntervalMining`.
-    pub fn anvil_get_interval_mining(&self) -> Result<Option<u64>> {
-        node_info!("anvil_getIntervalMining");
-        Ok(self.miner.get_interval())
-    }
-
-    /// Enables or disables, based on the single boolean argument, the automatic mining of new
-    /// blocks with each new transaction submitted to the network.
-    ///
-    /// Handler for ETH RPC call: `evm_setAutomine`
-    pub async fn anvil_set_auto_mine(&self, enable_automine: bool) -> Result<()> {
-        node_info!("evm_setAutomine");
-        if self.miner.is_auto_mine() {
-            if enable_automine {
-                return Ok(());
-            }
-            self.miner.set_mining_mode(MiningMode::None);
-        } else if enable_automine {
-            let listener = self.pool.add_ready_listener();
-            let mode = MiningMode::instant(1_000, listener);
-            self.miner.set_mining_mode(mode);
-        }
-        Ok(())
-    }
-
     /// Mines a series of blocks.
     ///
     /// Handler for ETH RPC call: `anvil_mine`
@@ -2091,87 +2722,6 @@ impl EthApi {
         })
         .await?;
 
-        Ok(())
-    }
-
-    /// Sets the mining behavior to interval with the given interval (seconds)
-    ///
-    /// Handler for ETH RPC call: `evm_setIntervalMining`
-    pub fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
-        node_info!("evm_setIntervalMining");
-        let mining_mode = if secs == 0 {
-            MiningMode::None
-        } else {
-            let block_time = Duration::from_secs(secs);
-
-            // This ensures that memory limits are stricter in interval-mine mode
-            self.backend.update_interval_mine_block_time(block_time);
-
-            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(block_time))
-        };
-        self.miner.set_mining_mode(mining_mode);
-        Ok(())
-    }
-
-    /// Removes transactions from the pool
-    ///
-    /// Handler for RPC call: `anvil_dropTransaction`
-    pub async fn anvil_drop_transaction(&self, tx_hash: B256) -> Result<Option<B256>> {
-        node_info!("anvil_dropTransaction");
-        Ok(self.pool.drop_transaction(tx_hash).map(|tx| tx.hash()))
-    }
-
-    /// Removes all transactions from the pool
-    ///
-    /// Handler for RPC call: `anvil_dropAllTransactions`
-    pub async fn anvil_drop_all_transactions(&self) -> Result<()> {
-        node_info!("anvil_dropAllTransactions");
-        self.pool.clear();
-        Ok(())
-    }
-
-    /// Reset the fork to a fresh forked state, and optionally update the fork config.
-    ///
-    /// If `forking` is `None` then this will disable forking entirely.
-    ///
-    /// Handler for RPC call: `anvil_reset`
-    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
-        self.reset_instance_id();
-        node_info!("anvil_reset");
-        if let Some(forking) = forking {
-            // if we're resetting the fork we need to reset the instance id
-            self.backend.reset_fork(forking).await?;
-        } else {
-            // Reset to a fresh in-memory state
-            self.backend.reset_to_in_mem().await?;
-        }
-        // Clear pending transactions since they reference the old chain state.
-        self.pool.clear();
-        Ok(())
-    }
-
-    pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
-        node_info!("anvil_setChainId");
-        self.backend.set_chain_id(chain_id);
-        Ok(())
-    }
-
-    /// Modifies the balance of an account.
-    ///
-    /// Handler for RPC call: `anvil_setBalance`
-    pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
-        node_info!("anvil_setBalance");
-        self.backend.set_balance(address, balance).await?;
-        Ok(())
-    }
-
-    /// Increases the balance of an account.
-    ///
-    /// Handler for RPC call: `anvil_addBalance`
-    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
-        node_info!("anvil_addBalance");
-        let current_balance = self.backend.get_balance(address, None).await?;
-        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
         Ok(())
     }
 
@@ -2317,183 +2867,6 @@ impl EthApi {
         Ok(())
     }
 
-    /// Sets the code of a contract.
-    ///
-    /// Handler for RPC call: `anvil_setCode`
-    pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
-        node_info!("anvil_setCode");
-        self.backend.set_code(address, code).await?;
-        Ok(())
-    }
-
-    /// Sets the nonce of an address.
-    ///
-    /// Handler for RPC call: `anvil_setNonce`
-    pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
-        node_info!("anvil_setNonce");
-        self.backend.set_nonce(address, nonce).await?;
-        Ok(())
-    }
-
-    /// Writes a single slot of the account's storage.
-    ///
-    /// Handler for RPC call: `anvil_setStorageAt`
-    pub async fn anvil_set_storage_at(
-        &self,
-        address: Address,
-        slot: U256,
-        val: B256,
-    ) -> Result<bool> {
-        node_info!("anvil_setStorageAt");
-        self.backend.set_storage_at(address, slot, val).await?;
-        Ok(true)
-    }
-
-    /// Enable or disable logging.
-    ///
-    /// Handler for RPC call: `anvil_setLoggingEnabled`
-    pub async fn anvil_set_logging(&self, enable: bool) -> Result<()> {
-        node_info!("anvil_setLoggingEnabled");
-        self.logger.set_enabled(enable);
-        Ok(())
-    }
-
-    /// Set the minimum gas price for the node.
-    ///
-    /// Handler for RPC call: `anvil_setMinGasPrice`
-    pub async fn anvil_set_min_gas_price(&self, gas: U256) -> Result<()> {
-        node_info!("anvil_setMinGasPrice");
-        if self.backend.is_eip1559() {
-            return Err(RpcError::invalid_params(
-                "anvil_setMinGasPrice is not supported when EIP-1559 is active",
-            )
-            .into());
-        }
-        self.backend.set_gas_price(gas.to());
-        Ok(())
-    }
-
-    /// Sets the base fee of the next block.
-    ///
-    /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
-    pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
-        node_info!("anvil_setNextBlockBaseFeePerGas");
-        if !self.backend.is_eip1559() {
-            return Err(RpcError::invalid_params(
-                "anvil_setNextBlockBaseFeePerGas is only supported when EIP-1559 is active",
-            )
-            .into());
-        }
-        self.backend.set_base_fee(basefee.to());
-        Ok(())
-    }
-
-    /// Sets the coinbase address.
-    ///
-    /// Handler for RPC call: `anvil_setCoinbase`
-    pub async fn anvil_set_coinbase(&self, address: Address) -> Result<()> {
-        node_info!("anvil_setCoinbase");
-        self.backend.set_coinbase(address);
-        Ok(())
-    }
-
-    /// Create a buffer that represents all state on the chain, which can be loaded to separate
-    /// process by calling `anvil_loadState`
-    ///
-    /// Handler for RPC call: `anvil_dumpState`
-    pub async fn anvil_dump_state(
-        &self,
-        preserve_historical_states: Option<bool>,
-    ) -> Result<Bytes> {
-        node_info!("anvil_dumpState");
-        self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
-    }
-
-    /// Returns the current state
-    pub async fn serialized_state(
-        &self,
-        preserve_historical_states: bool,
-    ) -> Result<SerializableState> {
-        self.backend.serialized_state(preserve_historical_states).await
-    }
-
-    /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
-    /// storage.
-    ///
-    /// Handler for RPC call: `anvil_loadState`
-    pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
-        node_info!("anvil_loadState");
-        self.backend.load_state_bytes(buf).await
-    }
-
-    /// Retrieves the Anvil node configuration params.
-    ///
-    /// Handler for RPC call: `anvil_nodeInfo`
-    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
-        node_info!("anvil_nodeInfo");
-
-        let env = self.backend.env().read();
-        let fork_config = self.backend.get_fork();
-        let tx_order = self.transaction_order.read();
-        let hard_fork: &str = env.evm_env.cfg_env.spec.into();
-
-        Ok(NodeInfo {
-            current_block_number: self.backend.best_number(),
-            current_block_timestamp: env.evm_env.block_env.timestamp.saturating_to(),
-            current_block_hash: self.backend.best_hash(),
-            hard_fork: hard_fork.to_string(),
-            transaction_order: match *tx_order {
-                TransactionOrder::Fifo => "fifo".to_string(),
-                TransactionOrder::Fees => "fees".to_string(),
-            },
-            environment: NodeEnvironment {
-                base_fee: self.backend.base_fee() as u128,
-                chain_id: self.backend.chain_id().to::<u64>(),
-                gas_limit: self.backend.gas_limit(),
-                gas_price: self.gas_price(),
-            },
-            fork_config: fork_config
-                .map(|fork| {
-                    let config = fork.config.read();
-
-                    NodeForkConfig {
-                        fork_url: Some(config.eth_rpc_url.clone()),
-                        fork_block_number: Some(config.block_number),
-                        fork_retry_backoff: Some(config.backoff.as_millis()),
-                    }
-                })
-                .unwrap_or_default(),
-        })
-    }
-
-    /// Retrieves metadata about the Anvil instance.
-    ///
-    /// Handler for RPC call: `anvil_metadata`
-    pub async fn anvil_metadata(&self) -> Result<Metadata> {
-        node_info!("anvil_metadata");
-        let fork_config = self.backend.get_fork();
-
-        Ok(Metadata {
-            client_version: CLIENT_VERSION.to_string(),
-            chain_id: self.backend.chain_id().to::<u64>(),
-            latest_block_hash: self.backend.best_hash(),
-            latest_block_number: self.backend.best_number(),
-            instance_id: *self.instance_id.read(),
-            forked_network: fork_config.map(|cfg| ForkedNetwork {
-                chain_id: cfg.chain_id(),
-                fork_block_number: cfg.block_number(),
-                fork_block_hash: cfg.block_hash(),
-            }),
-            snapshots: self.backend.list_state_snapshots(),
-        })
-    }
-
-    pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
-        node_info!("anvil_removePoolTransactions");
-        self.pool.remove_transactions_by_address(address);
-        Ok(())
-    }
-
     /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
     ///
     /// e.g depth = 3
@@ -2570,7 +2943,7 @@ impl EthApi {
                         let curr_nonce = nonces.entry(from).or_insert(
                             self.get_transaction_count(
                                 from,
-                                Some(common_block.header.number.into()),
+                                Some(common_block.header.number().into()),
                             )
                             .await?,
                         );
@@ -2603,109 +2976,6 @@ impl EthApi {
 
         self.backend.reorg(depth, block_pool_txs, common_block).await?;
         Ok(())
-    }
-
-    /// Rollback the chain to a specific depth.
-    ///
-    /// e.g depth = 3
-    ///     A  -> B  -> C  -> D  -> E
-    ///     A  -> B
-    ///
-    /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
-    /// chain height, i.e. can't rollback past the genesis block.
-    ///
-    /// Handler for RPC call: `anvil_rollback`
-    pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
-        node_info!("anvil_rollback");
-        let depth = depth.unwrap_or(1);
-
-        // Check reorg depth doesn't exceed current chain height
-        let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
-
-        // Get the common ancestor block
-        let common_block =
-            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
-
-        self.backend.rollback(common_block).await?;
-        Ok(())
-    }
-
-    /// Snapshot the state of the blockchain at the current block.
-    ///
-    /// Handler for RPC call: `evm_snapshot`
-    pub async fn evm_snapshot(&self) -> Result<U256> {
-        node_info!("evm_snapshot");
-        Ok(self.backend.create_state_snapshot().await)
-    }
-
-    /// Revert the state of the blockchain to a previous snapshot.
-    /// Takes a single parameter, which is the snapshot id to revert to.
-    ///
-    /// Handler for RPC call: `evm_revert`
-    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
-        node_info!("evm_revert");
-        self.backend.revert_state_snapshot(id).await
-    }
-
-    /// Jump forward in time by the given amount of time, in seconds.
-    ///
-    /// Handler for RPC call: `evm_increaseTime`
-    pub async fn evm_increase_time(&self, seconds: U256) -> Result<i64> {
-        node_info!("evm_increaseTime");
-        Ok(self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX)) as i64)
-    }
-
-    /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
-    ///
-    /// Handler for RPC call: `evm_setNextBlockTimestamp`
-    pub fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
-        node_info!("evm_setNextBlockTimestamp");
-        self.backend.time().set_next_block_timestamp(seconds)
-    }
-
-    /// Sets the specific timestamp and returns the number of seconds between the given timestamp
-    /// and the current time.
-    ///
-    /// Handler for RPC call: `evm_setTime`
-    pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
-        node_info!("evm_setTime");
-        let now = self.backend.time().current_call_timestamp();
-        self.backend.time().reset(timestamp);
-
-        // number of seconds between the given timestamp and the current time.
-        let offset = timestamp.saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
-    }
-
-    /// Set the next block gas limit
-    ///
-    /// Handler for RPC call: `evm_setBlockGasLimit`
-    pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
-        node_info!("evm_setBlockGasLimit");
-        self.backend.set_gas_limit(gas_limit.to());
-        Ok(true)
-    }
-
-    /// Sets an interval for the block timestamp
-    ///
-    /// Handler for RPC call: `anvil_setBlockTimestampInterval`
-    pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
-        node_info!("anvil_setBlockTimestampInterval");
-        self.backend.time().set_block_timestamp_interval(seconds);
-        Ok(())
-    }
-
-    /// Sets an interval for the block timestamp
-    ///
-    /// Handler for RPC call: `anvil_removeBlockTimestampInterval`
-    pub fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
-        node_info!("anvil_removeBlockTimestampInterval");
-        Ok(self.backend.time().remove_block_timestamp_interval())
     }
 
     /// Mine blocks, instantly.
@@ -2775,31 +3045,6 @@ impl EthApi {
         Ok(blocks)
     }
 
-    /// Sets the backend rpc url
-    ///
-    /// Handler for ETH RPC call: `anvil_setRpcUrl`
-    pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
-        node_info!("anvil_setRpcUrl");
-        if let Some(fork) = self.backend.get_fork() {
-            let mut config = fork.config.write();
-            // let interval = config.provider.get_interval();
-            let new_provider = Arc::new(
-                ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000).build().map_err(
-                    |_| {
-                        TransportErrorKind::custom_str(
-                            format!("Failed to parse invalid url {url}").as_str(),
-                        )
-                    },
-                    // TODO: Add interval
-                )?, // .interval(interval),
-            );
-            config.provider = new_provider;
-            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
-            config.eth_rpc_url = url;
-        }
-        Ok(())
-    }
-
     /// Execute a transaction regardless of signature status
     ///
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
@@ -2828,16 +3073,6 @@ impl EthApi {
         let provides = vec![to_marker(nonce, from)];
 
         self.add_pending_transaction(pending_transaction, requires, provides)
-    }
-
-    /// Returns the number of transactions currently pending for inclusion in the next block(s), as
-    /// well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
-    ///
-    /// Handler for ETH RPC call: `txpool_status`
-    pub async fn txpool_status(&self) -> Result<TxpoolStatus> {
-        node_info!("txpool_status");
-        Ok(self.pool.txpool_status())
     }
 
     /// Returns a summary of all the transactions currently pending for inclusion in the next
@@ -2924,25 +3159,6 @@ impl EthApi {
 }
 
 impl EthApi {
-    /// Executes the future on a new blocking task.
-    async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
-    where
-        C: FnOnce(Self) -> F,
-        F: Future<Output = Result<R>> + Send + 'static,
-        R: Send + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        let this = self.clone();
-        let f = c(this);
-        tokio::task::spawn_blocking(move || {
-            tokio::runtime::Handle::current().block_on(async move {
-                let res = f.await;
-                let _ = tx.send(res);
-            })
-        });
-        rx.await.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
-    }
-
     /// Executes the `evm_mine` and returns the number of blocks mined
     async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64> {
         let mut blocks_to_mine = 1u64;
@@ -3019,179 +3235,9 @@ impl EthApi {
         .await
     }
 
-    /// Estimates the gas usage of the `request` with the state.
-    ///
-    /// This will execute the transaction request and find the best gas limit via binary search.
-    fn do_estimate_gas_with_state(
-        &self,
-        mut request: WithOtherFields<TransactionRequest>,
-        state: &dyn DatabaseRef,
-        block_env: BlockEnv,
-    ) -> Result<u128> {
-        // If the request is a simple native token transfer we can optimize
-        // We assume it's a transfer if we have no input data.
-        let to = request.to.as_ref().and_then(TxKind::to);
-
-        // check certain fields to see if the request could be a simple transfer
-        let maybe_transfer = (request.input.input().is_none()
-            || request.input.input().is_some_and(|data| data.is_empty()))
-            && request.authorization_list.is_none()
-            && request.access_list.is_none()
-            && request.blob_versioned_hashes.is_none();
-
-        if maybe_transfer
-            && let Some(to) = to
-            && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
-            && target_code.as_ref().is_empty()
-        {
-            return Ok(MIN_TRANSACTION_GAS);
-        }
-
-        let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-            request.max_fee_per_blob_gas,
-        )?
-        .or_zero_fees();
-
-        // get the highest possible gas limit, either the request's set value or the currently
-        // configured gas limit
-        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
-
-        let gas_price = fees.gas_price.unwrap_or_default();
-        // If we have non-zero gas price, cap gas limit by sender balance
-        if gas_price > 0
-            && let Some(from) = request.from
-        {
-            let mut available_funds = self.backend.get_balance_with_state(state, from)?;
-            if let Some(value) = request.value {
-                if value > available_funds {
-                    return Err(InvalidTransactionError::InsufficientFunds.into());
-                }
-                // safe: value < available_funds
-                available_funds -= value;
-            }
-            // amount of gas the sender can afford with the `gas_price`
-            let allowance = available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
-            highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
-        }
-
-        let mut call_to_estimate = request.clone();
-        call_to_estimate.gas = Some(highest_gas_limit as u64);
-
-        // execute the call without writing to db
-        let ethres =
-            self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
-
-        let gas_used = match ethres.try_into()? {
-            GasEstimationCallResult::Success(gas) => Ok(gas),
-            GasEstimationCallResult::OutOfGas => {
-                Err(InvalidTransactionError::BasicOutOfGas(highest_gas_limit).into())
-            }
-            GasEstimationCallResult::Revert(output) => {
-                Err(InvalidTransactionError::Revert(output).into())
-            }
-            GasEstimationCallResult::EvmError(err) => {
-                warn!(target: "node", "estimation failed due to {:?}", err);
-                Err(BlockchainError::EvmError(err))
-            }
-        }?;
-
-        // at this point we know the call succeeded but want to find the _best_ (lowest) gas the
-        // transaction succeeds with. we find this by doing a binary search over the
-        // possible range NOTE: this is the gas the transaction used, which is less than the
-        // transaction requires to succeed
-
-        // Get the starting lowest gas needed depending on the transaction kind.
-        let mut lowest_gas_limit = determine_base_gas_by_kind(&request);
-
-        // pick a point that's close to the estimated gas
-        let mut mid_gas_limit =
-            std::cmp::min(gas_used * 3, (highest_gas_limit + lowest_gas_limit) / 2);
-
-        // Binary search for the ideal gas limit
-        while (highest_gas_limit - lowest_gas_limit) > 1 {
-            request.gas = Some(mid_gas_limit as u64);
-            let ethres = self.backend.call_with_state(
-                &state,
-                request.clone(),
-                fees.clone(),
-                block_env.clone(),
-            );
-
-            match ethres.try_into()? {
-                GasEstimationCallResult::Success(_) => {
-                    // If the transaction succeeded, we can set a ceiling for the highest gas limit
-                    // at the current midpoint, as spending any more gas would
-                    // make no sense (as the TX would still succeed).
-                    highest_gas_limit = mid_gas_limit;
-                }
-                GasEstimationCallResult::OutOfGas
-                | GasEstimationCallResult::Revert(_)
-                | GasEstimationCallResult::EvmError(_) => {
-                    // If the transaction failed, we can set a floor for the lowest gas limit at the
-                    // current midpoint, as spending any less gas would make no
-                    // sense (as the TX would still revert due to lack of gas).
-                    //
-                    // We don't care about the reason here, as we known that transaction is correct
-                    // as it succeeded earlier
-                    lowest_gas_limit = mid_gas_limit;
-                }
-            };
-            // new midpoint
-            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-        }
-
-        trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
-
-        Ok(highest_gas_limit)
-    }
-
-    /// Updates the `TransactionOrder`
-    pub fn set_transaction_order(&self, order: TransactionOrder) {
-        *self.transaction_order.write() = order;
-    }
-
     /// Returns the priority of the transaction based on the current `TransactionOrder`
     fn transaction_priority(&self, tx: &FoundryTxEnvelope) -> TransactionPriority {
         self.transaction_order.read().priority(tx)
-    }
-
-    /// Returns the chain ID used for transaction
-    pub fn chain_id(&self) -> u64 {
-        self.backend.chain_id().to::<u64>()
-    }
-
-    /// Returns the configured fork, if any.
-    pub fn get_fork(&self) -> Option<ClientFork> {
-        self.backend.get_fork()
-    }
-
-    /// Returns the current instance's ID.
-    pub fn instance_id(&self) -> B256 {
-        *self.instance_id.read()
-    }
-
-    /// Resets the instance ID.
-    pub fn reset_instance_id(&self) {
-        *self.instance_id.write() = B256::random();
-    }
-
-    /// Returns the first signer that can sign for the given address
-    #[expect(clippy::borrowed_box)]
-    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<FoundryNetwork>>> {
-        self.signers.iter().find(|signer| signer.is_signer_for(address))
-    }
-
-    /// Returns a new block event stream that yields Notifications when a new block was added
-    pub fn new_block_notifications(&self) -> NewBlockNotifications {
-        self.backend.new_block_notifications()
-    }
-
-    /// Returns a new listeners for ready transactions
-    pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
-        self.pool.add_ready_listener()
     }
 
     /// Returns a listener for pending transactions, yielding full transactions
@@ -3212,16 +3258,6 @@ impl EthApi {
         });
 
         rx
-    }
-
-    /// Returns a new accessor for certain storage elements
-    pub fn storage_info(&self) -> StorageInfo {
-        StorageInfo::new(Arc::clone(&self.backend))
-    }
-
-    /// Returns true if forked
-    pub fn is_fork(&self) -> bool {
-        self.backend.is_fork()
     }
 
     /// Mines exactly one block
@@ -3343,11 +3379,6 @@ impl EthApi {
         }
     }
 
-    /// Returns true if the `addr` is currently impersonated
-    pub fn is_impersonated(&self, addr: Address) -> bool {
-        self.backend.cheats().is_impersonated(addr)
-    }
-
     /// Returns the nonce of the `address` depending on the `block_number`
     async fn get_transaction_count(
         &self,
@@ -3399,11 +3430,6 @@ impl EthApi {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
-    }
-
-    /// Returns the current state root
-    pub async fn state_root(&self) -> Option<B256> {
-        self.backend.get_db().read().await.maybe_state_root()
     }
 
     /// additional validation against hardfork

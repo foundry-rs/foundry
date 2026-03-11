@@ -6,6 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
+use alloy_network::AnyNetwork;
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
@@ -18,7 +19,7 @@ use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     ContractsByArtifact,
     fmt::{format_token, format_token_raw},
-    provider::get_http_provider,
+    provider::ProviderBuilder,
 };
 use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
@@ -236,7 +237,7 @@ impl RpcData {
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = get_http_provider(rpc);
+            let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
             let id = provider.get_chain_id().await.ok()?;
             NamedChain::try_from(id).ok()
         });

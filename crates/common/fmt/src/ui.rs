@@ -758,25 +758,25 @@ transactionIndex     {}
 type                 {}
 blobGasPrice         {}
 blobGasUsed          {}",
-            receipt.block_hash.pretty(),
-            receipt.block_number.pretty(),
-            receipt.contract_address.pretty(),
-            receipt.inner.cumulative_gas_used().pretty(),
-            receipt.effective_gas_price.pretty(),
-            receipt.from.pretty(),
-            receipt.gas_used.pretty(),
+            receipt.block_hash().pretty(),
+            receipt.block_number().pretty(),
+            receipt.contract_address().pretty(),
+            receipt.cumulative_gas_used().pretty(),
+            receipt.effective_gas_price().pretty(),
+            receipt.from().pretty(),
+            receipt.gas_used().pretty(),
             serde_json::to_string(receipt.inner.logs()).unwrap(),
             receipt.inner.logs_bloom().pretty(),
             self.state_root().pretty(),
-            receipt.inner.status().pretty(),
-            receipt.transaction_hash.pretty(),
-            receipt.transaction_index.pretty(),
+            receipt.status().pretty(),
+            receipt.transaction_hash().pretty(),
+            receipt.transaction_index().pretty(),
             receipt.inner.tx_type() as u8,
-            receipt.blob_gas_price.pretty(),
-            receipt.blob_gas_used.pretty()
+            receipt.blob_gas_price().pretty(),
+            receipt.blob_gas_used().pretty()
         );
 
-        if let Some(to) = receipt.to {
+        if let Some(to) = receipt.to() {
             pretty.push_str(&format!("\nto                   {}", to.pretty()));
         }
 
@@ -917,25 +917,25 @@ transactionIndex     {}
 type                 {}
 feePayer             {}
 feeToken             {}",
-            receipt.block_hash.pretty(),
-            receipt.block_number.pretty(),
-            receipt.contract_address.pretty(),
-            receipt.inner.cumulative_gas_used().pretty(),
-            receipt.effective_gas_price.pretty(),
-            receipt.from.pretty(),
-            receipt.gas_used.pretty(),
+            receipt.block_hash().pretty(),
+            receipt.block_number().pretty(),
+            receipt.contract_address().pretty(),
+            receipt.cumulative_gas_used().pretty(),
+            receipt.effective_gas_price().pretty(),
+            receipt.from().pretty(),
+            receipt.gas_used().pretty(),
             serde_json::to_string(receipt.inner.logs()).unwrap(),
             receipt.inner.logs_bloom.pretty(),
             self.state_root().pretty(),
-            receipt.inner.status().pretty(),
-            receipt.transaction_hash.pretty(),
-            receipt.transaction_index.pretty(),
+            receipt.status().pretty(),
+            receipt.transaction_hash().pretty(),
+            receipt.transaction_index().pretty(),
             receipt.inner.receipt.tx_type as u8,
             self.fee_payer.pretty(),
             self.fee_token.pretty(),
         );
 
-        if let Some(to) = receipt.to {
+        if let Some(to) = receipt.to() {
             pretty.push_str(&format!("\nto                   {}", to.pretty()));
         }
 

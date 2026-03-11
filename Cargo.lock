@@ -4386,6 +4386,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-linking",
+ "foundry-primitives",
  "foundry-wallets",
  "futures",
  "indicatif",
@@ -4406,6 +4407,7 @@ dependencies = [
 name = "forge-script-sequence"
 version = "1.6.0"
 dependencies = [
+ "alloy-network",
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "eyre",

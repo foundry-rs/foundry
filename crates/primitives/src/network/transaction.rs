@@ -30,6 +30,9 @@ use tempo_alloy::TempoNetwork;
 /// - [`FoundryTransactionBuilder::set_fee_token`]
 /// - [`FoundryTransactionBuilder::set_nonce_key`]
 pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
+    /// Reset gas limit
+    fn reset_gas_limit(&mut self);
+
     /// Get the max fee per blob gas for the transaction.
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
         None
@@ -144,6 +147,10 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
 }
 
 impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionRequest {
+    fn reset_gas_limit(&mut self) {
+        self.gas = None;
+    }
+
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
         self.max_fee_per_blob_gas
     }
@@ -179,6 +186,10 @@ impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionR
 }
 
 impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::TransactionRequest {
+    fn reset_gas_limit(&mut self) {
+        self.gas = None;
+    }
+
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
         self.max_fee_per_blob_gas
     }
@@ -214,6 +225,10 @@ impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::Transact
 }
 
 impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::TransactionRequest {
+    fn reset_gas_limit(&mut self) {
+        self.gas = None;
+    }
+
     fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
         self.authorization_list.as_ref()
     }
