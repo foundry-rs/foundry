@@ -5,7 +5,7 @@ use crate::{
     fork::{CreateFork, configure_env},
 };
 use alloy_network::{AnyNetwork, Network};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, BlockNumber, U256};
 use alloy_provider::{Provider, RootProvider};
 use eyre::WrapErr;
 use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
@@ -141,7 +141,7 @@ impl EvmOpts {
 
     /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint,
     /// and the block number that was used to configure the environment.
-    pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, u64)> {
+    pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, BlockNumber)> {
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
         self.fork_evm_env_with_provider(fork_url, &provider).await
     }
@@ -152,7 +152,7 @@ impl EvmOpts {
         &self,
         fork_url: &str,
         provider: &P,
-    ) -> eyre::Result<(crate::Env, u64)> {
+    ) -> eyre::Result<(crate::Env, BlockNumber)> {
         environment(
             provider,
             self.memory_limit,

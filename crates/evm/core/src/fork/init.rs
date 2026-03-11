@@ -1,6 +1,6 @@
 use crate::{Env, EvmEnv, utils::apply_chain_and_block_specific_env_changes};
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, BlockNumber, ChainId, U256};
 use alloy_provider::{Network, Provider, network::BlockResponse};
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -14,13 +14,13 @@ pub async fn environment<N: Network, P: Provider<N>>(
     provider: &P,
     memory_limit: u64,
     override_gas_price: Option<u128>,
-    override_chain_id: Option<u64>,
-    pin_block: Option<u64>,
+    override_chain_id: Option<ChainId>,
+    pin_block: Option<BlockNumber>,
     origin: Address,
     disable_block_gas_limit: bool,
     enable_tx_gas_limit: bool,
     configs: NetworkConfigs,
-) -> eyre::Result<(Env, u64)> {
+) -> eyre::Result<(Env, BlockNumber)> {
     trace!(
         %memory_limit,
         ?override_gas_price,
