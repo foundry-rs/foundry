@@ -129,8 +129,8 @@ impl EvmOpts {
 
     /// Assembles a complete [`Env`]
     ///
-    /// If a `fork_url` is set, creates a provider and passes it to both [`Self::fork_evm_env`]
-    /// and [`Self::fork_tx_env`]. Falls back to local settings when no fork URL is configured.
+    /// If a `fork_url` is set, creates a provider and passes it to both `EvmOpts::fork_evm_env`
+    /// and `EvmOpts::fork_tx_env`. Falls back to local settings when no fork URL is configured.
     pub async fn env(&self) -> eyre::Result<crate::Env> {
         if let Some(ref fork_url) = self.fork_url {
             let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
