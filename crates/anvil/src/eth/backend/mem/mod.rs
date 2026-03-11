@@ -957,55 +957,6 @@ impl<T> Backend<T> {
         id
     }
 
-    /// Reverts the state to the state snapshot identified by the given `id`.
-    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let block = { self.active_state_snapshots.lock().remove(&id) };
-        if let Some((num, hash)) = block {
-            let best_block_hash = {
-                // revert the storage that's newer than the snapshot
-                let current_height = self.best_number();
-                let mut storage = self.blockchain.storage.write();
-
-                for n in ((num + 1)..=current_height).rev() {
-                    trace!(target: "backend", "reverting block {}", n);
-                    if let Some(hash) = storage.hashes.remove(&n)
-                        && let Some(block) = storage.blocks.remove(&hash)
-                    {
-                        for tx in block.body.transactions {
-                            let _ = storage.transactions.remove(&tx.hash());
-                        }
-                    }
-                }
-
-                storage.best_number = num;
-                storage.best_hash = hash;
-                hash
-            };
-            let block = self
-                .blockchain
-                .get_block_by_hash(&best_block_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
-
-            let reset_time = block.header.timestamp();
-            self.time.reset(reset_time);
-
-            let mut env = self.env.write();
-            env.evm_env.block_env = BlockEnv {
-                number: U256::from(num),
-                timestamp: U256::from(block.header.timestamp()),
-                difficulty: block.header.difficulty(),
-                // ensures prevrandao is set
-                prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
-                gas_limit: block.header.gas_limit(),
-                // Keep previous `beneficiary` and `basefee` value
-                beneficiary: env.evm_env.block_env.beneficiary,
-                basefee: env.evm_env.block_env.basefee,
-                ..Default::default()
-            }
-        }
-        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
-    }
-
     pub fn list_state_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
         self.active_state_snapshots.lock().clone().into_iter().collect()
     }
@@ -1209,6 +1160,53 @@ impl<T> Backend<T> {
 }
 
 impl Backend {
+    /// Reverts the state to the state snapshot identified by the given `id`.
+    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
+        let block = { self.active_state_snapshots.lock().remove(&id) };
+        if let Some((num, hash)) = block {
+            let best_block_hash = {
+                // revert the storage that's newer than the snapshot
+                let current_height = self.best_number();
+                let mut storage = self.blockchain.storage.write();
+
+                for n in ((num + 1)..=current_height).rev() {
+                    trace!(target: "backend", "reverting block {}", n);
+                    if let Some(hash) = storage.hashes.remove(&n)
+                        && let Some(block) = storage.blocks.remove(&hash)
+                    {
+                        for tx in block.body.transactions {
+                            let _ = storage.transactions.remove(&tx.hash());
+                        }
+                    }
+                }
+
+                storage.best_number = num;
+                storage.best_hash = hash;
+                hash
+            };
+            let block =
+                self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+
+            let reset_time = block.header.timestamp();
+            self.time.reset(reset_time);
+
+            let mut env = self.env.write();
+            env.evm_env.block_env = BlockEnv {
+                number: U256::from(num),
+                timestamp: U256::from(block.header.timestamp()),
+                difficulty: block.header.difficulty(),
+                // ensures prevrandao is set
+                prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
+                gas_limit: block.header.gas_limit(),
+                // Keep previous `beneficiary` and `basefee` value
+                beneficiary: env.evm_env.block_env.beneficiary,
+                basefee: env.evm_env.block_env.basefee,
+                ..Default::default()
+            }
+        }
+        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
+    }
+
     /// executes the transactions without writing to the underlying database
     pub async fn inspect_tx(
         &self,
