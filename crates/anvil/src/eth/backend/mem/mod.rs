@@ -119,7 +119,7 @@ use revm::{
 };
 use std::{
     collections::BTreeMap,
-    fmt::Debug,
+    fmt::{self, Debug},
     io::{Read, Write},
     ops::{Mul, Not},
     path::PathBuf,
@@ -151,13 +151,21 @@ pub const MIN_CREATE_GAS: u128 = 53000;
 pub type State = foundry_evm::utils::StateChangeset;
 
 /// A block request, which includes the Pool Transactions if it's Pending
-#[derive(Debug)]
-pub enum BlockRequest {
-    Pending(Vec<Arc<PoolTransaction>>),
+pub enum BlockRequest<T = FoundryTxEnvelope> {
+    Pending(Vec<Arc<PoolTransaction<T>>>),
     Number(u64),
 }
 
-impl BlockRequest {
+impl<T> fmt::Debug for BlockRequest<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pending(txs) => f.debug_tuple("Pending").field(&txs.len()).finish(),
+            Self::Number(n) => f.debug_tuple("Number").field(n).finish(),
+        }
+    }
+}
+
+impl<T> BlockRequest<T> {
     pub fn block_number(&self) -> BlockNumber {
         match *self {
             Self::Pending(_) => BlockNumber::Pending,
