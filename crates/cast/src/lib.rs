@@ -7,7 +7,7 @@
 extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader, Header};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
@@ -1007,7 +1007,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
                     let block = self.provider.get_block_by_hash(hash.block_hash).await?;
-                    Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
+                    Ok(block.map(|block| block.header.number()).map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),

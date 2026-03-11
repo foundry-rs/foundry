@@ -3,7 +3,7 @@ use crate::eth::{
     error::{BlockchainError, Result},
     macros::node_info,
 };
-use alloy_consensus::Transaction as TransactionTrait;
+use alloy_consensus::{BlockHeader, Transaction as TransactionTrait};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse,
     ReceiptResponse, TransactionResponse,
@@ -376,7 +376,7 @@ impl EthApi {
         let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
         // Reuse timestamp from the block we already have
-        let timestamp = block.header.timestamp;
+        let timestamp = block.header.timestamp();
 
         let receipts = join_all(receipt_futs.map(|r| async move {
             if let Ok(Some(r)) = r.await {
@@ -425,7 +425,7 @@ impl EthApi {
                     ts
                 } else {
                     let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                    block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp
+                    block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp()
                 };
                 let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })

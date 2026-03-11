@@ -3,7 +3,7 @@ use std::{cmp::Ordering, sync::Arc, time::Duration};
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
     Address, TxHash,
     map::{AddressHashMap, AddressHashSet},
@@ -21,6 +21,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::Config;
+use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
@@ -30,14 +31,17 @@ use crate::{
     sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
 
-pub async fn estimate_gas<P: Provider<Ethereum>>(
-    tx: &mut TransactionRequest,
+pub async fn estimate_gas<N: Network, P: Provider<N>>(
+    tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
-) -> Result<()> {
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
-    tx.gas = None;
+    tx.reset_gas_limit();
 
     tx.set_gas_limit(
         provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?

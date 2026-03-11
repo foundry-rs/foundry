@@ -4,7 +4,8 @@ use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::Po
 use alloy_consensus::{BlockHeader, TrieAccount};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse, primitives::HeaderResponse,
+    AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
+    primitives::HeaderResponse,
 };
 use alloy_primitives::{
     Address, B256, Bytes, StorageValue, U256,
@@ -17,14 +18,12 @@ use alloy_provider::{
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
     FeeHistory, Filter, Log,
-    request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
     },
 };
-use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_primitives::FoundryTxReceipt;
@@ -41,71 +40,21 @@ use tokio::sync::RwLock as AsyncRwLock;
 /// This type contains a subset of the [`EthApi`](crate::eth::EthApi) functions but will exclusively
 /// fetch the requested data from the remote client, if it wasn't already fetched.
 #[derive(Clone, Debug)]
-pub struct ClientFork {
+pub struct ClientFork<N: Network = AnyNetwork> {
     /// Contains the cached data
-    pub storage: Arc<RwLock<ForkedStorage>>,
+    pub storage: Arc<RwLock<ForkedStorage<N>>>,
     /// contains the info how the fork is configured
     // Wrapping this in a lock, ensures we can update this on the fly via additional custom RPC
     // endpoints
-    pub config: Arc<RwLock<ClientForkConfig>>,
+    pub config: Arc<RwLock<ClientForkConfig<N>>>,
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
 }
 
-impl ClientFork {
+impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
-    pub fn new(config: ClientForkConfig, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
+    pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
         Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
-    }
-
-    /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub async fn reset(
-        &self,
-        url: Option<String>,
-        block_number: impl Into<BlockId>,
-    ) -> Result<(), BlockchainError> {
-        let block_number = block_number.into();
-        {
-            self.database
-                .write()
-                .await
-                .maybe_reset(url.clone(), block_number)
-                .map_err(BlockchainError::Internal)?;
-        }
-
-        if let Some(url) = url {
-            self.config.write().update_url(url)?;
-            let override_chain_id = self.config.read().override_chain_id;
-            let chain_id = if let Some(chain_id) = override_chain_id {
-                chain_id
-            } else {
-                self.provider().get_chain_id().await?
-            };
-            self.config.write().chain_id = chain_id;
-        }
-
-        let provider = self.provider();
-        let block =
-            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-        let block_hash = block.header().hash();
-        let timestamp = block.header().timestamp();
-        let base_fee = block.header().base_fee_per_gas();
-        let total_difficulty = block.header().difficulty();
-
-        let number = block.header().number();
-        self.config.write().update_block(
-            number,
-            block_hash,
-            timestamp,
-            base_fee.map(|g| g as u128),
-            total_difficulty,
-        );
-
-        self.clear_cached_storage();
-
-        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
-
-        Ok(())
     }
 
     /// Removes all data cached from previous responses
@@ -156,15 +105,15 @@ impl ClientFork {
         self.config.read().chain_id
     }
 
-    fn provider(&self) -> Arc<RetryProvider> {
+    fn provider(&self) -> Arc<RetryProvider<N>> {
         self.config.read().provider.clone()
     }
 
-    fn storage_read(&self) -> RwLockReadGuard<'_, RawRwLock, ForkedStorage> {
+    fn storage_read(&self) -> RwLockReadGuard<'_, RawRwLock, ForkedStorage<N>> {
         self.storage.read()
     }
 
-    fn storage_write(&self) -> RwLockWriteGuard<'_, RawRwLock, ForkedStorage> {
+    fn storage_write(&self) -> RwLockWriteGuard<'_, RawRwLock, ForkedStorage<N>> {
         self.storage.write()
     }
 
@@ -186,55 +135,6 @@ impl ClientFork {
         block_number: Option<BlockId>,
     ) -> Result<EIP1186AccountProofResponse, TransportError> {
         self.provider().get_proof(address, keys).block_id(block_number.unwrap_or_default()).await
-    }
-
-    /// Sends `eth_call`
-    pub async fn call(
-        &self,
-        request: &WithOtherFields<TransactionRequest>,
-        block: Option<BlockNumber>,
-    ) -> Result<Bytes, TransportError> {
-        let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().call(request.clone()).block(block.into()).await?;
-
-        Ok(res)
-    }
-
-    /// Sends `eth_simulateV1`
-    pub async fn simulate_v1(
-        &self,
-        request: &SimulatePayload,
-        block: Option<BlockNumber>,
-    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, TransportError> {
-        let mut simulate_call = self.provider().simulate(request);
-        if let Some(n) = block {
-            simulate_call = simulate_call.number(n.as_number().unwrap());
-        }
-
-        let res = simulate_call.await?;
-
-        Ok(res)
-    }
-
-    /// Sends `eth_estimateGas`
-    pub async fn estimate_gas(
-        &self,
-        request: &WithOtherFields<TransactionRequest>,
-        block: Option<BlockNumber>,
-    ) -> Result<u128, TransportError> {
-        let block = block.unwrap_or_default();
-        let res = self.provider().estimate_gas(request.clone()).block(block.into()).await?;
-
-        Ok(res as u128)
-    }
-
-    /// Sends `eth_createAccessList`
-    pub async fn create_access_list(
-        &self,
-        request: &WithOtherFields<TransactionRequest>,
-        block: Option<BlockNumber>,
-    ) -> Result<AccessListResult, TransportError> {
-        self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
     }
 
     pub async fn storage_at(
@@ -304,73 +204,6 @@ impl ClientFork {
         self.provider().get_account(address).block_id(blocknumber.into()).await
     }
 
-    pub async fn transaction_by_block_number_and_index(
-        &self,
-        number: u64,
-        index: usize,
-    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
-        if let Some(block) = self.block_by_number(number).await? {
-            #[allow(clippy::collapsible_match)]
-            match block.transactions() {
-                BlockTransactions::Full(txs) => {
-                    if let Some(tx) = txs.get(index) {
-                        return Ok(Some(tx.clone()));
-                    }
-                }
-                BlockTransactions::Hashes(hashes) => {
-                    if let Some(tx_hash) = hashes.get(index) {
-                        return self.transaction_by_hash(*tx_hash).await;
-                    }
-                }
-                // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
-            }
-        }
-        Ok(None)
-    }
-
-    pub async fn transaction_by_block_hash_and_index(
-        &self,
-        hash: B256,
-        index: usize,
-    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
-        if let Some(block) = self.block_by_hash(hash).await? {
-            #[allow(clippy::collapsible_match)]
-            match block.transactions() {
-                BlockTransactions::Full(txs) => {
-                    if let Some(tx) = txs.get(index) {
-                        return Ok(Some(tx.clone()));
-                    }
-                }
-                BlockTransactions::Hashes(hashes) => {
-                    if let Some(tx_hash) = hashes.get(index) {
-                        return self.transaction_by_hash(*tx_hash).await;
-                    }
-                }
-                // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
-            }
-        }
-        Ok(None)
-    }
-
-    pub async fn transaction_by_hash(
-        &self,
-        hash: B256,
-    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
-        trace!(target: "backend::fork", "transaction_by_hash={:?}", hash);
-        if let tx @ Some(_) = self.storage_read().transactions.get(&hash).cloned() {
-            return Ok(tx);
-        }
-
-        let tx = self.provider().get_transaction_by_hash(hash).await?;
-        if let Some(tx) = tx.clone() {
-            let mut storage = self.storage_write();
-            storage.transactions.insert(hash, tx);
-        }
-        Ok(tx)
-    }
-
     pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, TransportError> {
         if let Some(traces) = self.storage_read().transaction_traces.get(&hash).cloned() {
             return Ok(traces);
@@ -433,6 +266,271 @@ impl ClientFork {
         self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
     }
 
+    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    pub async fn reset(
+        &self,
+        url: Option<String>,
+        block_number: impl Into<BlockId>,
+    ) -> Result<(), BlockchainError> {
+        let block_number = block_number.into();
+        {
+            self.database
+                .write()
+                .await
+                .maybe_reset(url.clone(), block_number)
+                .map_err(BlockchainError::Internal)?;
+        }
+
+        if let Some(url) = url {
+            self.config.write().update_url(url)?;
+            let override_chain_id = self.config.read().override_chain_id;
+            let chain_id = if let Some(chain_id) = override_chain_id {
+                chain_id
+            } else {
+                self.provider().get_chain_id().await?
+            };
+            self.config.write().chain_id = chain_id;
+        }
+
+        let provider = self.provider();
+        let block =
+            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let block_hash = block.header().hash();
+        let timestamp = block.header().timestamp();
+        let base_fee = block.header().base_fee_per_gas();
+        let total_difficulty = block.header().difficulty();
+
+        let number = block.header().number();
+        self.config.write().update_block(
+            number,
+            block_hash,
+            timestamp,
+            base_fee.map(|g| g as u128),
+            total_difficulty,
+        );
+
+        self.clear_cached_storage();
+
+        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
+
+        Ok(())
+    }
+
+    /// Sends `eth_call`
+    pub async fn call(
+        &self,
+        request: &N::TransactionRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<Bytes, TransportError> {
+        let block = block.unwrap_or(BlockNumber::Latest);
+        let res = self.provider().call(request.clone()).block(block.into()).await?;
+
+        Ok(res)
+    }
+
+    /// Sends `eth_simulateV1`
+    pub async fn simulate_v1(
+        &self,
+        request: &SimulatePayload,
+        block: Option<BlockNumber>,
+    ) -> Result<Vec<SimulatedBlock<N::BlockResponse>>, TransportError> {
+        let mut simulate_call = self.provider().simulate(request);
+        if let Some(n) = block {
+            simulate_call = simulate_call.number(n.as_number().unwrap());
+        }
+
+        let res = simulate_call.await?;
+
+        Ok(res)
+    }
+
+    /// Sends `eth_estimateGas`
+    pub async fn estimate_gas(
+        &self,
+        request: &N::TransactionRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<u128, TransportError> {
+        let block = block.unwrap_or_default();
+        let res = self.provider().estimate_gas(request.clone()).block(block.into()).await?;
+
+        Ok(res as u128)
+    }
+
+    /// Sends `eth_createAccessList`
+    pub async fn create_access_list(
+        &self,
+        request: &N::TransactionRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<AccessListResult, TransportError> {
+        self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
+    }
+
+    pub async fn transaction_by_block_number_and_index(
+        &self,
+        number: u64,
+        index: usize,
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
+        if let Some(block) = self.block_by_number(number).await? {
+            #[allow(clippy::collapsible_match)]
+            match block.transactions() {
+                BlockTransactions::Full(txs) => {
+                    if let Some(tx) = txs.get(index) {
+                        return Ok(Some(tx.clone()));
+                    }
+                }
+                BlockTransactions::Hashes(hashes) => {
+                    if let Some(tx_hash) = hashes.get(index) {
+                        return self.transaction_by_hash(*tx_hash).await;
+                    }
+                }
+                // TODO(evalir): Is it possible to reach this case? Should we support it
+                BlockTransactions::Uncle => panic!("Uncles not supported"),
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn transaction_by_block_hash_and_index(
+        &self,
+        hash: B256,
+        index: usize,
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
+        if let Some(block) = self.block_by_hash(hash).await? {
+            #[allow(clippy::collapsible_match)]
+            match block.transactions() {
+                BlockTransactions::Full(txs) => {
+                    if let Some(tx) = txs.get(index) {
+                        return Ok(Some(tx.clone()));
+                    }
+                }
+                BlockTransactions::Hashes(hashes) => {
+                    if let Some(tx_hash) = hashes.get(index) {
+                        return self.transaction_by_hash(*tx_hash).await;
+                    }
+                }
+                // TODO(evalir): Is it possible to reach this case? Should we support it
+                BlockTransactions::Uncle => panic!("Uncles not supported"),
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn transaction_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
+        trace!(target: "backend::fork", "transaction_by_hash={:?}", hash);
+        if let tx @ Some(_) = self.storage_read().transactions.get(&hash).cloned() {
+            return Ok(tx);
+        }
+
+        let tx = self.provider().get_transaction_by_hash(hash).await?;
+        if let Some(tx) = tx.clone() {
+            let mut storage = self.storage_write();
+            storage.transactions.insert(hash, tx);
+        }
+        Ok(tx)
+    }
+
+    pub async fn block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(mut block) = self.storage_read().blocks.get(&hash).cloned() {
+            block.transactions_mut().convert_to_hashes();
+            return Ok(Some(block));
+        }
+
+        Ok(self.fetch_full_block(hash).await?.map(|mut b| {
+            b.transactions_mut().convert_to_hashes();
+            b
+        }))
+    }
+
+    pub async fn block_by_hash_full(
+        &self,
+        hash: B256,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
+            return Ok(Some(self.convert_to_full_block(block)));
+        }
+        self.fetch_full_block(hash).await
+    }
+
+    pub async fn block_by_number(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(mut block) = self
+            .storage_read()
+            .hashes
+            .get(&block_number)
+            .and_then(|hash| self.storage_read().blocks.get(hash).cloned())
+        {
+            block.transactions_mut().convert_to_hashes();
+            return Ok(Some(block));
+        }
+
+        let mut block = self.fetch_full_block(block_number).await?;
+        if let Some(block) = &mut block {
+            block.transactions_mut().convert_to_hashes();
+        }
+        Ok(block)
+    }
+
+    pub async fn block_by_number_full(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(block) = self
+            .storage_read()
+            .hashes
+            .get(&block_number)
+            .copied()
+            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+        {
+            return Ok(Some(self.convert_to_full_block(block)));
+        }
+
+        self.fetch_full_block(block_number).await
+    }
+
+    async fn fetch_full_block(
+        &self,
+        block_id: impl Into<BlockId>,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
+            let hash = block.header().hash();
+            let block_number = block.header().number();
+            let mut storage = self.storage_write();
+            // also insert all transactions
+            let block_txs = match block.transactions() {
+                BlockTransactions::Full(txs) => txs.to_owned(),
+                _ => vec![],
+            };
+            storage.transactions.extend(block_txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
+            storage.hashes.insert(block_number, hash);
+            storage.blocks.insert(hash, block.clone());
+            return Ok(Some(block));
+        }
+
+        Ok(None)
+    }
+
+    /// Converts a block of hashes into a full block
+    fn convert_to_full_block(&self, mut block: N::BlockResponse) -> N::BlockResponse {
+        let storage = self.storage.read();
+        let transactions = block
+            .transactions()
+            .hashes()
+            .filter_map(|hash| storage.transactions.get(&hash).cloned())
+            .collect();
+        *block.transactions_mut() = BlockTransactions::Full(transactions);
+        block
+    }
+}
+
+impl ClientFork {
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -487,88 +585,6 @@ impl ClientFork {
         Ok(None)
     }
 
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(mut block) = self.storage_read().blocks.get(&hash).cloned() {
-            block.transactions_mut().convert_to_hashes();
-            return Ok(Some(block));
-        }
-
-        Ok(self.fetch_full_block(hash).await?.map(|mut b| {
-            b.transactions_mut().convert_to_hashes();
-            b
-        }))
-    }
-
-    pub async fn block_by_hash_full(
-        &self,
-        hash: B256,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
-            return Ok(Some(self.convert_to_full_block(block)));
-        }
-        self.fetch_full_block(hash).await
-    }
-
-    pub async fn block_by_number(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(mut block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .and_then(|hash| self.storage_read().blocks.get(hash).cloned())
-        {
-            block.transactions_mut().convert_to_hashes();
-            return Ok(Some(block));
-        }
-
-        let mut block = self.fetch_full_block(block_number).await?;
-        if let Some(block) = &mut block {
-            block.transactions_mut().convert_to_hashes();
-        }
-        Ok(block)
-    }
-
-    pub async fn block_by_number_full(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self
-            .storage_read()
-            .hashes
-            .get(&block_number)
-            .copied()
-            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
-        {
-            return Ok(Some(self.convert_to_full_block(block)));
-        }
-
-        self.fetch_full_block(block_number).await
-    }
-
-    async fn fetch_full_block(
-        &self,
-        block_id: impl Into<BlockId>,
-    ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
-            let hash = block.header().hash();
-            let block_number = block.header().number();
-            let mut storage = self.storage_write();
-            // also insert all transactions
-            let block_txs = match block.transactions() {
-                BlockTransactions::Full(txs) => txs.to_owned(),
-                _ => vec![],
-            };
-            storage.transactions.extend(block_txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
-            storage.hashes.insert(block_number, hash);
-            storage.blocks.insert(hash, block.clone());
-            return Ok(Some(block));
-        }
-
-        Ok(None)
-    }
-
     pub async fn uncle_by_block_hash_and_index(
         &self,
         hash: B256,
@@ -614,23 +630,11 @@ impl ClientFork {
         self.storage_write().uncles.insert(block_hash, uncles.clone());
         Ok(uncles.get(index).cloned())
     }
-
-    /// Converts a block of hashes into a full block
-    fn convert_to_full_block(&self, mut block: AnyRpcBlock) -> AnyRpcBlock {
-        let storage = self.storage.read();
-        let transactions = block
-            .transactions()
-            .hashes()
-            .filter_map(|hash| storage.transactions.get(&hash).cloned())
-            .collect();
-        *block.transactions_mut() = BlockTransactions::Full(transactions);
-        block
-    }
 }
 
 /// Contains all fork metadata
 #[derive(Clone, Debug)]
-pub struct ClientForkConfig {
+pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub eth_rpc_url: String,
     /// The block number of the forked block
     pub block_number: u64,
@@ -638,8 +642,7 @@ pub struct ClientForkConfig {
     pub block_hash: B256,
     /// The transaction hash we forked off of, if any.
     pub transaction_hash: Option<B256>,
-    // TODO make provider agnostic
-    pub provider: Arc<RetryProvider>,
+    pub provider: Arc<RetryProvider<N>>,
     pub chain_id: u64,
     pub override_chain_id: Option<u64>,
     /// The timestamp for the forked block
@@ -664,7 +667,7 @@ pub struct ClientForkConfig {
     pub force_transactions: Option<Vec<PoolTransaction>>,
 }
 
-impl ClientForkConfig {
+impl<N: Network> ClientForkConfig<N> {
     /// Updates the provider URL
     ///
     /// # Errors
@@ -673,7 +676,7 @@ impl ClientForkConfig {
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
         // let interval = self.provider.get_interval();
         self.provider = Arc::new(
-            ProviderBuilder::new(url.as_str())
+            ProviderBuilder::<N>::new(url.as_str())
                 .timeout(self.timeout)
                 // .timeout_retry(self.retries)
                 .max_retry(self.retries)
@@ -707,12 +710,12 @@ impl ClientForkConfig {
 /// Contains cached state fetched to serve EthApi requests
 ///
 /// This is used as a cache so repeated requests to the same data are not sent to the remote client
-#[derive(Clone, Debug, Default)]
-pub struct ForkedStorage {
-    pub uncles: FbHashMap<32, Vec<AnyRpcBlock>>,
-    pub blocks: FbHashMap<32, AnyRpcBlock>,
+#[derive(Clone, Debug)]
+pub struct ForkedStorage<N: Network = AnyNetwork> {
+    pub uncles: FbHashMap<32, Vec<N::BlockResponse>>,
+    pub blocks: FbHashMap<32, N::BlockResponse>,
     pub hashes: HashMap<u64, B256>,
-    pub transactions: FbHashMap<32, AnyRpcTransaction>,
+    pub transactions: FbHashMap<32, N::TransactionResponse>,
     pub transaction_receipts: FbHashMap<32, FoundryTxReceipt>,
     pub transaction_traces: FbHashMap<32, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,
@@ -722,7 +725,25 @@ pub struct ForkedStorage {
     pub code_at: HashMap<(Address, u64), Bytes>,
 }
 
-impl ForkedStorage {
+impl<N: Network> Default for ForkedStorage<N> {
+    fn default() -> Self {
+        Self {
+            uncles: Default::default(),
+            blocks: Default::default(),
+            hashes: Default::default(),
+            transactions: Default::default(),
+            transaction_receipts: Default::default(),
+            transaction_traces: Default::default(),
+            logs: Default::default(),
+            geth_transaction_traces: Default::default(),
+            block_traces: Default::default(),
+            block_receipts: Default::default(),
+            code_at: Default::default(),
+        }
+    }
+}
+
+impl<N: Network> ForkedStorage<N> {
     /// Clears all data
     pub fn clear(&mut self) {
         // simply replace with a completely new, empty instance
