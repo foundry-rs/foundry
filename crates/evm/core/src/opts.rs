@@ -142,7 +142,8 @@ impl EvmOpts {
         }
     }
 
-    /// Returns the [`EvmEnv`] (cfg + block) and [`BlockNumber`] fetched from the fork endpoint via provider
+    /// Returns the [`EvmEnv`] (cfg + block) and [`BlockNumber`] fetched from the fork endpoint via
+    /// provider
     pub async fn fork_evm_env<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
