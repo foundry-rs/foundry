@@ -4386,6 +4386,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-linking",
+ "foundry-primitives",
  "foundry-wallets",
  "futures",
  "indicatif",
