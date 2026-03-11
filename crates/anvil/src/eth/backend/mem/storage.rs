@@ -277,7 +277,7 @@ pub struct BlockchainStorage<N: Network> {
     pub total_difficulty: U256,
 }
 
-impl BlockchainStorage<FoundryNetwork> {
+impl<N: Network> BlockchainStorage<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
         env: &Env,
@@ -393,9 +393,30 @@ impl BlockchainStorage<FoundryNetwork> {
             block.body.transactions.clear();
         }
     }
-}
 
-impl<N: Network> BlockchainStorage<N> {
+    /// Serialize all blocks in storage
+    pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
+        self.blocks.values().map(|block| block.clone().into()).collect()
+    }
+
+    /// Deserialize and add all blocks data to the backend storage
+    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
+        for serializable_block in &serializable_blocks {
+            let block: Block = serializable_block.clone().into();
+            let block_hash = block.header.hash_slow();
+            let block_number = block.header.number();
+            self.blocks.insert(block_hash, block);
+            self.hashes.insert(block_number, block_hash);
+
+            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
+            // block tag lookups return the correct hash.
+            // See: https://github.com/foundry-rs/foundry/issues/12645
+            if block_number == 0 {
+                self.genesis_hash = block_hash;
+            }
+        }
+    }
+
     /// Returns the hash for [BlockNumberOrTag]
     pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
         let slots_in_an_epoch = 32;
@@ -423,10 +444,6 @@ impl<N: Network> BlockchainStorage<N> {
 }
 
 impl BlockchainStorage<FoundryNetwork> {
-    pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
-        self.blocks.values().map(|block| block.clone().into()).collect()
-    }
-
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
         self.transactions
             .values()
@@ -434,25 +451,7 @@ impl BlockchainStorage<FoundryNetwork> {
             .collect()
     }
 
-    /// Deserialize and add all blocks data to the backend storage
-    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in &serializable_blocks {
-            let block: Block = serializable_block.clone().into();
-            let block_hash = block.header.hash_slow();
-            let block_number = block.header.number();
-            self.blocks.insert(block_hash, block);
-            self.hashes.insert(block_number, block_hash);
-
-            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
-            // block tag lookups return the correct hash.
-            // See: https://github.com/foundry-rs/foundry/issues/12645
-            if block_number == 0 {
-                self.genesis_hash = block_hash;
-            }
-        }
-    }
-
-    /// Deserialize and add all blocks data to the backend storage
+    /// Deserialize and add all transactions data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
         for serializable_transaction in &serializable_transactions {
             let transaction: MinedTransaction<FoundryNetwork> =
@@ -469,7 +468,7 @@ pub struct Blockchain<N: Network> {
     pub storage: Arc<RwLock<BlockchainStorage<N>>>,
 }
 
-impl Blockchain<FoundryNetwork> {
+impl<N: Network> Blockchain<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
         env: &Env,
@@ -498,9 +497,7 @@ impl Blockchain<FoundryNetwork> {
             ))),
         }
     }
-}
 
-impl<N: Network> Blockchain<N> {
     /// returns the header hash of given block
     pub fn hash(&self, id: BlockId) -> Option<B256> {
         match id {
