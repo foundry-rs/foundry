@@ -10,7 +10,7 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
+use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_network::Network;
 use alloy_primitives::{
@@ -439,7 +439,7 @@ impl BlockchainStorage<FoundryNetwork> {
         for serializable_block in &serializable_blocks {
             let block: Block = serializable_block.clone().into();
             let block_hash = block.header.hash_slow();
-            let block_number = block.header.number;
+            let block_number = block.header.number();
             self.blocks.insert(block_hash, block);
             self.hashes.insert(block_number, block_hash);
 
@@ -741,7 +741,7 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, { header.gas_limit });
+        assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }

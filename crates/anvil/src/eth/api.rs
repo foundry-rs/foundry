@@ -29,7 +29,9 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
 };
-use alloy_consensus::{Blob, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered};
+use alloy_consensus::{
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered,
+};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
@@ -2941,7 +2943,7 @@ impl EthApi {
                         let curr_nonce = nonces.entry(from).or_insert(
                             self.get_transaction_count(
                                 from,
-                                Some(common_block.header.number.into()),
+                                Some(common_block.header.number().into()),
                             )
                             .await?,
                         );
