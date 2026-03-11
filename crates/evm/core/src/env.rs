@@ -16,13 +16,6 @@ pub struct Env {
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
 impl Env {
-    pub fn default_with_spec_id(spec_id: SpecId) -> Self {
-        let mut cfg = CfgEnv::default();
-        cfg.spec = spec_id;
-
-        Self::from(cfg, BlockEnv::default(), TxEnv::default())
-    }
-
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
         Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
     }
@@ -32,11 +25,6 @@ impl Env {
         cfg.spec = spec_id;
 
         Self::from(cfg, block, tx)
-    }
-
-    /// Creates a clone of the env from a [`FoundryContextExt`] context.
-    pub fn clone_from_context(ecx: &mut impl FoundryContextExt) -> Self {
-        Self::from(ecx.cfg_mut().clone(), ecx.block_mut().clone(), ecx.tx_mut().clone())
     }
 
     /// Clones the evm env and tx env separately from a [`FoundryContextExt`] context.
@@ -52,21 +40,6 @@ impl Env {
         *ecx.block_mut() = evm_env.block_env;
         *ecx.cfg_mut() = evm_env.cfg_env;
         *ecx.tx_mut() = tx_env;
-    }
-
-    /// Writes this env back into a [`FoundryContextExt`] context.
-    pub fn apply_to(self, ecx: &mut impl FoundryContextExt) {
-        Self::apply_evm_and_tx(ecx, self.evm_env, self.tx);
-    }
-
-    /// Mutable reference to the block environment.
-    pub fn block_mut(&mut self) -> &mut BlockEnv {
-        &mut self.evm_env.block_env
-    }
-
-    /// Mutable reference to the cfg environment.
-    pub fn cfg_mut(&mut self) -> &mut CfgEnv {
-        &mut self.evm_env.cfg_env
     }
 }
 
@@ -303,7 +276,7 @@ impl FoundryCfg for CfgEnv {
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
 /// Cheatcodes like `vm.warp()`, `vm.roll()`, `vm.chainId()` need to mutate these fields.
 pub trait FoundryContextExt:
-    ContextTr<Block: FoundryBlock, Tx: FoundryTransaction, Cfg: FoundryCfg>
+    ContextTr<Block: FoundryBlock + Clone, Tx: FoundryTransaction + Clone, Cfg: FoundryCfg + Clone>
 {
     /// Mutable reference to the block environment.
     fn block_mut(&mut self) -> &mut BlockEnv;

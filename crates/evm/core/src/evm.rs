@@ -35,18 +35,19 @@ use revm::{
 
 pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     db: &'db mut dyn DatabaseExt,
-    env: Env,
+    evm_env: EvmEnv,
+    tx_env: TxEnv,
     inspector: I,
 ) -> FoundryEvm<'db, I> {
     let mut ctx = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
-            journal.set_spec_id(env.evm_env.cfg_env.spec);
+            journal.set_spec_id(evm_env.cfg_env.spec);
             journal
         },
-        block: env.evm_env.block_env,
-        cfg: env.evm_env.cfg_env,
-        tx: env.tx,
+        block: evm_env.block_env,
+        cfg: evm_env.cfg_env,
+        tx: tx_env,
         chain: (),
         local: LocalContext::default(),
         error: Ok(()),

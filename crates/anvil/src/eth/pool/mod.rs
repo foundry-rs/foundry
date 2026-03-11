@@ -181,7 +181,7 @@ impl<T: Transaction> Pool<T> {
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
     ///
     /// This will remove the transactions from the pool.
-    pub fn on_mined_block(&self, outcome: MinedBlockOutcome) -> PruneResult<T> {
+    pub fn on_mined_block(&self, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
         let MinedBlockOutcome { block_number, included, invalid } = outcome;
 
         // remove invalid transactions from the pool

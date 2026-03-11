@@ -10,6 +10,7 @@ use crate::{
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
 };
+use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
@@ -25,13 +26,13 @@ use tokio::{task::JoinHandle, time::Interval};
 /// transactions for the next block, then those transactions are handed off to the backend to
 /// construct a new block, if all transactions were successfully included in a new block they get
 /// purged from the `Pool`.
-pub struct NodeService {
+pub struct NodeService<T = FoundryTxEnvelope> {
     /// The pool that holds all transactions.
-    pool: Arc<Pool>,
+    pool: Arc<Pool<T>>,
     /// Creates new blocks.
-    block_producer: BlockProducer,
+    block_producer: BlockProducer<T>,
     /// The miner responsible to select transactions from the `pool`.
-    miner: Miner,
+    miner: Miner<T>,
     /// Maintenance task for fee history related tasks.
     fee_history: FeeHistoryService,
     /// Tracks all active filters
@@ -102,13 +103,13 @@ impl Future for NodeService {
 
 /// A type that exclusively mines one block at a time
 #[must_use = "streams do nothing unless polled"]
-struct BlockProducer {
+struct BlockProducer<T = FoundryTxEnvelope> {
     /// Holds the backend if no block is being mined
     idle_backend: Option<Arc<Backend>>,
     /// Single active future that mines a new block
-    block_mining: Option<JoinHandle<(MinedBlockOutcome, Arc<Backend>)>>,
+    block_mining: Option<JoinHandle<(MinedBlockOutcome<T>, Arc<Backend>)>>,
     /// backlog of sets of transactions ready to be mined
-    queued: VecDeque<Vec<Arc<PoolTransaction>>>,
+    queued: VecDeque<Vec<Arc<PoolTransaction<T>>>>,
 }
 
 impl BlockProducer {

@@ -840,7 +840,9 @@ async fn flaky_test_reset_fork_on_new_blocks() {
 
     let current_block = anvil_provider.get_block_number().await.unwrap();
 
-    handle.task_manager().spawn_reset_on_new_polled_blocks(provider.clone(), api);
+    handle
+        .task_manager()
+        .spawn_reset_on_new_polled_blocks::<alloy_network::AnyNetwork, _>(provider.clone(), api);
 
     let mut stream = provider
         .watch_blocks()

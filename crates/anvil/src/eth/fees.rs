@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::{Header, Transaction};
+use alloy_consensus::{BlockHeader, Header, Transaction};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_primitives::B256;
 use futures::StreamExt;
@@ -268,11 +268,11 @@ impl FeeHistoryService {
         let current_receipts = self.storage_info.receipts(hash);
 
         if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number);
+            block_number = Some(block.header.number());
 
-            let gas_used = block.header.gas_used as f64;
-            let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
-            item.gas_used_ratio = gas_used / block.header.gas_limit as f64;
+            let gas_used = block.header.gas_used() as f64;
+            let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
+            item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
             item.blob_gas_used_ratio = blob_gas_used
                 .map(|g| {
                     let max = self.blob_params.max_blob_gas_per_block() as f64;

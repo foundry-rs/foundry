@@ -1285,10 +1285,10 @@ latest block number: {latest_block}"
 
         env.evm_env.block_env = BlockEnv {
             number: U256::from(fork_block_number),
-            timestamp: U256::from(block.header.timestamp),
-            difficulty: block.header.difficulty,
+            timestamp: U256::from(block.header.timestamp()),
+            difficulty: block.header.difficulty(),
             // ensures prevrandao is set
-            prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
+            prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
             beneficiary: env.evm_env.block_env.beneficiary,
@@ -1315,25 +1315,25 @@ latest block number: {latest_block}"
 
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
-            if let Some(base_fee) = block.header.base_fee_per_gas {
+            if let Some(base_fee) = block.header.base_fee_per_gas() {
                 self.base_fee = Some(base_fee);
                 env.evm_env.block_env.basefee = base_fee;
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used,
+                    block.header.gas_used(),
                     gas_limit,
-                    block.header.base_fee_per_gas.unwrap_or_default(),
+                    block.header.base_fee_per_gas().unwrap_or_default(),
                 );
 
                 // update next base fee
                 fees.set_base_fee(next_block_base_fee);
             }
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
-                (block.header.excess_blob_gas, block.header.blob_gas_used)
+                (block.header.excess_blob_gas(), block.header.blob_gas_used())
             {
                 // derive the blobparams that are active at this timestamp
-                let blob_params = get_blob_params(chain_id, block.header.timestamp);
+                let blob_params = get_blob_params(chain_id, block.header.timestamp());
 
                 env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                     blob_excess_gas,
@@ -1393,14 +1393,14 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            timestamp: block.header.timestamp,
-            base_fee: block.header.base_fee_per_gas.map(|g| g as u128),
+            timestamp: block.header.timestamp(),
+            base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
-            blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
+            blob_gas_used: block.header.blob_gas_used().map(|g| g as u128),
             blob_excess_gas_and_price: env.evm_env.block_env.blob_excess_gas_and_price,
             force_transactions,
         };
