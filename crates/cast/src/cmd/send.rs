@@ -190,7 +190,7 @@ impl SendTxArgs {
             // Browser wallet work differently as it sign and send the transaction in one step.
             if let Some(browser) = browser {
                 let (tx_request, _) = builder.build(browser.address()).await?;
-                let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
+                let tx_hash = browser.send_transaction_via_browser(tx_request.into()).await?;
 
                 if send_tx.cast_async {
                     sh_println!("{tx_hash:#x}")?;

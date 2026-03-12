@@ -1,4 +1,4 @@
-use alloy_consensus::{BlobTransactionSidecar, EthereumTypedTransaction};
+use alloy_consensus::{BlobTransactionSidecarVariant, EthereumTypedTransaction};
 use alloy_network::{
     BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
 };
@@ -152,10 +152,7 @@ impl FoundryTransactionRequest {
             Ok(FoundryTypedTx::Tempo(
                 tx_req.build_aa().map_err(|e| Self::Tempo(Box::new(e.into_value())))?,
             ))
-        } else if self.as_ref().has_eip4844_fields()
-            && self.blob_sidecar().is_none()
-            && alloy_network::TransactionBuilder7594::blob_sidecar_7594(self.as_ref()).is_none()
-        {
+        } else if self.as_ref().has_eip4844_fields() && self.blob_sidecar().is_none() {
             // if request has eip4844 fields but no blob sidecar (neither eip4844 nor eip7594
             // format), try to build to eip4844 without sidecar
             self.into_inner()
@@ -296,6 +293,12 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
 impl From<FoundryTxEnvelope> for FoundryTransactionRequest {
     fn from(tx: FoundryTxEnvelope) -> Self {
         FoundryTypedTx::from(tx).into()
+    }
+}
+
+impl From<op_alloy_rpc_types::Transaction<FoundryTxEnvelope>> for FoundryTransactionRequest {
+    fn from(tx: op_alloy_rpc_types::Transaction<FoundryTxEnvelope>) -> Self {
+        tx.inner.into_inner().into()
     }
 }
 
@@ -521,11 +524,11 @@ impl TransactionBuilder4844 for FoundryTransactionRequest {
         self.as_mut().set_max_fee_per_blob_gas(max_fee_per_blob_gas);
     }
 
-    fn blob_sidecar(&self) -> Option<&BlobTransactionSidecar> {
+    fn blob_sidecar(&self) -> Option<&BlobTransactionSidecarVariant> {
         self.as_ref().blob_sidecar()
     }
 
-    fn set_blob_sidecar(&mut self, sidecar: BlobTransactionSidecar) {
+    fn set_blob_sidecar(&mut self, sidecar: BlobTransactionSidecarVariant) {
         self.as_mut().set_blob_sidecar(sidecar);
     }
 }

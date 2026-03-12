@@ -57,6 +57,7 @@ alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
 alloy-eips.workspace = true
+tempo-alloy.workspace = true
 
 op-alloy-flz.workspace = true
 
