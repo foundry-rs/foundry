@@ -44,6 +44,7 @@ use foundry_evm::{
     },
     utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
+use foundry_primitives::FoundryNetwork;
 use itertools::Itertools;
 use op_revm::OpTransaction;
 use parking_lot::RwLock;
@@ -1052,7 +1053,7 @@ impl NodeConfig {
     /// [Backend](mem::Backend)
     ///
     /// *Note*: only memory based backend for now
-    pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
+    pub(crate) async fn setup(&mut self) -> Result<mem::Backend<FoundryNetwork>> {
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();

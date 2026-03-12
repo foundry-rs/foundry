@@ -110,7 +110,7 @@ pub struct EthApi<T = FoundryTxEnvelope> {
     pool: Arc<Pool<T>>,
     /// Holds all blockchain related data
     /// In-Memory only for now
-    pub backend: Arc<backend::mem::Backend<T>>,
+    pub backend: Arc<backend::mem::Backend<FoundryNetwork>>,
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
@@ -162,7 +162,7 @@ impl<T> EthApi<T> {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         pool: Arc<Pool<T>>,
-        backend: Arc<backend::mem::Backend<T>>,
+        backend: Arc<backend::mem::Backend<FoundryNetwork>>,
         signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
         fee_history_cache: FeeHistoryCache,
         fee_history_limit: u64,
