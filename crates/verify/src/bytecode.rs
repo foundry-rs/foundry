@@ -7,6 +7,7 @@ use crate::{
     },
     verify::VerifierArgs,
 };
+use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
     Provider,
@@ -253,9 +254,9 @@ impl VerifyBytecodeArgs {
 
             if let Some(ref block) = genesis_block {
                 configure_env_block(&mut env, block, config.networks);
-                gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
-                gen_tx_req.gas = Some(block.header.gas_limit);
-                gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
+                gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas().map(|g| g as u128);
+                gen_tx_req.gas = Some(block.header.gas_limit());
+                gen_tx_req.gas_price = block.header.base_fee_per_gas().map(|g| g as u128);
             }
 
             configure_tx_req_env(&mut env, &gen_tx_req)
