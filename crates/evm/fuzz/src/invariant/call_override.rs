@@ -91,7 +91,13 @@ impl RandomCallGenerator {
 
             // `original_caller` has a 80% chance of being the `new_target`.
             let choice = self.strategy.new_tree(&mut self.runner.lock()).unwrap().current().map(
-                |call_details| BasicTxDetails { warp: None, roll: None, sender, call_details },
+                |call_details| BasicTxDetails {
+                    warp: None,
+                    roll: None,
+                    deal: None,
+                    sender,
+                    call_details,
+                },
             );
 
             self.last_sequence.write().push(choice.clone());

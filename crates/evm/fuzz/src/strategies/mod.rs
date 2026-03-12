@@ -6,8 +6,9 @@ pub use uint::UintStrategy;
 
 mod param;
 pub use param::{
-    fuzz_param, fuzz_param_from_state, fuzz_param_with_fixtures, mutate_param_value,
-    mutate_param_value_with_senders,
+    fuzz_msg_value, fuzz_param, fuzz_param_from_state, fuzz_param_with_fixtures,
+    generate_msg_value, mutate_param_value, mutate_param_value_with_senders,
+    select_random_sender_for_mutation,
 };
 
 mod calldata;
