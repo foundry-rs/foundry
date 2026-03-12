@@ -533,14 +533,15 @@ impl<N: Network> Drop for ShutDownMultiFork<N> {
 async fn create_fork<N: Network>(
     mut fork: CreateFork,
 ) -> eyre::Result<(ForkId, CreatedFork<N>, BackendHandler<N>)> {
-    let provider = fork.evm_opts.fork_provider_with_url(&fork.url)?;
+    // Ensure evm_opts reflects the fork URL (may differ from the resolved CreateFork url when
+    // created via cheatcodes, where evm_opts is cloned from the base config).
+    fork.evm_opts.fork_url = Some(fork.url.clone());
+
+    let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
 
     // Initialise the fork environment.
-    // The block number is returned separately because on some L2s (e.g. Arbitrum) the env's
-    // block number can differ from the actual block number.
-    let (env, number) =
-        fork.evm_opts.fork_evm_env_with_provider::<_, N>(&fork.url, &provider).await?;
-    fork.env = env;
+    let (evm_env, number) = fork.evm_opts.fork_evm_env(&provider).await?;
+    fork.env.evm_env = evm_env;
     let meta = BlockchainDbMeta::new(fork.env.evm_env.block_env.clone(), fork.url.clone());
 
     // Determine the cache path if caching is enabled.
