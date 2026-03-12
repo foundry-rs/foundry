@@ -830,6 +830,39 @@ async fn test_fork_init_base_fee() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_init_blob_base_fee_with_explicit_base_fee() {
+    let fork_rpc_url = rpc::next_http_archive_rpc_url();
+    let fork_block_number = 24_127_158u64;
+    let (default_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_rpc_url.clone()))
+            .with_fork_block_number(Some(fork_block_number)),
+    )
+    .await;
+    let explicit_base_fee = default_api
+        .block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
+    let (explicit_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_rpc_url))
+            .with_fork_block_number(Some(fork_block_number))
+            .with_base_fee(Some(explicit_base_fee)),
+    )
+    .await;
+
+    let default_blob_base_fee = default_api.blob_base_fee().unwrap();
+    let explicit_blob_base_fee = explicit_api.blob_base_fee().unwrap();
+
+    assert!(default_blob_base_fee > U256::from(1));
+    assert_eq!(explicit_blob_base_fee, default_blob_base_fee);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_reset_fork_on_new_blocks() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
