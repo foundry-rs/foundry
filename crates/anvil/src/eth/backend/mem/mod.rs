@@ -2420,17 +2420,7 @@ impl Backend {
                 let result = self
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
-                        let block = BlockEnv {
-                            number: U256::from(block.header.number()),
-                            beneficiary: block.header.beneficiary(),
-                            timestamp: U256::from(block.header.timestamp()),
-                            difficulty: block.header.difficulty(),
-                            prevrandao: block.header.mix_hash(),
-                            basefee: block.header.base_fee_per_gas().unwrap_or_default(),
-                            gas_limit: block.header.gas_limit(),
-                            ..Default::default()
-                        };
-                        f(state, block)
+                        f(state, block_env_from_header(&block.header))
                     })
                     .await;
                 return Ok(result);
@@ -2454,11 +2444,11 @@ impl Backend {
             {
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return Ok(get_block_env(state_db, block_number, block, f));
+                    return Ok(f(Box::new(state_db), block_env_from_header(&block.header)));
                 } else {
                     let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
                     if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                        return Ok(get_block_env(state, block_number, block, f));
+                        return Ok(f(Box::new(state), block_env_from_header(&block.header)));
                     }
                 }
             }
@@ -2703,16 +2693,7 @@ impl Backend {
             // configure the blockenv for the block of the transaction
             let mut env = self.env.read().clone();
 
-            env.evm_env.block_env = BlockEnv {
-                number: U256::from(block.header.number()),
-                beneficiary: block.header.beneficiary(),
-                timestamp: U256::from(block.header.timestamp()),
-                difficulty: block.header.difficulty(),
-                prevrandao: block.header.mix_hash(),
-                basefee: block.header.base_fee_per_gas().unwrap_or_default(),
-                gas_limit: block.header.gas_limit(),
-                ..Default::default()
-            };
+            env.evm_env.block_env = block_env_from_header(&block.header);
 
             let executor = TransactionExecutor {
                 db: &mut cache_db,
@@ -3021,16 +3002,7 @@ impl Backend {
 
         // Configure the block environment
         let mut env = self.env.read().clone();
-        env.evm_env.block_env = BlockEnv {
-            number: U256::from(block.header.number()),
-            beneficiary: block.header.beneficiary(),
-            timestamp: U256::from(block.header.timestamp()),
-            difficulty: block.header.difficulty(),
-            prevrandao: block.header.mix_hash(),
-            basefee: block.header.base_fee_per_gas().unwrap_or_default(),
-            gas_limit: block.header.gas_limit(),
-            ..Default::default()
-        };
+        env.evm_env.block_env = block_env_from_header(&block.header);
 
         // Execute each transaction in the block with tracing
         for tx_envelope in &block.body.transactions {
@@ -3594,21 +3566,18 @@ impl Backend {
     }
 }
 
-fn get_block_env<F, T>(state: &StateDb, block_number: u64, block: AnyRpcBlock, f: F) -> T
-where
-    F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
-{
-    let block = BlockEnv {
-        number: U256::from(block_number),
-        beneficiary: block.header.beneficiary(),
-        timestamp: U256::from(block.header.timestamp()),
-        difficulty: block.header.difficulty(),
-        prevrandao: block.header.mix_hash(),
-        basefee: block.header.base_fee_per_gas().unwrap_or_default(),
-        gas_limit: block.header.gas_limit(),
+/// Constructs a `BlockEnv` from a block header.
+fn block_env_from_header(header: &impl BlockHeader) -> BlockEnv {
+    BlockEnv {
+        number: U256::from(header.number()),
+        beneficiary: header.beneficiary(),
+        timestamp: U256::from(header.timestamp()),
+        difficulty: header.difficulty(),
+        prevrandao: header.mix_hash(),
+        basefee: header.base_fee_per_gas().unwrap_or_default(),
+        gas_limit: header.gas_limit(),
         ..Default::default()
-    };
-    f(Box::new(state), block)
+    }
 }
 
 /// Get max nonce from transaction pool by address.
