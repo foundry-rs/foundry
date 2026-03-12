@@ -20,6 +20,7 @@ foundry-common.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 serde_json.workspace = true
+alloy-consensus.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }

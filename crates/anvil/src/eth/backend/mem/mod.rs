@@ -3867,7 +3867,7 @@ pub fn transaction_build(
                     block_number: block.as_ref().map(|block| block.header.number()),
                     transaction_index: info.as_ref().map(|info| info.transaction_index),
                     effective_gas_price: None,
-                    block_timestamp: block.as_ref().map(|block| block.header.timestamp),
+                    block_timestamp: block.as_ref().map(|block| block.header.timestamp()),
                 };
 
                 return AnyRpcTransaction::from(WithOtherFields::new(tx));
@@ -3929,7 +3929,7 @@ pub fn transaction_build(
         transaction_index: info.as_ref().map(|info| info.transaction_index),
         // deprecated
         effective_gas_price: Some(effective_gas_price),
-        block_timestamp: block.as_ref().map(|block| block.header.timestamp),
+        block_timestamp: block.as_ref().map(|block| block.header.timestamp()),
     };
     AnyRpcTransaction::from(WithOtherFields::new(tx))
 }
