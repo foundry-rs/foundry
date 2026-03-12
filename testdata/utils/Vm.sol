@@ -192,6 +192,7 @@ interface Vm {
     function createWallet(string calldata walletLabel) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
+    function currentFilePath() external view returns (string memory path);
     function deal(address account, uint256 newBalance) external;
     function deleteSnapshot(uint256 snapshotId) external returns (bool success);
     function deleteSnapshots() external;
