@@ -444,12 +444,12 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 ## alloy-evm
 # alloy-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
 # alloy-op-evm = { git = "https://github.com/haythemsellami/evm", branch = "main" }
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", branch = "main" }
+alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", branch = "feat/mip-4-reserve-balance-precompile" }
 
 ## revm
 # revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
 # op-revm = { git = "https://github.com/haythemsellami/revm", branch = "main" }
-monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main" }
+monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "feat/mip-4-reserve-balance-precompile" }
 revm-inspectors = { git = "https://github.com/haythemsellami/revm-inspectors", branch = "main" }
 
 ## foundry
@@ -463,4 +463,3 @@ solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/sola
 solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
 solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
 solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
-

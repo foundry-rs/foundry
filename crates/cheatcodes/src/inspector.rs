@@ -47,11 +47,13 @@ use foundry_evm_traces::{
 };
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
-use monad_revm::{MonadContext, MonadSpecId, instructions::monad_gas_params};
+use monad_revm::{
+    MonadContext, MonadJournal, MonadJournalTr, MonadSpecId, instructions::monad_gas_params,
+};
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
-    Inspector, Journal,
+    Inspector,
     bytecode::opcode as op,
     context::{BlockEnv, JournalTr, LocalContext, TransactionType, result::EVMError},
     context_interface::{CreateScheme, transaction::SignedAuthorization},
@@ -136,17 +138,21 @@ where
 {
     let mut inspector = executor.get_inspector(ccx.state);
     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+    let journal_inner = ccx.ecx.journaled_state.inner.clone();
+    let reserve_balance = ccx.ecx.journaled_state.reserve_balance().clone();
+    let chain = ccx.ecx.chain.clone();
 
     let ctx: MonadContext<&mut dyn DatabaseExt> = revm::Context {
         block: ccx.ecx.block.clone(),
         cfg: ccx.ecx.cfg.clone(),
         tx: ccx.ecx.tx.clone(),
-        journaled_state: Journal {
-            inner: ccx.ecx.journaled_state.inner.clone(),
-            database: &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
-        },
+        journaled_state: MonadJournal::new_with_inner(
+            &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
+            journal_inner,
+            reserve_balance,
+        ),
         local: LocalContext::default(),
-        chain: (),
+        chain,
         error,
     };
 
@@ -154,12 +160,26 @@ where
 
     let res = f(&mut evm)?;
 
-    let ctx = evm.into_context();
-    ccx.ecx.journaled_state.inner = ctx.journaled_state.inner;
-    ccx.ecx.block = ctx.block;
-    ccx.ecx.tx = ctx.tx;
-    ccx.ecx.cfg = ctx.cfg;
-    ccx.ecx.error = ctx.error;
+    let (journal_inner, reserve_balance, block, tx, cfg, chain, error) = {
+        let ctx = evm.into_context();
+        (
+            ctx.journaled_state.inner.clone(),
+            ctx.journaled_state.reserve_balance().clone(),
+            ctx.block,
+            ctx.tx,
+            ctx.cfg,
+            ctx.chain,
+            ctx.error,
+        )
+    };
+
+    ccx.ecx.journaled_state.inner = journal_inner;
+    *ccx.ecx.journaled_state.reserve_balance_mut() = reserve_balance;
+    ccx.ecx.block = block;
+    ccx.ecx.tx = tx;
+    ccx.ecx.cfg = cfg;
+    ccx.ecx.chain = chain;
+    ccx.ecx.error = error;
 
     Ok(res)
 }
@@ -942,6 +962,7 @@ impl Cheatcodes {
 
                     let input = TransactionInput::new(call.input.bytes(ecx));
 
+                    let rpc = ecx.journaled_state.database.active_fork_url();
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
 
@@ -991,10 +1012,8 @@ impl Cheatcodes {
                         tx_req.authorization_list = Some(active_delegations);
                     }
 
-                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.journaled_state.database.active_fork_url(),
-                        transaction: tx_req.into(),
-                    });
+                    self.broadcastable_transactions
+                        .push_back(BroadcastableTransaction { rpc, transaction: tx_req.into() });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     // Explicitly increment nonce if calls are not isolated.
@@ -1743,9 +1762,10 @@ impl Inspector<MonadContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
                 input.set_caller(broadcast.new_origin);
 
+                let rpc = ecx.journaled_state.database.active_fork_url();
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                    rpc: ecx.journaled_state.database.active_fork_url(),
+                    rpc,
                     transaction: TransactionRequest {
                         from: Some(broadcast.new_origin),
                         to: None,

@@ -50,7 +50,7 @@ use alloy_evm::{
     Database, Evm, FromRecoveredTx,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
-    precompiles::{DynPrecompile, Precompile, PrecompilesMap},
+    precompiles::{DynPrecompile, Precompile},
 };
 use alloy_monad_evm::MonadContext;
 use alloy_network::{
@@ -1179,7 +1179,11 @@ impl Backend {
         db: &'db DB,
         env: &Env,
         inspector: &'db mut I,
-    ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
+    ) -> EitherEvm<
+        WrapDatabaseRef<&'db DB>,
+        &'db mut I,
+        foundry_evm::core::precompiles::FoundryPrecompiles,
+    >
     where
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>

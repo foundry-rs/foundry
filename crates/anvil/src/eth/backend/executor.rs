@@ -23,12 +23,12 @@ use alloy_eips::{
     eip7840::BlobParams,
 };
 use alloy_evm::{
-    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx,
+    EthEvm, Evm, EvmEnv, FromRecoveredTx,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
-use alloy_monad_evm::MonadEvmFactory;
-use alloy_op_evm::OpEvmFactory;
+use alloy_monad_evm::MonadEvm;
+use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{BlockInfo, create_block},
@@ -36,18 +36,22 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::DatabaseError,
-    core::{either_evm::EitherEvm, precompiles::EC_RECOVER},
+    core::{
+        either_evm::EitherEvm,
+        precompiles::{EC_RECOVER, FoundryPrecompiles},
+    },
     hardfork::FoundryHardfork,
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
-use monad_revm::MonadContext;
-use op_revm::{OpContext, OpTransaction};
+use monad_revm::{MonadContext, MonadEvm as RevmMonadEvm, monad_context_with_db};
+use op_revm::{DefaultOp, OpBuilder, OpContext, OpTransaction, precompiles::OpPrecompiles};
 use revm::{
-    Database, Inspector,
+    Context, Database, Inspector, MainBuilder, MainContext,
     context::{Block as RevmBlock, Cfg, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
+    handler::EthPrecompiles,
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,
 };
@@ -497,7 +501,7 @@ pub fn new_evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
     inspector: I,
-) -> EitherEvm<DB, I, PrecompilesMap>
+) -> EitherEvm<DB, I, FoundryPrecompiles>
 where
     DB: Database<Error = DatabaseError> + Debug,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
@@ -510,8 +514,18 @@ where
         let cfg = env.evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(
             foundry_evm::hardfork::spec_id_from_optimism_hardfork(hardfork),
         );
-        let evm_env = EvmEnv::new(cfg, env.evm_env.block_env.clone());
-        EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
+        let precompiles = FoundryPrecompiles::standard(PrecompilesMap::from_static(
+            OpPrecompiles::new_with_spec(cfg.spec).precompiles(),
+        ));
+        EitherEvm::Op(OpEvm::new(
+            Context::op()
+                .with_db(db)
+                .with_block(env.evm_env.block_env.clone())
+                .with_cfg(cfg)
+                .build_op_with_inspector(inspector)
+                .with_precompiles(precompiles),
+            true,
+        ))
     } else if env.networks.is_monad() {
         let hardfork = match env.hardfork {
             FoundryHardfork::Monad(hardfork) => hardfork,
@@ -519,15 +533,26 @@ where
         };
         let cfg: monad_revm::MonadCfgEnv =
             env.evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(hardfork).into();
-        let evm_env = EvmEnv::new(cfg.into(), env.evm_env.block_env.clone());
-        EitherEvm::Monad(
-            MonadEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector),
-        )
+        let mut ctx = monad_context_with_db(db);
+        ctx.block = env.evm_env.block_env.clone();
+        ctx.cfg = cfg;
+        ctx.journaled_state.set_spec_id(hardfork.into_eth_spec());
+        EitherEvm::Monad(MonadEvm::new(
+            RevmMonadEvm::new(ctx, inspector).with_precompiles(FoundryPrecompiles::monad(hardfork)),
+            true,
+        ))
     } else {
-        EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
-            db,
-            env.evm_env.clone(),
-            inspector,
+        let precompiles = FoundryPrecompiles::standard(PrecompilesMap::from_static(
+            EthPrecompiles::new(env.evm_env.cfg_env.spec).precompiles,
+        ));
+        EitherEvm::Eth(EthEvm::new(
+            Context::mainnet()
+                .with_db(db)
+                .with_block(env.evm_env.block_env.clone())
+                .with_cfg(env.evm_env.cfg_env.clone())
+                .build_mainnet_with_inspector(inspector)
+                .with_precompiles(precompiles),
+            true,
         ))
     }
 }

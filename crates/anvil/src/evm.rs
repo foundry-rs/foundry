@@ -23,12 +23,12 @@ mod tests {
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm::{
-        core::either_evm::EitherEvm,
+        core::{either_evm::EitherEvm, precompiles::FoundryPrecompiles},
         hardfork::{FoundryHardfork, OpHardfork},
     };
     use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
-    use monad_revm::{MonadContext, MonadSpecId, precompiles::MonadPrecompiles};
+    use monad_revm::{MonadContext, MonadEvm as RevmMonadEvm, MonadSpecId, monad_context_with_db};
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
         Journal,
@@ -74,7 +74,7 @@ mod tests {
     /// Creates a new EVM instance with the custom precompile factory.
     fn create_eth_evm(
         spec: SpecId,
-    ) -> (TxEnv, EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>) {
+    ) -> (TxEnv, EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, FoundryPrecompiles>) {
         let block_env = BlockEnv::default();
         let cfg_env = CfgEnv::new_with_spec(spec);
         let tx_env = TxEnv {
@@ -103,7 +103,7 @@ mod tests {
                 eth_evm_context,
                 NoOpInspector,
                 EthInstructions::<EthInterpreter, EthEvmContext<EmptyDB>>::default(),
-                PrecompilesMap::from_static(eth_precompiles),
+                FoundryPrecompiles::standard(PrecompilesMap::from_static(eth_precompiles)),
             ),
             true,
         ));
@@ -117,7 +117,7 @@ mod tests {
         op_spec: OpSpecId,
     ) -> (
         crate::eth::backend::env::Env,
-        EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>,
+        EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, FoundryPrecompiles>,
     ) {
         let op_env = crate::eth::backend::env::Env {
             evm_env: EvmEnv { block_env: Default::default(), cfg_env: CfgEnv::new_with_spec(spec) },
@@ -162,7 +162,7 @@ mod tests {
                 op_evm_context,
                 NoOpInspector,
                 EthInstructions::<EthInterpreter, OpContext<EmptyDB>>::default(),
-                PrecompilesMap::from_static(op_precompiles),
+                FoundryPrecompiles::standard(PrecompilesMap::from_static(op_precompiles)),
             )),
             true,
         ));
@@ -176,7 +176,7 @@ mod tests {
         monad_spec: MonadSpecId,
     ) -> (
         crate::eth::backend::env::Env,
-        EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>,
+        EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, FoundryPrecompiles>,
     ) {
         let monad_env = crate::eth::backend::env::Env {
             evm_env: EvmEnv { block_env: Default::default(), cfg_env: CfgEnv::new_with_spec(spec) },
@@ -195,28 +195,17 @@ mod tests {
         let monad_cfg: monad_revm::MonadCfgEnv = CfgEnv::new_with_spec(monad_spec)
             .with_chain_id(monad_env.evm_env.cfg_env.chain_id)
             .into();
-        let monad_evm_context = MonadContext {
-            journaled_state: {
-                let mut journal = Journal::new(EmptyDB::default());
-                // Converting SpecId into MonadSpecId
-                journal.set_spec_id(monad_env.evm_env.cfg_env.spec);
-                journal
-            },
-            block: monad_env.evm_env.block_env.clone(),
-            cfg: monad_cfg.clone(),
-            tx: monad_env.tx.base.clone(),
-            chain: (),
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let monad_precompiles = MonadPrecompiles::new_with_spec(monad_cfg.spec).precompiles();
+        let mut monad_evm_context = monad_context_with_db(EmptyDB::default());
+        monad_evm_context.block = monad_env.evm_env.block_env.clone();
+        monad_evm_context.cfg = monad_cfg.clone();
+        monad_evm_context.tx = monad_env.tx.base.clone();
+        monad_evm_context.journaled_state.set_spec_id(monad_env.evm_env.cfg_env.spec);
         let monad_evm = EitherEvm::Monad(MonadEvm::new(
-            monad_revm::MonadEvm(RevmEvm::new_with_inspector(
+            RevmMonadEvm(RevmEvm::new_with_inspector(
                 monad_evm_context,
                 NoOpInspector,
                 EthInstructions::<EthInterpreter, MonadContext<EmptyDB>>::default(),
-                PrecompilesMap::from_static(monad_precompiles),
+                FoundryPrecompiles::monad(monad_cfg.spec),
             )),
             true,
         ));

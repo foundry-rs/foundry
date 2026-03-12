@@ -23,7 +23,7 @@ use foundry_evm_core::{
     },
 };
 use itertools::Itertools;
-use monad_revm::staking::STAKING_ADDRESS;
+use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 
@@ -85,6 +85,12 @@ alloy_sol_types::sol! {
         event ValidatorRewarded(uint64 indexed validatorId, address indexed from, uint256 amount, uint64 epoch);
         event ValidatorStatusChanged(uint64 indexed validatorId, uint64 flags);
         event Withdraw(uint64 indexed validatorId, address indexed delegator, uint8 withdrawId, uint256 amount, uint64 withdrawEpoch);
+    }
+
+    /// Monad reserve-balance precompile interface at address 0x1001.
+    #[sol(abi)]
+    interface IReserveBalance {
+        function dippedIntoReserve() external returns (bool);
     }
 }
 
@@ -245,6 +251,8 @@ impl CallTraceDecoder {
                 (POINT_EVALUATION, "PointEvaluation".to_string()),
                 // Monad staking precompile
                 (STAKING_ADDRESS, "Staking".to_string()),
+                // Monad reserve-balance precompile
+                (RESERVE_BALANCE_ADDRESS, "ReserveBalance".to_string()),
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
@@ -254,6 +262,7 @@ impl CallTraceDecoder {
                 .into_values()
                 .chain(Vm::abi::functions().into_values())
                 .chain(IMonadStaking::abi::functions().into_values())
+                .chain(IReserveBalance::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),

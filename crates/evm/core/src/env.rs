@@ -1,5 +1,5 @@
 pub use alloy_evm::EvmEnv;
-use monad_revm::{MonadCfgEnv, MonadSpecId, instructions::monad_gas_params};
+use monad_revm::{MonadCfgEnv, MonadJournal, MonadSpecId, instructions::monad_gas_params};
 use revm::{
     Context, Database, Journal, JournalEntry,
     context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
@@ -134,33 +134,29 @@ pub trait ContextExt {
     ) -> (&mut Self::DB, &mut JournalInner<JournalEntry>, EnvMut<'_>);
 }
 
-impl<DB: Database, C> ContextExt
-    for Context<BlockEnv, TxEnv, MonadCfg, DB, Journal<DB, JournalEntry>, C>
-{
+impl<DB: Database, C> ContextExt for Context<BlockEnv, TxEnv, MonadCfg, DB, MonadJournal<DB>, C> {
     type DB = DB;
 
     fn as_db_env_and_journal(
         &mut self,
     ) -> (&mut Self::DB, &mut JournalInner<JournalEntry>, EnvMut<'_>) {
-        (
-            &mut self.journaled_state.database,
-            &mut self.journaled_state.inner,
-            EnvMut { block: &mut self.block, cfg: &mut self.cfg, tx: &mut self.tx },
-        )
+        let Journal { database, inner } = &mut *self.journaled_state;
+        (database, inner, EnvMut { block: &mut self.block, cfg: &mut self.cfg, tx: &mut self.tx })
     }
 }
 
 impl<DB: Database, C> ContextExt
-    for Context<BlockEnv, TxEnv, MonadCfgEnv, DB, Journal<DB, JournalEntry>, C>
+    for Context<BlockEnv, TxEnv, MonadCfgEnv, DB, MonadJournal<DB>, C>
 {
     type DB = DB;
 
     fn as_db_env_and_journal(
         &mut self,
     ) -> (&mut Self::DB, &mut JournalInner<JournalEntry>, EnvMut<'_>) {
+        let Journal { database, inner } = &mut *self.journaled_state;
         (
-            &mut self.journaled_state.database,
-            &mut self.journaled_state.inner,
+            database,
+            inner,
             // MonadCfgEnv derefs to CfgEnv<MonadSpecId>
             EnvMut { block: &mut self.block, cfg: &mut *self.cfg, tx: &mut self.tx },
         )
