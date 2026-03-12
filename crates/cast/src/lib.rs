@@ -767,7 +767,7 @@ where
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
         } else if to_request {
-            serde_json::to_string_pretty(tx.as_ref())?
+            serde_json::to_string_pretty(&Into::<N::TransactionRequest>::into(tx))?
         } else {
             tx.pretty()
         })
