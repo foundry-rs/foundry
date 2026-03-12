@@ -82,7 +82,7 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.fee_token.is_some() || self.tx.tempo.sequence_key.is_some() {
+        if self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>().await
         } else {
             self.run_generic::<AnyNetwork>().await
@@ -96,6 +96,8 @@ impl MakeTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
+
+        let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -124,6 +126,17 @@ impl MakeTxArgs {
             .await?
             .with_blob_data(blob_data)?;
 
+        // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
+        if print_sponsor_hash {
+            let from = eth.wallet.from.unwrap_or(Address::ZERO);
+            let (tx, _) = tx_builder.build(from).await?;
+            let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
+                eyre::eyre!("This network does not support sponsored transactions")
+            })?;
+            sh_println!("{hash:?}")?;
+            return Ok(());
+        }
+
         if raw_unsigned {
             // Build unsigned raw tx
             // Check if nonce is provided when --from is not specified
@@ -137,7 +150,8 @@ impl MakeTxArgs {
             // Use zero address as placeholder for unsigned transactions
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
 
-            let raw_tx = tx_builder.build_unsigned_raw(from).await?;
+            let (tx, _) = tx_builder.build(from).await?;
+            let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             sh_println!("{raw_tx}")?;
             return Ok(());

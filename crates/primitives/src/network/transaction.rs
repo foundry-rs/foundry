@@ -2,7 +2,7 @@ use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Signature, U256};
 use alloy_rpc_types::SignedAuthorization;
 use tempo_alloy::TempoNetwork;
 
@@ -29,6 +29,10 @@ use tempo_alloy::TempoNetwork;
 /// If the Network supports Tempo transactions, implement these methods:
 /// - [`FoundryTransactionBuilder::set_fee_token`]
 /// - [`FoundryTransactionBuilder::set_nonce_key`]
+/// - [`FoundryTransactionBuilder::set_key_id`]
+/// - [`FoundryTransactionBuilder::set_valid_before`]
+/// - [`FoundryTransactionBuilder::set_valid_after`]
+/// - [`FoundryTransactionBuilder::set_fee_payer_signature`]
 pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     /// Reset gas limit
     fn reset_gas_limit(&mut self);
@@ -154,6 +158,74 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
         self.set_nonce_key(nonce_key);
         self
     }
+
+    /// Get the access key ID for a Tempo transaction.
+    fn key_id(&self) -> Option<Address> {
+        None
+    }
+
+    /// Set the access key ID for a Tempo transaction.
+    ///
+    /// Used during gas estimation to override the key_id that would normally be
+    /// recovered from the signature.
+    fn set_key_id(&mut self, _key_id: Address) {}
+
+    /// Builder-pattern method for setting the Tempo access key ID.
+    fn with_key_id(mut self, key_id: Address) -> Self {
+        self.set_key_id(key_id);
+        self
+    }
+
+    /// Get the valid_before timestamp for a Tempo expiring nonce transaction.
+    fn valid_before(&self) -> Option<u64> {
+        None
+    }
+
+    /// Set the valid_before timestamp for a Tempo expiring nonce transaction.
+    fn set_valid_before(&mut self, _valid_before: u64) {}
+
+    /// Builder-pattern method for setting the valid_before timestamp.
+    fn with_valid_before(mut self, valid_before: u64) -> Self {
+        self.set_valid_before(valid_before);
+        self
+    }
+
+    /// Get the valid_after timestamp for a Tempo expiring nonce transaction.
+    fn valid_after(&self) -> Option<u64> {
+        None
+    }
+
+    /// Set the valid_after timestamp for a Tempo expiring nonce transaction.
+    fn set_valid_after(&mut self, _valid_after: u64) {}
+
+    /// Builder-pattern method for setting the valid_after timestamp.
+    fn with_valid_after(mut self, valid_after: u64) -> Self {
+        self.set_valid_after(valid_after);
+        self
+    }
+
+    /// Get the fee payer (sponsor) signature for a Tempo sponsored transaction.
+    fn fee_payer_signature(&self) -> Option<Signature> {
+        None
+    }
+
+    /// Set the fee payer (sponsor) signature for a Tempo sponsored transaction.
+    fn set_fee_payer_signature(&mut self, _signature: Signature) {}
+
+    /// Builder-pattern method for setting the fee payer signature.
+    fn with_fee_payer_signature(mut self, signature: Signature) -> Self {
+        self.set_fee_payer_signature(signature);
+        self
+    }
+
+    /// Computes the sponsor (fee payer) signature hash for this transaction.
+    ///
+    /// This builds an unsigned consensus-level transaction from the request and computes
+    /// the hash that a sponsor needs to sign. Returns `None` for networks that don't
+    /// support sponsored transactions.
+    fn compute_sponsor_hash(&self, _from: Address) -> Option<B256> {
+        None
+    }
 }
 
 impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionRequest {
@@ -261,5 +333,42 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn set_nonce_key(&mut self, nonce_key: U256) {
         self.nonce_key = Some(nonce_key);
+    }
+
+    fn key_id(&self) -> Option<Address> {
+        self.key_id
+    }
+
+    fn set_key_id(&mut self, key_id: Address) {
+        self.key_id = Some(key_id);
+    }
+
+    fn valid_before(&self) -> Option<u64> {
+        self.valid_before
+    }
+
+    fn set_valid_before(&mut self, valid_before: u64) {
+        self.valid_before = Some(valid_before);
+    }
+
+    fn valid_after(&self) -> Option<u64> {
+        self.valid_after
+    }
+
+    fn set_valid_after(&mut self, valid_after: u64) {
+        self.valid_after = Some(valid_after);
+    }
+
+    fn fee_payer_signature(&self) -> Option<Signature> {
+        self.fee_payer_signature
+    }
+
+    fn set_fee_payer_signature(&mut self, signature: Signature) {
+        self.fee_payer_signature = Some(signature);
+    }
+
+    fn compute_sponsor_hash(&self, from: Address) -> Option<B256> {
+        let tx = self.clone().build_aa().ok()?;
+        Some(tx.fee_payer_signature_hash(from))
     }
 }

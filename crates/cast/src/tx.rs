@@ -1,5 +1,5 @@
 use crate::traces::identifier::SignaturesIdentifier;
-use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder};
+use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
@@ -7,7 +7,7 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
-use alloy_signer::{Signature, Signer};
+use alloy_signer::Signer;
 use alloy_transport::TransportError;
 use clap::Args;
 use eyre::{Result, WrapErr};
@@ -319,6 +319,9 @@ pub struct CastTxBuilder<N: Network, P, S> {
     blob: bool,
     /// Whether the blob transaction should use EIP-4844 (legacy) format instead of EIP-7594.
     eip4844: bool,
+    /// Whether to fill gas, fees and nonce. Set to `false` for read-only calls
+    /// (eth_call, eth_estimateGas, eth_createAccessList).
+    fill: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -340,42 +343,8 @@ where
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
-        if let Some(gas_limit) = tx_opts.gas_limit {
-            tx.set_gas_limit(gas_limit.to());
-        }
-
-        if let Some(value) = tx_opts.value {
-            tx.set_value(value);
-        }
-
-        if let Some(gas_price) = tx_opts.gas_price {
-            if legacy {
-                tx.set_gas_price(gas_price.to());
-            } else {
-                tx.set_max_fee_per_gas(gas_price.to());
-            }
-        }
-
-        if !legacy && let Some(priority_fee) = tx_opts.priority_gas_price {
-            tx.set_max_priority_fee_per_gas(priority_fee.to());
-        }
-
-        if let Some(max_blob_fee) = tx_opts.blob_gas_price {
-            tx.set_max_fee_per_blob_gas(max_blob_fee.to())
-        }
-
-        if let Some(nonce) = tx_opts.nonce {
-            tx.set_nonce(nonce.to());
-        }
-
-        // Set Tempo fee token if provided
-        if let Some(fee_token) = tx_opts.tempo.fee_token {
-            tx.set_fee_token(fee_token);
-        }
-
-        if let Some(nonce_key) = tx_opts.tempo.sequence_key {
-            tx.set_nonce_key(nonce_key);
-        }
+        // Apply gas, value, fee, and network-specific options.
+        tx_opts.apply::<N>(&mut tx, legacy);
 
         Ok(Self {
             provider,
@@ -383,6 +352,7 @@ where
             legacy,
             blob: tx_opts.blob,
             eip4844: tx_opts.eip4844,
+            fill: true,
             chain,
             etherscan_api_key,
             auth: tx_opts.auth,
@@ -400,6 +370,7 @@ where
             legacy: self.legacy,
             blob: self.blob,
             eip4844: self.eip4844,
+            fill: self.fill,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -460,6 +431,7 @@ where
             legacy: self.legacy,
             blob: self.blob,
             eip4844: self.eip4844,
+            fill: self.fill,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
@@ -473,148 +445,80 @@ impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InputState>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    /// Builds a TransactionRequest and fills missing fields. Returns a transaction which
-    /// is ready to be broadcasted.
+    /// Builds the TransactionRequest. Fills gas, fees and nonce unless [`raw`](Self::raw) was
+    /// called.
     pub async fn build(
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        self._build(sender, true, false).await
-    }
-
-    /// Builds generic TransactionRequest without filling missing fields. Used for read-only calls
-    /// such as eth_call, eth_estimateGas, etc
-    pub async fn build_raw(
-        self,
-        sender: impl Into<SenderKind<'_>>,
-    ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        self._build(sender, false, false).await
-    }
-
-    /// Builds an unsigned RLP-encoded raw transaction.
-    ///
-    /// Returns the hex encoded string representation of the transaction.
-    pub async fn build_unsigned_raw(self, from: Address) -> Result<String>
-    where
-        N::UnsignedTx: SignableTransaction<Signature>,
-    {
-        let (tx, _) = self._build(SenderKind::Address(from), true, true).await?;
-
-        let typed_tx = tx.build_unsigned()?;
-        Ok(hex::encode_prefixed(typed_tx.encoded_for_signing()))
+        let fill = self.fill;
+        self._build(sender, fill).await
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
-        unsigned: bool,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
+        // prepare
         let sender = sender.into();
-        let from = sender.address();
+        self.prepare(&sender);
 
-        self.tx.set_kind(self.state.kind);
+        // resolve
+        let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
+        self.resolve_auth(&sender, tx_nonce).await?;
+        self.resolve_access_list().await?;
 
-        // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
-        self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
-
-        self.tx.set_from(from);
-        self.tx.set_chain_id(self.chain.id());
-
-        let tx_nonce = if let Some(nonce) = self.tx.nonce() {
-            nonce
-        } else {
-            let nonce = self.provider.get_transaction_count(from).await?;
-            if fill {
-                self.tx.set_nonce(nonce);
-            }
-            nonce
-        };
-
-        if !unsigned {
-            self.resolve_auth(sender, tx_nonce).await?;
-        } else if !self.auth.is_empty() {
-            let mut signed_auths = Vec::with_capacity(self.auth.len());
-            for auth in std::mem::take(&mut self.auth) {
-                let CliAuthorizationList::Signed(signed_auth) = auth else {
-                    eyre::bail!(
-                        "SignedAuthorization needs to be provided for generating unsigned 7702 txs"
-                    )
-                };
-                signed_auths.push(signed_auth);
-            }
-
-            self.tx.set_authorization_list(signed_auths);
-        }
-
-        if let Some(access_list) = match self.access_list.take() {
-            None => None,
-            // --access-list provided with no value, call the provider to create it
-            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
-            // Access list provided as a string, attempt to parse it
-            Some(Some(access_list)) => Some(access_list),
-        } {
-            self.tx.set_access_list(access_list);
-        }
-
-        if !fill {
-            return Ok((self.tx, self.state.func));
-        }
-
-        if self.legacy && self.tx.gas_price().is_none() {
-            self.tx.set_gas_price(self.provider.get_gas_price().await?);
-        }
-
-        if self.blob && self.tx.max_fee_per_blob_gas().is_none() {
-            self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
-        }
-
-        if !self.legacy
-            && (self.tx.max_fee_per_gas().is_none() || self.tx.max_priority_fee_per_gas().is_none())
-        {
-            let estimate = self.provider.estimate_eip1559_fees().await?;
-
-            if self.tx.max_fee_per_gas().is_none() {
-                self.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
-
-            if self.tx.max_priority_fee_per_gas().is_none() {
-                self.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-        }
-
-        if self.tx.gas_limit().is_none() {
-            self.estimate_gas().await?;
+        // fill
+        if fill {
+            self.fill_fees().await?;
         }
 
         Ok((self.tx, self.state.func))
     }
 
-    /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
-    async fn estimate_gas(&mut self) -> Result<()> {
-        match self.provider.estimate_gas(self.tx.clone()).await {
-            Ok(estimated) => {
-                self.tx.set_gas_limit(estimated);
-                Ok(())
+    /// Sets the core transaction fields from the builder state: kind, input, from, and chain id.
+    fn prepare(&mut self, sender: &SenderKind<'_>) {
+        self.tx.set_kind(self.state.kind);
+        // We set both fields to the same value because some nodes only accept the legacy
+        // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
+        self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
+        self.tx.set_from(sender.address());
+        self.tx.set_chain_id(self.chain.id());
+    }
+
+    /// Resolves the transaction nonce. Returns the existing nonce or fetches one from the
+    /// provider. Only sets it on the transaction when `fill` is true.
+    async fn resolve_nonce(&mut self, from: Address, fill: bool) -> Result<u64> {
+        if let Some(nonce) = self.tx.nonce() {
+            Ok(nonce)
+        } else {
+            let nonce = self.provider.get_transaction_count(from).await?;
+            if fill {
+                self.tx.set_nonce(nonce);
             }
-            Err(err) => {
-                if let TransportError::ErrorResp(payload) = &err {
-                    // If execution reverted with code 3 during provider gas estimation then try
-                    // to decode custom errors and append it to the error message.
-                    if payload.code == 3
-                        && let Some(data) = &payload.data
-                        && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
-                    {
-                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
-                    }
-                }
-                eyre::bail!("Failed to estimate gas: {}", err)
-            }
+            Ok(nonce)
         }
     }
 
+    /// Resolves the access list. Fetches from the provider if `--access-list` was passed without
+    /// a value.
+    async fn resolve_access_list(&mut self) -> Result<()> {
+        if let Some(access_list) = match self.access_list.take() {
+            None => None,
+            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
+            Some(Some(access_list)) => Some(access_list),
+        } {
+            self.tx.set_access_list(access_list);
+        }
+        Ok(())
+    }
+
     /// Parses the passed --auth values and sets the authorization list on the transaction.
-    async fn resolve_auth(&mut self, sender: SenderKind<'_>, tx_nonce: u64) -> Result<()> {
+    ///
+    /// If a signer is available in `sender`, address-based auths will be signed.
+    /// If no signer is available, all auths must be pre-signed.
+    async fn resolve_auth(&mut self, sender: &SenderKind<'_>, tx_nonce: u64) -> Result<()> {
         if self.auth.is_empty() {
             return Ok(());
         }
@@ -644,7 +548,10 @@ where
                     };
 
                     let Some(signer) = sender.as_signer() else {
-                        eyre::bail!("No signer available to sign authorization");
+                        eyre::bail!(
+                            "No signer available to sign authorization. \
+                            Provide a pre-signed authorization (hex-encoded) instead."
+                        );
                     };
                     let signature = signer.sign_hash(&auth.signature_hash()).await?;
 
@@ -658,6 +565,62 @@ where
         self.tx.set_authorization_list(signed_auths);
 
         Ok(())
+    }
+
+    /// Fills gas price, EIP-1559 fees, blob fees, and gas limit from the provider.
+    ///
+    /// Only fills values that haven't been explicitly set by the user.
+    async fn fill_fees(&mut self) -> Result<()> {
+        if self.legacy && self.tx.gas_price().is_none() {
+            self.tx.set_gas_price(self.provider.get_gas_price().await?);
+        }
+
+        if self.blob && self.tx.max_fee_per_blob_gas().is_none() {
+            self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
+        }
+
+        if !self.legacy
+            && (self.tx.max_fee_per_gas().is_none() || self.tx.max_priority_fee_per_gas().is_none())
+        {
+            let estimate = self.provider.estimate_eip1559_fees().await?;
+
+            if self.tx.max_fee_per_gas().is_none() {
+                self.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+            }
+
+            if self.tx.max_priority_fee_per_gas().is_none() {
+                self.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+            }
+        }
+
+        if self.tx.gas_limit().is_none() {
+            self.estimate_gas().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
+    async fn estimate_gas(&mut self) -> Result<()> {
+        match self.provider.estimate_gas(self.tx.clone()).await {
+            Ok(estimated) => {
+                self.tx.set_gas_limit(estimated);
+                Ok(())
+            }
+            Err(err) => {
+                if let TransportError::ErrorResp(payload) = &err {
+                    // If execution reverted with code 3 during provider gas estimation then try
+                    // to decode custom errors and append it to the error message.
+                    if payload.code == 3
+                        && let Some(data) = &payload.data
+                        && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
+                    {
+                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
+                    }
+                }
+                eyre::bail!("Failed to estimate gas: {}", err)
+            }
+        }
     }
 
     /// Populates the blob sidecar for the transaction if any blob data was provided.
@@ -676,6 +639,13 @@ where
         }
 
         Ok(self)
+    }
+
+    /// Skips gas, fee and nonce filling. Use for read-only calls
+    /// (eth_call, eth_estimateGas, eth_createAccessList).
+    pub fn raw(mut self) -> Self {
+        self.fill = false;
+        self
     }
 }
 
