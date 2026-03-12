@@ -1487,9 +1487,9 @@ contract AContractTest is DSTest {
 ╭-------------------+--------------+--------------+--------------+---------------╮
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 +================================================================================+
-| src/AContract.sol | 60.00% (3/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
+| src/AContract.sol | 80.00% (4/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
 |-------------------+--------------+--------------+--------------+---------------|
-| Total             | 60.00% (3/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
+| Total             | 80.00% (4/5) | 80.00% (4/5) | 50.00% (1/2) | 100.00% (1/1) |
 ╰-------------------+--------------+--------------+--------------+---------------╯
 
 "#]]);
@@ -2071,6 +2071,498 @@ end_of_record
 
 "#]],
     );
+});
+
+// Regression test for multi-line `if` conditions: LCOV branch line numbers should be attributed to
+// the condition line, not the branch body line.
+//
+// See: <https://github.com/foundry-rs/foundry/issues/12657>
+forgetest!(multiline_if_condition_lcov_branch_line, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "IfMultiline.sol",
+        r#"
+contract IfMultiline {
+    function f(bool a, bool b) external pure returns (uint256) {
+        uint256 x = 0;
+        if (
+            a &&
+            b
+        ) {
+            x = 1;
+        } else {
+            x = 2;
+        }
+        return x;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "IfMultiline.t.sol",
+        r#"
+import "./test.sol";
+import {IfMultiline} from "./IfMultiline.sol";
+
+contract IfMultilineTest is DSTest {
+    function test_true_branch() external {
+        IfMultiline c = new IfMultiline();
+        assertEq(c.f(true, true), 1);
+    }
+}
+    "#,
+    );
+
+    let lcov = prj.root().join("lcov.info");
+    cmd.args(["coverage", "--report=lcov", "--report-file"]).arg(&lcov).assert_success();
+    assert!(lcov.exists(), "lcov.info was not created");
+    let lcov_text = fs::read_to_string(&lcov).unwrap();
+
+    let src_path = prj.paths().sources.join("IfMultiline.sol");
+    let src_text = fs::read_to_string(&src_path).unwrap();
+    let if_line = src_text.lines().position(|l| l.contains("if (")).unwrap() + 1;
+    let body_line = src_text.lines().position(|l| l.contains("x = 1;")).unwrap() + 1;
+
+    // We expect 2 BRDA entries (true/false) attributed to the `if (` line.
+    let needle = format!("BRDA:{if_line},");
+    assert!(
+        lcov_text.matches(&needle).count() >= 2,
+        "expected at least 2 branch entries on the condition line; lcov was:\n{lcov_text}"
+    );
+
+    // None should be attributed to the branch body line (this was the bug with multi-line
+    // conditions when branch items used the body span for their line range).
+    let bad_needle = format!("BRDA:{body_line},");
+    assert!(
+        !lcov_text.contains(&bad_needle),
+        "unexpected branch entry on body line; lcov was:\n{lcov_text}"
+    );
+});
+
+// Regression test based on the POC in <https://github.com/foundry-rs/foundry/issues/12508>.
+//
+// Goal: LCOV branch coverage should reflect short-circuit conditions for `&&` / `||` regardless of
+// whether the conditions are formatted inline or across multiple lines.
+//
+// Related: <https://github.com/foundry-rs/foundry/issues/12657>
+forgetest!(lcov_condition_branches_independent_of_formatting, |prj, cmd| {
+    prj.add_source(
+        "CounterMulti.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract CounterMulti {
+    uint256 public number = 1;
+
+    function setNumber(uint256 newNumber) public {
+        if (
+            newNumber % 2 == 0 ||
+            newNumber % 2 == 1 ||
+            newNumber != 0 ||
+            newNumber != 1 ||
+            newNumber != 2
+        ) {
+            number = newNumber;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "CounterInline.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract CounterInline {
+    uint256 public number = 1;
+
+    function setNumber(uint256 newNumber) public {
+        if (newNumber % 2 == 0 || newNumber % 2 == 1 || newNumber != 0 || newNumber != 1 || newNumber != 2) {
+            number = newNumber;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {CounterMulti} from "./CounterMulti.sol";
+import {CounterInline} from "./CounterInline.sol";
+
+contract CounterTest {
+    function testMulti_even_shortcircuits() external {
+        CounterMulti c = new CounterMulti();
+        c.setNumber(2); // first clause true => short-circuit
+        require(c.number() == 2, "bad");
+    }
+
+    function testInline_even_shortcircuits() external {
+        CounterInline c = new CounterInline();
+        c.setNumber(2); // first clause true => short-circuit
+        require(c.number() == 2, "bad");
+    }
+}
+    "#,
+    );
+
+    let lcov = prj.root().join("lcov.info");
+    cmd.args(["coverage", "--report=lcov", "--report-file"]).arg(&lcov).assert_success();
+    assert!(lcov.exists(), "lcov.info was not created");
+    let lcov_text = fs::read_to_string(&lcov).unwrap();
+
+    fn section(lcov: &str, sf: &str) -> String {
+        let mut in_sec = false;
+        let mut out = String::new();
+        for line in lcov.lines() {
+            if line.starts_with("SF:") {
+                in_sec = line == format!("SF:{sf}");
+            }
+            if in_sec {
+                out.push_str(line);
+                out.push('\n');
+                if line == "end_of_record" {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    // N=5 operands in the `||` chain => (N-1)=4 condition branch points => 8 BR items (2 paths
+    // each) plus the existing `if` true-branch item (no else) => total BRF = 9.
+    let expected_brf = "BRF:9";
+
+    for sf in ["src/CounterMulti.sol", "src/CounterInline.sol"] {
+        let sec = section(&lcov_text, sf);
+        assert!(!sec.is_empty(), "expected section for {sf} in lcov, got:\n{lcov_text}");
+        assert!(
+            sec.contains(expected_brf),
+            "expected {expected_brf} in section for {sf}, got:\n{sec}"
+        );
+        // Must not be fully covered (only first clause short-circuits).
+        let brh_line = sec.lines().find(|l| l.starts_with("BRH:")).unwrap();
+        let brh: usize = brh_line["BRH:".len()..].parse().unwrap();
+        assert!(
+            brh < 9,
+            "expected BRH < 9 (not all condition branches covered) for {sf}, got {brh_line}:\n{sec}"
+        );
+    }
+});
+
+// Additional regressions for <https://github.com/foundry-rs/foundry/issues/12657>:
+// - `require(...)` should also report short-circuit condition branches regardless of formatting.
+// - loop conditions (while) should do the same.
+forgetest!(lcov_condition_branches_require_and_while, |prj, cmd| {
+    prj.add_source(
+        "RequireMulti.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract RequireMulti {
+    function f(uint256 x) external pure returns (uint256) {
+        require(
+            x != 0 &&
+            x != 1 &&
+            x != 2 &&
+            x != 3 &&
+            x != 4
+        , "bad");
+        return x;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "RequireInline.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract RequireInline {
+    function f(uint256 x) external pure returns (uint256) {
+        require(x != 0 && x != 1 && x != 2 && x != 3 && x != 4, "bad");
+        return x;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "WhileMulti.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract WhileMulti {
+    function f(uint256 x) external pure returns (uint256) {
+        uint256 i = 0;
+        while (
+            i++ < 1 &&
+            x != 0 &&
+            x != 1 &&
+            x != 2 &&
+            x != 3
+        ) {
+            // no-op
+        }
+        return i;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "WhileInline.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract WhileInline {
+    function f(uint256 x) external pure returns (uint256) {
+        uint256 i = 0;
+        while (i++ < 1 && x != 0 && x != 1 && x != 2 && x != 3) {
+            // no-op
+        }
+        return i;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "All.t.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {RequireMulti} from "./RequireMulti.sol";
+import {RequireInline} from "./RequireInline.sol";
+import {WhileMulti} from "./WhileMulti.sol";
+import {WhileInline} from "./WhileInline.sol";
+
+contract AllTest {
+    function test_require_shortcircuits() external {
+        RequireMulti a = new RequireMulti();
+        RequireInline b = new RequireInline();
+        // x=0 fails on the first clause, so later clauses are not evaluated.
+        // We expect condition-branch items to exist regardless of formatting.
+        try a.f(0) { revert("expected revert"); } catch {}
+        try b.f(0) { revert("expected revert"); } catch {}
+    }
+
+    function test_while_shortcircuits() external {
+        WhileMulti a = new WhileMulti();
+        WhileInline b = new WhileInline();
+        // x=0 makes the second clause false on the first iteration, so later clauses are not evaluated.
+        require(a.f(0) > 0, "bad");
+        require(b.f(0) > 0, "bad");
+    }
+}
+    "#,
+    );
+
+    let lcov = prj.root().join("lcov.info");
+    cmd.args(["coverage", "--report=lcov", "--report-file"]).arg(&lcov).assert_success();
+    assert!(lcov.exists(), "lcov.info was not created");
+    let lcov_text = fs::read_to_string(&lcov).unwrap();
+
+    fn section(lcov: &str, sf: &str) -> String {
+        let mut in_sec = false;
+        let mut out = String::new();
+        for line in lcov.lines() {
+            if line.starts_with("SF:") {
+                in_sec = line == format!("SF:{sf}");
+            }
+            if in_sec {
+                out.push_str(line);
+                out.push('\n');
+                if line == "end_of_record" {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    // Require: 5 operands in `&&` => 4 branch points => 8 condition BR items,
+    // plus the existing `require` branch itself (2 paths) => total BRF = 10.
+    let expected_require_brf = "BRF:10";
+    for sf in ["src/RequireMulti.sol", "src/RequireInline.sol"] {
+        let sec = section(&lcov_text, sf);
+        assert!(
+            sec.contains(expected_require_brf),
+            "expected {expected_require_brf} for {sf}, got:\n{sec}"
+        );
+    }
+
+    // While: 5 operands in `&&` => 4 branch points => 8 condition BR items
+    let expected_while_brf = "BRF:8";
+    for sf in ["src/WhileMulti.sol", "src/WhileInline.sol"] {
+        let sec = section(&lcov_text, sf);
+        assert!(
+            sec.contains(expected_while_brf),
+            "expected {expected_while_brf} for {sf}, got:\n{sec}"
+        );
+    }
+});
+
+// Additional regressions for loop conditions:
+// - `for (...; cond; ...)` should report short-circuit condition branches regardless of formatting.
+// - `do { ... } while (cond)` should do the same.
+forgetest!(lcov_condition_branches_for_and_do_while, |prj, cmd| {
+    prj.add_source(
+        "ForMulti.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract ForMulti {
+    function f(uint256 x) external pure returns (uint256) {
+        uint256 i;
+        for (
+            i = 0;
+            i < 1 &&
+                x != 0 &&
+                x != 1 &&
+                x != 2 &&
+                x != 3;
+            i++
+        ) {
+            // no-op
+        }
+        return i;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "ForInline.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract ForInline {
+    function f(uint256 x) external pure returns (uint256) {
+        uint256 i;
+        for (i = 0; i < 1 && x != 0 && x != 1 && x != 2 && x != 3; i++) {
+            // no-op
+        }
+        return i;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "DoWhileMulti.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract DoWhileMulti {
+    function f(uint256 x) external pure returns (uint256) {
+        uint256 i = 0;
+        do {
+            // no-op
+        } while (
+            i++ < 1 &&
+            x != 0 &&
+            x != 1 &&
+            x != 2 &&
+            x != 3
+        );
+        return i;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "DoWhileInline.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract DoWhileInline {
+    function f(uint256 x) external pure returns (uint256) {
+        uint256 i = 0;
+        do { } while (i++ < 1 && x != 0 && x != 1 && x != 2 && x != 3);
+        return i;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "All.t.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {ForMulti} from "./ForMulti.sol";
+import {ForInline} from "./ForInline.sol";
+import {DoWhileMulti} from "./DoWhileMulti.sol";
+import {DoWhileInline} from "./DoWhileInline.sol";
+
+contract AllTest {
+    function test_for_shortcircuits() external {
+        ForMulti a = new ForMulti();
+        ForInline b = new ForInline();
+        // x=0 makes the second clause false, so later clauses are not evaluated.
+        require(a.f(0) == 0, "bad");
+        require(b.f(0) == 0, "bad");
+    }
+
+    function test_do_while_shortcircuits() external {
+        DoWhileMulti a = new DoWhileMulti();
+        DoWhileInline b = new DoWhileInline();
+        // x=0 makes the second clause false on the first condition check.
+        require(a.f(0) > 0, "bad");
+        require(b.f(0) > 0, "bad");
+    }
+}
+    "#,
+    );
+
+    let lcov = prj.root().join("lcov.info");
+    cmd.args(["coverage", "--report=lcov", "--report-file"]).arg(&lcov).assert_success();
+    assert!(lcov.exists(), "lcov.info was not created");
+    let lcov_text = fs::read_to_string(&lcov).unwrap();
+
+    fn section(lcov: &str, sf: &str) -> String {
+        let mut in_sec = false;
+        let mut out = String::new();
+        for line in lcov.lines() {
+            if line.starts_with("SF:") {
+                in_sec = line == format!("SF:{sf}");
+            }
+            if in_sec {
+                out.push_str(line);
+                out.push('\n');
+                if line == "end_of_record" {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    // Each loop condition has 5 operands in an `&&` chain => 4 branch points => 8 BR items.
+    let expected_brf = "BRF:8";
+    for sf in
+        ["src/ForMulti.sol", "src/ForInline.sol", "src/DoWhileMulti.sol", "src/DoWhileInline.sol"]
+    {
+        let sec = section(&lcov_text, sf);
+        assert!(sec.contains(expected_brf), "expected {expected_brf} for {sf}, got:\n{sec}");
+    }
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11183>
