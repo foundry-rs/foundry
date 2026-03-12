@@ -31,11 +31,13 @@ use foundry_common::{
     compile::etherscan_project,
     flatten,
     fmt::*,
-    fs, shell,
+    fs,
+    provider::ProviderBuilder,
+    shell,
 };
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
 use foundry_evm::core::bytecode::InstIter;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use futures::{FutureExt, StreamExt, future::Either};
 
 use rayon::prelude::*;
@@ -730,7 +732,6 @@ where
         from: Option<NameOrAddress>,
         nonce: Option<u64>,
         field: Option<String>,
-        raw: bool,
         to_request: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
@@ -757,10 +758,7 @@ where
             eyre::bail!("tx hash or from address is required")
         };
 
-        Ok(if raw {
-            let encoded = tx.as_ref().encoded_2718();
-            format!("0x{}", hex::encode(encoded))
-        } else if let Some(ref field) = field {
+        Ok(if let Some(ref field) = field {
             get_pretty_tx_attr::<N>(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
@@ -2358,6 +2356,44 @@ fn explorer_client(
     }
 
     builder.build().map_err(Into::into)
+}
+
+// Temporary workaround to handle tx raw encoding through FoundryNetwork
+// TODO: Once the Network selection UI will be finalized, bring back --raw
+// handling to `Cast::transaction`
+pub async fn transaction_raw(
+    config: &Config,
+    tx_hash: Option<String>,
+    from: Option<NameOrAddress>,
+    nonce: Option<u64>,
+) -> Result<String> {
+    let provider = ProviderBuilder::<FoundryNetwork>::from_config(config)?.build()?;
+    let tx = if let Some(tx_hash) = tx_hash {
+        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        provider
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
+    } else if let Some(from) = from {
+        // If nonce is not provided, uses 0.
+        let nonce = U64::from(nonce.unwrap_or_default());
+        let from = from.resolve(provider.root()).await?;
+
+        provider
+            .raw_request::<_, Option<<FoundryNetwork as Network>::TransactionResponse>>(
+                "eth_getTransactionBySenderAndNonce".into(),
+                (from, nonce),
+            )
+            .await?
+            .ok_or_else(|| {
+                eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+            })?
+    } else {
+        eyre::bail!("tx hash or from address is required")
+    };
+
+    let encoded = tx.as_ref().encoded_2718();
+    Ok(format!("0x{}", hex::encode(encoded)))
 }
 
 #[cfg(test)]
