@@ -110,7 +110,7 @@ pub struct EthApi<T = FoundryTxEnvelope> {
     pool: Arc<Pool<T>>,
     /// Holds all blockchain related data
     /// In-Memory only for now
-    pub backend: Arc<backend::mem::Backend>,
+    pub backend: Arc<backend::mem::Backend<FoundryNetwork>>,
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
@@ -162,7 +162,7 @@ impl<T> EthApi<T> {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         pool: Arc<Pool<T>>,
-        backend: Arc<backend::mem::Backend>,
+        backend: Arc<backend::mem::Backend<FoundryNetwork>>,
         signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
         fee_history_cache: FeeHistoryCache,
         fee_history_limit: u64,
@@ -185,20 +185,6 @@ impl<T> EthApi<T> {
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
         }
-    }
-
-    async fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest<T>> {
-        let block_request = match block_number {
-            Some(BlockId::Number(BlockNumber::Pending)) => {
-                let pending_txs = self.pool.ready_transactions().collect();
-                BlockRequest::Pending(pending_txs)
-            }
-            _ => {
-                let number = self.backend.ensure_block_number(block_number).await?;
-                BlockRequest::Number(number)
-            }
-        };
-        Ok(block_request)
     }
 
     /// Returns the current gas price
@@ -332,16 +318,6 @@ impl<T> EthApi<T> {
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_setBalance");
         self.backend.set_balance(address, balance).await?;
-        Ok(())
-    }
-
-    /// Increases the balance of an account.
-    ///
-    /// Handler for RPC call: `anvil_addBalance`
-    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
-        node_info!("anvil_addBalance");
-        let current_balance = self.backend.get_balance(address, None).await?;
-        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
         Ok(())
     }
 
@@ -522,51 +498,12 @@ impl<T> EthApi<T> {
         Ok(())
     }
 
-    /// Rollback the chain to a specific depth.
-    ///
-    /// e.g depth = 3
-    ///     A  -> B  -> C  -> D  -> E
-    ///     A  -> B
-    ///
-    /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
-    /// chain height, i.e. can't rollback past the genesis block.
-    ///
-    /// Handler for RPC call: `anvil_rollback`
-    pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
-        node_info!("anvil_rollback");
-        let depth = depth.unwrap_or(1);
-
-        // Check reorg depth doesn't exceed current chain height
-        let current_height = self.backend.best_number();
-        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params(format!(
-                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
-            )),
-        ))?;
-
-        // Get the common ancestor block
-        let common_block =
-            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
-
-        self.backend.rollback(common_block).await?;
-        Ok(())
-    }
-
     /// Snapshot the state of the blockchain at the current block.
     ///
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
         Ok(self.backend.create_state_snapshot().await)
-    }
-
-    /// Revert the state of the blockchain to a previous snapshot.
-    /// Takes a single parameter, which is the snapshot id to revert to.
-    ///
-    /// Handler for RPC call: `evm_revert`
-    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
-        node_info!("evm_revert");
-        self.backend.revert_state_snapshot(id).await
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
@@ -677,6 +614,126 @@ impl<T> EthApi<T> {
             })
         });
         rx.await.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
+    }
+
+    /// Updates the `TransactionOrder`
+    pub fn set_transaction_order(&self, order: TransactionOrder) {
+        *self.transaction_order.write() = order;
+    }
+
+    /// Returns the chain ID used for transaction
+    pub fn chain_id(&self) -> u64 {
+        self.backend.chain_id().to::<u64>()
+    }
+
+    /// Returns the configured fork, if any.
+    pub fn get_fork(&self) -> Option<ClientFork> {
+        self.backend.get_fork()
+    }
+
+    /// Returns the current instance's ID.
+    pub fn instance_id(&self) -> B256 {
+        *self.instance_id.read()
+    }
+
+    /// Resets the instance ID.
+    pub fn reset_instance_id(&self) {
+        *self.instance_id.write() = B256::random();
+    }
+
+    /// Returns the first signer that can sign for the given address
+    #[expect(clippy::borrowed_box)]
+    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<FoundryNetwork>>> {
+        self.signers.iter().find(|signer| signer.is_signer_for(address))
+    }
+
+    /// Returns a new listeners for ready transactions
+    pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
+        self.pool.add_ready_listener()
+    }
+
+    /// Returns true if forked
+    pub fn is_fork(&self) -> bool {
+        self.backend.is_fork()
+    }
+
+    /// Returns the current state root
+    pub async fn state_root(&self) -> Option<B256> {
+        self.backend.get_db().read().await.maybe_state_root()
+    }
+
+    /// Returns true if the `addr` is currently impersonated
+    pub fn is_impersonated(&self, addr: Address) -> bool {
+        self.backend.cheats().is_impersonated(addr)
+    }
+}
+
+// == impl EthApi anvil endpoints ==
+
+impl EthApi {
+    // TODO: move to `impl<T> EthApi<T>` once `Backend::block_by_hash` is network-generic.
+
+    /// Revert the state of the blockchain to a previous snapshot.
+    /// Takes a single parameter, which is the snapshot id to revert to.
+    ///
+    /// Handler for RPC call: `evm_revert`
+    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
+        node_info!("evm_revert");
+        self.backend.revert_state_snapshot(id).await
+    }
+
+    async fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest> {
+        let block_request = match block_number {
+            Some(BlockId::Number(BlockNumber::Pending)) => {
+                let pending_txs = self.pool.ready_transactions().collect();
+                BlockRequest::Pending(pending_txs)
+            }
+            _ => {
+                let number = self.backend.ensure_block_number(block_number).await?;
+                BlockRequest::Number(number)
+            }
+        };
+        Ok(block_request)
+    }
+
+    /// Increases the balance of an account.
+    ///
+    /// Handler for RPC call: `anvil_addBalance`
+    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
+        node_info!("anvil_addBalance");
+        let current_balance = self.backend.get_balance(address, None).await?;
+        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
+        Ok(())
+    }
+
+    /// Rollback the chain to a specific depth.
+    ///
+    /// e.g depth = 3
+    ///     A  -> B  -> C  -> D  -> E
+    ///     A  -> B
+    ///
+    /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
+    /// chain height, i.e. can't rollback past the genesis block.
+    ///
+    /// Handler for RPC call: `anvil_rollback`
+    pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
+        node_info!("anvil_rollback");
+        let depth = depth.unwrap_or(1);
+
+        // Check reorg depth doesn't exceed current chain height
+        let current_height = self.backend.best_number();
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params(format!(
+                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
+            )),
+        ))?;
+
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        self.backend.rollback(common_block).await?;
+        Ok(())
     }
 
     /// Estimates the gas usage of the `request` with the state.
@@ -808,45 +865,9 @@ impl<T> EthApi<T> {
         Ok(highest_gas_limit)
     }
 
-    /// Updates the `TransactionOrder`
-    pub fn set_transaction_order(&self, order: TransactionOrder) {
-        *self.transaction_order.write() = order;
-    }
-
-    /// Returns the chain ID used for transaction
-    pub fn chain_id(&self) -> u64 {
-        self.backend.chain_id().to::<u64>()
-    }
-
-    /// Returns the configured fork, if any.
-    pub fn get_fork(&self) -> Option<ClientFork> {
-        self.backend.get_fork()
-    }
-
-    /// Returns the current instance's ID.
-    pub fn instance_id(&self) -> B256 {
-        *self.instance_id.read()
-    }
-
-    /// Resets the instance ID.
-    pub fn reset_instance_id(&self) {
-        *self.instance_id.write() = B256::random();
-    }
-
-    /// Returns the first signer that can sign for the given address
-    #[expect(clippy::borrowed_box)]
-    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<FoundryNetwork>>> {
-        self.signers.iter().find(|signer| signer.is_signer_for(address))
-    }
-
     /// Returns a new block event stream that yields Notifications when a new block was added
     pub fn new_block_notifications(&self) -> NewBlockNotifications {
         self.backend.new_block_notifications()
-    }
-
-    /// Returns a new listeners for ready transactions
-    pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
-        self.pool.add_ready_listener()
     }
 
     /// Returns a new accessor for certain storage elements
@@ -854,25 +875,6 @@ impl<T> EthApi<T> {
         StorageInfo::new(Arc::clone(&self.backend))
     }
 
-    /// Returns true if forked
-    pub fn is_fork(&self) -> bool {
-        self.backend.is_fork()
-    }
-
-    /// Returns the current state root
-    pub async fn state_root(&self) -> Option<B256> {
-        self.backend.get_db().read().await.maybe_state_root()
-    }
-
-    /// Returns true if the `addr` is currently impersonated
-    pub fn is_impersonated(&self, addr: Address) -> bool {
-        self.backend.cheats().is_impersonated(addr)
-    }
-}
-
-// == impl EthApi anvil endpoints ==
-
-impl EthApi {
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
