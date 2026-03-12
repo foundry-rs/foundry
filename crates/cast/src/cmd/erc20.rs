@@ -4,7 +4,7 @@ use crate::{cmd::send::cast_send, format_uint_exp, tx::SendTxOpts};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, Network};
+use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{U64, U256};
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
@@ -84,39 +84,29 @@ where
     Ok(provider)
 }
 
-/// Apply transaction options to a transaction request for ERC20 operations.
-fn apply_tx_opts<N: Network, T: FoundryTransactionBuilder<N>>(
-    tx: &mut T,
-    tx_opts: &Erc20TxOpts,
-    is_legacy: bool,
-) {
-    if let Some(gas_limit) = tx_opts.gas_limit {
-        tx.set_gas_limit(gas_limit.to());
-    }
-
-    if let Some(gas_price) = tx_opts.gas_price {
-        if is_legacy {
-            tx.set_gas_price(gas_price.to());
-        } else {
-            tx.set_max_fee_per_gas(gas_price.to());
+impl Erc20TxOpts {
+    /// Applies gas, fee, nonce, and Tempo options to a transaction request.
+    fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        if let Some(gas_limit) = self.gas_limit {
+            tx.set_gas_limit(gas_limit.to());
         }
-    }
 
-    if !is_legacy && let Some(priority_fee) = tx_opts.priority_gas_price {
-        tx.set_max_priority_fee_per_gas(priority_fee.to());
-    }
+        if let Some(gas_price) = self.gas_price {
+            if legacy {
+                tx.set_gas_price(gas_price.to());
+            } else {
+                tx.set_max_fee_per_gas(gas_price.to());
+            }
+        }
 
-    if let Some(nonce) = tx_opts.nonce {
-        tx.set_nonce(nonce.to());
-    }
+        if !legacy && let Some(priority_fee) = self.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
+        }
 
-    // Apply Tempo-specific options
-    if let Some(fee_token) = tx_opts.tempo.fee_token {
-        tx.set_fee_token(fee_token);
-    }
-
-    if let Some(nonce_key) = tx_opts.tempo.sequence_key {
-        tx.set_nonce_key(nonce_key);
+        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
     }
 }
 
@@ -463,12 +453,7 @@ impl Erc20Subcommand {
                     .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
 
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
+                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
                 cast_send(
                     provider,
@@ -486,12 +471,7 @@ impl Erc20Subcommand {
                     .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
 
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
+                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
                 cast_send(
                     provider,
@@ -509,12 +489,7 @@ impl Erc20Subcommand {
                     .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
                     .into_transaction_request();
 
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
+                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
                 cast_send(
                     provider,
@@ -532,12 +507,7 @@ impl Erc20Subcommand {
                     .burn(U256::from_str(&amount)?)
                     .into_transaction_request();
 
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
+                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
                 cast_send(
                     provider,
