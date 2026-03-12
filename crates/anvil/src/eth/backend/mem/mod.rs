@@ -121,7 +121,6 @@ use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
     io::{Read, Write},
-    marker::PhantomData,
     ops::{Mul, Not},
     path::PathBuf,
     sync::Arc,
@@ -235,7 +234,6 @@ pub struct Backend<N: Network> {
     mining: Arc<tokio::sync::Mutex<()>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
-    _network: PhantomData<N>,
 }
 
 impl<N: Network> Clone for Backend<N> {
@@ -263,7 +261,6 @@ impl<N: Network> Clone for Backend<N> {
             precompile_factory: self.precompile_factory.clone(),
             mining: self.mining.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
-            _network: PhantomData,
         }
     }
 }
@@ -907,7 +904,6 @@ impl Backend<FoundryNetwork> {
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
             disable_pool_balance_checks,
-            _network: PhantomData,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -1380,9 +1376,7 @@ impl Backend<FoundryNetwork> {
 
         evm
     }
-}
 
-impl Backend<FoundryNetwork> {
     /// executes the transactions without writing to the underlying database
     pub async fn inspect_tx(
         &self,
