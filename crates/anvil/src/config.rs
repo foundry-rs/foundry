@@ -1314,21 +1314,21 @@ latest block number: {latest_block}"
         };
 
         // if not set explicitly we use the base fee of the latest block
-        if self.base_fee.is_none() {
-            if let Some(base_fee) = block.header.base_fee_per_gas() {
-                self.base_fee = Some(base_fee);
-                env.evm_env.block_env.basefee = base_fee;
-                // this is the base fee of the current block, but we need the base fee of
-                // the next block
-                let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used(),
-                    gas_limit,
-                    block.header.base_fee_per_gas().unwrap_or_default(),
-                );
+        if self.base_fee.is_none()
+            && let Some(base_fee) = block.header.base_fee_per_gas()
+        {
+            self.base_fee = Some(base_fee);
+            env.evm_env.block_env.basefee = base_fee;
+            // this is the base fee of the current block, but we need the base fee of
+            // the next block
+            let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
+                block.header.gas_used(),
+                gas_limit,
+                block.header.base_fee_per_gas().unwrap_or_default(),
+            );
 
-                // update next base fee
-                fees.set_base_fee(next_block_base_fee);
-            }
+            // update next base fee
+            fees.set_base_fee(next_block_base_fee);
         }
 
         if let (Some(blob_excess_gas), Some(blob_gas_used)) =
