@@ -7,6 +7,7 @@ use crate::{
     },
     verify::VerifierArgs,
 };
+use alloy_evm::{FromRecoveredTx, rpc::TryIntoTxEnv};
 use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
     Provider,
@@ -29,11 +30,9 @@ use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    executors::EvmError,
-    utils::{configure_tx_env, configure_tx_req_env},
+    constants::DEFAULT_CREATE2_DEPLOYER, executors::EvmError,
 };
-use revm::state::AccountInfo;
+use revm::{context::TxEnv, state::AccountInfo};
 use std::path::PathBuf;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -258,8 +257,8 @@ impl VerifyBytecodeArgs {
                 gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
             }
 
-            configure_tx_req_env(&mut env, &gen_tx_req)
-                .wrap_err("Failed to configure tx request env")?;
+            let kind = gen_tx_req.kind();
+            env.tx = gen_tx_req.try_into_tx_env(&env.evm_env)?;
 
             // Seed deployer account with funds
             let account_info = AccountInfo {
@@ -273,7 +272,7 @@ impl VerifyBytecodeArgs {
                 &mut executor,
                 &env,
                 config.evm_spec_id(),
-                gen_tx_req.to,
+                kind,
             )?;
 
             // Compare runtime bytecode
@@ -489,7 +488,9 @@ impl VerifyBytecodeArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env, tx);
+                    if let Some(tx_envelope) = tx.as_envelope() {
+                        env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());
+                    }
 
                     if let TxKind::Call(_) = tx.inner.kind() {
                         executor.transact_with_env(env.clone()).wrap_err_with(|| {
@@ -531,15 +532,14 @@ impl VerifyBytecodeArgs {
                 transaction.input = TransactionInput::both(Bytes::from(local_bytecode_vec));
             }
 
-            // configure_req__env(&mut env, &transaction.inner);
-            configure_tx_req_env(&mut env, &transaction)
-                .wrap_err("Failed to configure tx request env")?;
+            let kind = transaction.kind();
+            env.tx = transaction.try_into_tx_env(&env.evm_env)?;
 
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
                 &env,
                 config.evm_spec_id(),
-                transaction.to,
+                kind,
             )?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.

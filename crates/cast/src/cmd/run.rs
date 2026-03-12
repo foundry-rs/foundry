@@ -1,5 +1,6 @@
 use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_changes};
 use alloy_consensus::{BlockHeader, Transaction};
+use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
@@ -27,10 +28,9 @@ use foundry_evm::{
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
-    utils::configure_tx_env,
 };
 use futures::TryFutureExt;
-use revm::DatabaseRef;
+use revm::{DatabaseRef, context::TxEnv};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -258,7 +258,9 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env, tx);
+                    if let Some(tx_envelope) = tx.as_envelope() {
+                        env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());
+                    }
 
                     env.evm_env.cfg_env.disable_balance_check = true;
 
@@ -299,7 +301,9 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env, &tx);
+            if let Some(tx_envelope) = tx.as_envelope() {
+                env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());
+            }
             if is_impersonated_tx(tx.as_ref()) {
                 env.evm_env.cfg_env.disable_balance_check = true;
             }
