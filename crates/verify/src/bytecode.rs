@@ -29,9 +29,7 @@ use foundry_cli::{
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
-use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, executors::EvmError,
-};
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::EvmError};
 use revm::{context::TxEnv, state::AccountInfo};
 use std::path::PathBuf;
 
@@ -268,12 +266,8 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let fork_address = crate::utils::deploy_contract(
-                &mut executor,
-                &env,
-                config.evm_spec_id(),
-                kind,
-            )?;
+            let fork_address =
+                crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), kind)?;
 
             // Compare runtime bytecode
             let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(
@@ -535,12 +529,8 @@ impl VerifyBytecodeArgs {
             let kind = transaction.kind();
             env.tx = transaction.try_into_tx_env(&env.evm_env)?;
 
-            let fork_address = crate::utils::deploy_contract(
-                &mut executor,
-                &env,
-                config.evm_spec_id(),
-                kind,
-            )?;
+            let fork_address =
+                crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), kind)?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.
             let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
