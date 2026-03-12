@@ -22,7 +22,7 @@ foundry-evm-networks.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-evm.workspace = true
+alloy-evm = { workspace = true, features = ["rpc"] }
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
 alloy-op-hardforks.workspace = true

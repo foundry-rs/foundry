@@ -10,7 +10,7 @@ use crate::{
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
 };
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
@@ -44,7 +44,7 @@ pub struct NodeService<T = FoundryTxEnvelope> {
 impl NodeService {
     pub fn new(
         pool: Arc<Pool>,
-        backend: Arc<Backend>,
+        backend: Arc<Backend<FoundryNetwork>>,
         miner: Miner,
         fee_history: FeeHistoryService,
         filters: Filters,
@@ -101,19 +101,21 @@ impl Future for NodeService {
     }
 }
 
+type MiningResult<T> = (MinedBlockOutcome<T>, Arc<Backend<FoundryNetwork>>);
+
 /// A type that exclusively mines one block at a time
 #[must_use = "streams do nothing unless polled"]
 struct BlockProducer<T = FoundryTxEnvelope> {
     /// Holds the backend if no block is being mined
-    idle_backend: Option<Arc<Backend>>,
+    idle_backend: Option<Arc<Backend<FoundryNetwork>>>,
     /// Single active future that mines a new block
-    block_mining: Option<JoinHandle<(MinedBlockOutcome<T>, Arc<Backend>)>>,
+    block_mining: Option<JoinHandle<MiningResult<T>>>,
     /// backlog of sets of transactions ready to be mined
     queued: VecDeque<Vec<Arc<PoolTransaction<T>>>>,
 }
 
 impl BlockProducer {
-    fn new(backend: Arc<Backend>) -> Self {
+    fn new(backend: Arc<Backend<FoundryNetwork>>) -> Self {
         Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }
     }
 }

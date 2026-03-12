@@ -54,7 +54,7 @@ pub struct TempoOpts {
     ///
     /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
     /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
-    #[arg(long = "tempo.expiring-nonce")]
+    #[arg(long = "tempo.expiring-nonce", requires = "valid_before")]
     pub expiring_nonce: bool,
 
     /// Upper bound timestamp for Tempo expiring nonce transactions.
