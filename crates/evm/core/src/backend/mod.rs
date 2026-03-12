@@ -6,10 +6,10 @@ use crate::{
     evm::new_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::{configure_tx_env, configure_tx_req_env, get_blob_base_fee_update_fraction},
+    utils::get_blob_base_fee_update_fraction,
 };
 use alloy_consensus::{BlockHeader, Typed2718};
-use alloy_evm::{Evm, EvmEnv};
+use alloy_evm::{Evm, EvmEnv, FromRecoveredTx, rpc::TryIntoTxEnv};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, TransactionResponse,
@@ -1383,7 +1383,7 @@ impl DatabaseExt for Backend {
 
         let mut env = Env { evm_env, tx: tx_env };
         let res = {
-            configure_tx_req_env(&mut env, tx)?;
+            env.tx = tx.clone().try_into_tx_env(&env.evm_env)?;
 
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(
@@ -2040,7 +2040,9 @@ fn commit_transaction(
     persistent_accounts: &HashSet<Address>,
     inspector: &mut dyn InspectorExt,
 ) -> eyre::Result<()> {
-    configure_tx_env(env, tx);
+    if let Some(tx_envelope) = tx.as_envelope() {
+        env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());
+    }
 
     let now = Instant::now();
     let res = {

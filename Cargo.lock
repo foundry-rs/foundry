@@ -2594,6 +2594,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eips 2.0.0-rc.0",
  "alloy-ens",
+ "alloy-evm",
  "alloy-hardforks",
  "alloy-json-abi",
  "alloy-json-rpc",
@@ -4419,7 +4420,9 @@ dependencies = [
 name = "forge-verify"
 version = "1.6.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-evm",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-provider",
