@@ -13,11 +13,10 @@ use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
-    utils::{self, LoadConfig, get_provider_builder, parse_function_args},
+    utils::{self, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr,
-    provider::RetryProviderWithSigner, shell,
+    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr, shell,
 };
 use foundry_config::{Chain, Config};
 use foundry_primitives::FoundryTransactionBuilder;
@@ -505,11 +504,6 @@ where
         Ok(hex::encode_prefixed(typed_tx.encoded_for_signing()))
     }
 
-    /// Returns whether this builder will produce a Tempo transaction.
-    pub fn is_tempo(&self) -> bool {
-        self.tx.fee_token().is_some() || self.tx.nonce_key().is_some()
-    }
-
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
@@ -701,18 +695,4 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         return Ok(Some(decoded_error));
     }
     Ok(None)
-}
-
-/// Creates a provider with wallet for signing transactions locally.
-pub(crate) async fn get_provider_with_wallet(
-    tx_opts: &SendTxOpts,
-) -> eyre::Result<RetryProviderWithSigner> {
-    let config = tx_opts.eth.load_config()?;
-    let signer = tx_opts.eth.wallet.signer().await?;
-    let wallet = alloy_network::EthereumWallet::from(signer);
-    let provider = get_provider_builder(&config)?.build_with_wallet(wallet)?;
-    if let Some(interval) = tx_opts.poll_interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval))
-    }
-    Ok(provider)
 }
