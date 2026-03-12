@@ -14,7 +14,8 @@ use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     Env, FoundryBlock, FoundryInspectorExt, FoundryTransaction, InspectorExt,
-    backend::{DatabaseError, FoundryJournalExt, JournaledState},
+    backend::{DatabaseError, DatabaseExt, FoundryJournalExt, JournaledState},
+    env::FoundryContextExt,
     evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_coverage::HitMaps;
@@ -363,7 +364,9 @@ pub struct InspectorStackRefMut<'a> {
     pub inner: &'a mut InspectorStackInner,
 }
 
-impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
+impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
+    for InspectorStackInner
+{
     fn with_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes,
@@ -384,7 +387,7 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes,
-        db: &mut dyn foundry_evm_core::backend::DatabaseExt,
+        db: &mut dyn DatabaseExt,
         evm_env: foundry_evm_core::EvmEnv,
         tx_env: revm::context::TxEnv,
         f: NestedEvmClosure<'_>,
@@ -658,7 +661,7 @@ impl InspectorStackRefMut<'_> {
     /// Should be called on the top-level call of inner context (depth == 0 &&
     /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
     /// Updates tx.origin to the value before entering inner context
-    fn adjust_evm_data_for_inner_context<CTX: CheatsCtxExt>(&mut self, ecx: &mut CTX) {
+    fn adjust_evm_data_for_inner_context<CTX: FoundryContextExt>(&mut self, ecx: &mut CTX) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
         ecx.tx_mut().set_caller(inner_context_data.original_origin);
@@ -727,7 +730,7 @@ impl InspectorStackRefMut<'_> {
         outcome.clone()
     }
 
-    fn transact_inner<CTX: CheatsCtxExt>(
+    fn transact_inner<CTX: FoundryContextExt>(
         &mut self,
         ecx: &mut CTX,
         kind: TxKind,
@@ -886,7 +889,7 @@ impl InspectorStackRefMut<'_> {
     }
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
-    fn top_level_frame_start<CTX: CheatsCtxExt>(&mut self, ecx: &mut CTX) {
+    fn top_level_frame_start<CTX: ContextTr<Journal: JournalExt>>(&mut self, ecx: &mut CTX) {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
@@ -895,7 +898,11 @@ impl InspectorStackRefMut<'_> {
     }
 
     /// Invoked at the end of root frame.
-    fn top_level_frame_end<CTX: CheatsCtxExt>(&mut self, ecx: &mut CTX, result: InstructionResult) {
+    fn top_level_frame_end<CTX: ContextTr<Journal: JournalExt>>(
+        &mut self,
+        ecx: &mut CTX,
+        result: InstructionResult,
+    ) {
         if !result.is_revert() {
             return;
         }
@@ -959,10 +966,7 @@ impl InspectorStackRefMut<'_> {
     }
 }
 
-impl<CTX: CheatsCtxExt> Inspector<CTX> for InspectorStackRefMut<'_>
-where
-    CTX::Journal: FoundryJournalExt,
-{
+impl<CTX: CheatsCtxExt> Inspector<CTX> for InspectorStackRefMut<'_> {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!(
             [
@@ -1193,10 +1197,7 @@ impl FoundryInspectorExt for InspectorStackRefMut<'_> {
     }
 }
 
-impl<CTX: CheatsCtxExt> Inspector<CTX> for InspectorStack
-where
-    CTX::Journal: FoundryJournalExt,
-{
+impl<CTX: CheatsCtxExt> Inspector<CTX> for InspectorStack {
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         self.as_mut().step_inlined(interpreter, ecx)
     }

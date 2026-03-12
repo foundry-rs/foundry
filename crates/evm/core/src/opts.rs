@@ -1,17 +1,17 @@
-use super::fork::environment;
 use crate::{
-    EvmEnv,
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::{CreateFork, configure_env},
+    EvmEnv, constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork,
+    utils::apply_chain_and_block_specific_env_changes,
 };
-use alloy_network::{AnyNetwork, Network};
-use alloy_primitives::{Address, B256, BlockNumber, U256};
+use alloy_consensus::BlockHeader;
+use alloy_network::{AnyNetwork, BlockResponse, Network};
+use alloy_primitives::{Address, B256, BlockNumber, ChainId, U256};
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_types::BlockNumberOrTag;
 use eyre::WrapErr;
-use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
+use foundry_common::{ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, provider::ProviderBuilder};
 use foundry_config::{Chain, Config, GasLimit};
 use foundry_evm_networks::NetworkConfigs;
-use revm::context::{BlockEnv, TxEnv};
+use revm::context::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;
@@ -127,85 +127,159 @@ impl EvmOpts {
             .build()
     }
 
-    /// Configures a new `revm::Env`
+    /// Assembles a complete [`Env`]
     ///
-    /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
-    /// id, )
-    pub async fn evm_env(&self) -> eyre::Result<crate::Env> {
+    /// If a `fork_url` is set, creates a provider and passes it to both `EvmOpts::fork_evm_env`
+    /// and `EvmOpts::fork_tx_env`. Falls back to local settings when no fork URL is configured.
+    pub async fn env(&self) -> eyre::Result<crate::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            Ok(self.fork_evm_env(fork_url).await?.0)
+            let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
+            let ((evm_env, _block), tx) =
+                tokio::try_join!(self.fork_evm_env(&provider), self.fork_tx_env(&provider))?;
+            Ok(crate::Env { evm_env, tx })
         } else {
-            Ok(self.local_evm_env())
+            Ok(crate::Env { evm_env: self.local_evm_env(), tx: self.local_tx_env() })
         }
     }
 
-    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint,
-    /// and the block number that was used to configure the environment.
-    pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, BlockNumber)> {
-        let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
-        self.fork_evm_env_with_provider(fork_url, &provider).await
-    }
-
-    /// Returns the `revm::Env` that is configured with settings retrieved from the provider,
-    /// and the block number that was used to configure the environment.
-    pub async fn fork_evm_env_with_provider<P: Provider<N>, N: Network>(
+    /// Returns the [`EvmEnv`] (cfg + block) and [`BlockNumber`] fetched from the fork endpoint via
+    /// provider
+    pub async fn fork_evm_env<N: Network, P: Provider<N>>(
         &self,
-        fork_url: &str,
         provider: &P,
-    ) -> eyre::Result<(crate::Env, BlockNumber)> {
-        environment(
-            provider,
-            self.memory_limit,
-            self.env.gas_price.map(|v| v as u128),
-            self.env.chain_id,
-            self.fork_block_number,
-            self.sender,
-            self.disable_block_gas_limit,
-            self.enable_tx_gas_limit,
-            self.networks,
-        )
-        .await
-        .wrap_err_with(|| {
-            let mut msg = "could not instantiate forked environment".to_string();
-            if let Ok(url) = Url::parse(fork_url)
-                && let Some(provider) = url.host()
-            {
-                write!(msg, " with provider {provider}").unwrap();
-            }
-            msg
-        })
-    }
-
-    /// Returns the `revm::Env` configured with only local settings
-    fn local_evm_env(&self) -> crate::Env {
-        let cfg = configure_env(
-            self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID),
-            self.memory_limit,
-            self.disable_block_gas_limit,
-            self.enable_tx_gas_limit,
+    ) -> eyre::Result<(EvmEnv, BlockNumber)> {
+        trace!(
+            memory_limit = %self.memory_limit,
+            override_chain_id = ?self.env.chain_id,
+            pin_block = ?self.fork_block_number,
+            origin = %self.sender,
+            disable_block_gas_limit = %self.disable_block_gas_limit,
+            enable_tx_gas_limit = %self.enable_tx_gas_limit,
+            configs = ?self.networks,
+            "creating fork environment"
         );
 
-        crate::Env {
-            evm_env: EvmEnv {
-                cfg_env: cfg,
-                block_env: BlockEnv {
-                    number: self.env.block_number,
-                    beneficiary: self.env.block_coinbase,
-                    timestamp: self.env.block_timestamp,
-                    difficulty: U256::from(self.env.block_difficulty),
-                    prevrandao: Some(self.env.block_prevrandao),
-                    basefee: self.env.block_base_fee_per_gas,
-                    gas_limit: self.gas_limit(),
-                    ..Default::default()
-                },
+        let bn = match self.fork_block_number {
+            Some(bn) => BlockNumberOrTag::Number(bn),
+            None => BlockNumberOrTag::Latest,
+        };
+
+        let (chain_id, block) = tokio::try_join!(
+            option_try_or_else(self.env.chain_id, async || provider.get_chain_id().await),
+            provider.get_block_by_number(bn)
+        )
+        .wrap_err_with(|| {
+            let mut msg = "could not instantiate forked environment".to_string();
+            if let Some(fork_url) = self.fork_url.as_deref()
+                && let Ok(url) = Url::parse(fork_url)
+                && let Some(host) = url.host()
+            {
+                write!(msg, " with provider {host}").unwrap();
+            }
+            msg
+        })?;
+
+        let Some(block) = block else {
+            let bn_msg = match bn {
+                BlockNumberOrTag::Number(bn) => format!("block number: {bn}"),
+                bn => format!("{bn} block"),
+            };
+            let latest_msg = if let Ok(latest_block) = provider.get_block_number().await {
+                if let Some(block_number) = self.fork_block_number
+                    && block_number <= latest_block
+                {
+                    error!("{NON_ARCHIVE_NODE_WARNING}");
+                }
+                format!("; latest block number: {latest_block}")
+            } else {
+                Default::default()
+            };
+            eyre::bail!("failed to get {bn_msg}{latest_msg}");
+        };
+
+        let block_number = block.header().number();
+        let mut evm_env = EvmEnv {
+            cfg_env: self.cfg_env(chain_id),
+            block_env: BlockEnv {
+                number: U256::from(block_number),
+                timestamp: U256::from(block.header().timestamp()),
+                beneficiary: block.header().beneficiary(),
+                difficulty: block.header().difficulty(),
+                prevrandao: block.header().mix_hash(),
+                basefee: block.header().base_fee_per_gas().unwrap_or_default(),
+                gas_limit: block.header().gas_limit(),
+                ..Default::default()
             },
-            tx: TxEnv {
-                gas_price: self.env.gas_price.unwrap_or_default().into(),
-                gas_limit: self.gas_limit(),
-                caller: self.sender,
+        };
+
+        apply_chain_and_block_specific_env_changes::<N>(&mut evm_env, &block, self.networks);
+
+        Ok((evm_env, block_number))
+    }
+
+    /// Returns the [`EvmEnv`] configured with only local settings.
+    fn local_evm_env(&self) -> EvmEnv {
+        let gas_limit = self.gas_limit();
+        EvmEnv {
+            cfg_env: self.cfg_env(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID)),
+            block_env: BlockEnv {
+                number: self.env.block_number,
+                beneficiary: self.env.block_coinbase,
+                timestamp: self.env.block_timestamp,
+                difficulty: U256::from(self.env.block_difficulty),
+                prevrandao: Some(self.env.block_prevrandao),
+                basefee: self.env.block_base_fee_per_gas,
+                gas_limit,
                 ..Default::default()
             },
         }
+    }
+
+    /// Returns the [`TxEnv`] with gas price and chain id resolved from provider.
+    async fn fork_tx_env<N: Network, P: Provider<N>>(&self, provider: &P) -> eyre::Result<TxEnv> {
+        let (gas_price, chain_id) = tokio::try_join!(
+            option_try_or_else(self.env.gas_price.map(|v| v as u128), async || {
+                provider.get_gas_price().await
+            }),
+            option_try_or_else(self.env.chain_id, async || provider.get_chain_id().await),
+        )?;
+        Ok(TxEnv {
+            caller: self.sender,
+            gas_price,
+            chain_id: Some(chain_id),
+            gas_limit: self.gas_limit(),
+            ..Default::default()
+        })
+    }
+
+    /// Returns the [`TxEnv`] configured from local settings only.
+    fn local_tx_env(&self) -> TxEnv {
+        TxEnv {
+            caller: self.sender,
+            gas_price: self.env.gas_price.unwrap_or_default().into(),
+            gas_limit: self.gas_limit(),
+            ..Default::default()
+        }
+    }
+
+    /// Builds a [`CfgEnv`] from the options, using the provided [`ChainId`].
+    fn cfg_env(&self, chain_id: ChainId) -> CfgEnv {
+        let mut cfg = CfgEnv::default();
+        cfg.chain_id = chain_id;
+        cfg.memory_limit = self.memory_limit;
+        cfg.limit_contract_code_size = Some(usize::MAX);
+        // EIP-3607 rejects transactions from senders with deployed code.
+        // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
+        // is a contract. So we disable the check by default.
+        cfg.disable_eip3607 = true;
+        cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+        cfg.disable_nonce_check = true;
+        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
+        // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
+        if !self.enable_tx_gas_limit {
+            cfg.tx_gas_limit_cap = Some(u64::MAX);
+        }
+        cfg
     }
 
     /// Helper function that returns the [CreateFork] to use, if any.
@@ -332,6 +406,13 @@ pub struct Env {
     pub code_size_limit: Option<usize>,
 }
 
+async fn option_try_or_else<T, E>(
+    option: Option<T>,
+    f: impl AsyncFnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    if let Some(value) = option { Ok(value) } else { f().await }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,7 +428,7 @@ mod tests {
         assert!(evm_opts.fork_block_number.is_none());
 
         // Fetch the environment (this resolves "latest" to an actual block number)
-        let env = evm_opts.evm_env().await.unwrap();
+        let env = evm_opts.env().await.unwrap();
         let resolved_block = env.evm_env.block_env.number;
         assert!(resolved_block > U256::ZERO, "should have resolved to a real block number");
 
@@ -372,7 +453,7 @@ mod tests {
         // Set an explicit block number
         evm_opts.fork_block_number = Some(12345678);
 
-        let env = evm_opts.evm_env().await.unwrap();
+        let env = evm_opts.env().await.unwrap();
 
         let fork = evm_opts.get_fork(&Config::default(), env).unwrap();
 
