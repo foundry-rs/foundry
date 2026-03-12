@@ -1,6 +1,6 @@
-use super::CheatsCtxExt;
 use crate::inspector::Cheatcodes;
 use alloy_primitives::{Address, Bytes, U256};
+use foundry_evm_core::backend::DatabaseExt;
 use revm::{
     context::ContextTr,
     inspector::JournalExt,
@@ -16,7 +16,7 @@ pub(crate) trait CommonCreateInput {
     fn scheme(&self) -> Option<CreateScheme>;
     fn set_caller(&mut self, caller: Address);
     fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme);
-    fn allow_cheatcodes<CTX: CheatsCtxExt>(
+    fn allow_cheatcodes<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
         &self,
         cheatcodes: &mut Cheatcodes,
         ecx: &mut CTX,
@@ -50,7 +50,7 @@ impl CommonCreateInput for &mut CreateInputs {
         };
         debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
     }
-    fn allow_cheatcodes<CTX: CheatsCtxExt>(
+    fn allow_cheatcodes<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
         &self,
         cheatcodes: &mut Cheatcodes,
         ecx: &mut CTX,
