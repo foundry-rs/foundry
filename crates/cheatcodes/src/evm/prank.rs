@@ -1,4 +1,4 @@
-use crate::{Cheatcode, CheatsCtxExt, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use revm::{
@@ -58,70 +58,97 @@ impl Prank {
 }
 
 impl Cheatcode for prank_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, true, false)
     }
 }
 
 impl Cheatcode for startPrank_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, false, false)
     }
 }
 
 impl Cheatcode for prank_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), true, false)
     }
 }
 
 impl Cheatcode for startPrank_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), false, false)
     }
 }
 
 impl Cheatcode for prank_2Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, true, *delegateCall)
     }
 }
 
 impl Cheatcode for startPrank_2Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, false, *delegateCall)
     }
 }
 
 impl Cheatcode for prank_3Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
     }
 }
 
 impl Cheatcode for startPrank_3Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), false, *delegateCall)
     }
 }
 
 impl Cheatcode for stopPrankCall {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self {} = self;
         ccx.state.pranks.remove(&ccx.ecx.journal().depth());
         Ok(Default::default())
     }
 }
 
-fn prank<CTX: ContextTr<Db: DatabaseExt, Journal: JournalExt>>(
+fn prank<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     new_caller: &Address,
     new_origin: Option<&Address>,

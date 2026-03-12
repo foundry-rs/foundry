@@ -4,7 +4,7 @@ use crate::mem::Backend;
 use alloy_network::AnyRpcBlock;
 use alloy_primitives::B256;
 use anvil_core::eth::block::Block;
-use foundry_primitives::FoundryReceiptEnvelope;
+use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use std::{fmt, sync::Arc};
 
 /// A type that can fetch data related to the ethereum storage.
@@ -14,11 +14,11 @@ use std::{fmt, sync::Arc};
 // TODO(mattsee): once we have multiple Backend types, this should be turned into a trait
 #[derive(Clone)]
 pub struct StorageInfo {
-    backend: Arc<Backend>,
+    backend: Arc<Backend<FoundryNetwork>>,
 }
 
 impl StorageInfo {
-    pub(crate) fn new(backend: Arc<Backend>) -> Self {
+    pub(crate) fn new(backend: Arc<Backend<FoundryNetwork>>) -> Self {
         Self { backend }
     }
 

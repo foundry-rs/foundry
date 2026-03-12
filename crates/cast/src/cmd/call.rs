@@ -274,7 +274,8 @@ impl CallArgs {
             .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
-            .build_raw(sender)
+            .raw()
+            .build(sender)
             .await?;
 
         if trace {
