@@ -8,11 +8,9 @@ use alloy_primitives::Address;
 use async_trait::async_trait;
 use eyre::{Context, Result, eyre};
 use foundry_common::retry::RetryError;
-use foundry_compilers::artifacts::{Source, vyper::VyperInput};
 use futures::FutureExt;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use url::Url;
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
@@ -250,13 +248,7 @@ impl SourcifyVerificationProvider {
                 })
             }
             ContractLanguage::Vyper => {
-                let path = Path::new(&context.target_path);
-                let sources = Source::read_all_from(path, &["vy", "vyi"])?;
-                let input = VyperInput::new(
-                    sources,
-                    context.clone().compiler_settings.vyper,
-                    &context.compiler_version,
-                );
+                let input = context.get_vyper_standard_json_input()?;
                 let std_json_input = serde_json::to_value(&input)
                     .wrap_err("Failed to serialize vyper json input")?;
 
