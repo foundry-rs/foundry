@@ -1,7 +1,7 @@
 //! Handler that can get current storage related data
 
 use crate::mem::Backend;
-use alloy_network::AnyRpcBlock;
+use alloy_network::{AnyRpcBlock, Network};
 use alloy_primitives::B256;
 use anvil_core::eth::block::Block;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
@@ -13,28 +13,18 @@ use std::{fmt, sync::Arc};
 /// fetch ethereum storage related data
 // TODO(mattsee): once we have multiple Backend types, this should be turned into a trait
 #[derive(Clone)]
-pub struct StorageInfo {
-    backend: Arc<Backend<FoundryNetwork>>,
+pub struct StorageInfo<N: Network> {
+    backend: Arc<Backend<N>>,
 }
 
-impl StorageInfo {
-    pub(crate) fn new(backend: Arc<Backend<FoundryNetwork>>) -> Self {
+impl<N: Network> StorageInfo<N> {
+    pub(crate) fn new(backend: Arc<Backend<N>>) -> Self {
         Self { backend }
-    }
-
-    /// Returns the receipts of the current block
-    pub fn current_receipts(&self) -> Option<Vec<FoundryReceiptEnvelope>> {
-        self.backend.mined_receipts(self.backend.best_hash())
     }
 
     /// Returns the current block
     pub fn current_block(&self) -> Option<Block> {
         self.backend.get_block(self.backend.best_number())
-    }
-
-    /// Returns the receipts of the block with the given hash
-    pub fn receipts(&self, hash: B256) -> Option<Vec<FoundryReceiptEnvelope>> {
-        self.backend.mined_receipts(hash)
     }
 
     /// Returns the block with the given hash
@@ -49,7 +39,21 @@ impl StorageInfo {
     }
 }
 
-impl fmt::Debug for StorageInfo {
+impl StorageInfo<FoundryNetwork> {
+    // TODO: receipts methods require N::ReceiptEnvelope generalization
+
+    /// Returns the receipts of the current block
+    pub fn current_receipts(&self) -> Option<Vec<FoundryReceiptEnvelope>> {
+        self.backend.mined_receipts(self.backend.best_hash())
+    }
+
+    /// Returns the receipts of the block with the given hash
+    pub fn receipts(&self, hash: B256) -> Option<Vec<FoundryReceiptEnvelope>> {
+        self.backend.mined_receipts(hash)
+    }
+}
+
+impl<N: Network> fmt::Debug for StorageInfo<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StorageInfo").finish_non_exhaustive()
     }
