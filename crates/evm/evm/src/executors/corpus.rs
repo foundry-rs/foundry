@@ -440,6 +440,37 @@ impl WorkerCorpus {
         self.in_memory_corpus.push(corpus);
     }
 
+    /// Adds an input to the corpus unconditionally (regardless of coverage).
+    /// This is used by the addToCorpus cheatcode to permanently add inputs to the corpus.
+    #[instrument(skip_all)]
+    pub fn add_input_unconditionally(&mut self, input: &BasicTxDetails) {
+        let Some(worker_corpus) = &self.worker_dir else {
+            return;
+        };
+        let worker_corpus = worker_corpus.join(CORPUS_DIR);
+
+        let corpus = CorpusEntry::new(vec![input.clone()]);
+
+        // Persist to disk.
+        let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
+        if let Err(err) = write_result {
+            debug!(target: "corpus", %err, "failed to record input from addToCorpus {:?}", input);
+        } else {
+            trace!(
+                target: "corpus",
+                "persisted input from addToCorpus for {} corpus",
+                corpus.uuid,
+            );
+        }
+
+        // Track in-memory corpus changes to update MasterWorker on sync.
+        let new_index = self.in_memory_corpus.len();
+        self.new_entry_indices.push(new_index);
+
+        self.metrics.corpus_count += 1;
+        self.in_memory_corpus.push(corpus);
+    }
+
     /// Collects coverage from call result and updates metrics.
     pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
         if !self.config.collect_edge_coverage() {
