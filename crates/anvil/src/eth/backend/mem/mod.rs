@@ -976,7 +976,7 @@ impl Backend<FoundryNetwork> {
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
         if !self.is_fork() {
-            if let Some(eth_rpc_url) = forking.clone().json_rpc_url {
+            if let Some(eth_rpc_url) = forking.json_rpc_url.clone() {
                 let mut env = self.env.read().clone();
 
                 let (db, config) = {
@@ -3524,6 +3524,8 @@ impl Backend<FoundryNetwork> {
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+        let hash = common_block.header.hash_slow();
+
         // Get the database at the common block
         let common_state = {
             let return_state_or_throw_err =
@@ -3534,22 +3536,18 @@ impl Backend<FoundryNetwork> {
                     Ok(db_full.clone())
                 };
 
-            let hash = &common_block.header.hash_slow();
             let read_guard = self.states.upgradable_read();
-            if let Some(db) = read_guard.get_state(hash) {
+            if let Some(db) = read_guard.get_state(&hash) {
                 return_state_or_throw_err(Some(db))?
             } else {
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                return_state_or_throw_err(write_guard.get_on_disk_state(hash))?
+                return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?
             }
         };
 
         {
             // Unwind the storage back to the common ancestor first
-            self.blockchain
-                .storage
-                .write()
-                .unwind_to(common_block.header.number(), common_block.header.hash_slow());
+            self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
 
             // Set environment back to common block
             let mut env = self.env.write();
