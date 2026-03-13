@@ -1010,7 +1010,7 @@ impl DatabaseExt for Backend {
 
             // merge additional logs
             snapshot.merge(current_state);
-            let BackendStateSnapshot { db, mut journaled_state, snap_evm_env, snap_tx_env } =
+            let BackendStateSnapshot { db, mut journaled_state, snap_evm_env, snap_tx_env: _ } =
                 snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
@@ -1039,7 +1039,7 @@ impl DatabaseExt for Backend {
                 }
             }
 
-            update_current_env_with_fork_env(evm_env, tx_env, snap_evm_env, snap_tx_env);
+            update_current_env_with_fork_env(evm_env, tx_env, snap_evm_env);
             trace!(target: "backend", "Reverted snapshot {}", id);
 
             Some(journaled_state)
@@ -1075,9 +1075,9 @@ impl DatabaseExt for Backend {
         trace!(?transaction, "create fork at transaction");
         let id = self.create_fork(fork)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
-        let mut env = self
+        let mut evm_env = self
             .forks
-            .get_env(fork_id)?
+            .get_evm_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exist", id))?;
 
         // we still need to roll to the transaction, but we only need an empty dummy state since we
@@ -1085,8 +1085,8 @@ impl DatabaseExt for Backend {
         self.roll_fork_to_transaction(
             Some(id),
             transaction,
-            &mut env.evm_env,
-            &mut env.tx,
+            &mut evm_env,
+            &mut TxEnv::default(),
             &mut self.inner.new_journaled_state(),
         )?;
 
@@ -1120,9 +1120,9 @@ impl DatabaseExt for Backend {
 
         let fork_id = self.ensure_fork_id(id).cloned()?;
         let idx = self.inner.ensure_fork_index(&fork_id)?;
-        let fork_env = self
+        let fork_evm_env = self
             .forks
-            .get_env(fork_id)?
+            .get_evm_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exist", id))?;
 
         // If we're currently in forking mode we need to update the journaled_state to this point,
@@ -1219,7 +1219,7 @@ impl DatabaseExt for Backend {
 
         self.active_fork_ids = Some((id, idx));
         // Update current environment with environment of newly selected fork.
-        update_current_env_with_fork_env(evm_env, tx_env, fork_env.evm_env, fork_env.tx);
+        update_current_env_with_fork_env(evm_env, tx_env, fork_evm_env);
 
         Ok(())
     }
@@ -1246,7 +1246,7 @@ impl DatabaseExt for Backend {
             if active_id == id {
                 // need to update the block's env settings right away, which is otherwise set when
                 // forks are selected `select_fork`
-                update_current_env_with_fork_env(evm_env, tx_env, fork_env.evm_env, fork_env.tx);
+                update_current_env_with_fork_env(evm_env, tx_env, fork_env);
 
                 // we also need to update the journaled_state right away, this has essentially the
                 // same effect as selecting (`select_fork`) by discarding
@@ -1930,10 +1930,9 @@ pub(crate) fn update_current_env_with_fork_env(
     evm_env: &mut EvmEnv,
     tx_env: &mut TxEnv,
     fork_evm_env: EvmEnv,
-    fork_tx_env: TxEnv,
 ) {
+    tx_env.chain_id = Some(fork_evm_env.cfg_env.chain_id);
     *evm_env = fork_evm_env;
-    tx_env.chain_id = fork_tx_env.chain_id;
 }
 
 /// Clones the data of the given `accounts` from the `active` database into the `fork_db`
@@ -2126,7 +2125,7 @@ mod tests {
 
         let env = evm_opts.env().await.unwrap();
 
-        let fork = evm_opts.get_fork(&Config::default(), env.clone()).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), env.evm_env.clone()).unwrap();
 
         let backend = Backend::spawn(Some(fork)).unwrap();
 

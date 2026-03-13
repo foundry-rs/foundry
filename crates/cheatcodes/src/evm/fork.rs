@@ -3,6 +3,7 @@ use crate::{
     Vm::*, json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
+use alloy_evm::EvmEnv;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
@@ -420,9 +421,9 @@ fn create_fork_request<CTX: FoundryContextExt<Db: DatabaseExt>>(
         enable_caching: !ccx.state.config.no_storage_caching
             && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
-        env: {
-            let (evm_env, tx_env) = Env::clone_evm_and_tx(ccx.ecx);
-            Env { evm_env, tx: tx_env }
+        evm_env: EvmEnv {
+            cfg_env: ccx.ecx.cfg_mut().clone(),
+            block_env: ccx.ecx.block_mut().clone(),
         },
         evm_opts,
     };
