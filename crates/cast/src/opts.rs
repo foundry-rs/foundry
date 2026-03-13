@@ -521,12 +521,7 @@ pub enum CastSubcommand {
         to_request: bool,
 
         /// Specify the Network for correct encoding.
-        #[arg(
-            long,
-            short,
-            num_args = 0..=1,
-            value_name = "NETWORK"
-        )]
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
         network: Option<NetworkVariant>,
     },
 
