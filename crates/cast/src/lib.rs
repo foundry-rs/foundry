@@ -7,25 +7,21 @@
 extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::{AnyNetwork, AnyRpcTransaction};
+use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, LogData, Selector, TxHash, TxKind, U64, U256, hex,
+    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
-use alloy_provider::{
-    PendingTransactionBuilder, Provider,
-    network::eip2718::{Decodable2718, Encodable2718},
-};
+use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, TransactionRequest,
-    state::StateOverride,
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, state::StateOverride,
 };
-use alloy_serde::WithOtherFields;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -35,18 +31,22 @@ use foundry_common::{
     compile::etherscan_project,
     flatten,
     fmt::*,
-    fs, shell,
+    fs,
+    provider::ProviderBuilder,
+    shell,
 };
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
 use foundry_evm::core::bytecode::InstIter;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use futures::{FutureExt, StreamExt, future::Either};
 
 use rayon::prelude::*;
+use serde::Serialize;
 use std::{
     borrow::Cow,
     fmt::Write,
     io,
+    marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
@@ -67,13 +67,23 @@ pub mod tx;
 
 use rlp_converter::Item;
 
+use crate::rlp_converter::TryIntoRlpEncodable;
+
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
-pub struct Cast<P> {
+pub struct Cast<P, N = AnyNetwork> {
     provider: P,
+    _phantom: PhantomData<N>,
 }
 
-impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
+impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N>
+where
+    N::TxEnvelope: Serialize + UIfmtSignatureExt,
+    N::Header: TryIntoRlpEncodable,
+    N::TransactionResponse: UIfmt,
+    N::HeaderResponse: UIfmtHeaderExt,
+    N::BlockResponse: UIfmt,
+{
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
@@ -90,7 +100,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// # }
     /// ```
     pub fn new(provider: P) -> Self {
-        Self { provider }
+        Self { provider, _phantom: PhantomData }
     }
 
     /// Makes a read-only call to the specified address
@@ -135,7 +145,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// ```
     pub async fn call(
         &self,
-        req: &WithOtherFields<TransactionRequest>,
+        req: &N::TransactionRequest,
         func: Option<&Function>,
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
@@ -161,7 +171,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                     // ensure the address is a contract
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
-                        if let Some(TxKind::Call(addr)) = req.to {
+                        if let Some(addr) = req.to() {
                             if let Ok(code) = self
                                 .provider
                                 .get_code_at(addr)
@@ -171,7 +181,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                             {
                                 eyre::bail!("contract {addr:?} does not have any code")
                             }
-                        } else if Some(TxKind::Create) == req.to {
+                        } else if req.to().is_none() {
                             eyre::bail!("tx req is a contract deployment");
                         } else {
                             eyre::bail!("recipient is None");
@@ -231,7 +241,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// ```
     pub async fn access_list(
         &self,
-        req: &WithOtherFields<TransactionRequest>,
+        req: &N::TransactionRequest,
         block: Option<BlockId>,
     ) -> Result<String> {
         let access_list =
@@ -277,7 +287,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<N>> {
         let tx = hex::decode(strip_0x(&raw_tx))?;
         let res = self.provider.send_raw_transaction(&tx).await?;
 
@@ -319,13 +329,13 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
         Ok(if raw {
-            let header: Header = block.into_inner().header.inner.try_into_header()?;
-            format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
+            let encoded = block.header().as_ref().try_rlp_encode()?;
+            format!("0x{}", hex::encode(encoded))
         } else if !fields.is_empty() {
             let mut result = String::new();
             for field in fields {
                 result.push_str(
-                    &get_pretty_block_attr::<AnyNetwork>(&block, &field)
+                    &get_pretty_block_attr::<N>(&block, &field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field")),
                 );
 
@@ -711,7 +721,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -722,7 +732,6 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         from: Option<NameOrAddress>,
         nonce: Option<u64>,
         field: Option<String>,
-        raw: bool,
         to_request: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
@@ -737,7 +746,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             let from = from.resolve(self.provider.root()).await?;
 
             self.provider
-                .raw_request::<_, Option<AnyRpcTransaction>>(
+                .raw_request::<_, Option<N::TransactionResponse>>(
                     "eth_getTransactionBySenderAndNonce".into(),
                     (from, nonce),
                 )
@@ -749,22 +758,14 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             eyre::bail!("tx hash or from address is required")
         };
 
-        Ok(if raw {
-            // convert to FoundryTxEnvelope to support all foundry tx types (including opstack
-            // deposit transactions)
-            let foundry_tx = FoundryTxEnvelope::try_from(tx)?;
-            let encoded = foundry_tx.encoded_2718();
-            format!("0x{}", hex::encode(encoded))
-        } else if let Some(ref field) = field {
-            get_pretty_tx_attr::<AnyNetwork>(&tx, field.as_str())
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_attr::<N>(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
         } else if to_request {
-            serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
-                tx.into(),
-            ))?
+            serde_json::to_string_pretty(&Into::<N::TransactionRequest>::into(tx))?
         } else {
             tx.pretty()
         })
@@ -1007,7 +1008,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
                     let block = self.provider.get_block_by_hash(hash.block_hash).await?;
-                    Ok(block.map(|block| block.header.number()).map(BlockNumberOrTag::from))
+                    Ok(block.map(|block| block.header().number()).map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),
@@ -1068,7 +1069,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number)
-                        && block.number  > to_block {
+                        && block.number()  > to_block {
                             break;
                         }
                 },
@@ -2355,6 +2356,44 @@ fn explorer_client(
     }
 
     builder.build().map_err(Into::into)
+}
+
+// Temporary workaround to handle tx raw encoding through FoundryNetwork
+// TODO: Once the Network selection UI will be finalized, bring back --raw
+// handling to `Cast::transaction`
+pub async fn transaction_raw(
+    config: &Config,
+    tx_hash: Option<String>,
+    from: Option<NameOrAddress>,
+    nonce: Option<u64>,
+) -> Result<String> {
+    let provider = ProviderBuilder::<FoundryNetwork>::from_config(config)?.build()?;
+    let tx = if let Some(tx_hash) = tx_hash {
+        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        provider
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
+    } else if let Some(from) = from {
+        // If nonce is not provided, uses 0.
+        let nonce = U64::from(nonce.unwrap_or_default());
+        let from = from.resolve(provider.root()).await?;
+
+        provider
+            .raw_request::<_, Option<<FoundryNetwork as Network>::TransactionResponse>>(
+                "eth_getTransactionBySenderAndNonce".into(),
+                (from, nonce),
+            )
+            .await?
+            .ok_or_else(|| {
+                eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+            })?
+    } else {
+        eyre::bail!("tx hash or from address is required")
+    };
+
+    let encoded = tx.as_ref().encoded_2718();
+    Ok(format!("0x{}", hex::encode(encoded)))
 }
 
 #[cfg(test)]
