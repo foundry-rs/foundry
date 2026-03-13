@@ -88,6 +88,11 @@ impl GeneratedOutputRef<'_> {
     pub fn repl_contract(&self) -> Option<&ConfigurableContractArtifact> {
         self.output.find_first("REPL")
     }
+
+    /// Returns a reference to the underlying `ProjectCompileOutput`.
+    pub fn output(&self) -> &ProjectCompileOutput {
+        self.output
+    }
 }
 
 impl std::ops::Deref for GeneratedOutput {

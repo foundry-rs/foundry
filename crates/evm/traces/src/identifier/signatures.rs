@@ -108,6 +108,19 @@ impl SignaturesCache {
         }
     }
 
+    /// Saves the cache to a file and returns an error if it fails.
+    #[instrument(target = "evm::traces", name = "SignaturesCache::save_result", skip(self))]
+    pub fn save_result(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| eyre::eyre!("failed to create cache directory: {err}"))?;
+        }
+        fs::write_json_file(path, self)
+            .map_err(|err| eyre::eyre!("failed to flush signature cache: {err}"))?;
+        trace!(target: "evm::traces", "flushed signature cache");
+        Ok(())
+    }
+
     /// Updates the cache from an ABI.
     pub fn extend_from_abi(&mut self, abi: &JsonAbi) {
         self.extend(abi.items().filter_map(|item| match item {

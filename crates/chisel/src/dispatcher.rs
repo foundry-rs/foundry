@@ -11,6 +11,7 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
+use foundry_common::ContractsByArtifact;
 use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
     decode::decode_console_logs,
@@ -152,23 +153,32 @@ impl ChiselDispatcher {
     }
 
     /// Decodes traces in the given [`ChiselResult`].
-    // TODO: Add `known_contracts` back in.
     pub async fn decode_traces(
         session_config: &SessionSourceConfig,
         result: &mut ChiselResult,
-        // known_contracts: &ContractsByArtifact,
+        known_contracts: Option<&ContractsByArtifact>,
     ) -> eyre::Result<CallTraceDecoder> {
-        let mut decoder = CallTraceDecoderBuilder::new()
+        let mut builder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::from_config(
                 &session_config.foundry_config,
-            )?)
-            .build();
+            )?);
+
+        if let Some(contracts) = known_contracts {
+            builder = builder.with_known_contracts(contracts);
+        }
+
+        let mut decoder = builder.build();
 
         let mut identifier = TraceIdentifiers::new().with_external(
             &session_config.foundry_config,
             session_config.evm_opts.get_remote_chain_id().await,
         )?;
+
+        if let Some(contracts) = known_contracts {
+            identifier = identifier.with_local(contracts);
+        }
+
         if !identifier.is_empty() {
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &mut identifier);
@@ -202,7 +212,30 @@ impl ChiselDispatcher {
         let mut res = new_source.execute().await?;
         let failed = !res.success;
         if new_source.config.traces || failed {
-            if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await {
+            // Build the source to get artifacts for trace decoding
+            let known_contracts = new_source.build().ok().and_then(|output| {
+                output.enter(|output_ref| {
+                    // Create ContractsByArtifact from the compiled artifacts
+                    Some(ContractsByArtifact::new(output_ref.output().artifact_ids().map(
+                        |(id, artifact): (
+                            foundry_compilers::ArtifactId,
+                            &foundry_compilers::artifacts::ConfigurableContractArtifact,
+                        )| {
+                            (
+                                id,
+                                foundry_compilers::artifacts::CompactContractBytecode {
+                                    abi: artifact.abi.clone(),
+                                    bytecode: artifact.bytecode.clone(),
+                                    deployed_bytecode: artifact.deployed_bytecode.clone(),
+                                },
+                            )
+                        },
+                    )))
+                })
+            });
+            if let Ok(decoder) =
+                Self::decode_traces(&new_source.config, &mut res, known_contracts.as_ref()).await
+            {
                 Self::show_traces(&decoder, &mut res).await?;
 
                 // Show console logs, if there are any
