@@ -1,5 +1,6 @@
 use crate::cmd::{
     access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
+    batch_mktx::BatchMakeTxArgs, batch_send::BatchSendArgs, batch_sign::BatchSignArgs,
     bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
     creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, erc20::Erc20Subcommand,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
@@ -545,6 +546,18 @@ pub enum CastSubcommand {
     /// Sign and publish a transaction.
     #[command(name = "send", visible_alias = "s")]
     SendTx(SendTxArgs),
+
+    /// Sign and publish multiple transactions from a batch file.
+    #[command(name = "batch-send", visible_alias = "bs")]
+    BatchSend(BatchSendArgs),
+
+    /// Sign multiple transactions from a batch file without sending.
+    #[command(name = "batch-sign")]
+    BatchSign(BatchSignArgs),
+
+    /// Build multiple transactions from a batch file without signing or sending.
+    #[command(name = "batch-mktx")]
+    BatchMakeTx(BatchMakeTxArgs),
 
     /// Publish a raw transaction to the network.
     #[command(name = "publish", visible_alias = "p")]
