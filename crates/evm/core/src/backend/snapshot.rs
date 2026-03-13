@@ -4,7 +4,7 @@ use alloy_primitives::{
     B256, U256,
     map::{AddressHashMap, HashMap},
 };
-use revm::{context::TxEnv, state::AccountInfo};
+use revm::state::AccountInfo;
 use serde::{Deserialize, Serialize};
 
 /// A minimal abstraction of a state at a certain point in time
@@ -23,14 +23,12 @@ pub struct BackendStateSnapshot<T> {
     pub journaled_state: JournaledState,
     /// Contains the evm env at the time of the snapshot
     pub snap_evm_env: EvmEnv,
-    /// Contains the tx env at the time of the snapshot
-    pub snap_tx_env: TxEnv,
 }
 
 impl<T> BackendStateSnapshot<T> {
     /// Takes a new state snapshot.
-    pub fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv, tx_env: TxEnv) -> Self {
-        Self { db, journaled_state, snap_evm_env: evm_env, snap_tx_env: tx_env }
+    pub fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv) -> Self {
+        Self { db, journaled_state, snap_evm_env: evm_env }
     }
 
     /// Called when this state snapshot is reverted.

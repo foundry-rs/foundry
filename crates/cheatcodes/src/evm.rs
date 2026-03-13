@@ -5,7 +5,7 @@ use crate::{
     Error, Result, Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::TxEnvelope;
-use alloy_evm::FromRecoveredTx;
+use alloy_evm::{EvmEnv, FromRecoveredTx};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
@@ -1425,9 +1425,10 @@ pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
 fn inner_snapshot_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
 ) -> Result {
-    let (evm_env, tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+    let evm_env =
+        EvmEnv { cfg_env: ccx.ecx.cfg_mut().clone(), block_env: ccx.ecx.block_mut().clone() };
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    let id = db.snapshot_state(inner, &evm_env, &tx_env);
+    let id = db.snapshot_state(inner, &evm_env);
     Ok(id.abi_encode())
 }
 
