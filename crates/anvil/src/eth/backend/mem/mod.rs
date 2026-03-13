@@ -719,6 +719,65 @@ impl<N: Network> Backend<N> {
         self.blockchain.get_block_by_hash(&hash)
     }
 
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>, BlockchainError> {
+        trace!(target: "backend", "get block by hash {:?}", hash);
+        if let tx @ Some(_) = self.mined_block_by_hash(hash) {
+            return Ok(tx);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.block_by_hash(hash).await?);
+        }
+
+        Ok(None)
+    }
+
+    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyRpcBlock> {
+        let block = self.blockchain.get_block_by_hash(&hash)?;
+        Some(self.convert_block_with_hash(block, Some(hash)))
+    }
+
+    /// Takes a block as it's stored internally and returns the eth api conform block format.
+    pub fn convert_block(&self, block: Block) -> AnyRpcBlock {
+        self.convert_block_with_hash(block, None)
+    }
+
+    /// Takes a block as it's stored internally and returns the eth api conform block format.
+    /// If `known_hash` is provided, it will be used instead of computing `hash_slow()`.
+    pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
+        let size = U256::from(alloy_rlp::encode(&block).len() as u32);
+
+        let header = block.header.clone();
+        let transactions = block.body.transactions;
+
+        let hash = known_hash.unwrap_or_else(|| header.hash_slow());
+        let Header { number, withdrawals_root, .. } = header;
+
+        let block = AlloyBlock {
+            header: AlloyHeader {
+                inner: AnyHeader::from(header),
+                hash,
+                total_difficulty: Some(self.total_difficulty()),
+                size: Some(size),
+            },
+            transactions: alloy_rpc_types::BlockTransactions::Hashes(
+                transactions.into_iter().map(|tx| tx.hash()).collect(),
+            ),
+            uncles: vec![],
+            withdrawals: withdrawals_root.map(|_| Default::default()),
+        };
+
+        let mut block = WithOtherFields::new(block);
+
+        // If Arbitrum, apply chain specifics to converted block.
+        if is_arbitrum(self.env.read().evm_env.cfg_env.chain_id) {
+            // Set `l1BlockNumber` field.
+            block.other.insert("l1BlockNumber".to_string(), number.into());
+        }
+
+        AnyRpcBlock::from(block)
+    }
+
     /// Returns the traces for the given transaction
     pub(crate) fn mined_parity_trace_transaction(
         &self,
@@ -2359,19 +2418,6 @@ impl Backend<FoundryNetwork> {
         }
     }
 
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>, BlockchainError> {
-        trace!(target: "backend", "get block by hash {:?}", hash);
-        if let tx @ Some(_) = self.mined_block_by_hash(hash) {
-            return Ok(tx);
-        }
-
-        if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_hash(hash).await?);
-        }
-
-        Ok(None)
-    }
-
     pub async fn block_by_hash_full(
         &self,
         hash: B256,
@@ -2386,11 +2432,6 @@ impl Backend<FoundryNetwork> {
         }
 
         Ok(None)
-    }
-
-    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyRpcBlock> {
-        let block = self.blockchain.get_block_by_hash(&hash)?;
-        Some(self.convert_block_with_hash(block, Some(hash)))
     }
 
     pub(crate) async fn mined_transactions_by_block_number(
@@ -2472,47 +2513,6 @@ impl Backend<FoundryNetwork> {
         let mut block = self.convert_block_with_hash(block, Some(hash));
         block.inner.transactions = BlockTransactions::Full(transactions);
         Some(block)
-    }
-
-    /// Takes a block as it's stored internally and returns the eth api conform block format.
-    pub fn convert_block(&self, block: Block) -> AnyRpcBlock {
-        self.convert_block_with_hash(block, None)
-    }
-
-    /// Takes a block as it's stored internally and returns the eth api conform block format.
-    /// If `known_hash` is provided, it will be used instead of computing `hash_slow()`.
-    pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
-        let size = U256::from(alloy_rlp::encode(&block).len() as u32);
-
-        let header = block.header.clone();
-        let transactions = block.body.transactions;
-
-        let hash = known_hash.unwrap_or_else(|| header.hash_slow());
-        let Header { number, withdrawals_root, .. } = header;
-
-        let block = AlloyBlock {
-            header: AlloyHeader {
-                inner: AnyHeader::from(header),
-                hash,
-                total_difficulty: Some(self.total_difficulty()),
-                size: Some(size),
-            },
-            transactions: alloy_rpc_types::BlockTransactions::Hashes(
-                transactions.into_iter().map(|tx| tx.hash()).collect(),
-            ),
-            uncles: vec![],
-            withdrawals: withdrawals_root.map(|_| Default::default()),
-        };
-
-        let mut block = WithOtherFields::new(block);
-
-        // If Arbitrum, apply chain specifics to converted block.
-        if is_arbitrum(self.env.read().evm_env.cfg_env.chain_id) {
-            // Set `l1BlockNumber` field.
-            block.other.insert("l1BlockNumber".to_string(), number.into());
-        }
-
-        AnyRpcBlock::from(block)
     }
 
     /// Converts the `BlockNumber` into a numeric value
