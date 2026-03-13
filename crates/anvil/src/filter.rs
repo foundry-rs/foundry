@@ -11,6 +11,7 @@ use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
+use foundry_primitives::FoundryNetwork;
 use futures::{Stream, StreamExt, channel::mpsc::Receiver};
 use std::{
     pin::Pin,
@@ -158,7 +159,7 @@ pub struct LogsFilter {
     /// listener for new blocks
     pub blocks: NewBlockNotifications,
     /// accessor for block storage
-    pub storage: StorageInfo,
+    pub storage: StorageInfo<FoundryNetwork>,
     /// matcher with all provided filter params
     pub filter: FilteredParams,
     /// existing logs that matched the filter when the listener was installed

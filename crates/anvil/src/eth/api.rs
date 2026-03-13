@@ -871,7 +871,7 @@ impl EthApi {
     }
 
     /// Returns a new accessor for certain storage elements
-    pub fn storage_info(&self) -> StorageInfo {
+    pub fn storage_info(&self) -> StorageInfo<FoundryNetwork> {
         StorageInfo::new(Arc::clone(&self.backend))
     }
 

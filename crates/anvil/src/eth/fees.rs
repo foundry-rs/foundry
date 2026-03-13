@@ -17,6 +17,7 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use foundry_primitives::FoundryNetwork;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
@@ -199,7 +200,7 @@ pub struct FeeHistoryService {
     /// number of items to consider
     fee_history_limit: u64,
     /// a type that can fetch ethereum-storage data
-    storage_info: StorageInfo,
+    storage_info: StorageInfo<FoundryNetwork>,
 }
 
 impl FeeHistoryService {
@@ -207,7 +208,7 @@ impl FeeHistoryService {
         blob_params: BlobParams,
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
-        storage_info: StorageInfo,
+        storage_info: StorageInfo<FoundryNetwork>,
     ) -> Self {
         Self {
             blob_params,
