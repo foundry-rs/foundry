@@ -7,6 +7,7 @@ use alloy_consensus::{
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
     },
 };
+use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, TxHash};
@@ -43,7 +44,7 @@ pub enum FoundryTxEnvelope {
     ///
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[envelope(ty = 3)]
-    Eip4844(Signed<TxEip4844Variant>),
+    Eip4844(Signed<TxEip4844Variant<BlobTransactionSidecarVariant>>),
     /// [EIP-7702] transaction.
     ///
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
@@ -77,7 +78,7 @@ impl FoundryTxEnvelope {
         }
     }
 
-    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
+    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar<BlobTransactionSidecarVariant>> {
         match self {
             Self::Eip4844(signed_variant) => match signed_variant.tx() {
                 TxEip4844Variant::TxEip4844WithSidecar(with_sidecar) => Some(with_sidecar),
