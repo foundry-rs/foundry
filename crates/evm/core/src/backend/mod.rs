@@ -92,7 +92,6 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
         &mut self,
         journaled_state: &JournaledState,
         evm_env: &EvmEnv,
-        tx_env: &TxEnv,
     ) -> U256;
 
     /// Reverts the snapshot if it exists
@@ -969,14 +968,12 @@ impl DatabaseExt for Backend {
         &mut self,
         journaled_state: &JournaledState,
         evm_env: &EvmEnv,
-        tx_env: &TxEnv,
     ) -> U256 {
         trace!("create snapshot");
         let id = self.inner.state_snapshots.insert(BackendStateSnapshot::new(
             self.create_db_snapshot(),
             journaled_state.clone(),
             evm_env.clone(),
-            tx_env.clone(),
         ));
         trace!(target: "backend", "Created new snapshot {}", id);
         id
@@ -1010,8 +1007,7 @@ impl DatabaseExt for Backend {
 
             // merge additional logs
             snapshot.merge(current_state);
-            let BackendStateSnapshot { db, mut journaled_state, snap_evm_env, snap_tx_env: _ } =
-                snapshot;
+            let BackendStateSnapshot { db, mut journaled_state, snap_evm_env } = snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
