@@ -83,13 +83,13 @@ pub enum EstimateSubcommands {
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
         if self.tx.tempo.is_tempo() {
-            self.run_generic::<TempoNetwork>().await
+            self.run_with_network::<TempoNetwork>().await
         } else {
-            self.run_generic::<AnyNetwork>().await
+            self.run_with_network::<AnyNetwork>().await
         }
     }
 
-    pub async fn run_generic<N: Network>(self) -> Result<()>
+    pub async fn run_with_network<N: Network>(self) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
