@@ -1019,7 +1019,10 @@ async fn test_increase_time_by_zero() {
     let next_blk_timestamp = block.header.timestamp;
 
     assert_eq!(next_blk_num, init_number + 1);
-    assert!(next_blk_timestamp > init_timestamp, "{next_blk_timestamp} should be > {init_timestamp}");
+    assert!(
+        next_blk_timestamp > init_timestamp,
+        "{next_blk_timestamp} should be > {init_timestamp}"
+    );
 }
 
 // evm_mine(MineOptions::Timestamp(prev_block_timestamp + 1))
