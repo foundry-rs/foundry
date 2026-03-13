@@ -633,6 +633,102 @@ contract MultiTest is Test {
     );
 });
 
+// Verify that show_progress works for invariant tests
+forgetest_init!(invariant_show_progress_enabled, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+    });
+    prj.add_test(
+        "InvariantProgress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InvariantProgressTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function doSomething() public pure {}
+
+    function invariant_pass() public pure {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // Progress output includes the "↪" symbol when showing suite results
+    // Use --show-progress flag to override env var set by test harness
+    let output = cmd.args(["test", "--mt", "invariant_pass", "--show-progress"]).assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("↪"), "Progress should be shown when enabled");
+});
+
+// Verify that --quiet disables show_progress for invariant tests
+forgetest_init!(invariant_show_progress_disabled_with_quiet, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+    });
+    prj.add_test(
+        "InvariantProgress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InvariantProgressTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function doSomething() public pure {}
+
+    function invariant_pass() public pure {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With --quiet, progress output should not be shown
+    let output = cmd.args(["test", "--mt", "invariant_pass", "--quiet"]).assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(!stdout.contains("↪"), "Progress should not be shown with --quiet");
+});
+
+// Verify that --json disables show_progress for invariant tests
+forgetest_init!(invariant_show_progress_disabled_with_json, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+    });
+    prj.add_test(
+        "InvariantProgress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InvariantProgressTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function doSomething() public pure {}
+
+    function invariant_pass() public pure {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    // With --json, progress output should not be shown
+    let output = cmd.args(["test", "--mt", "invariant_pass", "--json"]).assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(!stdout.contains("↪"), "Progress should not be shown with --json");
+    // Verify it's valid JSON
+    assert!(stdout.starts_with("{") || stdout.starts_with("["), "Output should be JSON");
+});
+
 // https://github.com/foundry-rs/foundry/pull/6531
 forgetest_init!(fork_traces, |prj, cmd| {
     let endpoint = rpc::next_http_archive_rpc_url();

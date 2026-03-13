@@ -2564,7 +2564,7 @@ impl Default for Config {
             coverage_pattern_inverse: None,
             test_failures_file: "cache/test-failures".into(),
             threads: None,
-            show_progress: false,
+            show_progress: true,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
