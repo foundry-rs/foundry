@@ -8,13 +8,9 @@ use alloy_signer_local::PrivateKeySigner;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
 use tempo_primitives::TempoSignature;
 
-/// A transaction signer, generic over the network.
-///
-/// Modelled after alloy's `NetworkWallet<N>`: the
-/// [`sign_transaction_from`](Signer::sign_transaction_from) method takes an
-/// unsigned transaction and returns the fully-signed envelope in one step.
+/// Network-agnostic signing: messages, typed data, and hashes.
 #[async_trait::async_trait]
-pub trait Signer<N: Network>: Send + Sync {
+pub trait MessageSigner: Send + Sync {
     /// returns the available accounts for this signer
     fn accounts(&self) -> Vec<Address>;
 
@@ -36,7 +32,14 @@ pub trait Signer<N: Network>: Send + Sync {
 
     /// Signs the given hash.
     async fn sign_hash(&self, address: Address, hash: B256) -> Result<Signature, BlockchainError>;
+}
 
+/// A transaction signer, generic over the network.
+///
+/// Modelled after alloy's `NetworkWallet<N>`: the
+/// [`sign_transaction_from`](Signer::sign_transaction_from) method takes an
+/// unsigned transaction and returns the fully-signed envelope in one step.
+pub trait Signer<N: Network>: MessageSigner {
     /// Signs an unsigned transaction and returns the signed envelope.
     ///
     /// Mirrors `NetworkWallet::sign_transaction_from`.
@@ -62,7 +65,7 @@ impl DevSigner {
 }
 
 #[async_trait::async_trait]
-impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
+impl MessageSigner for DevSigner {
     fn accounts(&self) -> Vec<Address> {
         self.addresses.clone()
     }
@@ -97,7 +100,9 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
 
         Ok(signer.sign_hash(&hash).await?)
     }
+}
 
+impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     fn sign_transaction_from(
         &self,
         sender: &Address,

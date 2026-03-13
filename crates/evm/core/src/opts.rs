@@ -295,19 +295,19 @@ impl EvmOpts {
     ///
     /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
     /// be at `~/.foundry/cache/mainnet/14435000/storage.json`.
-    pub fn get_fork(&self, config: &Config, env: crate::Env) -> Option<CreateFork> {
+    pub fn get_fork(&self, config: &Config, evm_env: EvmEnv) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
-        let enable_caching = config.enable_caching(&url, env.evm_env.cfg_env.chain_id);
+        let enable_caching = config.enable_caching(&url, evm_env.cfg_env.chain_id);
 
         // Pin fork_block_number to the block that was already fetched in env, so subsequent
         // fork operations use the same block. This prevents inconsistencies when forking at
         // "latest" where the chain could advance between calls.
         let mut evm_opts = self.clone();
         if evm_opts.fork_block_number.is_none() {
-            evm_opts.fork_block_number = Some(env.evm_env.block_env.number.to());
+            evm_opts.fork_block_number = Some(evm_env.block_env.number.to());
         }
 
-        Some(CreateFork { url, enable_caching, env, evm_opts })
+        Some(CreateFork { url, enable_caching, evm_env, evm_opts })
     }
 
     /// Returns the gas limit to use
@@ -433,7 +433,7 @@ mod tests {
         assert!(resolved_block > U256::ZERO, "should have resolved to a real block number");
 
         // Create the fork - this should pin the block number
-        let fork = evm_opts.get_fork(&Config::default(), env).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), env.evm_env).unwrap();
 
         // The fork's evm_opts should now have fork_block_number set to the resolved block
         assert_eq!(
@@ -455,7 +455,7 @@ mod tests {
 
         let env = evm_opts.env().await.unwrap();
 
-        let fork = evm_opts.get_fork(&Config::default(), env).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), env.evm_env).unwrap();
 
         // Should preserve the explicit block number, not override it
         assert_eq!(

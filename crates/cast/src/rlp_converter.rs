@@ -1,8 +1,10 @@
+use alloy_network::AnyHeader;
 use alloy_primitives::{U256, hex};
 use alloy_rlp::{Buf, Decodable, Encodable, Header};
-use eyre::Context;
+use eyre::{Context, Result};
 use serde_json::Value;
 use std::fmt;
+use tempo_alloy::primitives::TempoHeader;
 
 /// Arbitrary nested data.
 ///
@@ -89,6 +91,33 @@ impl fmt::Display for Item {
             }
         };
         Ok(())
+    }
+}
+
+/// Trait for types that can be RLP-encoded, possibly after a fallible conversion.
+///
+/// Types that directly implement [`Encodable`] can opt in via [`RlpEncodable`]
+/// to get a blanket implementation. Types like [`AnyHeader`] that require
+/// conversion provide their own implementation.
+pub trait TryIntoRlpEncodable {
+    fn try_rlp_encode(&self) -> Result<Vec<u8>>;
+}
+
+/// Marker trait for [`Encodable`] types to opt into [`TryIntoRlpEncodable`].
+trait RlpEncodable: Encodable {}
+
+impl RlpEncodable for alloy_consensus::Header {}
+impl RlpEncodable for TempoHeader {}
+
+impl<T: RlpEncodable> TryIntoRlpEncodable for T {
+    fn try_rlp_encode(&self) -> Result<Vec<u8>> {
+        Ok(alloy_rlp::encode(self))
+    }
+}
+
+impl TryIntoRlpEncodable for AnyHeader {
+    fn try_rlp_encode(&self) -> Result<Vec<u8>> {
+        Ok(alloy_rlp::encode(self.clone().try_into_header()?))
     }
 }
 

@@ -2,10 +2,12 @@ use super::run::fetch_contracts_bytecode_from_trace;
 use crate::{
     Cast,
     debug::handle_traces,
+    rlp_converter::TryIntoRlpEncodable,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
+use alloy_network::{AnyNetwork, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -16,11 +18,12 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{LoadConfig, TraceResult, get_provider, parse_ether_value},
+    utils::{LoadConfig, TraceResult, parse_ether_value},
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    provider::curl_transport::generate_curl_command,
+    fmt::{UIfmt, UIfmtHeaderExt, UIfmtSignatureExt},
+    provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
@@ -36,11 +39,14 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::WalletOpts;
 use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
+use serde::Serialize;
 use std::{str::FromStr, sync::LazyLock};
+use tempo_alloy::TempoNetwork;
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -217,7 +223,22 @@ impl CallArgs {
         if self.rpc.curl {
             return self.run_curl().await;
         }
+        if self.tx.tempo.is_tempo() {
+            self.run_with_network::<TempoNetwork>().await
+        } else {
+            self.run_with_network::<AnyNetwork>().await
+        }
+    }
 
+    pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
+    where
+        N::TxEnvelope: Serialize + UIfmtSignatureExt,
+        N::Header: TryIntoRlpEncodable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::TransactionResponse: UIfmt,
+        N::HeaderResponse: UIfmtHeaderExt,
+        N::BlockResponse: UIfmt,
+    {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
@@ -247,7 +268,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = get_provider(&config)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -321,41 +342,39 @@ impl CallArgs {
                 state_overrides,
             )?;
 
-            let value = tx.value.unwrap_or_default();
-            let input = tx.inner.input.into_input().unwrap_or_default();
-            let tx_kind = tx.inner.to.expect("set by builder");
+            let value = tx.value().unwrap_or_default();
+            let input = tx.input().cloned().unwrap_or_default();
+            let tx_kind = tx.kind().expect("set by builder");
             let env_tx = &mut executor.env_mut().tx;
 
             // Set transaction options with --trace
-            if let Some(gas_limit) = tx.inner.gas {
+            if let Some(gas_limit) = tx.gas_limit() {
                 env_tx.gas_limit = gas_limit;
             }
 
-            if let Some(gas_price) = tx.inner.gas_price {
+            if let Some(gas_price) = tx.gas_price() {
                 env_tx.gas_price = gas_price;
             }
 
-            if let Some(max_fee_per_gas) = tx.inner.max_fee_per_gas {
+            if let Some(max_fee_per_gas) = tx.max_fee_per_gas() {
                 env_tx.gas_price = max_fee_per_gas;
             }
 
-            if let Some(max_priority_fee_per_gas) = tx.inner.max_priority_fee_per_gas {
+            if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
                 env_tx.gas_priority_fee = Some(max_priority_fee_per_gas);
             }
 
-            if let Some(max_fee_per_blob_gas) = tx.inner.max_fee_per_blob_gas {
+            if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
                 env_tx.max_fee_per_blob_gas = max_fee_per_blob_gas;
             }
 
-            if let Some(nonce) = tx.inner.nonce {
+            if let Some(nonce) = tx.nonce() {
                 env_tx.nonce = nonce;
             }
 
-            if let Some(tx_type) = tx.inner.transaction_type {
-                env_tx.tx_type = tx_type;
-            }
+            env_tx.tx_type = tx.output_tx_type().into();
 
-            if let Some(access_list) = tx.inner.access_list {
+            if let Some(access_list) = tx.access_list().cloned() {
                 env_tx.access_list = access_list;
 
                 if env_tx.tx_type == TransactionType::Legacy as u8 {
@@ -363,7 +382,7 @@ impl CallArgs {
                 }
             }
 
-            if let Some(auth) = tx.inner.authorization_list {
+            if let Some(auth) = tx.authorization_list().cloned() {
                 env_tx.authorization_list = auth.into_iter().map(Either::Left).collect();
 
                 env_tx.tx_type = TransactionType::Eip7702 as u8;
@@ -403,7 +422,7 @@ impl CallArgs {
             .await?;
 
         if response == "0x"
-            && let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to())
+            && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;
             if code.is_empty() {
