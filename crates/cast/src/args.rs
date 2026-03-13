@@ -535,17 +535,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
         CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request } => {
             let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-
             // Can use either --raw or specify raw as a field
-            let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
-
-            sh_println!(
-                "{}",
-                Cast::new(&provider)
-                    .transaction(tx_hash, from, nonce, field, raw, to_request)
-                    .await?
-            )?
+            if raw || field.as_ref().is_some_and(|f| f == "raw") {
+                // Temporary workaround to handle tx raw encoding through FoundryNetwork
+                // TODO: Once the Network selection UI will be finalized, bring back --raw
+                // handling to `Cast::transaction`
+                sh_println!("{}", crate::transaction_raw(&config, tx_hash, from, nonce).await?)?
+            } else {
+                let provider = utils::get_provider(&config)?;
+                sh_println!(
+                    "{}",
+                    Cast::new(&provider)
+                        .transaction(tx_hash, from, nonce, field, to_request)
+                        .await?
+                )?
+            }
         }
 
         // 4Byte
