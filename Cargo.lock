@@ -341,7 +341,7 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.2.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm?branch=feat%2Fmip-4-reserve-balance-precompile#c5a26b9ee5fd48346989fef642b8b324c9a361a2"
+source = "git+https://github.com/category-labs/alloy-monad-evm?branch=main#895d820baaaa8ef4a0889a8f6ebc01d85634c55b"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -6768,7 +6768,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.2.0"
-source = "git+https://github.com/category-labs/monad-revm?branch=feat%2Fmip-4-reserve-balance-precompile#3cb7b08bbad313ee2bd9df39635167891d207406"
+source = "git+https://github.com/category-labs/monad-revm?branch=main#bed432dd9492c957a532d1416cc6049682d404b6"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
