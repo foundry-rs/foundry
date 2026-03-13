@@ -9,14 +9,20 @@ use eyre::{Context, OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     Project,
-    artifacts::{StandardJsonCompilerInput, output_selection::OutputSelection},
+    artifacts::{
+        Source, StandardJsonCompilerInput, output_selection::OutputSelection, vyper::VyperInput,
+    },
     compilers::solc::SolcCompiler,
     multi::MultiCompilerSettings,
     solc::{Solc, SolcLanguage},
 };
 use foundry_config::{Chain, Config, EtherscanConfigError};
 use semver::Version;
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// Container with data required for contract verification.
 #[derive(Debug, Clone)]
@@ -69,6 +75,13 @@ impl VerificationContext {
         input.settings = settings;
 
         Ok(input)
+    }
+
+    /// Creates Vyper standard JSON input for verification.
+    pub fn get_vyper_standard_json_input(&self) -> Result<VyperInput> {
+        let path = Path::new(&self.target_path);
+        let sources = Source::read_all_from(path, &["vy", "vyi"])?;
+        Ok(VyperInput::new(sources, self.compiler_settings.vyper.clone(), &self.compiler_version))
     }
 
     /// Compiles target contract requesting only ABI and returns it.
