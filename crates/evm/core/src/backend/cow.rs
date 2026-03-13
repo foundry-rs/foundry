@@ -118,11 +118,7 @@ impl<'a> CowBackend<'a> {
 }
 
 impl DatabaseExt for CowBackend<'_> {
-    fn snapshot_state(
-        &mut self,
-        journaled_state: &JournaledState,
-        evm_env: &EvmEnv,
-    ) -> U256 {
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, evm_env: &EvmEnv) -> U256 {
         self.backend.to_mut().snapshot_state(journaled_state, evm_env)
     }
 
