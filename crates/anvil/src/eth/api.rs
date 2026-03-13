@@ -39,7 +39,7 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, ReceiptResponse, TransactionBuilder,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, ReceiptResponse, TransactionBuilder,
     TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
@@ -105,16 +105,16 @@ pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
-pub struct EthApi<T = FoundryTxEnvelope> {
+pub struct EthApi<N: Network> {
     /// The transaction pool
-    pool: Arc<Pool<T>>,
+    pool: Arc<Pool<N::TxEnvelope>>,
     /// Holds all blockchain related data
     /// In-Memory only for now
-    pub backend: Arc<backend::mem::Backend<FoundryNetwork>>,
+    pub backend: Arc<backend::mem::Backend<N>>,
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
-    signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
+    signers: Arc<Vec<Box<dyn Signer<N>>>>,
     /// data required for `eth_feeHistory`
     fee_history_cache: FeeHistoryCache,
     /// max number of items kept in fee cache
@@ -123,7 +123,7 @@ pub struct EthApi<T = FoundryTxEnvelope> {
     ///
     /// This access is required in order to adjust miner settings based on requests received from
     /// custom RPC endpoints
-    miner: Miner<T>,
+    miner: Miner<N::TxEnvelope>,
     /// allows to enabled/disable logging
     logger: LoggingManager,
     /// Tracks all active filters
@@ -136,7 +136,7 @@ pub struct EthApi<T = FoundryTxEnvelope> {
     instance_id: Arc<RwLock<B256>>,
 }
 
-impl<T> Clone for EthApi<T> {
+impl<N: Network> Clone for EthApi<N> {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
@@ -155,18 +155,18 @@ impl<T> Clone for EthApi<T> {
     }
 }
 
-// == impl EthApi<T> generic methods ==
+// == impl EthApi<N: Network> generic methods ==
 
-impl<T> EthApi<T> {
+impl<N: Network> EthApi<N> {
     /// Creates a new instance
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        pool: Arc<Pool<T>>,
-        backend: Arc<backend::mem::Backend<FoundryNetwork>>,
-        signers: Arc<Vec<Box<dyn Signer<FoundryNetwork>>>>,
+        pool: Arc<Pool<N::TxEnvelope>>,
+        backend: Arc<backend::mem::Backend<N>>,
+        signers: Arc<Vec<Box<dyn Signer<N>>>>,
         fee_history_cache: FeeHistoryCache,
         fee_history_limit: u64,
-        miner: Miner<T>,
+        miner: Miner<N::TxEnvelope>,
         logger: LoggingManager,
         filters: Filters,
         transactions_order: TransactionOrder,
@@ -286,26 +286,6 @@ impl<T> EthApi<T> {
         Ok(())
     }
 
-    /// Reset the fork to a fresh forked state, and optionally update the fork config.
-    ///
-    /// If `forking` is `None` then this will disable forking entirely.
-    ///
-    /// Handler for RPC call: `anvil_reset`
-    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
-        self.reset_instance_id();
-        node_info!("anvil_reset");
-        if let Some(forking) = forking {
-            // if we're resetting the fork we need to reset the instance id
-            self.backend.reset_fork(forking).await?;
-        } else {
-            // Reset to a fresh in-memory state
-            self.backend.reset_to_in_mem().await?;
-        }
-        // Clear pending transactions since they reference the old chain state.
-        self.pool.clear();
-        Ok(())
-    }
-
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
         node_info!("anvil_setChainId");
         self.backend.set_chain_id(chain_id);
@@ -399,35 +379,6 @@ impl<T> EthApi<T> {
         node_info!("anvil_setCoinbase");
         self.backend.set_coinbase(address);
         Ok(())
-    }
-
-    /// Create a buffer that represents all state on the chain, which can be loaded to separate
-    /// process by calling `anvil_loadState`
-    ///
-    /// Handler for RPC call: `anvil_dumpState`
-    pub async fn anvil_dump_state(
-        &self,
-        preserve_historical_states: Option<bool>,
-    ) -> Result<Bytes> {
-        node_info!("anvil_dumpState");
-        self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
-    }
-
-    /// Returns the current state
-    pub async fn serialized_state(
-        &self,
-        preserve_historical_states: bool,
-    ) -> Result<SerializableState> {
-        self.backend.serialized_state(preserve_historical_states).await
-    }
-
-    /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
-    /// storage.
-    ///
-    /// Handler for RPC call: `anvil_loadState`
-    pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
-        node_info!("anvil_loadState");
-        self.backend.load_state_bytes(buf).await
     }
 
     /// Retrieves the Anvil node configuration params.
@@ -643,7 +594,7 @@ impl<T> EthApi<T> {
 
     /// Returns the first signer that can sign for the given address
     #[expect(clippy::borrowed_box)]
-    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<FoundryNetwork>>> {
+    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<N>>> {
         self.signers.iter().find(|signer| signer.is_signer_for(address))
     }
 
@@ -666,12 +617,64 @@ impl<T> EthApi<T> {
     pub fn is_impersonated(&self, addr: Address) -> bool {
         self.backend.cheats().is_impersonated(addr)
     }
+
+    /// Returns a new accessor for certain storage elements
+    pub fn storage_info(&self) -> StorageInfo<N> {
+        StorageInfo::new(Arc::clone(&self.backend))
+    }
 }
 
 // == impl EthApi anvil endpoints ==
 
-impl EthApi {
-    // TODO: move to `impl<T> EthApi<T>` once `Backend::block_by_hash` is network-generic.
+impl EthApi<FoundryNetwork> {
+    /// Reset the fork to a fresh forked state, and optionally update the fork config.
+    ///
+    /// If `forking` is `None` then this will disable forking entirely.
+    ///
+    /// Handler for RPC call: `anvil_reset`
+    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
+        self.reset_instance_id();
+        node_info!("anvil_reset");
+        if let Some(forking) = forking {
+            // if we're resetting the fork we need to reset the instance id
+            self.backend.reset_fork(forking).await?;
+        } else {
+            // Reset to a fresh in-memory state
+            self.backend.reset_to_in_mem().await?;
+        }
+        // Clear pending transactions since they reference the old chain state.
+        self.pool.clear();
+        Ok(())
+    }
+
+    /// Create a buffer that represents all state on the chain, which can be loaded to separate
+    /// process by calling `anvil_loadState`
+    ///
+    /// Handler for RPC call: `anvil_dumpState`
+    pub async fn anvil_dump_state(
+        &self,
+        preserve_historical_states: Option<bool>,
+    ) -> Result<Bytes> {
+        node_info!("anvil_dumpState");
+        self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
+    }
+
+    /// Returns the current state
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState> {
+        self.backend.serialized_state(preserve_historical_states).await
+    }
+
+    /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
+    /// storage.
+    ///
+    /// Handler for RPC call: `anvil_loadState`
+    pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
+        node_info!("anvil_loadState");
+        self.backend.load_state_bytes(buf).await
+    }
 
     /// Revert the state of the blockchain to a previous snapshot.
     /// Takes a single parameter, which is the snapshot id to revert to.
@@ -868,11 +871,6 @@ impl EthApi {
     /// Returns a new block event stream that yields Notifications when a new block was added
     pub fn new_block_notifications(&self) -> NewBlockNotifications {
         self.backend.new_block_notifications()
-    }
-
-    /// Returns a new accessor for certain storage elements
-    pub fn storage_info(&self) -> StorageInfo<FoundryNetwork> {
-        StorageInfo::new(Arc::clone(&self.backend))
     }
 
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
@@ -1765,6 +1763,7 @@ impl EthApi {
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
+    // TODO: generalize return type once N::ReceiptEnvelope is constructable
     /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
     async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
         let mut stream = self.new_block_notifications();
@@ -1784,6 +1783,7 @@ impl EthApi {
         Err(BlockchainError::Message("Failed to await transaction inclusion".to_string()))
     }
 
+    // TODO: generalize return type once N::ReceiptEnvelope is constructable
     /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
     async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
         const TIMEOUT_DURATION: Duration = Duration::from_secs(30);
@@ -1798,7 +1798,7 @@ impl EthApi {
     }
 
     /// Sends a transaction and waits for receipt
-    ///
+    // TODO: generalize return type once N::ReceiptEnvelope is constructable
     /// Handler for ETH RPC call: `eth_sendTransactionSync`
     pub async fn send_transaction_sync(
         &self,
@@ -1850,6 +1850,7 @@ impl EthApi {
         Ok(*tx.hash())
     }
 
+    // TODO: generalize return type once N::ReceiptEnvelope is constructable
     /// Sends signed transaction, returning its receipt.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
@@ -2227,6 +2228,7 @@ impl EthApi {
         Ok(None)
     }
 
+    // TODO: generalize return type once N::ReceiptEnvelope is constructable
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
@@ -2235,6 +2237,7 @@ impl EthApi {
         self.backend.transaction_receipt(hash).await
     }
 
+    // TODO: generalize return type once N::ReceiptEnvelope is constructable
     /// Returns block receipts by block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
@@ -2662,7 +2665,7 @@ impl EthApi {
 
 // == impl EthApi anvil endpoints ==
 
-impl EthApi {
+impl EthApi<FoundryNetwork> {
     /// Send transactions impersonating specific account and contract addresses.
     ///
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
@@ -3160,7 +3163,7 @@ impl EthApi {
     }
 }
 
-impl EthApi {
+impl EthApi<FoundryNetwork> {
     /// Executes the `evm_mine` and returns the number of blocks mined
     async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64> {
         let mut blocks_to_mine = 1u64;

@@ -12,6 +12,7 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
+use foundry_primitives::FoundryNetwork;
 use ssz::Encode;
 use std::{collections::HashMap, str::FromStr as _};
 
@@ -21,7 +22,7 @@ use std::{collections::HashMap, str::FromStr as _};
 ///
 /// GET /eth/v1/beacon/blob_sidecars/{block_id}
 pub async fn handle_get_blob_sidecars(
-    State(_api): State<EthApi>,
+    State(_api): State<EthApi<FoundryNetwork>>,
     Path(_block_id): Path<String>,
     Query(_params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -34,7 +35,7 @@ pub async fn handle_get_blob_sidecars(
 /// GET /eth/v1/beacon/blobs/{block_id}
 pub async fn handle_get_blobs(
     headers: HeaderMap,
-    State(api): State<EthApi>,
+    State(api): State<EthApi<FoundryNetwork>>,
     Path(block_id): Path<String>,
     Query(versioned_hashes): Query<HashMap<String, String>>,
 ) -> Response {
@@ -74,7 +75,7 @@ pub async fn handle_get_blobs(
 /// Only returns the `genesis_time`, other fields are set to zero.
 ///
 /// GET /eth/v1/beacon/genesis
-pub async fn handle_get_genesis(State(api): State<EthApi>) -> Response {
+pub async fn handle_get_genesis(State(api): State<EthApi<FoundryNetwork>>) -> Response {
     match api.anvil_get_genesis_time() {
         Ok(genesis_time) => Json(GenesisResponse {
             data: GenesisData {
