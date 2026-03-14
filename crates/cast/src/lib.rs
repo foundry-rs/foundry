@@ -1111,7 +1111,7 @@ where
     /// let provider =
     ///     ProviderBuilder::<_, _, Ethereum>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block_raw(5, true, vec![]).await?;
+    /// let block = cast.block_raw(5, true).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
