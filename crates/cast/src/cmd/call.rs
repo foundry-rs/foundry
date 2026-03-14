@@ -2,7 +2,6 @@ use super::run::fetch_contracts_bytecode_from_trace;
 use crate::{
     Cast,
     debug::handle_traces,
-    rlp_converter::TryIntoRlpEncodable,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
@@ -233,7 +232,6 @@ impl CallArgs {
     pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
     where
         N::TxEnvelope: Serialize + UIfmtSignatureExt,
-        N::Header: TryIntoRlpEncodable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::TransactionResponse: UIfmt,
         N::HeaderResponse: UIfmtHeaderExt,

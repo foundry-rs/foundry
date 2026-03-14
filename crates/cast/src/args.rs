@@ -9,17 +9,22 @@ use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::{utils, utils::LoadConfig};
+use foundry_cli::{
+    opts::NetworkVariant,
+    utils::{self, LoadConfig},
+};
 use foundry_common::{
     abi::{get_error, get_event},
     fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
     fs,
+    provider::ProviderBuilder,
     selectors::{
         ParsedSignatures, SelectorImportData, SelectorKind, decode_calldata, decode_event_topic,
         decode_function_selector, decode_selectors, import_selectors, parse_signatures,
@@ -27,7 +32,9 @@ use foundry_common::{
     },
     shell, stdin,
 };
+use op_alloy_network::Optimism;
 use std::time::Instant;
+use tempo_alloy::TempoNetwork;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -341,18 +348,42 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, fields, raw, rpc } => {
+        CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
             let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
             // Can use either --raw or specify raw as a field
-            let raw = raw || fields.contains(&"raw".into());
+            let output = if raw || fields.contains(&"raw".into()) {
+                match network {
+                    Some(NetworkVariant::Optimism) => {
+                        let provider =
+                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
 
-            sh_println!(
-                "{}",
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
+                    Some(NetworkVariant::Tempo) => {
+                        let provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
+                    // Ethereum (default) or no --raw flag
+                    _ => {
+                        let provider =
+                            ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
+                }
+            } else {
+                let provider = utils::get_provider(&config)?;
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, fields, raw)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, fields)
                     .await?
-            )?
+            };
+            sh_println!("{}", output)?
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = rpc.load_config()?;
@@ -533,23 +564,34 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request } => {
+        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
-            if raw || field.as_ref().is_some_and(|f| f == "raw") {
-                // Temporary workaround to handle tx raw encoding through FoundryNetwork
-                // TODO: Once the Network selection UI will be finalized, bring back --raw
-                // handling to `Cast::transaction`
-                sh_println!("{}", crate::transaction_raw(&config, tx_hash, from, nonce).await?)?
-            } else {
-                let provider = utils::get_provider(&config)?;
-                sh_println!(
-                    "{}",
+            let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+            let output = match network {
+                Some(NetworkVariant::Optimism) => {
+                    let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
                         .await?
-                )?
-            }
+                }
+                Some(NetworkVariant::Tempo) => {
+                    let provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    Cast::new(&provider)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .await?
+                }
+                // Ethereum (default) or no --raw flag
+                _ => {
+                    let provider = utils::get_provider(&config)?;
+                    Cast::new(&provider)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .await?
+                }
+            };
+            sh_println!("{}", output)?
         }
 
         // 4Byte

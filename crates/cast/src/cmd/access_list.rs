@@ -1,6 +1,5 @@
 use crate::{
     Cast,
-    rlp_converter::TryIntoRlpEncodable,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
@@ -75,7 +74,6 @@ impl AccessListArgs {
     pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
     where
         N::TxEnvelope: Serialize + UIfmtSignatureExt,
-        N::Header: TryIntoRlpEncodable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::TransactionResponse: UIfmt,
         N::HeaderResponse: UIfmtHeaderExt,

@@ -18,7 +18,7 @@ use alloy_primitives::{
     utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
-use alloy_rlp::Decodable;
+use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, state::StateOverride,
 };
@@ -31,13 +31,11 @@ use foundry_common::{
     compile::etherscan_project,
     flatten,
     fmt::*,
-    fs,
-    provider::ProviderBuilder,
-    shell,
+    fs, shell,
 };
-use foundry_config::{Chain, Config};
+use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
-use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
+use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, future::Either};
 
 use rayon::prelude::*;
@@ -67,8 +65,6 @@ pub mod tx;
 
 use rlp_converter::Item;
 
-use crate::rlp_converter::TryIntoRlpEncodable;
-
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
 pub struct Cast<P, N = AnyNetwork> {
@@ -79,7 +75,6 @@ pub struct Cast<P, N = AnyNetwork> {
 impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N>
 where
     N::TxEnvelope: Serialize + UIfmtSignatureExt,
-    N::Header: TryIntoRlpEncodable,
     N::TransactionResponse: UIfmt,
     N::HeaderResponse: UIfmtHeaderExt,
     N::BlockResponse: UIfmt,
@@ -304,7 +299,7 @@ where
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, vec![], false).await?;
+    /// let block = cast.block(5, true, vec![]).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -314,7 +309,6 @@ where
         block: B,
         full: bool,
         fields: Vec<String>,
-        raw: bool,
     ) -> Result<String> {
         let block = block.into();
         if fields.contains(&"transactions".into()) && !full {
@@ -328,10 +322,7 @@ where
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
-        Ok(if raw {
-            let encoded = block.header().as_ref().try_rlp_encode()?;
-            format!("0x{}", hex::encode(encoded))
-        } else if !fields.is_empty() {
+        Ok(if !fields.is_empty() {
             let mut result = String::new();
             for field in fields {
                 result.push_str(
@@ -356,7 +347,6 @@ where
             false,
             // Select only select field
             vec![field],
-            false,
         )
         .await?
         .parse()
@@ -385,15 +375,12 @@ where
             false,
             // Select only block hash
             vec![String::from("hash")],
-            false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, vec![String::from("hash")], false)
-                    .await?)[..]
-                {
+                match &(Self::block(self, 1920000, false, vec![String::from("hash")]).await?)[..] {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
@@ -435,7 +422,7 @@ where
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, vec![String::from("hash")], false).await?)[..] {
+                match &(Self::block(self, 1, false, vec![String::from("hash")]).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -721,7 +708,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -732,6 +719,7 @@ where
         from: Option<NameOrAddress>,
         nonce: Option<u64>,
         field: Option<String>,
+        raw: bool,
         to_request: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
@@ -758,7 +746,10 @@ where
             eyre::bail!("tx hash or from address is required")
         };
 
-        Ok(if let Some(ref field) = field {
+        Ok(if raw {
+            let encoded = tx.as_ref().encoded_2718();
+            format!("0x{}", hex::encode(encoded))
+        } else if let Some(ref field) = field {
             get_pretty_tx_attr::<N>(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
@@ -1103,6 +1094,41 @@ where
         }
 
         Ok(())
+    }
+}
+
+impl<P: Provider<N>, N: Network> Cast<P, N>
+where
+    N::Header: Encodable,
+{
+    /// # Example
+    ///
+    /// ```
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::Ethereum};
+    /// use cast::Cast;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, Ethereum>::default().connect("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let block = cast.block_raw(5, true).await?;
+    /// println!("{}", block);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn block_raw<B: Into<BlockId>>(&self, block: B, full: bool) -> Result<String> {
+        let block_id = block.into();
+
+        let block = self
+            .provider
+            .get_block(block_id)
+            .kind(full.into())
+            .await?
+            .ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?;
+
+        let encoded = alloy_rlp::encode(block.header().as_ref());
+
+        Ok(format!("0x{}", hex::encode(encoded)))
     }
 }
 
@@ -2356,44 +2382,6 @@ fn explorer_client(
     }
 
     builder.build().map_err(Into::into)
-}
-
-// Temporary workaround to handle tx raw encoding through FoundryNetwork
-// TODO: Once the Network selection UI will be finalized, bring back --raw
-// handling to `Cast::transaction`
-pub async fn transaction_raw(
-    config: &Config,
-    tx_hash: Option<String>,
-    from: Option<NameOrAddress>,
-    nonce: Option<u64>,
-) -> Result<String> {
-    let provider = ProviderBuilder::<FoundryNetwork>::from_config(config)?.build()?;
-    let tx = if let Some(tx_hash) = tx_hash {
-        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-        provider
-            .get_transaction_by_hash(tx_hash)
-            .await?
-            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
-    } else if let Some(from) = from {
-        // If nonce is not provided, uses 0.
-        let nonce = U64::from(nonce.unwrap_or_default());
-        let from = from.resolve(provider.root()).await?;
-
-        provider
-            .raw_request::<_, Option<<FoundryNetwork as Network>::TransactionResponse>>(
-                "eth_getTransactionBySenderAndNonce".into(),
-                (from, nonce),
-            )
-            .await?
-            .ok_or_else(|| {
-                eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
-            })?
-    } else {
-        eyre::bail!("tx hash or from address is required")
-    };
-
-    let encoded = tx.as_ref().encoded_2718();
-    Ok(format!("0x{}", hex::encode(encoded)))
 }
 
 #[cfg(test)]

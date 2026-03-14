@@ -335,6 +335,7 @@ alloy-trie = "0.9"
 
 ## op-alloy
 op-alloy-consensus = "0.24.0"
+op-alloy-network = "0.24.0"
 op-alloy-rpc-types = "0.24.0"
 op-alloy-flz = "0.13.1"
 
@@ -501,6 +502,7 @@ alloy-evm = { git = "https://github.com/alloy-rs/evm.git", branch = "alloy-2.0" 
 
 ## op-alloy / alloy-op-evm
 op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
 op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
 op-alloy = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
 alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
