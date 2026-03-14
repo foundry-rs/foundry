@@ -9,6 +9,7 @@ use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -347,18 +348,42 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, fields, raw, rpc } => {
+        CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
             let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
             // Can use either --raw or specify raw as a field
-            let raw = raw || fields.contains(&"raw".into());
+            let output = if raw || fields.contains(&"raw".into()) {
+                match network {
+                    Some(NetworkVariant::Optimism) => {
+                        let provider =
+                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
 
-            sh_println!(
-                "{}",
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
+                    Some(NetworkVariant::Tempo) => {
+                        let provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
+                    // Ethereum (default) or no --raw flag
+                    _ => {
+                        let provider =
+                            ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
+                }
+            } else {
+                let provider = utils::get_provider(&config)?;
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, fields, raw)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, fields)
                     .await?
-            )?
+            };
+            sh_println!("{}", output)?
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = rpc.load_config()?;

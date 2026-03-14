@@ -390,6 +390,10 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
     },
 
     /// Get the latest block number.

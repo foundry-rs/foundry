@@ -181,6 +181,32 @@ casttest!(block_raw, |_prj, cmd| {
     );
 });
 
+casttest!(block_raw_tempo, |_prj, cmd| {
+    // https://explore.tempo.xyz/block/8386710
+    let output = cmd
+        .args([
+            "block",
+            "8386710",
+            "--rpc-url",
+            "https://rpc.moderato.tempo.xyz",
+            "--raw",
+            "-n",
+            "tempo",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    let hash = alloy_primitives::keccak256(hex::decode(output).unwrap());
+
+    assert_eq!(
+        hash.to_string(),
+        "0xcd6170dc28b888bcb93ed1ad76a6bea4ad9977b678db5d462df83d35ec9b8d15"
+    );
+});
+
 // tests that the `cast find-block` command works correctly
 casttest!(finds_block, |_prj, cmd| {
     // Construct args
