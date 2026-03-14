@@ -213,7 +213,7 @@ impl FoundryTransaction for TxEnv {
 /// fields.
 pub trait FoundryCfg: Cfg {
     /// Sets the EVM spec (hardfork).
-    fn set_spec(&mut self, spec: SpecId);
+    fn set_spec(&mut self, spec: Self::Spec);
 
     /// Sets the chain ID.
     fn set_chain_id(&mut self, chain_id: u64);
@@ -237,8 +237,8 @@ pub trait FoundryCfg: Cfg {
     fn set_tx_gas_limit_cap(&mut self, cap: Option<u64>);
 }
 
-impl FoundryCfg for CfgEnv {
-    fn set_spec(&mut self, spec: SpecId) {
+impl<S: Into<SpecId> + Clone> FoundryCfg for CfgEnv<S> {
+    fn set_spec(&mut self, spec: S) {
         self.spec = spec;
     }
 
