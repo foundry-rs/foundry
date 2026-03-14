@@ -5,7 +5,7 @@
 
 use super::CreateFork;
 use alloy_evm::EvmEnv;
-use alloy_network::Network;
+use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{U256, map::HashMap};
 use foundry_config::Config;
 use foundry_fork_db::{BackendHandler, BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
@@ -543,8 +543,11 @@ async fn create_fork<N: Network>(
 
     let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
 
-    // Initialise the fork environment.
-    let (evm_env, number) = fork.evm_opts.fork_evm_env(&provider).await?;
+    // Initialize the fork environment using AnyNetwork to handle non-standard EVM chains
+    // (e.g. Moonbeam, Arbitrum) whose block headers may lack standard Ethereum fields like
+    // `mixHash`. The provider typed with N is used for ongoing block/tx fetching only.
+    let any_provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
+    let (evm_env, number) = fork.evm_opts.fork_evm_env(&any_provider).await?;
     fork.evm_env = evm_env;
     let meta = BlockchainDbMeta::new(fork.evm_env.block_env.clone(), fork.url.clone());
 
