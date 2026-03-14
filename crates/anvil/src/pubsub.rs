@@ -8,6 +8,7 @@ use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId};
 use anvil_rpc::{request::Version, response::ResponseResult};
+use foundry_primitives::FoundryNetwork;
 use futures::{Stream, StreamExt, channel::mpsc::Receiver, ready};
 use serde::Serialize;
 use std::{
@@ -21,7 +22,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 #[derive(Debug)]
 pub struct LogsSubscription {
     pub blocks: NewBlockNotifications,
-    pub storage: StorageInfo,
+    pub storage: StorageInfo<FoundryNetwork>,
     pub filter: FilteredParams,
     pub queued: VecDeque<Log>,
     pub id: SubscriptionId,
@@ -87,7 +88,7 @@ pub struct EthSubscriptionParams {
 #[derive(Debug)]
 pub enum EthSubscription {
     Logs(Box<LogsSubscription>),
-    Header(NewBlockNotifications, StorageInfo, SubscriptionId),
+    Header(NewBlockNotifications, StorageInfo<FoundryNetwork>, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
     FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
 }
