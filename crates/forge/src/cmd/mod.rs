@@ -9,6 +9,7 @@ pub mod bind;
 pub mod bind_json;
 pub mod build;
 pub mod cache;
+pub mod check;
 pub mod clone;
 pub mod compiler;
 pub mod config;
