@@ -25,13 +25,7 @@ use solar::{
     parse::lexer::token::{RawLiteralKind, RawTokenKind},
     sema::ast::Base,
 };
-use std::{
-    borrow::Cow,
-    io::Write,
-    ops::ControlFlow,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{borrow::Cow, io::Write, ops::ControlFlow, process::Command};
 use tempfile::Builder;
 use yansi::Paint;
 
@@ -424,19 +418,23 @@ impl ChiselDispatcher {
     }
 
     pub(crate) fn export(&self) -> Result<()> {
-        // Check if the pwd is a foundry project
-        if !Path::new("foundry.toml").exists() {
+        let config = &self.source().config.foundry_config;
+        let script_dir = config.root.join(&config.script);
+
+        // Check if the project root contains a foundry.toml
+        if !config.root.join("foundry.toml").exists() {
             eyre::bail!("Must be in a foundry project to export source to script.");
         }
 
-        // Create "script" dir if it does not already exist.
-        if !Path::new("script").exists() {
-            std::fs::create_dir_all("script")?;
+        // Create script dir if it does not already exist.
+        if !script_dir.exists() {
+            std::fs::create_dir_all(&script_dir)?;
         }
 
+        let export_path = script_dir.join("REPL.s.sol");
         let formatted_source = self.format_source()?;
-        std::fs::write(PathBuf::from("script/REPL.s.sol"), formatted_source)?;
-        sh_println!("Exported session source to script/REPL.s.sol!")
+        std::fs::write(&export_path, formatted_source)?;
+        sh_println!("Exported session source to {}", export_path.display())
     }
 
     /// Fetches an interface from Etherscan
