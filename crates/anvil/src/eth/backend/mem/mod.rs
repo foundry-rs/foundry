@@ -1570,7 +1570,7 @@ impl<N: Network> Backend<N> {
 
 impl<N: Network> Backend<N>
 where
-    N::ReceiptEnvelope: alloy_consensus::TxReceipt<Log = alloy_primitives::Log>,
+    N::ReceiptEnvelope: alloy_consensus::TxReceipt<Log = alloy_primitives::Log> + Clone,
 {
     /// Returns all `Log`s mined by the node that were emitted in the `block` and match the `Filter`
     fn mined_logs_for_block(&self, filter: Filter, block: Block, block_hash: B256) -> Vec<Log> {
@@ -1677,6 +1677,18 @@ where
 
             self.logs_for_range(&filter, from_block, to_block).await
         }
+    }
+
+    /// Returns all receipts of the block
+    pub fn mined_receipts(&self, hash: B256) -> Option<Vec<N::ReceiptEnvelope>> {
+        let block = self.mined_block_by_hash(hash)?;
+        let mut receipts = Vec::new();
+        let storage = self.blockchain.storage.read();
+        for tx in block.transactions.hashes() {
+            let receipt = storage.transactions.get(&tx)?.receipt.clone();
+            receipts.push(receipt);
+        }
+        Some(receipts)
     }
 }
 
@@ -3325,18 +3337,6 @@ impl Backend<FoundryNetwork> {
         }
 
         Ok(None)
-    }
-
-    /// Returns all receipts of the block
-    pub fn mined_receipts(&self, hash: B256) -> Option<Vec<FoundryReceiptEnvelope>> {
-        let block = self.mined_block_by_hash(hash)?;
-        let mut receipts = Vec::new();
-        let storage = self.blockchain.storage.read();
-        for tx in block.transactions.hashes() {
-            let receipt = storage.transactions.get(&tx)?.receipt.clone();
-            receipts.push(receipt);
-        }
-        Some(receipts)
     }
 
     /// Returns all transaction receipts of the block
