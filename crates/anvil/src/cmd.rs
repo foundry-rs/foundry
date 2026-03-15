@@ -32,16 +32,22 @@ use tokio::time::{Instant, Interval};
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
     /// Port number to listen on.
-    #[arg(long, short, default_value = "8545", value_name = "NUM")]
-    pub port: u16,
+    ///
+    /// Can also be set in `foundry.toml` under `[anvil]`. CLI flags take precedence.
+    #[arg(long, short, value_name = "NUM")]
+    pub port: Option<u16>,
 
     /// Number of dev accounts to generate and configure.
-    #[arg(long, short, default_value = "10", value_name = "NUM")]
-    pub accounts: u64,
+    ///
+    /// Can also be set in `foundry.toml` under `[anvil]`. CLI flags take precedence.
+    #[arg(long, short, value_name = "NUM")]
+    pub accounts: Option<u64>,
 
     /// The balance of every dev account in Ether.
-    #[arg(long, default_value = "10000", value_name = "NUM")]
-    pub balance: u64,
+    ///
+    /// Can also be set in `foundry.toml` under `[anvil]`. CLI flags take precedence.
+    #[arg(long, value_name = "NUM")]
+    pub balance: Option<u64>,
 
     /// The timestamp of the genesis block.
     #[arg(long, value_name = "NUM")]
@@ -89,8 +95,10 @@ pub struct NodeArgs {
     pub block_time: Option<Duration>,
 
     /// Slots in an epoch
-    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
-    pub slots_in_an_epoch: u64,
+    ///
+    /// Can also be set in `foundry.toml` under `[anvil]`. CLI flags take precedence.
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH")]
+    pub slots_in_an_epoch: Option<u64>,
 
     /// Writes output of `anvil` as json to user-specified file.
     #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
@@ -104,19 +112,22 @@ pub struct NodeArgs {
     pub mixed_mining: bool,
 
     /// The hosts the server will listen on.
+    ///
+    /// Can also be set in `foundry.toml` under `[anvil]`. CLI flags take precedence.
     #[arg(
         long,
         value_name = "IP_ADDR",
         env = "ANVIL_IP_ADDR",
-        default_value = "127.0.0.1",
         help_heading = "Server options",
         value_delimiter = ','
     )]
-    pub host: Vec<IpAddr>,
+    pub host: Option<Vec<IpAddr>>,
 
     /// How transactions are sorted in the mempool.
-    #[arg(long, default_value = "fees")]
-    pub order: TransactionOrder,
+    ///
+    /// Can also be set in `foundry.toml` under `[anvil]`. CLI flags take precedence.
+    #[arg(long)]
+    pub order: Option<TransactionOrder>,
 
     /// Initialize the genesis block with the given `genesis.json` file.
     #[arg(long, value_name = "PATH", value_parser= read_genesis_file)]
@@ -220,13 +231,103 @@ const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
 
 impl NodeArgs {
     pub fn into_node_config(self) -> eyre::Result<NodeConfig> {
-        let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
-        let compute_units_per_second =
-            if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
+        // Load [anvil] from foundry.toml (if in a foundry project)
+        let anvil_config = Config::load_with_providers(FigmentProviders::Anvil)?.anvil;
 
-        let hardfork = match &self.hardfork {
+        // Build account generator before destructuring self.
+        // CLI mnemonic flags (--mnemonic, --mnemonic-random, --mnemonic-seed-unsafe) suppress
+        // config mnemonic to avoid surprising override behavior.
+        let has_cli_mnemonic = self.mnemonic.is_some()
+            || self.mnemonic_random.is_some()
+            || self.mnemonic_seed.is_some();
+        let config_mnemonic = if has_cli_mnemonic { None } else { anvil_config.mnemonic.clone() };
+        let config_derivation_path =
+            if has_cli_mnemonic { None } else { anvil_config.derivation_path.clone() };
+
+        let merged_chain_id = self
+            .evm
+            .chain_id
+            .unwrap_or_else(|| anvil_config.chain_id.map(Chain::from).unwrap_or(CHAIN_ID.into()));
+
+        let merged_accounts = self.accounts.unwrap_or(anvil_config.accounts);
+        let account_generator = self.account_generator(
+            merged_accounts,
+            merged_chain_id,
+            &config_mnemonic,
+            &config_derivation_path,
+        );
+
+        // Destructure self to take ownership of all fields.
+        let Self {
+            port,
+            accounts: _,
+            balance,
+            timestamp,
+            number,
+            mnemonic: _,
+            mnemonic_random: _,
+            mnemonic_seed: _,
+            derivation_path: _,
+            hardfork,
+            block_time,
+            slots_in_an_epoch,
+            config_out,
+            no_mining,
+            mixed_mining,
+            host,
+            order,
+            init,
+            state,
+            state_interval: _,
+            dump_state: _,
+            preserve_historical_states: _,
+            load_state,
+            ipc,
+            prune_history,
+            max_persisted_states,
+            transaction_block_keeper,
+            max_transactions,
+            evm,
+            server_config,
+            cache_path,
+        } = self;
+
+        // Merge CLI > config > defaults for required fields
+        let port = port.unwrap_or(anvil_config.port);
+        let balance = balance.unwrap_or(anvil_config.balance);
+        let slots_in_an_epoch = slots_in_an_epoch.unwrap_or(anvil_config.slots_in_an_epoch);
+
+        let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(balance));
+
+        // Merge host: CLI > config > default (127.0.0.1)
+        let host = host.unwrap_or_else(|| {
+            if !anvil_config.host.is_empty() {
+                anvil_config
+                    .host
+                    .iter()
+                    .map(|h| {
+                        h.parse::<IpAddr>().unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+                    })
+                    .collect()
+            } else {
+                vec![IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)]
+            }
+        });
+
+        // Merge order: CLI > config > default (fees)
+        let order = order.unwrap_or_else(|| {
+            if let Some(ref order_str) = anvil_config.order {
+                order_str.parse::<TransactionOrder>().unwrap_or(TransactionOrder::Fees)
+            } else {
+                TransactionOrder::Fees
+            }
+        });
+
+        // Merge hardfork: CLI > config
+        let hardfork_str = hardfork.or(anvil_config.hardfork);
+        let hardfork = match &hardfork_str {
             Some(hf) => {
-                if self.evm.networks.is_optimism() {
+                if evm.networks.is_optimism() {
                     Some(OpHardfork::from_str(hf)?.into())
                 } else {
                     Some(EthereumHardfork::from_str(hf)?.into())
@@ -235,71 +336,129 @@ impl NodeArgs {
             None => None,
         };
 
+        // Merge block_time: CLI > config
+        let block_time = block_time.or_else(|| anvil_config.block_time.map(Duration::from_secs));
+
+        // Merge bool flags: CLI || config
+        let no_mining = no_mining || anvil_config.no_mining;
+        let mixed_mining = mixed_mining || anvil_config.mixed_mining;
+
+        // Merge EVM options: CLI > config
+        let gas_limit = evm.gas_limit.or(anvil_config.gas_limit.map(|g| g.0));
+        let disable_block_gas_limit =
+            evm.disable_block_gas_limit || anvil_config.disable_block_gas_limit;
+        let enable_tx_gas_limit = evm.enable_tx_gas_limit || anvil_config.enable_tx_gas_limit;
+        let gas_price = evm.gas_price.or(anvil_config.gas_price);
+        let block_base_fee_per_gas =
+            evm.block_base_fee_per_gas.or(anvil_config.block_base_fee_per_gas);
+        let disable_min_priority_fee =
+            evm.disable_min_priority_fee || anvil_config.disable_min_priority_fee;
+        let no_storage_caching = evm.no_storage_caching || anvil_config.no_storage_caching;
+        let steps_tracing = evm.steps_tracing || anvil_config.steps_tracing;
+        let disable_console_log = evm.disable_console_log || anvil_config.disable_console_log;
+        let print_traces = evm.print_traces || anvil_config.print_traces;
+        let auto_impersonate = evm.auto_impersonate || anvil_config.auto_impersonate;
+        let disable_default_create2_deployer =
+            evm.disable_default_create2_deployer || anvil_config.disable_default_create2_deployer;
+        let disable_pool_balance_checks =
+            evm.disable_pool_balance_checks || anvil_config.disable_pool_balance_checks;
+        let no_rate_limit = evm.no_rate_limit || anvil_config.no_rate_limit;
+
+        // Merge Option<T> fields: CLI > config
+        let code_size_limit = evm.code_size_limit.or(anvil_config.code_size_limit);
+        let disable_code_size_limit =
+            evm.disable_code_size_limit || anvil_config.disable_code_size_limit;
+        let memory_limit = evm.memory_limit.or(anvil_config.memory_limit);
+        let max_transactions = max_transactions.or(anvil_config.max_transactions);
+        let prune_history = prune_history.or(anvil_config.prune_history);
+        let max_persisted_states = max_persisted_states.or(anvil_config.max_persisted_states);
+        let transaction_block_keeper =
+            transaction_block_keeper.or(anvil_config.transaction_block_keeper);
+        let cache_path = cache_path.or(anvil_config.cache_path);
+        let ipc_merged: Option<Option<String>> =
+            if ipc.is_some() { ipc } else { anvil_config.ipc.map(Some) };
+
+        // Merge fork settings: CLI > config
+        let fork_url_str = evm.fork_url.as_ref().map(|f| f.url.clone()).or(anvil_config.fork_url);
+        let fork_block = evm.fork_url.as_ref().and_then(|f| f.block);
+        let fork_block_number = evm.fork_block_number.or(anvil_config.fork_block_number);
+        let fork_headers =
+            if evm.fork_headers.is_empty() { anvil_config.fork_headers } else { evm.fork_headers };
+        let fork_chain_id = evm.fork_chain_id.or(anvil_config.fork_chain_id.map(Chain::from));
+        let fork_request_timeout = evm.fork_request_timeout.or(anvil_config.fork_request_timeout);
+        let fork_request_retries = evm.fork_request_retries.or(anvil_config.fork_request_retries);
+        let fork_retry_backoff = evm.fork_retry_backoff.or(anvil_config.fork_retry_backoff);
+        let compute_units_per_second = if no_rate_limit {
+            Some(u64::MAX)
+        } else {
+            evm.compute_units_per_second.or(anvil_config.compute_units_per_second)
+        };
+
         Ok(NodeConfig::default()
-            .with_gas_limit(self.evm.gas_limit)
-            .disable_block_gas_limit(self.evm.disable_block_gas_limit)
-            .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
-            .with_gas_price(self.evm.gas_price)
+            .with_gas_limit(gas_limit)
+            .disable_block_gas_limit(disable_block_gas_limit)
+            .enable_tx_gas_limit(enable_tx_gas_limit)
+            .with_gas_price(gas_price)
             .with_hardfork(hardfork)
-            .with_blocktime(self.block_time)
-            .with_no_mining(self.no_mining)
-            .with_mixed_mining(self.mixed_mining, self.block_time)
-            .with_account_generator(self.account_generator())?
+            .with_blocktime(block_time)
+            .with_no_mining(no_mining)
+            .with_mixed_mining(mixed_mining, block_time)
+            .with_account_generator(account_generator)?
             .with_genesis_balance(genesis_balance)
-            .with_genesis_timestamp(self.timestamp)
-            .with_genesis_block_number(self.number)
-            .with_port(self.port)
-            .with_fork_choice(match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
+            .with_genesis_timestamp(timestamp)
+            .with_genesis_block_number(number)
+            .with_port(port)
+            .with_fork_choice(match (fork_block_number, evm.fork_transaction_hash) {
                 (Some(block), None) => Some(ForkChoice::Block(block)),
                 (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
-                _ => self
-                    .evm
-                    .fork_url
-                    .as_ref()
-                    .and_then(|f| f.block)
-                    .map(|num| ForkChoice::Block(num as i128)),
+                _ => fork_block.map(|num| ForkChoice::Block(num as i128)),
             })
-            .with_fork_headers(self.evm.fork_headers)
-            .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
-            .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
-            .fork_request_retries(self.evm.fork_request_retries)
-            .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
+            .with_fork_headers(fork_headers)
+            .with_fork_chain_id(fork_chain_id.map(u64::from).map(U256::from))
+            .fork_request_timeout(fork_request_timeout.map(Duration::from_millis))
+            .fork_request_retries(fork_request_retries)
+            .fork_retry_backoff(fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
-            .with_eth_rpc_url(self.evm.fork_url.map(|fork| fork.url))
-            .with_base_fee(self.evm.block_base_fee_per_gas)
-            .disable_min_priority_fee(self.evm.disable_min_priority_fee)
-            .with_no_storage_caching(self.evm.no_storage_caching)
-            .with_server_config(self.server_config)
-            .with_host(self.host)
+            .with_eth_rpc_url(fork_url_str)
+            .with_base_fee(block_base_fee_per_gas)
+            .disable_min_priority_fee(disable_min_priority_fee)
+            .with_no_storage_caching(no_storage_caching)
+            .with_server_config(server_config)
+            .with_host(host)
             .set_silent(shell::is_quiet())
-            .set_config_out(self.config_out)
-            .with_chain_id(self.evm.chain_id)
-            .with_transaction_order(self.order)
-            .with_genesis(self.init)
-            .with_steps_tracing(self.evm.steps_tracing)
-            .with_print_logs(!self.evm.disable_console_log)
-            .with_print_traces(self.evm.print_traces)
-            .with_auto_impersonate(self.evm.auto_impersonate)
-            .with_ipc(self.ipc)
-            .with_code_size_limit(self.evm.code_size_limit)
-            .disable_code_size_limit(self.evm.disable_code_size_limit)
-            .set_pruned_history(self.prune_history)
-            .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
-            .with_transaction_block_keeper(self.transaction_block_keeper)
-            .with_max_transactions(self.max_transactions)
-            .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(self.evm.networks)
-            .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
-            .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
-            .with_slots_in_an_epoch(self.slots_in_an_epoch)
-            .with_memory_limit(self.evm.memory_limit)
-            .with_cache_path(self.cache_path))
+            .set_config_out(config_out)
+            .with_chain_id(Some(merged_chain_id))
+            .with_transaction_order(order)
+            .with_genesis(init)
+            .with_steps_tracing(steps_tracing)
+            .with_print_logs(!disable_console_log)
+            .with_print_traces(print_traces)
+            .with_auto_impersonate(auto_impersonate)
+            .with_ipc(ipc_merged)
+            .with_code_size_limit(code_size_limit)
+            .disable_code_size_limit(disable_code_size_limit)
+            .set_pruned_history(prune_history)
+            .with_init_state(load_state.or_else(|| state.and_then(|s| s.state)))
+            .with_transaction_block_keeper(transaction_block_keeper)
+            .with_max_transactions(max_transactions)
+            .with_max_persisted_states(max_persisted_states)
+            .with_networks(evm.networks)
+            .with_disable_default_create2_deployer(disable_default_create2_deployer)
+            .with_disable_pool_balance_checks(disable_pool_balance_checks)
+            .with_slots_in_an_epoch(slots_in_an_epoch)
+            .with_memory_limit(memory_limit)
+            .with_cache_path(cache_path))
     }
 
-    fn account_generator(&self) -> AccountGenerator {
-        let mut generator = AccountGenerator::new(self.accounts as usize)
-            .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm.chain_id.unwrap_or(CHAIN_ID.into()));
+    fn account_generator(
+        &self,
+        accounts: u64,
+        chain_id: Chain,
+        config_mnemonic: &Option<String>,
+        config_derivation_path: &Option<String>,
+    ) -> AccountGenerator {
+        let mut generator =
+            AccountGenerator::new(accounts as usize).phrase(DEFAULT_MNEMONIC).chain_id(chain_id);
         if let Some(ref mnemonic) = self.mnemonic {
             generator = generator.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
@@ -308,8 +467,6 @@ impl NodeArgs {
                 Ok(mnemonic) => mnemonic.to_phrase(),
                 Err(err) => {
                     warn!(target: "node", ?count, %err, "failed to generate mnemonic, falling back to 12-word random mnemonic");
-                    // Fallback: generate a valid 12-word random mnemonic instead of using
-                    // DEFAULT_MNEMONIC
                     Mnemonic::<English>::new_with_count(&mut rng, 12)
                         .expect("valid default word count")
                         .to_phrase()
@@ -320,8 +477,12 @@ impl NodeArgs {
             let mut seed = StdRng::seed_from_u64(seed);
             let mnemonic = Mnemonic::<English>::new(&mut seed).to_phrase();
             generator = generator.phrase(mnemonic);
+        } else if let Some(mnemonic) = config_mnemonic {
+            generator = generator.phrase(mnemonic);
         }
         if let Some(ref derivation) = self.derivation_path {
+            generator = generator.derivation_path(derivation);
+        } else if let Some(derivation) = config_derivation_path {
             generator = generator.derivation_path(derivation);
         }
         generator
@@ -812,7 +973,7 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, net::Ipv4Addr};
+    use std::env;
 
     #[test]
     fn test_parse_fork_url() {
@@ -933,31 +1094,31 @@ mod tests {
     #[test]
     fn can_parse_host() {
         let args = NodeArgs::parse_from(["anvil"]);
-        assert_eq!(args.host, vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+        assert_eq!(args.host, None);
 
         let args = NodeArgs::parse_from([
             "anvil", "--host", "::1", "--host", "1.1.1.1", "--host", "2.2.2.2",
         ]);
         assert_eq!(
             args.host,
-            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+            Some(["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec())
         );
 
         let args = NodeArgs::parse_from(["anvil", "--host", "::1,1.1.1.1,2.2.2.2"]);
         assert_eq!(
             args.host,
-            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+            Some(["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec())
         );
 
         unsafe { env::set_var("ANVIL_IP_ADDR", "1.1.1.1") };
         let args = NodeArgs::parse_from(["anvil"]);
-        assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
+        assert_eq!(args.host, Some(vec!["1.1.1.1".parse::<IpAddr>().unwrap()]));
 
         unsafe { env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2") };
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(
             args.host,
-            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+            Some(["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec())
         );
     }
 }

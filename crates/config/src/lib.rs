@@ -85,6 +85,9 @@ pub mod error;
 use error::ExtractConfigError;
 pub use error::SolidityErrorCode;
 
+pub mod anvil;
+pub use anvil::AnvilConfig;
+
 pub mod doc;
 pub use doc::DocConfig;
 
@@ -490,6 +493,8 @@ pub struct Config {
     pub lint: LinterConfig,
     /// Configuration for `forge doc`
     pub doc: DocConfig,
+    /// Configuration for `anvil`
+    pub anvil: AnvilConfig,
     /// Configuration for `forge bind-json`
     pub bind_json: BindJsonConfig,
     /// Configures the permissions of cheat codes that touch the file system.
@@ -708,6 +713,7 @@ impl Config {
         "soldeer",
         "vyper",
         "bind_json",
+        "anvil",
     ];
 
     pub(crate) fn is_standalone_section<T: ?Sized + PartialEq<str>>(section: &T) -> bool {
@@ -2630,6 +2636,7 @@ impl Default for Config {
             fmt: Default::default(),
             lint: Default::default(),
             doc: Default::default(),
+            anvil: Default::default(),
             bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
@@ -4384,6 +4391,96 @@ mod tests {
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.runs, 500);
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_standalone_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [anvil]
+                port = 9999
+                gas_limit = "18446744073709551615"
+                no_mining = true
+                fork_url = "https://eth.llamarpc.com"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 9999);
+            assert_eq!(config.anvil.gas_limit, Some(GasLimit(u64::MAX)));
+            assert!(config.anvil.no_mining);
+            assert_eq!(config.anvil.fork_url, Some("https://eth.llamarpc.com".to_string()));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_profile_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [anvil]
+                port = 9999
+
+                [profile.ci.anvil]
+                port = 8888
+            ",
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 9999);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 8888);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_env_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [anvil]
+                port = 9999
+            ",
+            )?;
+
+            jail.set_env("FOUNDRY_ANVIL_PORT", "7777");
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 7777);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_anvil_config_defaults() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                src = 'src'
+            ",
+            )?;
+            let config = Config::load().unwrap();
+            assert_eq!(config.anvil.port, 8545);
+            assert_eq!(config.anvil.accounts, 10);
+            assert_eq!(config.anvil.balance, 10000);
+            assert_eq!(config.anvil.slots_in_an_epoch, 32);
+            assert!(!config.anvil.no_mining);
+            assert!(config.anvil.gas_limit.is_none());
+            assert!(config.anvil.fork_url.is_none());
             Ok(())
         });
     }
