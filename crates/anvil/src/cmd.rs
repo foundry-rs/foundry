@@ -147,6 +147,7 @@ pub struct NodeArgs {
     /// Dump the state and block environment of chain on exit to the given file.
     ///
     /// If the value is a directory, the state will be written to `<VALUE>/state.json`.
+    /// If the value ends in `.gz`, the state will be gzip-compressed.
     #[arg(long, value_name = "PATH", conflicts_with = "init")]
     pub dump_state: Option<PathBuf>,
 
@@ -637,7 +638,7 @@ impl AnvilEvmArgs {
 }
 
 /// Helper type to periodically dump the state of the chain to disk
-struct PeriodicStateDumper {
+pub struct PeriodicStateDumper {
     in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
     api: EthApi,
     dump_state: Option<PathBuf>,
@@ -646,7 +647,7 @@ struct PeriodicStateDumper {
 }
 
 impl PeriodicStateDumper {
-    fn new(
+    pub fn new(
         api: EthApi,
         dump_state: Option<PathBuf>,
         interval: Duration,
@@ -664,7 +665,7 @@ impl PeriodicStateDumper {
         Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
-    async fn dump(&self) {
+    pub async fn dump(&self) {
         if let Some(state) = self.dump_state.clone() {
             Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
         }
@@ -675,7 +676,12 @@ impl PeriodicStateDumper {
         trace!(path=?dump_state, "Dumping state on shutdown");
         match api.serialized_state(preserve_historical_states).await {
             Ok(state) => {
-                if let Err(err) = foundry_common::fs::write_json_file(&dump_state, &state) {
+                let result = if dump_state.extension().is_some_and(|ext| ext == "gz") {
+                    foundry_common::fs::write_json_gzip_file(&dump_state, &state)
+                } else {
+                    foundry_common::fs::write_json_file(&dump_state, &state)
+                };
+                if let Err(err) = result {
                     error!(?err, "Failed to dump state");
                 } else {
                     trace!(path=?dump_state, "Dumped state on shutdown");
