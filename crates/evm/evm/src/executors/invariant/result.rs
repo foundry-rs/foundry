@@ -177,10 +177,11 @@ pub(crate) fn can_continue(
             invariant_data.failures.error = Some(InvariantFuzzError::Revert(case_data));
 
             return Ok(RichInvariantResults::new(false, None));
-        } else if call_result.reverted && !is_optimization {
-            // If we don't fail test on revert then remove last reverted call from inputs.
-            // In optimization mode, we keep reverted calls to preserve warp/roll values
-            // for correct replay during shrinking.
+        } else if call_result.reverted && !invariant_config.has_delay() {
+            // When max_block_delay/max_time_delay are set, keep reverted calls
+            // to preserve warp/roll values for correct replay during shrinking.
+            // When delays are not set, warp/roll are always None, so we can
+            // safely remove reverted calls.
             invariant_run.inputs.pop();
         }
     }

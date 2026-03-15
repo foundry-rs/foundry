@@ -1653,46 +1653,39 @@ contract InvariantWarpAndRoll {
     }
 
     function invariant_warp() public view {
-        require(block.number < 200000, "max block");
+        require(block.timestamp < 500000, "max timestamp");
     }
 
     /// forge-config: default.invariant.show_solidity = true
     function invariant_roll() public view {
-        require(block.timestamp < 500000, "max timestamp");
+        require(block.number < 200000, "max block");
     }
 }
 "#,
     );
 
     cmd.args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
-[FAIL: max block]
-	[Sequence] (original: 6, shrunk: 6)
-		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
+...
+[FAIL: max timestamp]
+	[Sequence] (original: 5, shrunk: 5)
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[500000 [5e5]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
-		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=218105 roll=17834 calldata=setNumber(uint256) args=[24752675372815722001736610830 [2.475e28]]
  invariant_warp() (runs: 0, calls: 0, reverts: 0)
 ...
 
 "#]]);
 
     cmd.forge_fuse().args(["test", "--mt", "invariant_roll"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
-
-Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
-[FAIL: max timestamp]
-	[Sequence] (original: 5, shrunk: 5)
+...
+[FAIL: max block]
+	[Sequence] (original: 6, shrunk: 6)
 		vm.warp(block.timestamp + 6280);
 		vm.roll(block.number + 21461);
 		vm.prank([..]);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(200000);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(500000);
 		vm.warp(block.timestamp + 92060);
 		vm.roll(block.number + 51816);
 		vm.prank([..]);
@@ -1709,6 +1702,10 @@ Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
 		vm.roll(block.number + 24864);
 		vm.prank([..]);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+		vm.warp(block.timestamp + 218105);
+		vm.roll(block.number + 17834);
+		vm.prank([..]);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(24752675372815722001736610830);
  invariant_roll() (runs: 0, calls: 0, reverts: 0)
 ...
 
@@ -2001,4 +1998,91 @@ contract InvariantOptimizeWarpTest is Test {
  invariant_optimize_max_value() (best: 324962, runs: 10, calls: 150)
 ...
 "#]]);
+});
+
+// Test that shrunk sequence preserves warp/roll from removed calls.
+// This is a regression test for https://github.com/foundry-rs/foundry/issues/13214
+// The testRepro demonstrates that the generated repro fails with the same error as the invariant.
+forgetest_init!(invariant_shrink_preserves_warp_roll, |prj, cmd| {
+    prj.add_test(
+        "InvariantRollWarpShrink.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Roll {
+    uint256 public number;
+
+    function increment() public {
+        require(block.number > 50000, "wrong block");
+        number++;
+    }
+}
+
+contract Warp {
+    uint256 public number;
+
+    function increment() public {
+        require(block.timestamp > 500000, "wrong timestamp");
+        number++;
+    }
+}
+
+contract InvariantRoll is Test {
+    Roll public roll;
+
+    function setUp() public {
+        roll = new Roll();
+    }
+
+    /// forge-config: default.fuzz.seed = "119"
+    /// forge-config: default.invariant.max_block_delay = 60480
+    /// forge-config: default.invariant.show_solidity = true
+    function invariant_roll() public view {
+        require(roll.number() == 0, "number is not zero");
+    }
+}
+
+
+contract InvariantWarp is Test {
+    Warp public warp;
+
+    function setUp() public {
+        warp = new Warp();
+    }
+
+    /// forge-config: default.fuzz.seed = "119"
+    /// forge-config: default.invariant.max_time_delay = 604800
+    /// forge-config: default.invariant.show_solidity = true
+    function invariant_warp() public view {
+        require(warp.number() == 0, "max time");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_roll"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: number is not zero]
+	[Sequence] (original: 3, shrunk: 1)
+		vm.roll(block.number + 52068);
+		vm.prank(0x000000000000000000000000000000000000133a);
+		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+ invariant_roll() (runs: 0, calls: 0, reverts: 2)
+...
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: max time]
+	[Sequence] (original: 3, shrunk: 1)
+		vm.warp(block.timestamp + 656868);
+		vm.prank(0x00000000000000000000000000000000000012d2);
+		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+ invariant_warp() (runs: 0, calls: 0, reverts: 2)
+...
+
+"#
+    ]]);
 });

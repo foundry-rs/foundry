@@ -794,6 +794,7 @@ impl<'a> FunctionRunner<'a> {
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
                 invariant_contract.call_after_invariant,
+                invariant_config.has_delay(),
             ) && !success
             {
                 let warn = format!(

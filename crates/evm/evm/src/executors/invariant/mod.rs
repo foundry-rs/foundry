@@ -516,9 +516,11 @@ impl<'a> InvariantExecutor<'a> {
                                 invariant_test.test_data.failures.error =
                                     Some(InvariantFuzzError::Revert(case_data));
                                 result::RichInvariantResults::new(false, None)
-                            } else if !invariant_contract.is_optimization() {
-                                // In optimization mode, keep reverted calls to preserve
-                                // warp/roll values for correct replay during shrinking.
+                            } else if !self.config.has_delay() {
+                                // When max_block_delay/max_time_delay are set, keep reverted calls
+                                // to preserve warp/roll values for correct replay during shrinking.
+                                // When delays are not set, warp/roll are always None, so we can
+                                // safely remove reverted calls.
                                 current_run.inputs.pop();
                                 result::RichInvariantResults::new(true, None)
                             } else {
