@@ -46,6 +46,7 @@ alloy-provider = { workspace = true, features = [
     "ipc",
     "trace-api",
     "txpool-api",
+    "debug-api",
 ] }
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
