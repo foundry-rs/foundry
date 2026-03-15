@@ -3,13 +3,14 @@
 use axum::{Router, routing::get};
 
 use crate::eth::EthApi;
+use foundry_primitives::FoundryNetwork;
 
 mod error;
 mod handlers;
 mod utils;
 
 /// Configures an [`axum::Router`] that handles Beacon REST API calls.
-pub fn router(api: EthApi) -> Router {
+pub fn router(api: EthApi<FoundryNetwork>) -> Router {
     Router::new()
         .route("/eth/v1/beacon/blob_sidecars/{block_id}", get(handlers::handle_get_blob_sidecars))
         .route("/eth/v1/beacon/blobs/{block_id}", get(handlers::handle_get_blobs))

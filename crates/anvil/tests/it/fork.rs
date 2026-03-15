@@ -24,6 +24,7 @@ use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::Et
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
+use foundry_primitives::FoundryNetwork;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
 use std::{
@@ -41,9 +42,9 @@ const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
 /// Represents an anvil fork of an anvil node
 #[expect(unused)]
 pub struct LocalFork {
-    origin_api: EthApi,
+    origin_api: EthApi<FoundryNetwork>,
     origin_handle: NodeHandle,
-    fork_api: EthApi,
+    fork_api: EthApi<FoundryNetwork>,
     fork_handle: NodeHandle,
 }
 
@@ -1585,7 +1586,7 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let number = info.fork_config.fork_block_number.unwrap();
     assert_eq!(number, BLOCK_NUMBER);
 
-    async fn get_block_from_cache_path(api: &mut EthApi) -> u64 {
+    async fn get_block_from_cache_path(api: &mut EthApi<FoundryNetwork>) -> u64 {
         let db = api.backend.get_db().read().await;
         let cache_path = db.maybe_inner().unwrap().cache().cache_path().unwrap();
         cache_path
