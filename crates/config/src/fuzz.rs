@@ -71,16 +71,25 @@ pub struct FuzzDictionaryConfig {
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
     ///
     /// This limit is put in place to prevent memory blowup.
-    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
+    #[serde(
+        deserialize_with = "crate::deserialize_usize_or_max",
+        serialize_with = "crate::serialize_usize_or_max"
+    )]
     pub max_fuzz_dictionary_addresses: usize,
     /// How many values to record at most.
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
-    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
+    #[serde(
+        deserialize_with = "crate::deserialize_usize_or_max",
+        serialize_with = "crate::serialize_usize_or_max"
+    )]
     pub max_fuzz_dictionary_values: usize,
     /// How many literal values to seed from the AST, at most.
     ///
     /// This value is independent from the max amount of addresses and values.
-    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
+    #[serde(
+        deserialize_with = "crate::deserialize_usize_or_max",
+        serialize_with = "crate::serialize_usize_or_max"
+    )]
     pub max_fuzz_dictionary_literals: usize,
 }
 
