@@ -11,7 +11,7 @@ use foundry_config::{
     find_project_root, remappings_from_env_var,
 };
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{ffi::OsStr, path::PathBuf};
 
 /// Common arguments for a project's paths.
 #[derive(Clone, Debug, Default, Serialize, Parser)]
@@ -58,7 +58,12 @@ pub struct ProjectPathOpts {
     pub hardhat: bool,
 
     /// Path to the config file.
-    #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILE")]
+    #[arg(
+        long,
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE",
+        value_parser = parse_config_path
+    )]
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
 }
@@ -87,6 +92,42 @@ impl ProjectPathOpts {
             remappings.extend(env_remappings.expect("Failed to parse env var remappings"));
         }
         remappings
+    }
+}
+
+/// Parses and validates `--config-path`.
+fn parse_config_path(path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err(format!("config-path `{}` does not exist", path.display()));
+    }
+    if path.file_name() != Some(OsStr::new(Config::FILE_NAME)) {
+        return Err("the config-path must be a path to a foundry.toml file".to_string());
+    }
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_config_path;
+    use foundry_config::Config;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parse_config_path_rejects_nonexistent_path() {
+        let path = PathBuf::from("/definitely/nonexistent/path/foundry.toml");
+        let err = parse_config_path(path.to_str().expect("utf8 path")).unwrap_err();
+        assert!(err.contains("does not exist"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_config_path_rejects_non_foundry_toml_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().with_file_name("not-foundry.toml");
+        std::fs::write(&path, "").unwrap();
+
+        let err = parse_config_path(path.to_str().expect("utf8 path")).unwrap_err();
+        assert!(err.contains(Config::FILE_NAME), "error should mention required file name: {err}");
     }
 }
 
