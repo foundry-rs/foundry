@@ -25,6 +25,8 @@ pub struct FormatterConfig {
     pub hex_underscore: HexUnderscore,
     /// Style of single line blocks in statements
     pub single_line_statement_blocks: SingleLineBlockStyle,
+    /// Style of opening braces for code blocks
+    pub brace_style: BraceStyle,
     /// Print space in state variable, function and modifier `override` attribute
     pub override_spacing: bool,
     /// Wrap comments on `line_length` reached
@@ -158,6 +160,25 @@ pub enum SingleLineBlockStyle {
     Multi,
 }
 
+/// Style of opening braces for code blocks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BraceStyle {
+    /// Place the opening brace on the same line as the header.
+    #[default]
+    #[serde(alias = "kr", alias = "k_r", alias = "attach")]
+    SameLine,
+    /// Place the opening brace on its own line.
+    Allman,
+}
+
+impl BraceStyle {
+    #[inline]
+    pub fn is_allman(self) -> bool {
+        matches!(self, Self::Allman)
+    }
+}
+
 /// Style of function header in case it doesn't fit
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -259,6 +280,7 @@ impl Default for FormatterConfig {
             number_underscore: NumberUnderscore::default(),
             hex_underscore: HexUnderscore::default(),
             single_line_statement_blocks: SingleLineBlockStyle::default(),
+            brace_style: BraceStyle::default(),
             override_spacing: false,
             wrap_comments: false,
             ignore: vec![],

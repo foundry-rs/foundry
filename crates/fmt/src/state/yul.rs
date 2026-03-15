@@ -56,22 +56,31 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::If(expr, stmts) => {
                 self.print_word("if "); // 3 chars
                 self.print_yul_expr(expr);
-                self.nbsp(); // 1 char
+                if !self.uses_allman_braces() {
+                    self.nbsp(); // 1 char
+                }
                 self.print_yul_block(stmts, span, false, 4 + self.estimate_size(expr.span));
             }
             yul::StmtKind::For(yul::StmtFor { init, cond, step, body }) => {
                 self.ibox(0);
 
-                self.print_word("for "); // 4 chars
+                self.print_word("for"); // 3 chars
+                if !self.uses_allman_braces() {
+                    self.nbsp();
+                }
                 self.print_yul_block(init, init.span, false, 4);
 
                 self.space();
                 self.print_yul_expr(cond);
 
-                self.space();
+                if !self.uses_allman_braces() {
+                    self.space();
+                }
                 self.print_yul_block(step, step.span, false, 0);
 
-                self.space();
+                if !self.uses_allman_braces() {
+                    self.space();
+                }
                 self.print_yul_block(body, body.span, false, 0);
 
                 self.end();
@@ -91,13 +100,15 @@ impl<'ast> State<'_, 'ast> {
                         );
                         self.print_word("case ");
                         self.print_lit_yul(constant);
-                        self.nbsp();
                     } else {
                         self.print_comments(
                             body.span.lo(),
                             CommentConfig::default().mixed_prev_space(),
                         );
-                        self.print_word("default ");
+                        self.print_word("default");
+                    }
+                    if !self.uses_allman_braces() {
+                        self.nbsp();
                     }
                     self.print_yul_block(body, *span, false, 0);
 
@@ -127,9 +138,11 @@ impl<'ast> State<'_, 'ast> {
                     get_span!(),
                     ListFormat::consistent(),
                 );
-                self.nbsp();
                 let has_returns = !returns.is_empty();
-                let skip_opening_brace = has_returns;
+                let skip_opening_brace = has_returns && !self.uses_allman_braces();
+                if has_returns || !self.uses_allman_braces() {
+                    self.nbsp();
+                }
                 if self.can_yul_header_params_be_inlined(func) {
                     self.neverbreak();
                 }
@@ -140,7 +153,7 @@ impl<'ast> State<'_, 'ast> {
                         returns.last().map_or(body.span.lo(), |ret| ret.span.hi()),
                         Self::print_ident,
                         get_span!(),
-                        ListFormat::yul(Some("->"), Some("{")),
+                        ListFormat::yul(Some("->"), (!self.uses_allman_braces()).then_some("{")),
                     );
                 }
                 self.end();
@@ -209,10 +222,19 @@ impl<'ast> State<'_, 'ast> {
         }
 
         if !skip_opening_brace {
+            if self.uses_allman_braces() {
+                self.force_newline_before_brace(0);
+            }
             self.print_word("{");
+            if block.is_empty() && self.uses_allman_braces() {
+                self.hardbreak();
+            }
         }
 
-        let can_inline_block = if block.len() <= 1 && !self.is_multiline_yul_block(block) {
+        let can_inline_block = if !self.uses_allman_braces()
+            && block.len() <= 1
+            && !self.is_multiline_yul_block(block)
+        {
             if self.max_space_left(prefix_len) == 0 {
                 self.estimate_size(block.span) + self.config.tab_width < self.space_left()
             } else {
