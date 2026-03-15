@@ -21,7 +21,6 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
@@ -46,15 +45,17 @@ use foundry_evm_core::{
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
+use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
-    Inspector,
+    Context, Inspector,
     bytecode::opcode as op,
     context::{
-        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, TxEnv, result::EVMError,
+        BlockEnv, Cfg, CfgEnv, ContextTr, JournalTr, Transaction, TransactionType, TxEnv,
+        result::EVMError,
     },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
@@ -64,12 +65,12 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
-    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
     cmp::max,
     collections::{BTreeMap, VecDeque},
+    fmt::Debug,
     fs::File,
     io::BufReader,
     ops::Range,
@@ -452,7 +453,7 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   cheatcode address: by default, the caller, test contract and newly deployed contracts are
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
-pub struct Cheatcodes {
+pub struct Cheatcodes<CTX: FoundryContextExt = Context<BlockEnv, TxEnv, CfgEnv>> {
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
     pub analysis: Option<CheatcodeAnalysis>,
 
@@ -460,7 +461,7 @@ pub struct Cheatcodes {
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
-    pub block: Option<BlockEnv>,
+    pub block: Option<CTX::Block>,
 
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
@@ -591,7 +592,7 @@ pub struct Cheatcodes {
     /// Used to determine whether the broadcasted call has dynamic gas limit.
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
-    pub execution_evm_version: Option<SpecId>,
+    pub execution_evm_version: Option<<CTX::Cfg as Cfg>::Spec>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
