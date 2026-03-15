@@ -1873,7 +1873,7 @@ impl SimpleCast {
             .collect::<Result<Vec<_>>>()?;
 
         let mut topics = vec![event.selector()];
-        let mut data_tokens: Vec<u8> = Vec::new();
+        let mut non_indexed_tokens: Vec<DynSolValue> = Vec::new();
 
         for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
@@ -1901,11 +1901,15 @@ impl SimpleCast {
                 }
             } else {
                 // Non-indexed parameters go into data
-                data_tokens.extend_from_slice(&token.abi_encode());
+                non_indexed_tokens.push(token);
             }
         }
 
-        Ok(LogData::new_unchecked(topics, data_tokens.into()))
+        // ABI-encode all non-indexed parameters as a tuple so that dynamic type
+        // offsets are calculated relative to the entire data segment.
+        let data = DynSolValue::Tuple(non_indexed_tokens).abi_encode();
+
+        Ok(LogData::new_unchecked(topics, data.into()))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
