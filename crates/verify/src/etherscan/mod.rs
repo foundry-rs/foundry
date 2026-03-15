@@ -23,16 +23,11 @@ use foundry_common::{abi::encode_function_args, retry::RetryError};
 use foundry_compilers::{Artifact, artifacts::BytecodeObject};
 use foundry_config::Config;
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
-use regex::Regex;
-use semver::BuildMetadata;
-use std::{fmt::Debug, sync::LazyLock};
+use std::fmt::Debug;
 
 mod flatten;
 
 mod standard_json;
-
-pub static RE_BUILD_COMMIT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
 
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -312,14 +307,9 @@ impl EtherscanVerificationProvider {
 
         let lang = args.detect_language(context);
 
-        let mut compiler_version = context.compiler_version.clone();
-        compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
-            Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
-            _ => BuildMetadata::EMPTY,
-        };
-
         let compiler_version = if matches!(lang, ContractLanguage::Vyper) {
-            format!("vyper:{}", compiler_version.to_string().split('+').next().unwrap_or("0.0.0"))
+            let version_str = context.compiler_version.to_string();
+            format!("vyper:{}", version_str.split('+').next().unwrap_or("0.0.0"))
         } else {
             format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?)
         };
