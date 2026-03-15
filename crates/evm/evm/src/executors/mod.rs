@@ -521,7 +521,7 @@ impl Executor {
     pub fn call_with_env(&self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut env, stack.as_inspector())?;
+        let result = backend.inspect(&mut env, &mut stack)?;
         convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())
     }
 
@@ -530,7 +530,7 @@ impl Executor {
     pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut stack = self.inspector().clone();
         let backend = self.backend_mut();
-        let result = backend.inspect(&mut env, stack.as_inspector())?;
+        let result = backend.inspect(&mut env, &mut stack)?;
         let mut result =
             convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);

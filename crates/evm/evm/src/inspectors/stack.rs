@@ -345,7 +345,7 @@ pub struct InspectorStackInner {
     pub script_execution_inspector: Option<Box<ScriptExecutionInspector>>,
     pub tracer: Option<Box<TracingInspector>>,
 
-    // InspectorExt and other internal data.
+    // FoundryInspectorExt and other internal data.
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -598,12 +598,6 @@ impl InspectorStack {
     #[inline(always)]
     fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_deref_mut(), inner: &mut self.inner }
-    }
-
-    /// Returns an [`InspectorExt`] using this stack's inspectors.
-    #[inline]
-    pub fn as_inspector(&mut self) -> impl InspectorExt + '_ {
-        self
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -1195,6 +1189,12 @@ impl FoundryInspectorExt for InspectorStackRefMut<'_> {
     fn create2_deployer(&self) -> Address {
         self.inner.create2_deployer
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        // InspectorStackRefMut borrows with a non-'static lifetime,
+        // so it can't be downcasted via Any.
+        None
+    }
 }
 
 impl<CTX: CheatsCtxExt> Inspector<CTX> for InspectorStack {
@@ -1252,6 +1252,10 @@ impl FoundryInspectorExt for InspectorStack {
 
     fn create2_deployer(&self) -> Address {
         self.create2_deployer
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 

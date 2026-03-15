@@ -72,7 +72,25 @@ pub trait FoundryInspectorExt {
     fn create2_deployer(&self) -> Address {
         DEFAULT_CREATE2_DEPLOYER
     }
+
+    /// Returns a mutable reference to the concrete type as `dyn Any`, for downcasting.
+    ///
+    /// Used to recover the concrete inspector type (e.g. `InspectorStack`) from a
+    /// `&mut dyn FoundryInspectorExt` trait object.
+    ///
+    /// Returns `None` for types that cannot be downcasted (e.g. non-`'static` borrows).
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any>;
 }
+
+/// Convenience extension for downcasting `dyn FoundryInspectorExt` to concrete types.
+pub trait FoundryInspectorDowncastExt: FoundryInspectorExt {
+    /// Attempts to downcast to a concrete type `T`.
+    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.as_any_mut()?.downcast_mut::<T>()
+    }
+}
+
+impl<I: FoundryInspectorExt + ?Sized> FoundryInspectorDowncastExt for I {}
 
 /// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
 ///
@@ -88,6 +106,14 @@ impl<T> InspectorExt for T where
 {
 }
 
-impl FoundryInspectorExt for NoOpInspector {}
+impl FoundryInspectorExt for NoOpInspector {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+}
 
-impl FoundryInspectorExt for AccessListInspector {}
+impl FoundryInspectorExt for AccessListInspector {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+}

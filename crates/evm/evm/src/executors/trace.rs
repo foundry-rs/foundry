@@ -28,7 +28,7 @@ impl TracingExecutor {
         create2_deployer: Address,
         state_overrides: Option<StateOverride>,
     ) -> eyre::Result<Self> {
-        let db = Backend::spawn(Some(fork))?;
+        let db = Backend::spawn(Some(fork), crate::default_evm_factory())?;
         // configures a bare version of the evm executor: no cheatcode and log_collector inspector
         // is enabled, tracing will be enabled only for the targeted transaction
         let mut executor = ExecutorBuilder::new()

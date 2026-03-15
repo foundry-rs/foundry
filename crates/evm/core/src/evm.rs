@@ -1,10 +1,11 @@
 use std::{
+    fmt::Debug,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
 use crate::{
-    Env, FoundryContextExt, InspectorExt,
+    Env, FoundryContextExt, FoundryInspectorExt, InspectorExt,
     backend::{DatabaseExt, FoundryJournalExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
@@ -77,6 +78,39 @@ fn get_precompiles(spec: SpecId) -> PrecompilesMap {
         }
         .precompiles,
     )
+}
+
+/// Factory trait for constructing and running network-specific EVMs.
+///
+/// This abstracts over the concrete EVM type (`FoundryEvm` for Eth, `TempoEvm` for Tempo, etc.)
+/// so that `Backend` and `CowBackend` don't need to know which network's EVM they're using.
+///
+/// The inspector parameter is `&mut dyn FoundryInspectorExt` — network-agnostic. Each factory
+/// implementation uses [`FoundryInspectorExt::as_any_mut`] to downcast to its network-specific
+/// concrete inspector type (e.g. `InspectorStack` for Eth).
+pub trait FoundryEvmFactory: Debug + Send + Sync {
+    /// Creates a network-specific EVM, runs a transaction, and returns the result.
+    ///
+    /// The `env` is updated in-place with any changes the EVM made (e.g. cheatcodes modifying
+    /// block/tx fields).
+    fn inspect(
+        &self,
+        db: &mut dyn DatabaseExt,
+        env: &mut Env,
+        inspector: &mut dyn FoundryInspectorExt,
+    ) -> eyre::Result<ResultAndState>;
+
+    /// Like [`inspect`](Self::inspect) but sets the journal depth before transacting.
+    ///
+    /// Used by `transact_from_tx` and `commit_transaction` which replay historical transactions
+    /// inside an already-running execution context.
+    fn transact_with_depth(
+        &self,
+        db: &mut dyn DatabaseExt,
+        env: Env,
+        inspector: &mut dyn FoundryInspectorExt,
+        depth: usize,
+    ) -> eyre::Result<ResultAndState>;
 }
 
 /// Get the call inputs for the CREATE2 factory.

@@ -101,6 +101,10 @@ impl FoundryInspectorExt for LogCollector {
     fn console_log(&mut self, msg: &str) {
         self.push_msg(msg);
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 /// Creates a `console.log(string)` event.
