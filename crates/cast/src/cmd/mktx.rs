@@ -58,9 +58,14 @@ pub struct MakeTxArgs {
     #[arg(long)]
     raw_unsigned: bool,
 
+
     /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
     ethsign: bool,
+
+    /// Generate a raw RLP-encoded signed transaction using the provided signature.
+    #[arg(long, conflicts_with_all = &["raw_unsigned", "ethsign"])]
+    signature: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -95,7 +100,7 @@ impl MakeTxArgs {
         N::UnsignedTx: SignableTransaction<Signature>,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
+        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign, signature } = self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
@@ -157,6 +162,7 @@ impl MakeTxArgs {
             return Ok(());
         }
 
+
         if ethsign {
             // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
             // unlocked accounts.
@@ -166,6 +172,32 @@ impl MakeTxArgs {
             sh_println!("{signed_tx}")?;
             return Ok(());
         }
+
+        if let Some(sig) = signature {
+            use std::str::FromStr;
+            let signature = Signature::from_str(&sig).map_err(|e| eyre::eyre!("Failed to parse signature: {e}"))?;
+            
+            // If from is not provided, try to recover it from the signature?
+            // Actually, we need to build the tx first, but building it might require `from` for nonce/gas.
+            let from = eth.wallet.from.unwrap_or(Address::ZERO);
+
+            let (tx, _) = tx_builder.build(from).await?;
+            let unsigned_tx = tx.build_unsigned()?;
+            
+            // Check if recovered address matches from, if it was explicitly provided
+            let sighash = unsigned_tx.signature_hash();
+            if let Ok(recovered) = signature.recover_address_from_prehash(&sighash) {
+                if eth.wallet.from.is_some() && recovered != from {
+                    sh_warn!("Recovered address {recovered} does not match provided from address {from}")?;
+                }
+            }
+
+            let signed_tx = N::TxEnvelope::from(unsigned_tx.into_signed(signature));
+            let raw_tx = hex::encode_prefixed(signed_tx.encoded_2718());
+            sh_println!("{raw_tx}")?;
+            return Ok(());
+        }
+
 
         // Default to using the local signer.
         // Get the signer from the wallet, and fail if it can't be constructed.
