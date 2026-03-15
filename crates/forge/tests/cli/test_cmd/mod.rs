@@ -2360,6 +2360,12 @@ Error: 2 tests matched your criteria, but exactly 1 test must match in order to 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
+    cmd.forge_fuse().args(["test", "--evm-profile"]).assert_failure().stderr_eq(str![[r#"
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate an EVM profile.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
 });
 
 // Test a script that calls vm.rememberKeys
