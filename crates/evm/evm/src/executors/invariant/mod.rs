@@ -35,7 +35,7 @@ use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
-use result::{assert_after_invariant, assert_invariants, can_continue};
+use result::{assert_after_invariant, assert_invariants, can_continue, is_assertion_failure};
 use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -502,7 +502,46 @@ impl<'a> InvariantExecutor<'a> {
                         // Skip invariant check but still track reverts
                         if call_result.reverted {
                             invariant_test.test_data.failures.reverts += 1;
-                            if self.config.fail_on_revert {
+                            let should_fail_on_assert =
+                                self.config.fail_on_assert && is_assertion_failure(&call_result);
+                            if should_fail_on_assert {
+                                let failing_handler =
+                                    current_run.inputs.last().and_then(|last_input| {
+                                        invariant_test
+                                            .targeted_contracts
+                                            .targets
+                                            .lock()
+                                            .fuzzed_metric_key(last_input)
+                                            .map(|metric_key| {
+                                                metric_key
+                                                    .rsplit('.')
+                                                    .next()
+                                                    .unwrap_or(metric_key.as_str())
+                                                    .to_string()
+                                            })
+                                    });
+                                let case_data = error::FailedInvariantCaseData::new(
+                                    &invariant_contract,
+                                    &self.config,
+                                    &invariant_test.targeted_contracts,
+                                    &current_run.inputs,
+                                    call_result,
+                                    &[],
+                                )
+                                .with_failing_handler(failing_handler);
+                                invariant_test.test_data.failures.revert_reason =
+                                    Some(case_data.revert_reason.clone());
+                                invariant_test
+                                    .test_data
+                                    .failures
+                                    .record_assertion_failure(case_data);
+                                if !invariant_contract.is_optimization() {
+                                    // In optimization mode, keep reverted calls to preserve
+                                    // warp/roll values for correct replay during shrinking.
+                                    current_run.inputs.pop();
+                                }
+                                result::RichInvariantResults::new(true, None)
+                            } else if self.config.fail_on_revert {
                                 let case_data = error::FailedInvariantCaseData::new(
                                     &invariant_contract,
                                     &self.config,
@@ -594,10 +633,37 @@ impl<'a> InvariantExecutor<'a> {
         invariant_test.fuzz_state.log_stats();
 
         let result = invariant_test.test_data;
+        let mut failures = result.failures;
+        let assertion_failures: Vec<String> = failures.assertion_failures.keys().cloned().collect();
+        if failures.error.is_none() && self.config.fail_on_assert {
+            if let Some((handler, case_data)) = failures.assertion_failures.iter().next() {
+                failures.error = Some(InvariantFuzzError::BrokenInvariant(case_data.clone()));
+                let base_reason = if case_data.revert_reason.is_empty() {
+                    "assertion failure".to_string()
+                } else {
+                    case_data.revert_reason.clone()
+                };
+                let extra_handlers: Vec<_> = assertion_failures
+                    .iter()
+                    .filter(|name| name.as_str() != handler.as_str())
+                    .cloned()
+                    .collect();
+                failures.revert_reason = Some(if extra_handlers.is_empty() {
+                    format!("assertion failure in {handler}: {base_reason}")
+                } else {
+                    format!(
+                        "assertion failure in {handler}: {base_reason}; other assertion failures in {}",
+                        extra_handlers.join(", ")
+                    )
+                });
+            }
+        }
+
         Ok(InvariantFuzzTestResult {
-            error: result.failures.error,
+            error: failures.error,
+            assertion_failures,
             cases: result.fuzz_cases,
-            reverts: result.failures.reverts,
+            reverts: failures.reverts,
             last_run_inputs: result.last_run_inputs,
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,

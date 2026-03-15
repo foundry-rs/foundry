@@ -1,6 +1,9 @@
 use crate::executors::{
     EarlyExit, Executor,
-    invariant::{call_after_invariant_function, call_invariant_function, execute_tx},
+    invariant::{
+        call_after_invariant_function, call_invariant_function, execute_tx,
+        result::is_assertion_failure,
+    },
 };
 use alloy_primitives::{Address, Bytes, I256, U256};
 use foundry_config::InvariantConfig;
@@ -114,6 +117,7 @@ pub(crate) fn shrink_sequence(
             target_address,
             calldata.clone(),
             config.fail_on_revert,
+            config.fail_on_assert,
             invariant_contract.call_after_invariant,
         ) {
             // If candidate sequence still fails, shrink until shortest possible.
@@ -146,6 +150,7 @@ pub fn check_sequence(
     test_address: Address,
     calldata: Bytes,
     fail_on_revert: bool,
+    fail_on_assert: bool,
     call_after_invariant: bool,
 ) -> eyre::Result<(bool, bool)> {
     // Apply the call sequence.
@@ -156,7 +161,11 @@ pub fn check_sequence(
         // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
         // are replayed with a modified version of test driver (that use new `vm.assume`
         // cheatcodes).
-        if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
+        let should_fail_on_assert = fail_on_assert && is_assertion_failure(&call_result);
+        if call_result.reverted
+            && call_result.result.as_ref() != MAGIC_ASSUME
+            && (fail_on_revert || should_fail_on_assert)
+        {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
             return Ok((false, false));

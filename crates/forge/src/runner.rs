@@ -732,6 +732,9 @@ impl<'a> FunctionRunner<'a> {
 
         let runner = self.invariant_runner();
         let invariant_config = &self.config.invariant;
+        let invariant_depth = invariant_config.depth as usize;
+        let fail_on_revert = invariant_config.fail_on_revert;
+        let fail_on_assert = invariant_config.fail_on_assert;
 
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
@@ -789,10 +792,11 @@ impl<'a> FunctionRunner<'a> {
             if let Ok((success, replayed_entirely)) = check_sequence(
                 self.clone_executor(),
                 &txes,
-                (0..min(txes.len(), invariant_config.depth as usize)).collect(),
+                (0..min(txes.len(), invariant_depth)).collect(),
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
-                invariant_config.fail_on_revert,
+                fail_on_revert,
+                fail_on_assert,
                 invariant_contract.call_after_invariant,
             ) && !success
             {
@@ -841,11 +845,32 @@ impl<'a> FunctionRunner<'a> {
                     _ => {}
                 }
 
-                self.result.invariant_replay_fail(
-                    replayed_entirely,
-                    &invariant_contract.invariant_function.name,
-                    call_sequence,
-                );
+                let replay_label = if fail_on_assert {
+                    let assert_only_failure = check_sequence(
+                        self.clone_executor(),
+                        &txes,
+                        (0..min(txes.len(), invariant_depth)).collect(),
+                        invariant_contract.address,
+                        invariant_contract.invariant_function.selector().to_vec().into(),
+                        false,
+                        false,
+                        invariant_contract.call_after_invariant,
+                    )
+                    .map(|(success, _)| success)
+                    .unwrap_or(false);
+                    if assert_only_failure {
+                        call_sequence
+                            .last()
+                            .and_then(|counterexample| counterexample.func_name.clone())
+                            .map(|handler| format!("assertion failure in {handler}"))
+                            .unwrap_or_else(|| invariant_contract.invariant_function.name.clone())
+                    } else {
+                        invariant_contract.invariant_function.name.clone()
+                    }
+                } else {
+                    invariant_contract.invariant_function.name.clone()
+                };
+                self.result.invariant_replay_fail(replayed_entirely, &replay_label, call_sequence);
                 return self.result;
             }
         }
@@ -867,14 +892,37 @@ impl<'a> FunctionRunner<'a> {
         self.result.merge_coverages(invariant_result.line_coverage);
 
         let mut counterexample = None;
+        let assertion_failures = invariant_result.assertion_failures.clone();
         let success = invariant_result.error.is_none();
-        let reason = invariant_result.error.as_ref().and_then(|err| err.revert_reason());
+        let mut reason = invariant_result.error.as_ref().and_then(|err| err.revert_reason());
 
         match invariant_result.error {
             // If invariants were broken, replay the error to collect logs and traces
             Some(error) => match error {
                 InvariantFuzzError::BrokenInvariant(case_data)
                 | InvariantFuzzError::Revert(case_data) => {
+                    if case_data.fail_on_assert
+                        && let Some(handler) = case_data.failing_handler.as_ref()
+                    {
+                        let assert_reason = if case_data.revert_reason.is_empty() {
+                            "assertion failure".to_string()
+                        } else {
+                            case_data.revert_reason.clone()
+                        };
+                        let extra_handlers: Vec<_> = assertion_failures
+                            .iter()
+                            .filter(|name| name.as_str() != handler.as_str())
+                            .cloned()
+                            .collect();
+                        reason = Some(if extra_handlers.is_empty() {
+                            format!("assertion failure in {handler}: {assert_reason}")
+                        } else {
+                            format!(
+                                "assertion failure in {handler}: {assert_reason}; other assertion failures in {}",
+                                extra_handlers.join(", ")
+                            )
+                        });
+                    }
                     // Replay error to create counterexample and to collect logs, traces and
                     // coverage.
                     match case_data.test_error {
@@ -977,6 +1025,16 @@ impl<'a> FunctionRunner<'a> {
                     }
                 }
             }
+        }
+
+        if !assertion_failures.is_empty()
+            && !reason.as_ref().is_some_and(|r| r.contains("assertion failure in"))
+        {
+            let summary = format!("assertion failures in {}", assertion_failures.join(", "));
+            reason = Some(match reason {
+                Some(existing) => format!("{existing}; {summary}"),
+                None => summary,
+            });
         }
 
         self.result.invariant_result(

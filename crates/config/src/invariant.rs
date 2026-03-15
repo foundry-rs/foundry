@@ -13,6 +13,9 @@ pub struct InvariantConfig {
     pub depth: u32,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
+    /// Fails the invariant fuzzing if a Solidity assert failure occurs (`Panic(0x01)` or legacy
+    /// invalid opcode assert behavior), even if `fail_on_revert` is `false`.
+    pub fail_on_assert: bool,
     /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
     /// checks
     pub call_override: bool,
@@ -57,6 +60,7 @@ impl Default for InvariantConfig {
             runs: 256,
             depth: 500,
             fail_on_revert: false,
+            fail_on_assert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
             shrink_run_limit: 5000,
