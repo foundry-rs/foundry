@@ -6,11 +6,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
-use backend::DatabaseExt;
-use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
+use revm::{inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
@@ -72,22 +70,34 @@ pub trait FoundryInspectorExt {
     fn create2_deployer(&self) -> Address {
         DEFAULT_CREATE2_DEPLOYER
     }
+
+    /// Returns a mutable reference to the concrete type as `dyn Any`, for downcasting.
+    ///
+    /// Used to recover the concrete inspector type (e.g. `InspectorStack`) from a
+    /// `&mut dyn FoundryInspectorExt` trait object.
+    ///
+    /// Returns `None` for types that cannot be downcasted (e.g. non-`'static` borrows).
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any>;
 }
 
-/// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
-///
-/// Used as a trait object (`dyn InspectorExt`) in backend code that is Eth-specific.
-/// For generic multi-network code, use `I: FoundryInspectorExt + Inspector<CTX>` instead.
-pub trait InspectorExt:
-    for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
-{
+/// Convenience extension for downcasting `dyn FoundryInspectorExt` to concrete types.
+pub trait FoundryInspectorDowncastExt: FoundryInspectorExt {
+    /// Attempts to downcast to a concrete type `T`.
+    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.as_any_mut()?.downcast_mut::<T>()
+    }
 }
 
-impl<T> InspectorExt for T where
-    T: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
-{
+impl<I: FoundryInspectorExt + ?Sized> FoundryInspectorDowncastExt for I {}
+
+impl FoundryInspectorExt for NoOpInspector {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
 }
 
-impl FoundryInspectorExt for NoOpInspector {}
-
-impl FoundryInspectorExt for AccessListInspector {}
+impl FoundryInspectorExt for AccessListInspector {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+}

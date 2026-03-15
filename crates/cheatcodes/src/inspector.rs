@@ -41,7 +41,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
+    evm::with_cloned_context,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -93,9 +93,8 @@ impl<CTX> CheatsCtxExt for CTX where
 {
 }
 
-/// Closure type used by [`CheatcodesExecutor`] methods that run nested EVM operations.
-pub type NestedEvmClosure<'a> =
-    &'a mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>;
+/// Re-export from `foundry_evm_core`.
+pub use foundry_evm_core::evm::NestedEvmClosure;
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
 ///
@@ -195,13 +194,22 @@ impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
         ecx: &mut CTX,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
+        let factory = cheats
+            .evm_factory
+            .clone()
+            .ok_or_else(|| EVMError::Custom("evm_factory not set on Cheatcodes".to_string()))?;
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
-            let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
-            *evm.journal_inner_mut() = journal_inner;
-            f(&mut evm)?;
-            let (sub_evm_env, sub_tx) = evm.to_env();
-            let sub_inner = evm.into_context().journaled_state.inner;
-            Ok(((), sub_evm_env, sub_tx, sub_inner))
+            let env = Env { evm_env, tx: tx_env };
+            let mut journal_inner = Some(journal_inner);
+            let (sub_env, sub_inner) = factory
+                .call_nested(db, env, cheats, &mut |evm| {
+                    if let Some(ji) = journal_inner.take() {
+                        *evm.journal_inner_mut() = ji;
+                    }
+                    f(evm)
+                })
+                .map_err(|e| EVMError::Custom(e.to_string()))?;
+            Ok(((), sub_env.evm_env, sub_env.tx, sub_inner))
         })
     }
 
@@ -213,8 +221,13 @@ impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
         tx_env: TxEnv,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
-        f(&mut evm)
+        let factory = cheats
+            .evm_factory
+            .clone()
+            .ok_or_else(|| EVMError::Custom("evm_factory not set on Cheatcodes".to_string()))?;
+        let env = Env { evm_env, tx: tx_env };
+        factory.call_nested(db, env, cheats, f).map_err(|e| EVMError::Custom(e.to_string()))?;
+        Ok(())
     }
 
     fn transact_on_db(
@@ -592,6 +605,10 @@ pub struct Cheatcodes {
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
     pub execution_evm_version: Option<SpecId>,
+
+    /// The EVM factory for constructing network-specific EVMs in nested calls.
+    /// Set by the factory impl before building an EVM with this inspector.
+    pub evm_factory: Option<Arc<dyn foundry_evm_core::evm::FoundryEvmFactory>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -650,6 +667,7 @@ impl Cheatcodes {
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
             execution_evm_version: None,
+            evm_factory: None,
         }
     }
 
@@ -1988,6 +2006,10 @@ impl FoundryInspectorExt for Cheatcodes {
 
     fn create2_deployer(&self) -> Address {
         self.config.evm_opts.create2_deployer
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 

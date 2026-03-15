@@ -1,15 +1,15 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    Env, InspectorExt,
+    Env, FoundryInspectorExt,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    evm::new_evm_with_inspector,
+    evm::FoundryEvmFactory,
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::get_blob_base_fee_update_fraction,
 };
 use alloy_consensus::{BlockHeader, Typed2718};
-use alloy_evm::{Evm, EvmEnv, FromRecoveredTx, rpc::TryIntoTxEnv};
+use alloy_evm::{EvmEnv, FromRecoveredTx, rpc::TryIntoTxEnv};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, TransactionResponse,
@@ -36,6 +36,7 @@ use revm::{
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
+    sync::Arc,
     time::Instant,
 };
 
@@ -219,7 +220,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
@@ -229,7 +230,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -475,6 +476,8 @@ impl<DB: DatabaseExt> FoundryJournalExt for Journal<DB, JournalEntry> {
 #[derive(Clone, Debug)]
 #[must_use]
 pub struct Backend {
+    /// Factory for constructing network-specific EVMs.
+    evm_factory: Arc<dyn FoundryEvmFactory>,
     /// The access point for managing forks
     forks: MultiFork<AnyNetwork>,
     // The default in memory db
@@ -509,8 +512,11 @@ impl Backend {
     ///
     /// If `fork` is `Some` this will use a `fork` database, otherwise with an in-memory
     /// database.
-    pub fn spawn(fork: Option<CreateFork>) -> eyre::Result<Self> {
-        Self::new(MultiFork::spawn(), fork)
+    pub fn spawn(
+        fork: Option<CreateFork>,
+        evm_factory: Arc<dyn FoundryEvmFactory>,
+    ) -> eyre::Result<Self> {
+        Self::new(MultiFork::spawn(), fork, evm_factory)
     }
 
     /// Creates a new instance of `Backend`
@@ -519,7 +525,11 @@ impl Backend {
     /// database.
     ///
     /// Prefer using [`spawn`](Self::spawn) instead.
-    pub fn new(forks: MultiFork<AnyNetwork>, fork: Option<CreateFork>) -> eyre::Result<Self> {
+    pub fn new(
+        forks: MultiFork<AnyNetwork>,
+        fork: Option<CreateFork>,
+        evm_factory: Arc<dyn FoundryEvmFactory>,
+    ) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
         let inner = BackendInner {
@@ -528,6 +538,7 @@ impl Backend {
         };
 
         let mut backend = Self {
+            evm_factory,
             forks,
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: inner.new_journaled_state(),
@@ -558,8 +569,9 @@ impl Backend {
         id: &ForkId,
         fork: Fork,
         journaled_state: JournaledState,
+        evm_factory: Arc<dyn FoundryEvmFactory>,
     ) -> eyre::Result<Self> {
-        let mut backend = Self::spawn(None)?;
+        let mut backend = Self::spawn(None, evm_factory)?;
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
@@ -569,12 +581,23 @@ impl Backend {
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
     pub fn clone_empty(&self) -> Self {
         Self {
+            evm_factory: self.evm_factory.clone(),
             forks: self.forks.clone(),
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             inner: Default::default(),
         }
+    }
+
+    /// Returns the EVM factory.
+    pub fn evm_factory(&self) -> &Arc<dyn FoundryEvmFactory> {
+        &self.evm_factory
+    }
+
+    /// Sets the EVM factory.
+    pub fn set_evm_factory(&mut self, factory: Arc<dyn FoundryEvmFactory>) {
+        self.evm_factory = factory;
     }
 
     pub fn insert_account_info(&mut self, address: Address, account: AccountInfo) {
@@ -806,24 +829,13 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: InspectorExt>(
+    pub fn inspect(
         &mut self,
         env: &mut Env,
-        inspector: I,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(
-            self,
-            env.evm_env.to_owned(),
-            env.tx.to_owned(),
-            inspector,
-        );
-
-        let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
-
-        *env = Env::from(evm.cfg.clone(), evm.block.clone(), evm.tx.clone());
-
-        Ok(res)
+        self.evm_factory.clone().inspect(self, env, inspector)
     }
 
     /// Returns true if the address is a precompile
@@ -952,6 +964,7 @@ impl Backend {
                 &fork_id,
                 &persistent_accounts,
                 &mut NoOpInspector,
+                self.evm_factory.clone(),
             )?;
         }
 
@@ -1322,7 +1335,7 @@ impl DatabaseExt for Backend {
         mut evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1354,6 +1367,7 @@ impl DatabaseExt for Backend {
             &fork_id,
             &persistent_accounts,
             inspector,
+            self.evm_factory.clone(),
         )
     }
 
@@ -1363,7 +1377,7 @@ impl DatabaseExt for Backend {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn FoundryInspectorExt,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -1374,14 +1388,8 @@ impl DatabaseExt for Backend {
             env.tx = tx.clone().try_into_tx_env(&env.evm_env)?;
 
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(
-                &mut db,
-                env.evm_env.to_owned(),
-                env.tx.to_owned(),
-                inspector,
-            );
-            evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact(env.tx)?
+            let depth = journaled_state.depth + 1;
+            db.evm_factory.clone().transact_with_depth(&mut db, env, inspector, depth)?
         };
 
         self.commit(res.state);
@@ -2018,6 +2026,7 @@ fn update_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock) {
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
+#[allow(clippy::too_many_arguments)]
 fn commit_transaction(
     tx: &AnyRpcTransaction,
     env: &mut Env,
@@ -2025,7 +2034,8 @@ fn commit_transaction(
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn InspectorExt,
+    inspector: &mut dyn FoundryInspectorExt,
+    evm_factory: Arc<dyn FoundryEvmFactory>,
 ) -> eyre::Result<()> {
     if let Some(tx_envelope) = tx.as_envelope() {
         env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());
@@ -2036,17 +2046,11 @@ fn commit_transaction(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
-        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
+        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state, evm_factory.clone())?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(
-            &mut db as _,
-            env.evm_env.to_owned(),
-            env.tx.to_owned(),
-            inspector,
-        );
-        // Adjust inner EVM depth to ensure that inspectors receive accurate data.
-        evm.journaled_state.depth = depth + 1;
-        evm.transact(env.tx.clone()).wrap_err("backend: failed committing transaction")?
+        evm_factory
+            .transact_with_depth(&mut db, env.to_owned(), inspector, depth + 1)
+            .wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
@@ -2092,13 +2096,57 @@ fn apply_state_changeset(
 
 #[cfg(test)]
 mod tests {
-    use crate::{backend::Backend, opts::EvmOpts};
+    use crate::{
+        FoundryInspectorExt, backend::Backend, evm::FoundryEvmFactory, fork::CreateFork,
+        opts::EvmOpts,
+    };
     use alloy_primitives::{U256, address};
     use alloy_provider::Provider;
     use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
-    use revm::database::DatabaseRef;
+    use revm::{context_interface::result::ResultAndState, database::DatabaseRef};
+    use std::sync::Arc;
+
+    /// Stub factory for tests that don't execute EVM transactions.
+    #[derive(Debug)]
+    struct StubEvmFactory;
+
+    impl FoundryEvmFactory for StubEvmFactory {
+        fn inspect(
+            &self,
+            _db: &mut dyn crate::backend::DatabaseExt,
+            _env: &mut crate::Env,
+            _inspector: &mut dyn FoundryInspectorExt,
+        ) -> eyre::Result<ResultAndState> {
+            unimplemented!("StubEvmFactory: not meant for EVM execution")
+        }
+
+        fn transact_with_depth(
+            &self,
+            _db: &mut dyn crate::backend::DatabaseExt,
+            _env: crate::Env,
+            _inspector: &mut dyn FoundryInspectorExt,
+            _depth: usize,
+        ) -> eyre::Result<ResultAndState> {
+            unimplemented!("StubEvmFactory: not meant for EVM execution")
+        }
+
+        fn call_nested(
+            &self,
+            _db: &mut dyn crate::backend::DatabaseExt,
+            _env: crate::Env,
+            _inspector: &mut dyn FoundryInspectorExt,
+            _f: &mut dyn FnMut(
+                &mut dyn crate::evm::NestedEvm,
+            ) -> Result<
+                (),
+                revm::context::result::EVMError<foundry_fork_db::DatabaseError>,
+            >,
+        ) -> eyre::Result<(crate::Env, crate::backend::JournaledState)> {
+            unimplemented!("StubEvmFactory: not meant for EVM execution")
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
@@ -2115,7 +2163,7 @@ mod tests {
 
         let fork = evm_opts.get_fork(&Config::default(), env.evm_env.clone()).unwrap();
 
-        let backend = Backend::spawn(Some(fork)).unwrap();
+        let backend = Backend::spawn(Some(fork), Arc::new(StubEvmFactory)).unwrap();
 
         // some rng contract from etherscan
         let address = address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
