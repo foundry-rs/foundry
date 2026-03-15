@@ -1947,7 +1947,7 @@ contract SimpleScript is Script {
     .stdout_eq(str![[r#"
 {"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
 {"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH"}
-{"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
+{"chain":"anvil-hardhat","status":"success","tx_hash":"{...}","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
@@ -3488,6 +3488,90 @@ Setup
 Run 1
 Script ran successfully.
 [GAS]
+
+"#]]);
+});
+
+// Tests that broadcasting uses eth_maxPriorityFeePerGas as a floor for the priority fee.
+// On chains like Base (OP Stack), eth_feeHistory returns empty reward arrays, causing alloy's
+// estimator to fall back to 1 wei. Browser wallets may then override this with their own
+// estimate from eth_maxPriorityFeePerGas without adjusting maxFeePerGas, breaking the
+// maxPriorityFeePerGas <= maxFeePerGas invariant. This test ensures foundry proactively uses
+// eth_maxPriorityFeePerGas as a floor.
+forgetest_async!(can_broadcast_with_priority_fee_floor, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external returns (bool success) {
+        vm.startBroadcast();
+        (success, ) = address(0).call("");
+    }
+}
+   "#,
+    );
+
+    // Start anvil with base_fee = 0 so that eth_feeHistory returns zero/empty rewards,
+    // mimicking OP Stack chains like Base. Anvil's eth_maxPriorityFeePerGas still returns
+    // MIN_SUGGESTED_PRIORITY_FEE (1 gwei), which is much higher than alloy's fallback of
+    // 1 wei. Without the fix, the estimated maxFeePerGas could be below the suggested
+    // priority fee.
+    let node_config = NodeConfig::test().with_base_fee(Some(0));
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+        "--non-interactive",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+Script ran successfully.
+
+== Return ==
+success: bool true
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 });

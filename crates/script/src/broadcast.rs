@@ -343,15 +343,43 @@ impl BundledState {
                 ) {
                     (true, Some(gas_price), _) => (Some(gas_price.to()), None),
                     (true, None, _) => (Some(provider.get_gas_price().await?), None),
-                    (false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => (
-                        None,
-                        Some(Eip1559Estimation {
-                            max_fee_per_gas: max_fee_per_gas.to(),
-                            max_priority_fee_per_gas: max_priority_fee_per_gas.to(),
-                        }),
-                    ),
+                    (false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
+                        let max_fee: u128 = max_fee_per_gas.to();
+                        let max_priority: u128 = max_priority_fee_per_gas.to();
+                        if max_priority > max_fee {
+                            eyre::bail!(
+                                "--priority-gas-price ({max_priority}) cannot be higher than --with-gas-price ({max_fee})"
+                            );
+                        }
+                        (
+                            None,
+                            Some(Eip1559Estimation {
+                                max_fee_per_gas: max_fee,
+                                max_priority_fee_per_gas: max_priority,
+                            }),
+                        )
+                    }
                     (false, _, _) => {
                         let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+
+                        // The EIP-1559 fee estimator uses fee history reward percentiles
+                        // which can be empty on some chains (e.g. OP Stack / Base),
+                        // resulting in a priority fee of just 1 wei. This can cause
+                        // issues when browser wallets override the priority fee with
+                        // their own estimate (from eth_maxPriorityFeePerGas) without
+                        // adjusting maxFeePerGas accordingly, leading to
+                        // maxPriorityFeePerGas > maxFeePerGas.
+                        //
+                        // To prevent this, use eth_maxPriorityFeePerGas as a floor for
+                        // the priority fee, and adjust maxFeePerGas to accommodate.
+                        if let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+                            && suggested_tip > fees.max_priority_fee_per_gas
+                        {
+                            // Adjust max_fee by the difference so it still covers
+                            // the higher priority fee.
+                            fees.max_fee_per_gas += suggested_tip - fees.max_priority_fee_per_gas;
+                            fees.max_priority_fee_per_gas = suggested_tip;
+                        }
 
                         if let Some(gas_price) = self.args.with_gas_price {
                             fees.max_fee_per_gas = gas_price.to();
@@ -359,6 +387,12 @@ impl BundledState {
 
                         if let Some(priority_gas_price) = self.args.priority_gas_price {
                             fees.max_priority_fee_per_gas = priority_gas_price.to();
+                        }
+
+                        // Ensure the invariant maxFeePerGas >= maxPriorityFeePerGas
+                        // holds, even when user-provided overrides break it.
+                        if fees.max_priority_fee_per_gas > fees.max_fee_per_gas {
+                            fees.max_fee_per_gas = fees.max_priority_fee_per_gas;
                         }
 
                         (None, Some(fees))
