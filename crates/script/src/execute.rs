@@ -342,7 +342,7 @@ impl ExecutedState {
         )?;
 
         for (_, trace) in &self.execution_result.traces {
-            decoder.identify(trace, &mut identifier);
+            decoder.identify(trace, &mut identifier).await;
         }
 
         Ok(decoder)

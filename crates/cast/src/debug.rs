@@ -66,7 +66,7 @@ pub(crate) async fn handle_traces(
     let mut decoder = builder.build();
 
     for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
-        decoder.identify(trace, &mut identifier);
+        decoder.identify(trace, &mut identifier).await;
     }
 
     if decode_internal || debug {

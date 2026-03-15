@@ -33,9 +33,10 @@ pub struct IdentifiedAddress<'a> {
 }
 
 /// Trace identifiers figure out what ABIs and labels belong to all the addresses of the trace.
+#[async_trait::async_trait]
 pub trait TraceIdentifier {
     /// Attempts to identify an address in one or more call traces.
-    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>>;
+    async fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>>;
 }
 
 /// A collection of trace identifiers.
@@ -52,21 +53,22 @@ impl Default for TraceIdentifiers<'_> {
     }
 }
 
+#[async_trait::async_trait]
 impl TraceIdentifier for TraceIdentifiers<'_> {
-    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+    async fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
         if nodes.is_empty() {
             return Vec::new();
         }
 
         let mut identities = Vec::with_capacity(nodes.len());
         if let Some(local) = &mut self.local {
-            identities.extend(local.identify_addresses(nodes));
+            identities.extend(local.identify_addresses(nodes).await);
             if identities.len() >= nodes.len() {
                 return identities;
             }
         }
         if let Some(external) = &mut self.external {
-            identities.extend(external.identify_addresses(nodes));
+            identities.extend(external.identify_addresses(nodes).await);
         }
         identities
     }
