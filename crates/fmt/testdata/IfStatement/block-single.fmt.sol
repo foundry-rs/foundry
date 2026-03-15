@@ -119,6 +119,34 @@ contract IfStatement {
         else if (condition) execute();
         else if (condition) execute();
         else executeElse();
+
+        if (condition) {
+            execute();
+            execute();
+        }
+
+        if (condition) {
+            if (condition) {
+                execute();
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    execute();
+                    execute();
+                }
+            }
+        }
+
+        while (condition) {
+            if (condition) {
+                execute();
+                execute();
+            }
+        }
     }
 
     function test_nestedBkocks() public {

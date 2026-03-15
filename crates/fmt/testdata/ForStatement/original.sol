@@ -35,5 +35,8 @@ contract ForStatement {
         for (uint256 i5; ;)
             for (uint256 i6 = 10; i6 > i5; i6--)
                 i5++;
+        
+        for (;;) doIt();
+        for (;;) { doIt(); doIt(); }
     }
 }
