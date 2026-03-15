@@ -3515,7 +3515,9 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 return_ok!() => Ok(Self::Success(gas)),
 
                 // Revert opcodes:
-                InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
+                InstructionResult::Revert => {
+                    Ok(Self::Revert(Some(output.map(|o| o.into_data()).unwrap_or_default())))
+                }
                 InstructionResult::CallTooDeep
                 | InstructionResult::OutOfFunds
                 | InstructionResult::CreateInitCodeStartingEF00
