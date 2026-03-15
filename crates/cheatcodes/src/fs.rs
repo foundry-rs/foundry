@@ -88,6 +88,22 @@ impl Cheatcode for projectRootCall {
     }
 }
 
+impl Cheatcode for currentFilePathCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let artifact = state
+            .config
+            .running_artifact
+            .as_ref()
+            .ok_or_else(|| fmt_err!("no running contract found"))?;
+        let relative = artifact
+            .source
+            .strip_prefix(&state.config.root)
+            .unwrap_or(&artifact.source);
+        Ok(relative.display().to_string().abi_encode())
+    }
+}
+
 impl Cheatcode for unixTimeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;

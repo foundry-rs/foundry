@@ -3982,6 +3982,26 @@
     },
     {
       "func": {
+        "id": "currentFilePath",
+        "description": "Get the source file path of the currently running test or script contract,\nrelative to the project root.",
+        "declaration": "function currentFilePath() external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "currentFilePath()",
+        "selector": "0x9b45555c",
+        "selectorBytes": [
+          155,
+          69,
+          85,
+          92
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "deal",
         "description": "Sets an address' balance.",
         "declaration": "function deal(address account, uint256 newBalance) external;",
