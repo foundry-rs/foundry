@@ -968,8 +968,8 @@ async fn test_mine_blk_with_prev_timestamp() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-    // mock timestamp
-    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
+    // mock timestamp (must be strictly greater than previous)
+    api.evm_set_next_block_timestamp(init_timestamp + 1).unwrap();
 
     api.mine_one().await;
 
@@ -979,7 +979,7 @@ async fn test_mine_blk_with_prev_timestamp() {
     let next_blk_timestamp = block.header.timestamp;
 
     assert_eq!(next_blk_num, init_number + 1);
-    assert_eq!(next_blk_timestamp, init_timestamp);
+    assert_eq!(next_blk_timestamp, init_timestamp + 1);
 
     // Sleep for 1 second
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -1019,12 +1019,15 @@ async fn test_increase_time_by_zero() {
     let next_blk_timestamp = block.header.timestamp;
 
     assert_eq!(next_blk_num, init_number + 1);
-    assert_eq!(next_blk_timestamp, init_timestamp);
+    assert!(
+        next_blk_timestamp > init_timestamp,
+        "{next_blk_timestamp} should be > {init_timestamp}"
+    );
 }
 
-// evm_mine(MineOptions::Timestamp(prev_block_timestamp))
+// evm_mine(MineOptions::Timestamp(prev_block_timestamp + 1))
 #[tokio::test(flavor = "multi_thread")]
-async fn evm_mine_blk_with_same_timestamp() {
+async fn evm_mine_blk_with_next_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
@@ -1033,7 +1036,7 @@ async fn evm_mine_blk_with_same_timestamp() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-    api.evm_mine(Some(MineOptions::Timestamp(Some(init_timestamp)))).await.unwrap();
+    api.evm_mine(Some(MineOptions::Timestamp(Some(init_timestamp + 1)))).await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
@@ -1041,7 +1044,7 @@ async fn evm_mine_blk_with_same_timestamp() {
     let next_blk_timestamp = block.header.timestamp;
 
     assert_eq!(next_blk_num, init_number + 1);
-    assert_eq!(next_blk_timestamp, init_timestamp);
+    assert_eq!(next_blk_timestamp, init_timestamp + 1);
 }
 
 // mine 4 blocks instantly.
@@ -1073,12 +1076,9 @@ async fn test_mine_blk_with_same_timestamp() {
         .map(|blk| blk.unwrap().unwrap().header.timestamp)
         .collect::<Vec<_>>();
 
-    // All timestamps should be equal. Allow for 1 second difference.
-    assert!(timestamps.windows(2).all(|w| w[0] == w[1]), "{timestamps:#?}");
-    assert!(
-        timestamps[0] == init_timestamp || timestamps[0] == init_timestamp + 1,
-        "{timestamps:#?} != {init_timestamp}"
-    );
+    // All timestamps should be strictly increasing by 1.
+    assert!(timestamps.windows(2).all(|w| w[1] == w[0] + 1), "{timestamps:#?}");
+    assert_eq!(timestamps[0], init_timestamp + 1, "{timestamps:#?} != {init_timestamp}");
 }
 
 // <https://github.com/foundry-rs/foundry/issues/8962>
