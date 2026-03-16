@@ -316,10 +316,8 @@ impl EvmOpts {
         // fork operations use the same block. This prevents inconsistencies when forking at
         // "latest" where the chain could advance between calls.
         let mut evm_opts = self.clone();
-        if evm_opts.fork_block_number.is_none() {
-            if let Some(block_number) = fork_block_number {
-                evm_opts.fork_block_number = Some(block_number);
-            }
+        if evm_opts.fork_block_number.is_none() && fork_block_number.is_some() {
+            evm_opts.fork_block_number = fork_block_number;
         }
 
         Some(CreateFork { url, enable_caching, evm_env, evm_opts })
