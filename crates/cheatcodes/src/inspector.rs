@@ -89,9 +89,24 @@ pub use analysis::CheatcodeAnalysis;
 /// Shorthand used internally to avoid repeating the full where-clause.
 /// Any `EthEvmContext<&mut dyn DatabaseExt>` satisfies these bounds, so all
 /// existing call-sites (e.g. `InspectorStackRefMut`) keep working unchanged.
-pub trait CheatsCtxExt: FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt> {}
+pub trait CheatsCtxExt:
+    FoundryContextExt<
+        Block = BlockEnv,
+        Tx = TxEnv,
+        Cfg = CfgEnv,
+        Journal: FoundryJournalExt,
+        Db: DatabaseExt,
+    >
+{
+}
 impl<CTX> CheatsCtxExt for CTX where
-    CTX: FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt>
+    CTX: FoundryContextExt<
+            Block = BlockEnv,
+            Tx = TxEnv,
+            Cfg = CfgEnv,
+            Journal: FoundryJournalExt,
+            Db: DatabaseExt,
+        >
 {
 }
 
@@ -103,7 +118,7 @@ pub type NestedEvmClosure<'a> =
 ///
 /// The executor assembles the full inspector stack internally and never exposes it across the
 /// trait boundary. This keeps the trait free of `InspectorExt` (which is Eth-specific).
-pub trait CheatcodesExecutor<CTX> {
+pub trait CheatcodesExecutor<CTX: ContextTr> {
     /// Runs a closure with a nested EVM built from the current context.
     /// The inspector is assembled internally — never exposed to the caller.
     fn with_nested_evm(
@@ -137,8 +152,8 @@ pub trait CheatcodesExecutor<CTX> {
         &mut self,
         cheats: &mut Cheatcodes,
         db: &mut dyn DatabaseExt,
-        evm_env: EvmEnv,
-        tx_env: TxEnv,
+        evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
+        tx_env: CTX::Tx,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
@@ -188,9 +203,7 @@ pub(crate) fn exec_create<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
 #[derive(Debug, Default, Clone, Copy)]
 struct TransparentCheatcodesExecutor;
 
-impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
-    for TransparentCheatcodesExecutor
-{
+impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor {
     fn with_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes,
@@ -211,8 +224,8 @@ impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
         &mut self,
         cheats: &mut Cheatcodes,
         db: &mut dyn DatabaseExt,
-        evm_env: EvmEnv,
-        tx_env: TxEnv,
+        evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
+        tx_env: CTX::Tx,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);

@@ -177,7 +177,7 @@ impl Cheatcode for randomBytes8Call {
 }
 
 impl Cheatcode for pauseTracingCall {
-    fn apply_full<CTX>(
+    fn apply_full<CTX: ContextTr>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -200,7 +200,7 @@ impl Cheatcode for pauseTracingCall {
 }
 
 impl Cheatcode for resumeTracingCall {
-    fn apply_full<CTX>(
+    fn apply_full<CTX: ContextTr>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,

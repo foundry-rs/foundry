@@ -1327,7 +1327,7 @@ impl Cheatcode for executeTransactionCall {
 }
 
 impl Cheatcode for startDebugTraceRecordingCall {
-    fn apply_full<CTX>(
+    fn apply_full<CTX: ContextTr>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -1357,7 +1357,7 @@ impl Cheatcode for startDebugTraceRecordingCall {
 }
 
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
-    fn apply_full<CTX>(
+    fn apply_full<CTX: ContextTr>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
