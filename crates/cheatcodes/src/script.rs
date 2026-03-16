@@ -2,6 +2,7 @@
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
@@ -348,30 +349,30 @@ pub struct Broadcast {
 
 /// Contains context for wallet management.
 #[derive(Debug)]
-pub struct WalletsInner {
+pub struct WalletsInner<N: Network> {
     /// All signers in scope of the script.
-    pub multi_wallet: MultiWallet,
+    pub multi_wallet: MultiWallet<N>,
     /// Optional signer provided as `--sender` flag.
     pub provided_sender: Option<Address>,
 }
 
 /// Cloneable wrapper around [`WalletsInner`].
 #[derive(Debug, Clone)]
-pub struct Wallets {
+pub struct Wallets<N: Network> {
     /// Inner data.
-    pub inner: Arc<Mutex<WalletsInner>>,
+    pub inner: Arc<Mutex<WalletsInner<N>>>,
 }
 
-impl Wallets {
+impl<N: Network> Wallets<N> {
     #[expect(missing_docs)]
-    pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
+    pub fn new(multi_wallet: MultiWallet<N>, provided_sender: Option<Address>) -> Self {
         Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }
 
     /// Consumes [Wallets] and returns [MultiWallet].
     ///
     /// Panics if [Wallets] is still in use.
-    pub fn into_multi_wallet(self) -> MultiWallet {
+    pub fn into_multi_wallet(self) -> MultiWallet<N> {
         Arc::into_inner(self.inner)
             .map(|m| m.into_inner().multi_wallet)
             .unwrap_or_else(|| panic!("not all instances were dropped"))

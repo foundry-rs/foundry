@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, Ethereum};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
@@ -42,7 +42,7 @@ use yansi::Paint;
 pub struct LinkedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
     pub build_data: LinkedBuildData,
 }
 
@@ -93,7 +93,7 @@ impl LinkedState {
 pub struct PreExecutionState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
 }
@@ -275,7 +275,7 @@ pub struct ExecutionArtifacts {
 pub struct ExecutedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,

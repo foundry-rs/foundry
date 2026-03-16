@@ -2,6 +2,7 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
     LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
+use alloy_network::Ethereum;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
@@ -80,7 +81,7 @@ pub struct InspectorStackBuilder {
     /// Networks with enabled features.
     pub networks: NetworkConfigs,
     /// The wallets to set in the cheatcodes context.
-    pub wallets: Option<Wallets>,
+    pub wallets: Option<Wallets<Ethereum>>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
 }
@@ -122,7 +123,7 @@ impl InspectorStackBuilder {
 
     /// Set the wallets.
     #[inline]
-    pub fn wallets(mut self, wallets: Wallets) -> Self {
+    pub fn wallets(mut self, wallets: Wallets<Ethereum>) -> Self {
         self.wallets = Some(wallets);
         self
     }

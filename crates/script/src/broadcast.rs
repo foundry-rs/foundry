@@ -236,7 +236,7 @@ impl SendTransactionsKind {
 pub struct BundledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind,
 }

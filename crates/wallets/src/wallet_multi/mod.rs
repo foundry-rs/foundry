@@ -4,7 +4,7 @@ use crate::{
     utils,
     wallet_browser::signer::BrowserSigner,
 };
-use alloy_network::{Ethereum, Network};
+use alloy_network::Network;
 use alloy_primitives::map::AddressHashMap;
 use alloy_signer::Signer;
 use clap::Parser;
@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 /// Container for multiple wallets.
 #[derive(Debug)]
-pub struct MultiWallet<N: Network = Ethereum> {
+pub struct MultiWallet<N: Network> {
     /// Vector of wallets that require an action to be unlocked.
     /// Those are lazily unlocked on the first access of the signers.
     pending_signers: Vec<PendingSigner>,

@@ -21,7 +21,7 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_network::TransactionBuilder4844;
+use alloy_network::{Ethereum, TransactionBuilder4844};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
@@ -585,7 +585,7 @@ pub struct Cheatcodes {
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
-    pub wallets: Option<Wallets>,
+    pub wallets: Option<Wallets<Ethereum>>,
     /// Signatures identifier for decoding events and functions
     signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
     /// Used to determine whether the broadcasted call has dynamic gas limit.
@@ -666,12 +666,12 @@ impl Cheatcodes {
     }
 
     /// Returns the configured wallets if available, else creates a new instance.
-    pub fn wallets(&mut self) -> &Wallets {
+    pub fn wallets(&mut self) -> &Wallets<Ethereum> {
         self.wallets.get_or_insert_with(|| Wallets::new(MultiWallet::default(), None))
     }
 
     /// Sets the unlocked wallets.
-    pub fn set_wallets(&mut self, wallets: Wallets) {
+    pub fn set_wallets(&mut self, wallets: Wallets<Ethereum>) {
         self.wallets = Some(wallets);
     }
 

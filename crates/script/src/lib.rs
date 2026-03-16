@@ -13,6 +13,7 @@ extern crate tracing;
 
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
+use alloy_network::Ethereum;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -623,7 +624,7 @@ impl ScriptConfig {
     async fn get_runner_with_cheatcodes(
         &mut self,
         known_contracts: ContractsByArtifact,
-        script_wallets: Wallets,
+        script_wallets: Wallets<Ethereum>,
         debug: bool,
         target: ArtifactId,
     ) -> Result<ScriptRunner> {
@@ -632,7 +633,7 @@ impl ScriptConfig {
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
+        cheats_data: Option<(ContractsByArtifact, Wallets<Ethereum>, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");

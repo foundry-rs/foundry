@@ -10,7 +10,7 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::NamedChain;
-use alloy_network::TransactionBuilder;
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
@@ -35,7 +35,7 @@ use std::{
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,
@@ -252,7 +252,7 @@ impl PreSimulationState {
 pub struct FilledTransactionsState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata>,
