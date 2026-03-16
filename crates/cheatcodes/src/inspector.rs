@@ -142,7 +142,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
-pub(crate) fn exec_create<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
+pub(crate) fn exec_create<CTX: EthCheatCtx>(
     executor: &mut dyn CheatcodesExecutor<CTX>,
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, CTX>,
