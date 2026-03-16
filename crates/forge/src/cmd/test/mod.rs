@@ -321,7 +321,7 @@ impl TestArgs {
             evm_opts.verbosity = 3;
         }
 
-        let (evm_env, tx_env) = evm_opts.env().await?;
+        let (evm_env, tx_env, fork_block) = evm_opts.env().await?;
 
         // Enable internal tracing for more informative flamegraph.
         if should_draw && !self.decode_internal {
@@ -345,7 +345,7 @@ impl TestArgs {
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, &evm_env))
+            .with_fork(evm_opts.get_fork(&config, &evm_env, fork_block))
             .enable_isolation(evm_opts.isolate)
             .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)

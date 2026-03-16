@@ -638,13 +638,13 @@ impl ScriptConfig {
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
-        let (evm_env, tx_env) = self.evm_opts.env().await?;
+        let (evm_env, tx_env, fork_block) = self.evm_opts.env().await?;
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
-                    let fork = self.evm_opts.get_fork(&self.config, &evm_env);
+                    let fork = self.evm_opts.get_fork(&self.config, &evm_env, fork_block);
                     let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
