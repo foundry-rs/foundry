@@ -66,6 +66,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
+    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
@@ -111,8 +112,12 @@ impl<CTX> CheatsCtxExt for CTX where
 }
 
 /// Closure type used by [`CheatcodesExecutor`] methods that run nested EVM operations.
-pub type NestedEvmClosure<'a> =
-    &'a mut dyn FnMut(&mut dyn NestedEvm) -> Result<(), EVMError<DatabaseError>>;
+///
+/// The associated types are pinned to Eth types for now. When Tempo support is added,
+/// this will either become generic or a separate `TempoNestedEvmClosure` will be introduced.
+pub type NestedEvmClosure<'a> = &'a mut dyn FnMut(
+    &mut dyn NestedEvm<Tx = TxEnv, Block = BlockEnv, Spec = SpecId>,
+) -> Result<(), EVMError<DatabaseError>>;
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
 ///

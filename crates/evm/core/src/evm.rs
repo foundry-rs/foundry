@@ -241,23 +241,34 @@ impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
 /// This abstracts over the concrete EVM type (`FoundryEvm`, future `TempoEvm`, etc.)
 /// so that cheatcode impls can build and run nested EVMs without knowing the concrete type.
 pub trait NestedEvm {
+    /// The transaction environment type.
+    type Tx;
+    /// The block environment type.
+    type Block;
+    /// The EVM spec (hardfork) type.
+    type Spec;
+
     /// Returns a mutable reference to the journal inner state (`JournaledState`).
     fn journal_inner_mut(&mut self) -> &mut JournaledState;
 
     /// Runs a single execution frame (create or call) through the EVM handler loop.
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
 
-    /// Executes a full transaction with the given `TxEnv`.
+    /// Executes a full transaction with the given tx env.
     fn transact(
         &mut self,
-        tx: TxEnv,
+        tx: Self::Tx,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
 
     /// Returns a snapshot of the current environment (cfg + block, tx).
-    fn to_env(&self) -> (EvmEnv, TxEnv);
+    fn to_env(&self) -> (EvmEnv<Self::Spec, Self::Block>, Self::Tx);
 }
 
 impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
+    type Tx = TxEnv;
+    type Block = BlockEnv;
+    type Spec = SpecId;
+
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.inner.ctx.journaled_state.inner
     }
