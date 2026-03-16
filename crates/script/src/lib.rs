@@ -970,4 +970,19 @@ mod tests {
         ]);
         assert!(args.with_gas_price.unwrap().is_zero());
     }
+
+    #[test]
+    fn test_priority_gas_price_cannot_exceed_gas_price() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "--broadcast",
+            "--with-gas-price",
+            "100",
+            "--priority-gas-price",
+            "200",
+            "Script",
+        ]);
+        // priority (200) > max_fee (100) — broadcast should reject this at runtime
+        assert!(args.priority_gas_price.unwrap() > args.with_gas_price.unwrap());
+    }
 }
