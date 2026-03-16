@@ -2109,9 +2109,9 @@ mod tests {
         evm_opts.fork_url = Some(endpoint.to_string());
         evm_opts.fork_block_number = Some(block_num);
 
-        let env = evm_opts.env().await.unwrap();
+        let (env, fork_block) = evm_opts.env().await.unwrap();
 
-        let fork = evm_opts.get_fork(&Config::default(), env.evm_env.clone()).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), env.evm_env.clone(), fork_block).unwrap();
 
         let backend = Backend::spawn(Some(fork)).unwrap();
 

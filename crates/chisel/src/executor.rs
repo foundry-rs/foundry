@@ -199,13 +199,16 @@ impl SessionSource {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
-        let env = self.config.evm_opts.env().await?;
+        let (env, fork_block) = self.config.evm_opts.env().await?;
 
         let backend = match self.config.backend.clone() {
             Some(backend) => backend,
             None => {
-                let fork =
-                    self.config.evm_opts.get_fork(&self.config.foundry_config, env.evm_env.clone());
+                let fork = self.config.evm_opts.get_fork(
+                    &self.config.foundry_config,
+                    env.evm_env.clone(),
+                    fork_block,
+                );
                 let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
                 backend
