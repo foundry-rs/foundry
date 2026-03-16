@@ -10,7 +10,7 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::request::TransactionRequest;
 use foundry_cheatcodes::{
-    CheatcodeAnalysis, CheatcodesExecutor, EthCheatCtx, NestedEvmClosure, Wallets,
+    CheatcodeAnalysis, CheatcodesExecutor, EthCheatCtx, EthNestedEvmClosure, Wallets,
 };
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
@@ -371,7 +371,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
@@ -390,7 +390,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         db: &mut dyn DatabaseExt,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let mut evm = new_evm_with_inspector(db, evm_env, tx_env, &mut inspector);

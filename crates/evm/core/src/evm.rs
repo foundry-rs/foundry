@@ -292,6 +292,13 @@ impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
     }
 }
 
+/// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
+///
+/// Pinned to Eth types (`TxEnv`, `BlockEnv`, `SpecId`).
+pub type EthNestedEvmClosure<'a> = &'a mut dyn FnMut(
+    &mut dyn NestedEvm<Tx = TxEnv, Block = BlockEnv, Spec = SpecId>,
+) -> Result<(), EVMError<DatabaseError>>;
+
 /// Clones the current context (env + journal), passes the database, cloned env,
 /// and cloned journal inner to the callback. The callback builds whatever EVM it
 /// needs, runs its operations, and returns `(result, modified_env, modified_journal)`.

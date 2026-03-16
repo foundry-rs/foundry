@@ -41,7 +41,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
+    evm::{EthNestedEvmClosure, NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -66,7 +66,6 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
-    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
@@ -85,14 +84,6 @@ mod utils;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
-/// Closure type used by [`CheatcodesExecutor`] methods that run nested EVM operations.
-///
-/// The associated types are pinned to Eth types for now. When Tempo support is added,
-/// this will either become generic or a separate `TempoNestedEvmClosure` will be introduced.
-pub type NestedEvmClosure<'a> = &'a mut dyn FnMut(
-    &mut dyn NestedEvm<Tx = TxEnv, Block = BlockEnv, Spec = SpecId>,
-) -> Result<(), EVMError<DatabaseError>>;
-
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
 ///
 /// The executor assembles the full inspector stack internally and never exposes it across the
@@ -104,7 +95,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
@@ -133,7 +124,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
         db: &mut dyn DatabaseExt,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
@@ -187,7 +178,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
             let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
@@ -205,7 +196,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         db: &mut dyn DatabaseExt,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
         f(&mut evm)
