@@ -99,8 +99,10 @@ pub struct Executor {
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
     backend: Arc<Backend>,
-    /// The EVM environment.
-    env: Env,
+    /// The EVM environment (block and cfg).
+    evm_env: EvmEnv,
+    /// The transaction environment.
+    tx_env: TxEnv,
     /// The Revm inspector stack.
     inspector: InspectorStack,
     /// The gas limit for calls and deployments.
@@ -132,19 +134,23 @@ impl Executor {
             },
         );
 
-        Self { backend: Arc::new(backend), env, inspector, gas_limit, legacy_assertions }
+        Self {
+            backend: Arc::new(backend),
+            evm_env: env.evm_env,
+            tx_env: env.tx,
+            inspector,
+            gas_limit,
+            legacy_assertions,
+        }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
-        let env = Env::new_with_spec_id(
-            self.env.evm_env.cfg_env.clone(),
-            self.env.evm_env.block_env.clone(),
-            self.env.tx.clone(),
-            self.spec_id(),
-        );
+        let mut evm_env = self.evm_env.clone();
+        evm_env.cfg_env.spec = self.spec_id();
         Self {
             backend: Arc::new(backend),
-            env,
+            evm_env,
+            tx_env: self.tx_env.clone(),
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
@@ -164,14 +170,24 @@ impl Executor {
         Arc::make_mut(&mut self.backend)
     }
 
-    /// Returns a reference to the EVM environment.
-    pub fn env(&self) -> &Env {
-        &self.env
+    /// Returns a reference to the EVM environment (block and cfg).
+    pub fn evm_env(&self) -> &EvmEnv {
+        &self.evm_env
     }
 
-    /// Returns a mutable reference to the EVM environment.
-    pub fn env_mut(&mut self) -> &mut Env {
-        &mut self.env
+    /// Returns a mutable reference to the EVM environment (block and cfg).
+    pub fn evm_env_mut(&mut self) -> &mut EvmEnv {
+        &mut self.evm_env
+    }
+
+    /// Returns a reference to the transaction environment.
+    pub fn tx_env(&self) -> &TxEnv {
+        &self.tx_env
+    }
+
+    /// Returns a mutable reference to the transaction environment.
+    pub fn tx_env_mut(&mut self) -> &mut TxEnv {
+        &mut self.tx_env
     }
 
     /// Returns a reference to the EVM inspector.
@@ -186,12 +202,12 @@ impl Executor {
 
     /// Returns the EVM spec ID.
     pub fn spec_id(&self) -> SpecId {
-        self.env.evm_env.cfg_env.spec
+        self.evm_env.cfg_env.spec
     }
 
     /// Sets the EVM spec ID.
     pub fn set_spec_id(&mut self, spec_id: SpecId) {
-        self.env.evm_env.cfg_env.spec = spec_id;
+        self.evm_env.cfg_env.spec = spec_id;
     }
 
     /// Returns the gas limit for calls and deployments.
@@ -263,7 +279,7 @@ impl Executor {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
-        self.env_mut().tx.nonce = nonce;
+        self.tx_env_mut().nonce = nonce;
         Ok(())
     }
 
@@ -400,9 +416,9 @@ impl Executor {
         res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
-        self.env_mut().evm_env.block_env = res.env.evm_env.block_env.clone();
+        self.evm_env_mut().block_env = res.env.evm_env.block_env.clone();
         // and also the chainid, which can be set manually
-        self.env_mut().evm_env.cfg_env.chain_id = res.env.evm_env.cfg_env.chain_id;
+        self.evm_env_mut().cfg_env.chain_id = res.env.evm_env.cfg_env.chain_id;
 
         let success =
             self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
@@ -707,7 +723,7 @@ impl Executor {
         Env {
             evm_env: EvmEnv {
                 cfg_env: {
-                    let mut cfg = self.env().evm_env.cfg_env.clone();
+                    let mut cfg = self.evm_env.cfg_env.clone();
                     cfg.spec = self.spec_id();
                     cfg
                 },
@@ -717,7 +733,7 @@ impl Executor {
                 block_env: BlockEnv {
                     basefee: 0,
                     gas_limit: self.gas_limit,
-                    ..self.env().evm_env.block_env.clone()
+                    ..self.evm_env.block_env.clone()
                 },
             },
             tx: TxEnv {
@@ -729,8 +745,8 @@ impl Executor {
                 gas_price: 0,
                 gas_priority_fee: None,
                 gas_limit: self.gas_limit,
-                chain_id: Some(self.env().evm_env.cfg_env.chain_id),
-                ..self.env().tx.clone()
+                chain_id: Some(self.evm_env.cfg_env.chain_id),
+                ..self.tx_env.clone()
             },
         }
     }

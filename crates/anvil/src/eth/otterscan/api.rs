@@ -19,10 +19,11 @@ use alloy_rpc_types::{
         parity::{Action, CreateAction, CreateOutput, TraceOutput},
     },
 };
+use foundry_primitives::FoundryNetwork;
 use futures::future::join_all;
 use itertools::Itertools;
 
-impl EthApi {
+impl EthApi<FoundryNetwork> {
     /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
     /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
     ///

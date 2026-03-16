@@ -60,6 +60,7 @@ tempo-alloy.workspace = true
 alloy-evm.workspace = true
 
 op-alloy-flz.workspace = true
+op-alloy-network.workspace = true
 
 chrono.workspace = true
 eyre.workspace = true

@@ -8,6 +8,7 @@ use alloy_network::{BlockResponse, Network};
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::anvil::Forking;
+use foundry_primitives::FoundryNetwork;
 use futures::StreamExt;
 use std::fmt;
 use tokio::{runtime::Handle, task::JoinHandle};
@@ -69,7 +70,7 @@ impl TaskManager {
     /// handle.task_manager().spawn_reset_on_new_polled_blocks::<Ethereum, _>(provider, api);
     /// # }
     /// ```
-    pub fn spawn_reset_on_new_polled_blocks<N, P>(&self, provider: P, api: EthApi)
+    pub fn spawn_reset_on_new_polled_blocks<N, P>(&self, provider: P, api: EthApi<FoundryNetwork>)
     where
         N: Network,
         P: Provider<N> + Clone + Unpin + 'static,
@@ -129,7 +130,7 @@ impl TaskManager {
     ///
     /// # }
     /// ```
-    pub fn spawn_reset_on_subscribed_blocks<N, P>(&self, provider: P, api: EthApi)
+    pub fn spawn_reset_on_subscribed_blocks<N, P>(&self, provider: P, api: EthApi<FoundryNetwork>)
     where
         N: Network,
         P: Provider<N> + 'static,

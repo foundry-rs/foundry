@@ -1,10 +1,10 @@
 //! Handler that can get current storage related data
 
 use crate::mem::Backend;
+use alloy_consensus::TxReceipt;
 use alloy_network::{AnyRpcBlock, Network};
 use alloy_primitives::B256;
 use anvil_core::eth::block::Block;
-use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use std::{fmt, sync::Arc};
 
 /// A type that can fetch data related to the ethereum storage.
@@ -39,16 +39,17 @@ impl<N: Network> StorageInfo<N> {
     }
 }
 
-impl StorageInfo<FoundryNetwork> {
-    // TODO: receipts methods require N::ReceiptEnvelope generalization
-
+impl<N: Network> StorageInfo<N>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+{
     /// Returns the receipts of the current block
-    pub fn current_receipts(&self) -> Option<Vec<FoundryReceiptEnvelope>> {
+    pub fn current_receipts(&self) -> Option<Vec<N::ReceiptEnvelope>> {
         self.backend.mined_receipts(self.backend.best_hash())
     }
 
     /// Returns the receipts of the block with the given hash
-    pub fn receipts(&self, hash: B256) -> Option<Vec<FoundryReceiptEnvelope>> {
+    pub fn receipts(&self, hash: B256) -> Option<Vec<N::ReceiptEnvelope>> {
         self.backend.mined_receipts(hash)
     }
 }

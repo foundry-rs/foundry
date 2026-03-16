@@ -2,7 +2,6 @@ use super::run::fetch_contracts_bytecode_from_trace;
 use crate::{
     Cast,
     debug::handle_traces,
-    rlp_converter::TryIntoRlpEncodable,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
@@ -22,7 +21,6 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    fmt::{UIfmt, UIfmtHeaderExt, UIfmtSignatureExt},
     provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
 };
@@ -44,7 +42,6 @@ use foundry_wallets::WalletOpts;
 use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
-use serde::Serialize;
 use std::{str::FromStr, sync::LazyLock};
 use tempo_alloy::TempoNetwork;
 
@@ -232,12 +229,7 @@ impl CallArgs {
 
     pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
     where
-        N::TxEnvelope: Serialize + UIfmtSignatureExt,
-        N::Header: TryIntoRlpEncodable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
-        N::TransactionResponse: UIfmt,
-        N::HeaderResponse: UIfmtHeaderExt,
-        N::BlockResponse: UIfmt,
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
@@ -345,7 +337,7 @@ impl CallArgs {
             let value = tx.value().unwrap_or_default();
             let input = tx.input().cloned().unwrap_or_default();
             let tx_kind = tx.kind().expect("set by builder");
-            let env_tx = &mut executor.env_mut().tx;
+            let env_tx = executor.tx_env_mut();
 
             // Set transaction options with --trace
             if let Some(gas_limit) = tx.gas_limit() {

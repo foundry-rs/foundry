@@ -422,8 +422,8 @@ fn create_fork_request<CTX: FoundryContextExt<Db: DatabaseExt>>(
             && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         evm_env: EvmEnv {
-            cfg_env: ccx.ecx.cfg_mut().clone(),
-            block_env: ccx.ecx.block_mut().clone(),
+            cfg_env: ccx.ecx.eth_cfg_mut().clone(),
+            block_env: ccx.ecx.eth_block_mut().clone(),
         },
         evm_opts,
     };

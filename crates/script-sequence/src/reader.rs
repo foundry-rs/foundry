@@ -145,16 +145,16 @@ impl BroadcastReader {
     ) -> Vec<(TransactionWithMetadata, TransactionReceipt)> {
         let ScriptSequence { transactions, receipts, .. } = broadcast;
 
-        let mut targets = Vec::new();
-        for tx in transactions.into_iter().filter(|tx| self.matches_filters(tx)) {
-            let maybe_receipt = receipts
-                .iter()
-                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash()));
-
-            if let Some(receipt) = maybe_receipt {
-                targets.push((tx, receipt.clone()));
-            }
-        }
+        let mut targets: Vec<_> = transactions
+            .into_iter()
+            .filter(|tx| self.matches_filters(tx))
+            .filter_map(|tx| {
+                let receipt = receipts
+                    .iter()
+                    .find(|r| tx.hash.is_some_and(|hash| hash == r.transaction_hash()))?;
+                Some((tx, receipt.clone()))
+            })
+            .collect();
 
         // Sort by descending block number
         targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number()));

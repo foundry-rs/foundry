@@ -1211,7 +1211,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Override env for isolated execution.
         ccx.ecx.block_mut().set_basefee(0);
-        *ccx.ecx.tx_mut() = tx_env;
+        *ccx.ecx.eth_tx_mut() = tx_env;
         ccx.ecx.tx_mut().set_gas_price(0);
         ccx.ecx.tx_mut().set_gas_priority_fee(None);
 
@@ -1327,7 +1327,7 @@ impl Cheatcode for executeTransactionCall {
 }
 
 impl Cheatcode for startDebugTraceRecordingCall {
-    fn apply_full<CTX>(
+    fn apply_full<CTX: ContextTr>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -1357,7 +1357,7 @@ impl Cheatcode for startDebugTraceRecordingCall {
 }
 
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
-    fn apply_full<CTX>(
+    fn apply_full<CTX: ContextTr>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -1425,8 +1425,10 @@ pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
 fn inner_snapshot_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
 ) -> Result {
-    let evm_env =
-        EvmEnv { cfg_env: ccx.ecx.cfg_mut().clone(), block_env: ccx.ecx.block_mut().clone() };
+    let evm_env = EvmEnv {
+        cfg_env: ccx.ecx.eth_cfg_mut().clone(),
+        block_env: ccx.ecx.eth_block_mut().clone(),
+    };
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
     let id = db.snapshot_state(inner, &evm_env);
     Ok(id.abi_encode())

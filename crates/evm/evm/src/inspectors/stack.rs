@@ -2,6 +2,8 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
     LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
+use alloy_evm::EvmEnv;
+use alloy_network::Ethereum;
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
@@ -80,7 +82,7 @@ pub struct InspectorStackBuilder {
     /// Networks with enabled features.
     pub networks: NetworkConfigs,
     /// The wallets to set in the cheatcodes context.
-    pub wallets: Option<Wallets>,
+    pub wallets: Option<Wallets<Ethereum>>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
 }
@@ -122,7 +124,7 @@ impl InspectorStackBuilder {
 
     /// Set the wallets.
     #[inline]
-    pub fn wallets(mut self, wallets: Wallets) -> Self {
+    pub fn wallets(mut self, wallets: Wallets<Ethereum>) -> Self {
         self.wallets = Some(wallets);
         self
     }
@@ -364,9 +366,7 @@ pub struct InspectorStackRefMut<'a> {
     pub inner: &'a mut InspectorStackInner,
 }
 
-impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
-    for InspectorStackInner
-{
+impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
     fn with_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes,
@@ -388,8 +388,8 @@ impl<CTX: FoundryContextExt<Journal: FoundryJournalExt>> CheatcodesExecutor<CTX>
         &mut self,
         cheats: &mut Cheatcodes,
         db: &mut dyn DatabaseExt,
-        evm_env: foundry_evm_core::EvmEnv,
-        tx_env: revm::context::TxEnv,
+        evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
+        tx_env: CTX::Tx,
         f: NestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };

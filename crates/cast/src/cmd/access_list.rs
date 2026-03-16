@@ -1,6 +1,5 @@
 use crate::{
     Cast,
-    rlp_converter::TryIntoRlpEncodable,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
@@ -12,13 +11,9 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::LoadConfig,
 };
-use foundry_common::{
-    fmt::{UIfmt, UIfmtHeaderExt, UIfmtSignatureExt},
-    provider::ProviderBuilder,
-};
+use foundry_common::provider::ProviderBuilder;
 use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::WalletOpts;
-use serde::Serialize;
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
@@ -74,12 +69,7 @@ impl AccessListArgs {
 
     pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
     where
-        N::TxEnvelope: Serialize + UIfmtSignatureExt,
-        N::Header: TryIntoRlpEncodable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
-        N::TransactionResponse: UIfmt,
-        N::HeaderResponse: UIfmtHeaderExt,
-        N::BlockResponse: UIfmt,
     {
         let Self { to, mut sig, args, data, tx, rpc, wallet, block } = self;
 

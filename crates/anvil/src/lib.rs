@@ -26,6 +26,7 @@ use eth::backend::fork::ClientFork;
 use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 pub use foundry_evm::hardfork::EthereumHardfork;
+use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use revm::primitives::hardfork::SpecId;
@@ -111,7 +112,7 @@ extern crate tracing;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+pub async fn spawn(config: NodeConfig) -> (EthApi<FoundryNetwork>, NodeHandle) {
     try_spawn(config).await.expect("failed to spawn node")
 }
 
@@ -135,7 +136,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 

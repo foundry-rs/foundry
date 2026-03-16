@@ -11,17 +11,18 @@ use alloy_rpc_types::{
 use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
+use foundry_primitives::FoundryNetwork;
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
 #[derive(Clone)]
 pub struct HttpEthRpcHandler {
     /// Access to the node
-    api: EthApi,
+    api: EthApi<FoundryNetwork>,
 }
 
 impl HttpEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi) -> Self {
+    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 }
@@ -39,12 +40,12 @@ impl RpcHandler for HttpEthRpcHandler {
 #[derive(Clone)]
 pub struct PubSubEthRpcHandler {
     /// Access to the node
-    api: EthApi,
+    api: EthApi<FoundryNetwork>,
 }
 
 impl PubSubEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi) -> Self {
+    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 
