@@ -868,7 +868,7 @@ contract Issue13766Test is Test {
 
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: Error != expected error: CustomError() != ] test_expectRevertEmptyBytes() ([GAS])
+[FAIL: Error != expected error: CustomError() != EvmError: Revert] test_expectRevertEmptyBytes() ([GAS])
 ...
 "#]]);
 });
