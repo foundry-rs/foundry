@@ -366,12 +366,10 @@ impl BundledState {
                         // eth_feeHistory returns empty reward arrays, causing the
                         // estimator to fall back to a 1 wei priority fee.
                         if matches!(&send_kind, SendTransactionsKind::Raw { browser: Some(_), .. })
-                            && let Ok(suggested_tip) =
-                                provider.get_max_priority_fee_per_gas().await
+                            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
                             && suggested_tip > fees.max_priority_fee_per_gas
                         {
-                            fees.max_fee_per_gas +=
-                                suggested_tip - fees.max_priority_fee_per_gas;
+                            fees.max_fee_per_gas += suggested_tip - fees.max_priority_fee_per_gas;
                             fees.max_priority_fee_per_gas = suggested_tip;
                         }
 
