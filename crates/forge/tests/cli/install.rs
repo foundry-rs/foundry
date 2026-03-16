@@ -595,8 +595,7 @@ async fn correctly_sync_dep_with_multiple_version() {
 // when installing a tag that does not use submodules for its dependencies.
 // https://github.com/foundry-rs/foundry/issues/13688
 forgetest!(
-    #[ignore = "slow"]
-    install_no_git_cleans_nested_submodules,
+    flaky_install_no_git_cleans_nested_submodules,
     |prj, cmd| {
         cmd.git_init();
 
