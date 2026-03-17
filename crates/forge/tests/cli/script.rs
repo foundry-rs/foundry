@@ -3500,7 +3500,7 @@ Script ran successfully.
 // fetch state from an ancient block where contracts did not exist.
 forgetest_init!(
     #[ignore]
-    can_call_arbitrum_contract_in_script,
+    flaky_can_call_arbitrum_contract_in_script,
     |prj, cmd| {
         let script = prj.add_source(
             "ArbScript",

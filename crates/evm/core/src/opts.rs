@@ -474,12 +474,12 @@ mod tests {
         evm_opts.fork_url = Some(endpoint.clone());
         assert!(evm_opts.fork_block_number.is_none());
 
-        let (env, fork_block) = evm_opts.env().await.unwrap();
+        let (evm_env, _, fork_block) = evm_opts.env::<SpecId, BlockEnv, TxEnv>().await.unwrap();
         let fork_block = fork_block.expect("should have resolved a fork block number");
 
         // On Arbitrum, block_env.number is the L1 block number (much smaller).
         // The fork_block should be the actual L2 block number (much larger).
-        let block_env_number: u64 = env.evm_env.block_env.number.to();
+        let block_env_number: u64 = evm_env.block_env.number.to();
         assert!(
             fork_block > block_env_number,
             "fork_block ({fork_block}) should be the L2 block, which is larger than \
@@ -487,7 +487,7 @@ mod tests {
         );
 
         // Verify get_fork pins to the correct L2 block number
-        let fork = evm_opts.get_fork(&Config::default(), env.evm_env, Some(fork_block)).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), &evm_env, Some(fork_block)).unwrap();
         assert_eq!(
             fork.evm_opts.fork_block_number,
             Some(fork_block),
