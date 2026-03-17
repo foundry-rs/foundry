@@ -446,7 +446,7 @@ OPTIONS:
     -h, --help      Print help information
     -v, --version   Print the version of foundryup
     -U, --update    Update foundryup to the latest version
-    -i, --install   Install a specific version from built binaries
+    -i, --install   Install a specific version from built binaries (e.g., stable, nightly, 0.3.0)
     -l, --list      List versions installed from built binaries
     -u, --use       Use a specific installed version from built binaries
     -b, --branch    Build and install a specific branch
