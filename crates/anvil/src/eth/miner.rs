@@ -305,3 +305,68 @@ impl fmt::Debug for ReadyTransactionMiner {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{Signed, TxLegacy};
+    use alloy_primitives::{Address, Bytes, TxKind, U256, b256};
+    use alloy_signer::Signature;
+    use anvil_core::eth::transaction::PendingTransaction;
+    use std::pin::Pin;
+    use std::str::FromStr;
+
+    /// Creates a dummy [`PoolTransaction`] for testing.
+    fn dummy_pool_tx() -> PoolTransaction {
+        let tx = TxLegacy {
+            nonce: 0,
+            gas_price: 1_000_000_000,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::default(),
+            chain_id: Some(1),
+        };
+        let signature = Signature::from_str(
+            "0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae\
+             3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18\
+             2b",
+        )
+        .unwrap();
+        let envelope = FoundryTxEnvelope::Legacy(Signed::new_unchecked(
+            tx,
+            signature,
+            b256!("0xa517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
+        ));
+        let pending = PendingTransaction::with_impersonated(envelope, Address::ZERO);
+        PoolTransaction::new(pending)
+    }
+
+    /// Regression test for <https://github.com/foundry-rs/foundry/issues/13630>.
+    ///
+    /// `force_transactions` must be returned on the first poll even when the mining mode returns
+    /// `Poll::Pending` (empty pool). Previously, `ready!()` on the mining mode blocked the
+    /// entire `Miner::poll`, so force_transactions were never consumed — a permanent deadlock.
+    #[tokio::test]
+    async fn force_transactions_returned_when_mining_mode_pending() {
+        let pool: Arc<Pool> = Arc::new(Pool::default());
+
+        // MiningMode::None always returns Poll::Pending — simulates an empty pool in automine.
+        let mut miner = Miner::new(MiningMode::None)
+            .with_forced_transactions(Some(vec![dummy_pool_tx()]));
+
+        // First poll must return force_transactions immediately.
+        let result = futures::future::poll_fn(|cx| miner.poll(&pool, cx)).await;
+        assert_eq!(result.len(), 1, "force_transactions should be returned on first poll");
+
+        // Second poll with MiningMode::None and empty pool should be pending (no more forced txs).
+        let mut fut = futures::future::poll_fn(|cx| miner.poll(&pool, cx));
+        let pending = Pin::new(&mut fut);
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        assert!(
+            pending.poll(&mut cx).is_pending(),
+            "second poll should be Pending with MiningMode::None and empty pool"
+        );
+    }
+}
