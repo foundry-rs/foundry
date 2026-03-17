@@ -3511,9 +3511,12 @@ interface IERC20 {
 
 contract ArbScript is Script {
     function run() external view {
-        // WETH on Arbitrum — exists on-chain but would fail if fork pins to L1 block number
-        IERC20 weth = IERC20(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
-        string memory n = weth.name();
+        // USDC on Arbitrum — a contract with zero ETH balance.
+        // Before the fix, the fork pinned to the L1 block number, fetching state from
+        // an ancient block (Sept 2022) where USDC did not exist, causing
+        // "call to non-contract address".
+        IERC20 usdc = IERC20(0xaf88d065e77c8cC2239327C5EDb3A432268e5831);
+        string memory n = usdc.name();
         require(bytes(n).length > 0, "name should not be empty");
     }
 }
