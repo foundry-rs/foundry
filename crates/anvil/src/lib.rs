@@ -28,7 +28,6 @@ use foundry_common::provider::{ProviderBuilder, RetryProvider};
 pub use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, TryFutureExt};
-use parking_lot::Mutex;
 use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
@@ -200,7 +199,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         }
     }
 
-    let fee_history_cache = Arc::new(Mutex::new(Default::default()));
+    let fee_history_cache = backend.fee_history_cache().clone();
     let fee_history_service = FeeHistoryService::new(
         match backend.spec_id() {
             SpecId::OSAKA => BlobParams::osaka(),
@@ -208,7 +207,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
             _ => BlobParams::cancun(),
         },
         backend.new_block_notifications(),
-        Arc::clone(&fee_history_cache),
+        fee_history_cache.clone(),
         StorageInfo::new(Arc::clone(&backend)),
     );
     // create an entry for the best block

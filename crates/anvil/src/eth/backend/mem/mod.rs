@@ -21,7 +21,10 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{
+            FeeDetails, FeeHistoryCache, FeeManager, MAX_FEE_HISTORY_CACHE_SIZE,
+            MIN_SUGGESTED_PRIORITY_FEE, create_fee_history_cache_item,
+        },
         macros::node_info,
         pool::transactions::PoolTransaction,
         sign::build_impersonated,
@@ -234,6 +237,8 @@ pub struct Backend<N: Network> {
     mining: Arc<tokio::sync::Mutex<()>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
+    /// Fee history cache, updated synchronously during mining to avoid race conditions
+    fee_history_cache: FeeHistoryCache,
 }
 
 impl<N: Network> Clone for Backend<N> {
@@ -261,6 +266,7 @@ impl<N: Network> Clone for Backend<N> {
             precompile_factory: self.precompile_factory.clone(),
             mining: self.mining.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
+            fee_history_cache: self.fee_history_cache.clone(),
         }
     }
 }
@@ -349,6 +355,11 @@ impl<N: Network> Backend<N> {
     /// Returns the `FeeManager` that manages fee/pricings
     pub fn fees(&self) -> &FeeManager {
         &self.fees
+    }
+
+    /// Returns the fee history cache
+    pub fn fee_history_cache(&self) -> &FeeHistoryCache {
+        &self.fee_history_cache
     }
 
     /// The env data of the blockchain
@@ -1787,6 +1798,7 @@ impl Backend<FoundryNetwork> {
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
             disable_pool_balance_checks,
+            fee_history_cache: Arc::new(Mutex::new(Default::default())),
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -2418,6 +2430,24 @@ impl Backend<FoundryNetwork> {
             let BlockInfo { block, transactions, receipts } = block;
 
             let header = block.header.clone();
+
+            // Update fee history cache synchronously to avoid stale reads from
+            // eth_feeHistory before the async FeeHistoryService processes the notification.
+            {
+                let item = create_fee_history_cache_item(
+                    &header,
+                    &block.body.transactions,
+                    &receipts,
+                    self.blob_params(),
+                );
+                let mut cache = self.fee_history_cache.lock();
+                cache.insert(block_number, item);
+                let pop_next = block_number.saturating_sub(MAX_FEE_HISTORY_CACHE_SIZE);
+                let num_remove = (cache.len() as u64).saturating_sub(MAX_FEE_HISTORY_CACHE_SIZE);
+                for num in 0..num_remove {
+                    cache.remove(&(pop_next - num));
+                }
+            }
 
             trace!(
                 target: "backend",

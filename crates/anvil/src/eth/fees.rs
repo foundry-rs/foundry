@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::{BlockHeader, Header, Transaction};
+use alloy_consensus::{BlockHeader, Header, Transaction, TxReceipt};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_primitives::B256;
 use futures::StreamExt;
@@ -236,93 +236,30 @@ impl FeeHistoryService {
         hash: B256,
         header: &Header,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
-        // percentile list from 0.0 to 100.0 with a 0.5 resolution.
-        // this will create 200 percentile points
-        let reward_percentiles: Vec<f64> = {
-            let mut percentile: f64 = 0.0;
-            (0..=200)
-                .map(|_| {
-                    let val = percentile;
-                    percentile += 0.5;
-                    val
-                })
-                .collect()
-        };
-
-        let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
-        let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
-
-        let mut item = FeeHistoryCacheItem {
-            base_fee: base_fee as u128,
-            gas_used_ratio: 0f64,
-            blob_gas_used_ratio: 0f64,
-            rewards: Vec::new(),
-            excess_blob_gas,
-            base_fee_per_blob_gas,
-            blob_gas_used,
-        };
-
         let current_block = self.storage_info.block(hash);
         let current_receipts = self.storage_info.receipts(hash);
 
         if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number());
-
-            let gas_used = block.header.gas_used() as f64;
-            let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
-            item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
-            item.blob_gas_used_ratio = blob_gas_used
-                .map(|g| {
-                    let max = self.blob_params.max_blob_gas_per_block() as f64;
-                    if max == 0.0 { 0.0 } else { g / max }
-                })
-                .unwrap_or(0.0);
-
-            // extract useful tx info (gas_used, effective_reward)
-            let mut transactions: Vec<(_, _)> = receipts
-                .iter()
-                .enumerate()
-                .map(|(i, receipt)| {
-                    let cumulative = receipt.cumulative_gas_used();
-                    let prev_cumulative =
-                        if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
-                    let gas_used = cumulative - prev_cumulative;
-                    let effective_reward = block
-                        .body
-                        .transactions
-                        .get(i)
-                        .map(|tx| tx.as_ref().effective_tip_per_gas(base_fee).unwrap_or(0))
-                        .unwrap_or(0);
-
-                    (gas_used, effective_reward)
-                })
-                .collect();
-
-            // sort by effective reward asc
-            transactions.sort_by_key(|(_, reward)| *reward);
-
-            // calculate percentile rewards
-            item.rewards = reward_percentiles
-                .into_iter()
-                .filter_map(|p| {
-                    let target_gas = (p * gas_used / 100f64) as u64;
-                    let mut sum_gas = 0;
-                    for (gas_used, effective_reward) in transactions.iter().copied() {
-                        sum_gas += gas_used;
-                        if target_gas <= sum_gas {
-                            return Some(effective_reward);
-                        }
-                    }
-                    None
-                })
-                .collect();
+            let item = create_fee_history_cache_item(
+                header,
+                &block.body.transactions,
+                &receipts,
+                self.blob_params,
+            );
+            (item, Some(block.header.number()))
         } else {
-            item.rewards = vec![0; reward_percentiles.len()];
+            let base_fee = header.base_fee_per_gas.unwrap_or_default();
+            let item = FeeHistoryCacheItem {
+                base_fee: base_fee as u128,
+                gas_used_ratio: 0f64,
+                blob_gas_used_ratio: 0f64,
+                rewards: vec![0; 201],
+                excess_blob_gas: header.excess_blob_gas.map(|g| g as u128),
+                base_fee_per_blob_gas: header.blob_fee(self.blob_params),
+                blob_gas_used: header.blob_gas_used.map(|g| g as u128),
+            };
+            (item, None)
         }
-        (item, block_number)
     }
 
     fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
@@ -356,6 +293,96 @@ impl Future for FeeHistoryService {
         }
 
         Poll::Pending
+    }
+}
+
+/// Creates a [`FeeHistoryCacheItem`] from block data.
+///
+/// This is a standalone function so it can be called both from [`FeeHistoryService`] (async
+/// notification path) and synchronously during block mining to keep the cache consistent with the
+/// chain head.
+pub fn create_fee_history_cache_item<T, R>(
+    header: &Header,
+    transactions: &[T],
+    receipts: &[R],
+    blob_params: BlobParams,
+) -> FeeHistoryCacheItem
+where
+    T: std::ops::Deref,
+    T::Target: Transaction,
+    R: TxReceipt,
+{
+    // percentile list from 0.0 to 100.0 with a 0.5 resolution.
+    // this will create 200 percentile points
+    let reward_percentiles: Vec<f64> = {
+        let mut percentile: f64 = 0.0;
+        (0..=200)
+            .map(|_| {
+                let val = percentile;
+                percentile += 0.5;
+                val
+            })
+            .collect()
+    };
+
+    let base_fee = header.base_fee_per_gas.unwrap_or_default();
+    let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
+    let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
+    let base_fee_per_blob_gas = header.blob_fee(blob_params);
+
+    let gas_used = header.gas_used as f64;
+    let gas_used_ratio = gas_used / header.gas_limit as f64;
+    let blob_gas_used_ratio = header
+        .blob_gas_used
+        .map(|g| {
+            let max = blob_params.max_blob_gas_per_block() as f64;
+            if max == 0.0 { 0.0 } else { g as f64 / max }
+        })
+        .unwrap_or(0.0);
+
+    // extract useful tx info (gas_used, effective_reward)
+    let mut tx_gas_and_reward: Vec<(u64, u128)> = receipts
+        .iter()
+        .enumerate()
+        .map(|(i, receipt)| {
+            let cumulative = receipt.cumulative_gas_used();
+            let prev_cumulative = if i > 0 { receipts[i - 1].cumulative_gas_used() } else { 0 };
+            let gas_used = cumulative - prev_cumulative;
+            let effective_reward = transactions
+                .get(i)
+                .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
+                .unwrap_or(0);
+            (gas_used, effective_reward)
+        })
+        .collect();
+
+    // sort by effective reward asc
+    tx_gas_and_reward.sort_by_key(|(_, reward)| *reward);
+
+    // calculate percentile rewards
+    let rewards = reward_percentiles
+        .into_iter()
+        .filter_map(|p| {
+            let target_gas = (p * gas_used / 100f64) as u64;
+            let mut sum_gas = 0;
+            for &(gas_used, effective_reward) in &tx_gas_and_reward {
+                sum_gas += gas_used;
+                if target_gas <= sum_gas {
+                    return Some(effective_reward);
+                }
+            }
+            None
+        })
+        .collect();
+
+    FeeHistoryCacheItem {
+        base_fee: base_fee as u128,
+        gas_used_ratio,
+        blob_gas_used_ratio,
+        rewards,
+        excess_blob_gas,
+        base_fee_per_blob_gas,
+        blob_gas_used,
     }
 }
 
