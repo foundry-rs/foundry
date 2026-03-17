@@ -1,7 +1,7 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    Env, EthInspectorExt,
+    EthInspectorExt,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::new_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
@@ -233,7 +233,6 @@ pub trait DatabaseExt<Spec = SpecId, Block = BlockEnv, Tx = TxEnv>:
         &mut self,
         transaction: &TransactionRequest,
         evm_env: EvmEnv<Spec, Block>,
-        tx_env: Tx,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()>;
@@ -923,7 +922,8 @@ impl Backend {
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        mut env: Env,
+        mut evm_env: EvmEnv,
+        mut tx_env: TxEnv,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<Transaction<AnyTxEnvelope>>> {
@@ -934,7 +934,7 @@ impl Backend {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
-            fork.backend().get_full_block(env.evm_env.block_env.number.saturating_to::<u64>())?;
+            fork.backend().get_full_block(evm_env.block_env.number.saturating_to::<u64>())?;
 
         for tx in full_block.inner.transactions.txns() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
@@ -954,7 +954,8 @@ impl Backend {
 
             commit_transaction(
                 tx,
-                &mut env,
+                &mut evm_env,
+                &mut tx_env,
                 journaled_state,
                 fork,
                 &fork_id,
@@ -1315,10 +1316,8 @@ impl DatabaseExt for Backend {
             .forks
             .update_block_env(self.inner.ensure_fork_id(id).cloned()?, evm_env.block_env.clone());
 
-        let env = Env { evm_env: evm_env.clone(), tx: tx_env.clone() };
-
         // replay all transactions that came before
-        self.replay_until(id, env, transaction, journaled_state)?;
+        self.replay_until(id, evm_env.clone(), tx_env.clone(), transaction, journaled_state)?;
 
         Ok(())
     }
@@ -1328,7 +1327,7 @@ impl DatabaseExt for Backend {
         maybe_id: Option<LocalForkId>,
         transaction: B256,
         mut evm_env: EvmEnv,
-        tx_env: TxEnv,
+        mut tx_env: TxEnv,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
@@ -1352,11 +1351,11 @@ impl DatabaseExt for Backend {
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         update_env_block(&mut evm_env, &block);
 
-        let mut env = Env { evm_env, tx: tx_env };
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
             &tx,
-            &mut env,
+            &mut evm_env,
+            &mut tx_env,
             journaled_state,
             fork,
             &fork_id,
@@ -1369,7 +1368,6 @@ impl DatabaseExt for Backend {
         &mut self,
         tx: &TransactionRequest,
         evm_env: EvmEnv,
-        tx_env: TxEnv,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
@@ -1377,19 +1375,13 @@ impl DatabaseExt for Backend {
 
         self.commit(journaled_state.state.clone());
 
-        let mut env = Env { evm_env, tx: tx_env };
-        let res = {
-            env.tx = tx.clone().try_into_tx_env(&env.evm_env)?;
+        let tx_env = tx.clone().try_into_tx_env(&evm_env)?;
 
+        let res = {
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(
-                &mut db,
-                env.evm_env.to_owned(),
-                env.tx.to_owned(),
-                inspector,
-            );
+            let mut evm = new_evm_with_inspector(&mut db, evm_env, tx_env.to_owned(), inspector);
             evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact(env.tx)?
+            evm.transact(tx_env)?
         };
 
         self.commit(res.state);
@@ -2031,9 +2023,11 @@ fn update_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock) {
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
+#[allow(clippy::too_many_arguments)]
 fn commit_transaction(
     tx: &AnyRpcTransaction,
-    env: &mut Env,
+    evm_env: &mut EvmEnv,
+    tx_env: &mut TxEnv,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
@@ -2041,7 +2035,7 @@ fn commit_transaction(
     inspector: &mut dyn EthInspectorExt,
 ) -> eyre::Result<()> {
     if let Some(tx_envelope) = tx.as_envelope() {
-        env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());
+        *tx_env = TxEnv::from_recovered_tx(tx_envelope, tx.from());
     }
 
     let now = Instant::now();
@@ -2053,13 +2047,13 @@ fn commit_transaction(
 
         let mut evm = crate::evm::new_evm_with_inspector(
             &mut db as _,
-            env.evm_env.to_owned(),
-            env.tx.to_owned(),
+            evm_env.to_owned(),
+            tx_env.to_owned(),
             inspector,
         );
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.journaled_state.depth = depth + 1;
-        evm.transact(env.tx.clone()).wrap_err("backend: failed committing transaction")?
+        evm.transact(tx_env.clone()).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 

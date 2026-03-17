@@ -418,10 +418,9 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
-        let tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, evm_env, tx_env, inner, &mut inspector)
+        db.transact_from_tx(tx, evm_env, inner, &mut inspector)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {

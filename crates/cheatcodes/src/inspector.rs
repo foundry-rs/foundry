@@ -219,9 +219,8 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
-        let tx_env = ecx.tx_clone();
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, evm_env, tx_env, inner, cheats)
+        db.transact_from_tx(tx, evm_env, inner, cheats)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
