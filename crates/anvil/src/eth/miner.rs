@@ -108,13 +108,17 @@ impl<T> Miner<T> {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         self.inner.register(cx);
-        let next = ready!(self.mode.write().poll(pool, cx));
-        if let Some(mut transactions) = self.force_transactions.take() {
-            transactions.extend(next);
-            Poll::Ready(transactions)
-        } else {
-            Poll::Ready(next)
+
+        // Consume force transactions immediately on the first poll, without waiting for the mining
+        // mode to signal readiness. This avoids a deadlock: in automine mode the miner waits for
+        // pool readiness, but a user-submitted tx may depend on a force_transaction (same sender,
+        // next nonce). Since force_transactions live outside the pool, readiness never comes.
+        if let Some(transactions) = self.force_transactions.take() {
+            return Poll::Ready(transactions);
         }
+
+        let next = ready!(self.mode.write().poll(pool, cx));
+        Poll::Ready(next)
     }
 }
 
