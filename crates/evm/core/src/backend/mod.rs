@@ -898,18 +898,18 @@ impl Backend {
         transaction: B256,
     ) -> eyre::Result<(u64, AnyRpcBlock)> {
         let fork = self.inner.get_fork_by_id(id)?;
-        let tx = fork.db.db.get_transaction(transaction)?;
+        let tx = fork.backend().get_transaction(transaction)?;
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number {
-            let block = fork.db.db.get_full_block(tx_block)?;
+            let block = fork.backend().get_full_block(tx_block)?;
 
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
             Ok((fork_block, block))
         } else {
-            let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
+            let block = fork.backend().get_full_block(BlockNumberOrTag::Latest)?;
 
             let number = block.header.number();
 
@@ -934,7 +934,7 @@ impl Backend {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
-            fork.db.db.get_full_block(env.evm_env.block_env.number.saturating_to::<u64>())?;
+            fork.backend().get_full_block(env.evm_env.block_env.number.saturating_to::<u64>())?;
 
         for tx in full_block.inner.transactions.txns() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
@@ -1339,7 +1339,7 @@ impl DatabaseExt for Backend {
 
         let tx = {
             let fork = self.inner.get_fork_by_id_mut(id)?;
-            fork.db.db.get_transaction(transaction)?
+            fork.backend().get_transaction(transaction)?
         };
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
@@ -1661,6 +1661,11 @@ pub struct Fork {
 }
 
 impl Fork {
+    /// Returns a reference to the underlying [`SharedBackend`].
+    pub fn backend(&self) -> &SharedBackend {
+        &self.db.db
+    }
+
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
         if let Ok(Some(acc)) = self.db.basic_ref(acc)
