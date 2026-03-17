@@ -220,11 +220,22 @@ impl CallArgs {
         if self.rpc.curl {
             return self.run_curl().await;
         }
+
+        self.validate_trace_mode()?;
+
         if self.tx.tempo.is_tempo() {
             self.run_with_network::<TempoNetwork>().await
         } else {
             self.run_with_network::<AnyNetwork>().await
         }
+    }
+
+    fn validate_trace_mode(&self) -> Result<()> {
+        if self.trace && self.tx.tempo.is_tempo() {
+            eyre::bail!("Tempo transactions are not yet supported with `cast call --trace`");
+        }
+
+        Ok(())
     }
 
     pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
@@ -824,5 +835,32 @@ mod tests {
         assert_eq!(args.tx.nonce, Some(U64::from(42)));
         assert_eq!(args.tx.value, Some(U256::from(1000000000000000000u64)));
         assert_eq!(args.tx.blob_gas_price, Some(U256::from(10000000000u64)));
+    }
+
+    #[test]
+    fn trace_rejects_tempo_transactions() {
+        let args = CallArgs::parse_from([
+            "foundry-cli",
+            "--trace",
+            "--tempo.fee-token",
+            "0x0000000000000000000000000000000000000001",
+        ]);
+
+        let err = args.validate_trace_mode().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Tempo transactions are not yet supported with `cast call --trace`"
+        );
+    }
+
+    #[test]
+    fn non_trace_allows_tempo_transactions() {
+        let args = CallArgs::parse_from([
+            "foundry-cli",
+            "--tempo.fee-token",
+            "0x0000000000000000000000000000000000000001",
+        ]);
+
+        assert!(args.validate_trace_mode().is_ok());
     }
 }
