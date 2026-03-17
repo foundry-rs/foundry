@@ -22,9 +22,9 @@ use revm::context::{ContextTr, JournalTr};
 pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
+pub use foundry_evm_core::{EthCheatCtx, evm::EthNestedEvmClosure};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    CheatsCtxExt, NestedEvmClosure,
 };
 pub use spec::{CheatcodeDef, Vm};
 
@@ -77,7 +77,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         self.apply(ccx.state)
     }
 
@@ -85,7 +85,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ///
     /// Implement this function if you need access to the executor.
     #[inline(always)]
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,

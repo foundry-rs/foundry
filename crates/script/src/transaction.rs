@@ -1,7 +1,7 @@
 use super::ScriptResult;
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_network::TransactionBuilder;
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxKind, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
@@ -17,7 +17,7 @@ pub struct ScriptTransactionBuilder {
 }
 
 impl ScriptTransactionBuilder {
-    pub fn new(transaction: TransactionMaybeSigned, rpc: String) -> Self {
+    pub fn new(transaction: TransactionMaybeSigned<Ethereum>, rpc: String) -> Self {
         let mut transaction = TransactionWithMetadata::from_tx_request(transaction);
         transaction.rpc = rpc;
         // If tx.gas is already set that means it was specified in script

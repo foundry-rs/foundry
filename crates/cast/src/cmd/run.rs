@@ -266,16 +266,20 @@ impl RunArgs {
 
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
-                            format!(
-                                "Failed to execute transaction: {:?} in block {}",
-                                tx.tx_hash(),
-                                env.evm_env.block_env.number
-                            )
-                        })?;
+                        executor
+                            .transact_with_env(env.evm_env.clone(), env.tx.clone())
+                            .wrap_err_with(|| {
+                                format!(
+                                    "Failed to execute transaction: {:?} in block {}",
+                                    tx.tx_hash(),
+                                    env.evm_env.block_env.number
+                                )
+                            })?;
                     } else {
                         trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                        if let Err(error) =
+                            executor.deploy_with_env(env.evm_env.clone(), env.tx.clone(), None)
+                        {
                             match error {
                                 // Reverted transactions should be skipped
                                 EvmError::Execution(_) => (),
@@ -310,10 +314,10 @@ impl RunArgs {
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::try_from(executor.transact_with_env(env))?
+                TraceResult::try_from(executor.transact_with_env(env.evm_env, env.tx))?
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
-                TraceResult::try_from(executor.deploy_with_env(env, None))?
+                TraceResult::try_from(executor.deploy_with_env(env.evm_env, env.tx, None))?
             }
         };
 

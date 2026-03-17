@@ -1,6 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::DynSolValue;
+use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{
     Provider,
@@ -24,7 +25,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
+use revm::{bytecode::Bytecode, context::TxEnv, database::Database, primitives::hardfork::SpecId};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -298,16 +299,13 @@ pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock, config: NetworkCo
 
 pub fn deploy_contract(
     executor: &mut TracingExecutor,
-    env: &Env,
+    evm_env: &EvmEnv,
+    tx_env: &TxEnv,
     spec_id: SpecId,
     to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
-    let env = Env::new_with_spec_id(
-        env.evm_env.cfg_env.clone(),
-        env.evm_env.block_env.clone(),
-        env.tx.clone(),
-        spec_id,
-    );
+    let mut evm_env = evm_env.clone();
+    evm_env.cfg_env.set_spec(spec_id);
 
     if to.is_some_and(|to| to.is_call()) {
         let TxKind::Call(to) = to.unwrap() else { unreachable!() };
@@ -316,7 +314,7 @@ pub fn deploy_contract(
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
             );
         }
-        let result = executor.transact_with_env(env)?;
+        let result = executor.transact_with_env(evm_env, tx_env.clone())?;
 
         trace!(transact_result = ?result.exit_reason);
 
@@ -346,7 +344,7 @@ pub fn deploy_contract(
 
         Ok(Address::from_slice(&result.result))
     } else {
-        let deploy_result = executor.deploy_with_env(env, None)?;
+        let deploy_result = executor.deploy_with_env(evm_env, tx_env.clone(), None)?;
         trace!(deploy_result = ?deploy_result.raw.exit_reason);
         Ok(deploy_result.address)
     }

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 pub use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use revm::{
@@ -6,6 +8,8 @@ use revm::{
     context_interface::{ContextTr, transaction::AccessList},
     primitives::{TxKind, hardfork::SpecId},
 };
+
+use crate::backend::{DatabaseExt, FoundryJournalExt};
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
 #[derive(Clone, Debug, Default)]
@@ -27,16 +31,16 @@ impl Env {
         Self::from(cfg, block, tx)
     }
 
-    /// Clones the evm env and tx env separately from a [`FoundryContextExt`] context.
-    pub fn clone_evm_and_tx(ecx: &mut impl FoundryContextExt) -> (EvmEnv, TxEnv) {
+    /// Clones the evm env and tx env separately from a [`EthCheatCtx`] context.
+    pub fn clone_evm_and_tx(ecx: &mut impl EthCheatCtx) -> (EvmEnv, TxEnv) {
         (
             EvmEnv { cfg_env: ecx.cfg_mut().clone(), block_env: ecx.block_mut().clone() },
             ecx.tx_mut().clone(),
         )
     }
 
-    /// Writes the split evm env and tx env back into a [`FoundryContextExt`] context.
-    pub fn apply_evm_and_tx(ecx: &mut impl FoundryContextExt, evm_env: EvmEnv, tx_env: TxEnv) {
+    /// Writes the split evm env and tx env back into a [`EthCheatCtx`] context.
+    pub fn apply_evm_and_tx(ecx: &mut impl EthCheatCtx, evm_env: EvmEnv, tx_env: TxEnv) {
         *ecx.block_mut() = evm_env.block_env;
         *ecx.cfg_mut() = evm_env.cfg_env;
         *ecx.tx_mut() = tx_env;
@@ -211,9 +215,9 @@ impl FoundryTransaction for TxEnv {
 
 /// Extension of [`Cfg`] with mutable setters, allowing EVM-agnostic mutation of EVM configuration
 /// fields.
-pub trait FoundryCfg: Cfg {
+pub trait FoundryCfg: Cfg<Spec: Debug> {
     /// Sets the EVM spec (hardfork).
-    fn set_spec(&mut self, spec: SpecId);
+    fn set_spec(&mut self, spec: Self::Spec);
 
     /// Sets the chain ID.
     fn set_chain_id(&mut self, chain_id: u64);
@@ -237,8 +241,8 @@ pub trait FoundryCfg: Cfg {
     fn set_tx_gas_limit_cap(&mut self, cap: Option<u64>);
 }
 
-impl FoundryCfg for CfgEnv {
-    fn set_spec(&mut self, spec: SpecId) {
+impl<S: Into<SpecId> + Clone + Debug> FoundryCfg for CfgEnv<S> {
+    fn set_spec(&mut self, spec: S) {
         self.spec = spec;
     }
 
@@ -279,23 +283,62 @@ pub trait FoundryContextExt:
     ContextTr<Block: FoundryBlock + Clone, Tx: FoundryTransaction + Clone, Cfg: FoundryCfg + Clone>
 {
     /// Mutable reference to the block environment.
-    fn block_mut(&mut self) -> &mut BlockEnv;
+    fn block_mut(&mut self) -> &mut Self::Block;
     /// Mutable reference to the transaction environment.
-    fn tx_mut(&mut self) -> &mut TxEnv;
+    fn tx_mut(&mut self) -> &mut Self::Tx;
     /// Mutable reference to the configuration environment.
-    fn cfg_mut(&mut self) -> &mut CfgEnv;
+    fn cfg_mut(&mut self) -> &mut Self::Cfg;
+    /// Sets block environment
+    fn set_block(&mut self, block: Self::Block) {
+        *self.block_mut() = block;
+    }
+    /// Sets transaction environment
+    fn set_tx(&mut self, tx: Self::Tx) {
+        *self.tx_mut() = tx;
+    }
+    /// Sets configuration environment
+    fn set_cfg(&mut self, cfg: Self::Cfg) {
+        *self.cfg_mut() = cfg;
+    }
 }
 
 impl<DB: Database, J: JournalTr<Database = DB>, C> FoundryContextExt
     for Context<BlockEnv, TxEnv, CfgEnv, DB, J, C>
 {
-    fn block_mut(&mut self) -> &mut BlockEnv {
+    fn block_mut(&mut self) -> &mut Self::Block {
         &mut self.block
     }
-    fn tx_mut(&mut self) -> &mut TxEnv {
+    fn tx_mut(&mut self) -> &mut Self::Tx {
         &mut self.tx
     }
-    fn cfg_mut(&mut self) -> &mut CfgEnv {
+    fn cfg_mut(&mut self) -> &mut Self::Cfg {
         &mut self.cfg
     }
+}
+
+/// Temporary bound alias used during the transition to a fully generic foundry-evm and
+/// foundry-cheatcodes.
+///
+/// Pins the EVM context to Ethereum-specific environment types (`BlockEnv`, `TxEnv`, `CfgEnv`)
+/// so that cheatcode implementations don't need to repeat the full where-clause everywhere.
+/// Once cheatcodes are fully generic over network/environment types this alias will be removed.
+pub trait EthCheatCtx:
+    FoundryContextExt<
+        Block = BlockEnv,
+        Tx = TxEnv,
+        Cfg = CfgEnv,
+        Journal: FoundryJournalExt,
+        Db: DatabaseExt,
+    >
+{
+}
+impl<CTX> EthCheatCtx for CTX where
+    CTX: FoundryContextExt<
+            Block = BlockEnv,
+            Tx = TxEnv,
+            Cfg = CfgEnv,
+            Journal: FoundryJournalExt,
+            Db: DatabaseExt,
+        >
+{
 }

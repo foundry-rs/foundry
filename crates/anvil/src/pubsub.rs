@@ -3,7 +3,7 @@ use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
 };
 use alloy_consensus::{BlockHeader, TxReceipt};
-use alloy_network::AnyRpcTransaction;
+use alloy_network::{AnyRpcTransaction, Network};
 use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId};
@@ -18,16 +18,27 @@ use std::{
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Listens for new blocks and matching logs emitted in that block
-#[derive(Debug)]
-pub struct LogsSubscription {
+pub struct LogsSubscription<N: Network> {
     pub blocks: NewBlockNotifications,
-    pub storage: StorageInfo,
+    pub storage: StorageInfo<N>,
     pub filter: FilteredParams,
     pub queued: VecDeque<Log>,
     pub id: SubscriptionId,
 }
 
-impl LogsSubscription {
+impl<N: Network> std::fmt::Debug for LogsSubscription<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogsSubscription")
+            .field("filter", &self.filter)
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<N: Network> LogsSubscription<N>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+{
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         loop {
             if let Some(log) = self.queued.pop_front() {
@@ -84,15 +95,28 @@ pub struct EthSubscriptionParams {
 }
 
 /// Represents an ethereum Websocket subscription
-#[derive(Debug)]
-pub enum EthSubscription {
-    Logs(Box<LogsSubscription>),
-    Header(NewBlockNotifications, StorageInfo, SubscriptionId),
+pub enum EthSubscription<N: Network> {
+    Logs(Box<LogsSubscription<N>>),
+    Header(NewBlockNotifications, StorageInfo<N>, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
     FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
 }
 
-impl EthSubscription {
+impl<N: Network> std::fmt::Debug for EthSubscription<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Logs(_) => f.debug_tuple("Logs").finish(),
+            Self::Header(..) => f.debug_tuple("Header").finish(),
+            Self::PendingTransactions(..) => f.debug_tuple("PendingTransactions").finish(),
+            Self::FullPendingTransactions(..) => f.debug_tuple("FullPendingTransactions").finish(),
+        }
+    }
+}
+
+impl<N: Network> EthSubscription<N>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+{
     fn poll_response(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         match self {
             Self::Logs(listener) => listener.poll(cx),
@@ -135,7 +159,10 @@ impl EthSubscription {
     }
 }
 
-impl Stream for EthSubscription {
+impl<N: Network> Stream for EthSubscription<N>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+{
     type Item = serde_json::Value;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

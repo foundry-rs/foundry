@@ -202,34 +202,18 @@ impl SendTxArgs {
             )
             .await
         // Case 2:
+        // Browser wallet signs and sends the transaction in one step.
+        } else if let Some(browser) = browser {
+            let (tx_request, _) = builder.build(browser.address()).await?;
+            let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
+
+            let cast = CastTxSender::new(&provider);
+            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+        // Case 3:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
         } else {
-            // Browser wallet work differently as it sign and send the transaction in one step.
-            if let Some(browser) = browser {
-                let (tx_request, _) = builder.build(browser.address()).await?;
-                let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
-
-                if send_tx.cast_async {
-                    sh_println!("{tx_hash:#x}")?;
-                } else {
-                    let receipt = CastTxSender::new(&provider)
-                        .receipt(
-                            format!("{tx_hash:#x}"),
-                            None,
-                            send_tx.confirmations,
-                            Some(timeout),
-                            false,
-                        )
-                        .await?;
-                    sh_println!("{receipt}")?;
-                }
-
-                return Ok(());
-            }
-
-            // Retrieve the signer, and bail if it can't be constructed.
             let signer = send_tx.eth.wallet.signer().await?;
             let from = signer.address();
 
@@ -275,15 +259,8 @@ where
         sh_println!("{receipt}")?;
     } else {
         let pending_tx = cast.send(tx).await?;
-        let tx_hash = pending_tx.inner().tx_hash();
-
-        if cast_async {
-            sh_println!("{tx_hash:#x}")?;
-        } else {
-            let receipt =
-                cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
-            sh_println!("{receipt}")?;
-        }
+        let tx_hash = *pending_tx.inner().tx_hash();
+        cast.print_tx_result(tx_hash, cast_async, confs, timeout).await?;
     }
 
     Ok(())

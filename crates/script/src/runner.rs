@@ -5,6 +5,7 @@ use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
+use foundry_common::TransactionMaybeSigned;
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -73,13 +74,12 @@ impl ScriptRunner {
 
                 library_transactions.push_back(BroadcastableTransaction {
                     rpc: self.evm_opts.fork_url.clone(),
-                    transaction: TransactionRequest {
+                    transaction: TransactionMaybeSigned::new(TransactionRequest {
                         from: Some(self.evm_opts.sender),
                         input: code.clone().into(),
                         nonce: Some(sender_nonce + library_transactions.len() as u64),
                         ..Default::default()
-                    }
-                    .into(),
+                    }),
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
@@ -107,14 +107,13 @@ impl ScriptRunner {
 
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
-                        transaction: TransactionRequest {
+                        transaction: TransactionMaybeSigned::new(TransactionRequest {
                             from: Some(self.evm_opts.sender),
                             input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
                             to: Some(TxKind::Call(create2_deployer)),
                             ..Default::default()
-                        }
-                        .into(),
+                        }),
                     });
                 }
 
@@ -369,14 +368,14 @@ impl ScriptRunner {
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, Some(return_ok!())) {
             // Store the current gas limit and reset it later.
-            let init_gas_limit = self.executor.env().tx.gas_limit;
+            let init_gas_limit = self.executor.tx_env().gas_limit;
 
             let mut highest_gas_limit = gas_used * 3;
             let mut lowest_gas_limit = gas_used;
             let mut last_highest_gas_limit = highest_gas_limit;
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
+                self.executor.tx_env_mut().gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
                 match res.exit_reason {
                     Some(InstructionResult::Revert)
@@ -402,7 +401,7 @@ impl ScriptRunner {
                 }
             }
             // Reset gas limit in the executor.
-            self.executor.env_mut().tx.gas_limit = init_gas_limit;
+            self.executor.tx_env_mut().gas_limit = init_gas_limit;
         }
         Ok(gas_used)
     }

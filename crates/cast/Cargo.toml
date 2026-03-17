@@ -50,7 +50,6 @@ alloy-provider = { workspace = true, features = [
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-rpc-types-beacon.workspace = true
-alloy-serde.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
@@ -61,6 +60,7 @@ tempo-alloy.workspace = true
 alloy-evm.workspace = true
 
 op-alloy-flz.workspace = true
+op-alloy-network.workspace = true
 
 chrono.workspace = true
 eyre.workspace = true
@@ -91,6 +91,7 @@ evmole.workspace = true
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
+alloy-serde.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true

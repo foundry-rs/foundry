@@ -4,7 +4,7 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
@@ -234,6 +234,27 @@ where
     pub async fn send_raw(&self, raw_tx: &[u8]) -> Result<PendingTransactionBuilder<N>> {
         let res = self.provider.send_raw_transaction(raw_tx).await?;
         Ok(res)
+    }
+
+    /// Prints the transaction hash (if async) or waits for the receipt and prints it.
+    ///
+    /// This is the shared "output" path used by both the normal send flow and the browser wallet
+    /// flow (which sends the transaction out-of-band and only has a tx hash).
+    pub async fn print_tx_result(
+        &self,
+        tx_hash: B256,
+        cast_async: bool,
+        confs: u64,
+        timeout: u64,
+    ) -> Result<()> {
+        if cast_async {
+            sh_println!("{tx_hash:#x}")?;
+        } else {
+            let receipt =
+                self.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+            sh_println!("{receipt}")?;
+        }
+        Ok(())
     }
 
     /// # Example

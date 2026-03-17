@@ -3,15 +3,19 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
+use alloy_network::{AnyNetwork, Network};
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
-    utils::{self, LoadConfig},
+    utils::LoadConfig,
 };
+use foundry_common::provider::ProviderBuilder;
+use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::WalletOpts;
 use std::str::FromStr;
+use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
@@ -56,6 +60,17 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
+        if self.tx.tempo.is_tempo() {
+            self.run_with_network::<TempoNetwork>().await
+        } else {
+            self.run_with_network::<AnyNetwork>().await
+        }
+    }
+
+    pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let Self { to, mut sig, args, data, tx, rpc, wallet, block } = self;
 
         if let Some(data) = data {
@@ -63,7 +78,7 @@ impl AccessListArgs {
         }
 
         let config = rpc.load_config()?;
-        let provider = utils::get_provider(&config)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
 
         let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
@@ -76,9 +91,7 @@ impl AccessListArgs {
             .build(sender)
             .await?;
 
-        let cast = Cast::new(&provider);
-
-        let access_list: String = cast.access_list(&tx, block).await?;
+        let access_list: String = Cast::new(&provider).access_list(&tx, block).await?;
 
         sh_println!("{access_list}")?;
 

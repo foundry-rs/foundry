@@ -1,5 +1,5 @@
 use alloy_chains::{Chain, NamedChain};
-use alloy_network::{Ethereum, ReceiptResponse};
+use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{
     PendingTransactionBuilder, PendingTransactionError, Provider, RootProvider, WatchTxError,
@@ -20,25 +20,25 @@ pub struct PendingReceiptError {
 }
 
 /// Convenience enum for internal signalling of transaction status
-pub enum TxStatus {
+pub enum TxStatus<R: ReceiptResponse> {
     Dropped,
-    Success(TransactionReceipt),
-    Revert(TransactionReceipt),
+    Success(R),
+    Revert(R),
 }
 
-impl From<TransactionReceipt> for TxStatus {
-    fn from(receipt: TransactionReceipt) -> Self {
+impl<R: ReceiptResponse> From<R> for TxStatus<R> {
+    fn from(receipt: R) -> Self {
         if !receipt.status() { Self::Revert(receipt) } else { Self::Success(receipt) }
     }
 }
 
 /// Checks the status of a txhash by first polling for a receipt, then for
 /// mempool inclusion. Returns the tx hash, and a status
-pub async fn check_tx_status(
-    provider: &RootProvider<Ethereum>,
+pub async fn check_tx_status<N: Network>(
+    provider: &RootProvider<N>,
     hash: TxHash,
     timeout: u64,
-) -> (TxHash, Result<TxStatus, eyre::Report>) {
+) -> (TxHash, Result<TxStatus<N::ReceiptResponse>, eyre::Report>) {
     let result = retry::Retry::new_no_delay(3)
         .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)

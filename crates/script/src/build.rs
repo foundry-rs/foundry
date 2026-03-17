@@ -2,7 +2,7 @@ use crate::{
     ScriptArgs, ScriptConfig, broadcast::BundledState, execute::LinkedState,
     multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind,
 };
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, Ethereum};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
@@ -156,7 +156,7 @@ impl LinkedBuildData {
 pub struct PreprocessedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
 }
 
 impl PreprocessedState {
@@ -241,7 +241,7 @@ impl PreprocessedState {
 pub struct CompiledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets,
+    pub script_wallets: Wallets<Ethereum>,
     pub build_data: BuildData,
 }
 

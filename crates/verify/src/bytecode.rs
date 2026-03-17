@@ -267,8 +267,13 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let fork_address =
-                crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), kind)?;
+            let fork_address = crate::utils::deploy_contract(
+                &mut executor,
+                &env.evm_env,
+                &env.tx,
+                config.evm_spec_id(),
+                kind,
+            )?;
 
             // Compare runtime bytecode
             let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(
@@ -488,14 +493,18 @@ impl VerifyBytecodeArgs {
                     }
 
                     if let TxKind::Call(_) = tx.inner.kind() {
-                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
-                            format!(
-                                "Failed to execute transaction: {:?} in block {}",
-                                tx.tx_hash(),
-                                env.evm_env.block_env.number
-                            )
-                        })?;
-                    } else if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                        executor
+                            .transact_with_env(env.evm_env.clone(), env.tx.clone())
+                            .wrap_err_with(|| {
+                                format!(
+                                    "Failed to execute transaction: {:?} in block {}",
+                                    tx.tx_hash(),
+                                    env.evm_env.block_env.number
+                                )
+                            })?;
+                    } else if let Err(error) =
+                        executor.deploy_with_env(env.evm_env.clone(), env.tx.clone(), None)
+                    {
                         match error {
                             // Reverted transactions should be skipped
                             EvmError::Execution(_) => (),
@@ -530,8 +539,13 @@ impl VerifyBytecodeArgs {
             let kind = transaction.kind();
             env.tx = transaction.try_into_tx_env(&env.evm_env)?;
 
-            let fork_address =
-                crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), kind)?;
+            let fork_address = crate::utils::deploy_contract(
+                &mut executor,
+                &env.evm_env,
+                &env.tx,
+                config.evm_spec_id(),
+                kind,
+            )?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.
             let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(

@@ -2566,7 +2566,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                0
 to                   
-type                 0
+type                 EIP-1559
 value                0
 
 ### Transaction 2 ###
@@ -2581,7 +2581,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
-type                 0
+type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
 data (decoded): run(uint256,uint256)(

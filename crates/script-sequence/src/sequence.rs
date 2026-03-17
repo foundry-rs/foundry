@@ -1,5 +1,5 @@
 use crate::transaction::TransactionWithMetadata;
-use alloy_network::ReceiptResponse;
+use alloy_network::{Ethereum, ReceiptResponse};
 use alloy_primitives::{TxHash, hex, map::HashMap};
 use alloy_rpc_types_eth::TransactionReceipt;
 use eyre::{ContextCompat, Result, WrapErr};
@@ -204,7 +204,7 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn transactions(&self) -> impl Iterator<Item = &TransactionMaybeSigned> {
+    pub fn transactions(&self) -> impl Iterator<Item = &TransactionMaybeSigned<Ethereum>> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 

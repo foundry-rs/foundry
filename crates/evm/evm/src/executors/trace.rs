@@ -36,7 +36,7 @@ impl TracingExecutor {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
             .spec_id(evm_spec_id(version.unwrap_or_default()))
-            .build(env, db);
+            .build(env.evm_env, env.tx, db);
 
         // Apply the state overrides.
         if let Some(state_overrides) = state_overrides {
@@ -85,7 +85,7 @@ impl TracingExecutor {
 
         let env = evm_opts.env().await?;
 
-        let fork = evm_opts.get_fork(config, env.clone()).unwrap();
+        let fork = evm_opts.get_fork(config, env.evm_env.clone()).unwrap();
         let networks = evm_opts.networks.with_chain_id(env.evm_env.cfg_env.chain_id);
         config.labels.extend(networks.precompiles_label());
 
