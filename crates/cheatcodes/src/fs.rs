@@ -96,10 +96,7 @@ impl Cheatcode for currentFilePathCall {
             .running_artifact
             .as_ref()
             .ok_or_else(|| fmt_err!("no running contract found"))?;
-        let relative = artifact
-            .source
-            .strip_prefix(&state.config.root)
-            .unwrap_or(&artifact.source);
+        let relative = artifact.source.strip_prefix(&state.config.root).unwrap_or(&artifact.source);
         Ok(relative.display().to_string().abi_encode())
     }
 }
