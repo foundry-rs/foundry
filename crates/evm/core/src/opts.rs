@@ -457,6 +457,41 @@ mod tests {
         );
     }
 
+    // Regression test for https://github.com/foundry-rs/foundry/issues/13576
+    // On Arbitrum, `block_env.number` is remapped to the L1 block number by
+    // `apply_chain_and_block_specific_env_changes`. The fork block number returned
+    // by `env()` must be the actual L2 block number, not the remapped L1 value.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_fork_uses_l2_block_number_on_arbitrum() {
+        let endpoint =
+            foundry_test_utils::rpc::next_rpc_endpoint(foundry_config::NamedChain::Arbitrum);
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.clone());
+        assert!(evm_opts.fork_block_number.is_none());
+
+        let (env, fork_block) = evm_opts.env().await.unwrap();
+        let fork_block = fork_block.expect("should have resolved a fork block number");
+
+        // On Arbitrum, block_env.number is the L1 block number (much smaller).
+        // The fork_block should be the actual L2 block number (much larger).
+        let block_env_number: u64 = env.evm_env.block_env.number.to();
+        assert!(
+            fork_block > block_env_number,
+            "fork_block ({fork_block}) should be the L2 block, which is larger than \
+             block_env.number ({block_env_number}) which is the L1 block on Arbitrum"
+        );
+
+        // Verify get_fork pins to the correct L2 block number
+        let fork = evm_opts.get_fork(&Config::default(), env.evm_env, Some(fork_block)).unwrap();
+        assert_eq!(
+            fork.evm_opts.fork_block_number,
+            Some(fork_block),
+            "get_fork should pin to the L2 block number, not the L1 block number"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn get_fork_preserves_explicit_block_number() {
         let endpoint = foundry_test_utils::rpc::next_http_rpc_endpoint();

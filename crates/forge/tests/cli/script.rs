@@ -3491,3 +3491,37 @@ Script ran successfully.
 
 "#]]);
 });
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/13576
+// On Arbitrum, `block.number` is remapped to the L1 block number. Previously,
+// fork block pinning used the remapped L1 block number, causing the fork to
+// fetch state from an ancient block where contracts did not exist.
+forgetest_init!(
+    #[ignore]
+    can_call_arbitrum_contract_in_script,
+    |prj, cmd| {
+        let script = prj.add_source(
+            "ArbScript",
+            r#"
+import "forge-std/Script.sol";
+
+interface IERC20 {
+    function name() external view returns (string memory);
+}
+
+contract ArbScript is Script {
+    function run() external view {
+        // WETH on Arbitrum — exists on-chain but would fail if fork pins to L1 block number
+        IERC20 weth = IERC20(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
+        string memory n = weth.name();
+        require(bytes(n).length > 0, "name should not be empty");
+    }
+}
+    "#,
+        );
+
+        let rpc = foundry_test_utils::rpc::next_rpc_endpoint(alloy_chains::NamedChain::Arbitrum);
+
+        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]).assert_success();
+    }
+);
