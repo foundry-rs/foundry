@@ -10,21 +10,20 @@ use serde::{Deserialize, Serialize};
 pub struct RpcResponse {
     // JSON RPC version
     jsonrpc: Version,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Id>,
+    id: Id,
     #[serde(flatten)]
     result: ResponseResult,
 }
 
 impl From<RpcError> for RpcResponse {
     fn from(e: RpcError) -> Self {
-        Self { jsonrpc: Version::V2, id: None, result: ResponseResult::Error(e) }
+        Self { jsonrpc: Version::V2, id: Id::Null, result: ResponseResult::Error(e) }
     }
 }
 
 impl RpcResponse {
     pub fn new(id: Id, content: impl Into<ResponseResult>) -> Self {
-        Self { jsonrpc: Version::V2, id: Some(id), result: content.into() }
+        Self { jsonrpc: Version::V2, id, result: content.into() }
     }
 
     pub fn invalid_request(id: Id) -> Self {

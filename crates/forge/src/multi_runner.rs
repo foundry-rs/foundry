@@ -389,7 +389,7 @@ impl TestRunnerConfig {
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.env.clone(), db)
+            .build(self.env.evm_env.clone(), self.env.tx.clone(), db)
     }
 
     fn trace_mode(&self) -> TraceMode {

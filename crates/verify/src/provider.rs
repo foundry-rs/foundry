@@ -5,15 +5,24 @@ use crate::{
 };
 use alloy_json_abi::JsonAbi;
 use async_trait::async_trait;
-use eyre::{OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
-    Project, artifacts::output_selection::OutputSelection, compilers::solc::SolcCompiler,
-    multi::MultiCompilerSettings, solc::Solc,
+    Project,
+    artifacts::{
+        Source, StandardJsonCompilerInput, output_selection::OutputSelection, vyper::VyperInput,
+    },
+    compilers::solc::SolcCompiler,
+    multi::MultiCompilerSettings,
+    solc::{Solc, SolcLanguage},
 };
 use foundry_config::{Chain, Config, EtherscanConfigError};
 use semver::Version;
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// Container with data required for contract verification.
 #[derive(Debug, Clone)]
@@ -41,6 +50,38 @@ impl VerificationContext {
         project.compiler.solc = Some(SolcCompiler::Specific(solc));
 
         Ok(Self { config, project, target_name, target_path, compiler_version, compiler_settings })
+    }
+
+    pub fn get_solc_standard_json_input(&self) -> Result<StandardJsonCompilerInput> {
+        let mut input: StandardJsonCompilerInput = self
+            .project
+            .standard_json_input(&self.target_path)
+            .wrap_err("Failed to get standard json input")?
+            .normalize_evm_version(&self.compiler_version);
+
+        let mut settings = self.compiler_settings.solc.settings.clone();
+        settings.libraries.libs = input
+            .settings
+            .libraries
+            .libs
+            .into_iter()
+            .map(|(f, libs)| {
+                (f.strip_prefix(self.project.root()).unwrap_or(&f).to_path_buf(), libs)
+            })
+            .collect();
+
+        settings.remappings = input.settings.remappings;
+        settings.sanitize(&self.compiler_version, SolcLanguage::Solidity);
+        input.settings = settings;
+
+        Ok(input)
+    }
+
+    /// Creates Vyper standard JSON input for verification.
+    pub fn get_vyper_standard_json_input(&self) -> Result<VyperInput> {
+        let path = Path::new(&self.target_path);
+        let sources = Source::read_all_from(path, &["vy", "vyi"])?;
+        Ok(VyperInput::new(sources, self.compiler_settings.vyper.clone(), &self.compiler_version))
     }
 
     /// Compiles target contract requesting only ABI and returns it.

@@ -7,6 +7,8 @@ use crate::{
     },
     verify::VerifierArgs,
 };
+use alloy_consensus::BlockHeader;
+use alloy_evm::{FromRecoveredTx, rpc::TryIntoTxEnv};
 use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
     Provider,
@@ -28,13 +30,8 @@ use foundry_cli::{
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
-use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    core::AsEnvMut,
-    executors::EvmError,
-    utils::{configure_tx_env, configure_tx_req_env},
-};
-use revm::state::AccountInfo;
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::EvmError};
+use revm::{context::TxEnv, state::AccountInfo};
 use std::{path::PathBuf, time::Duration};
 use tokio::time::timeout;
 
@@ -254,14 +251,14 @@ impl VerifyBytecodeArgs {
                 .into_create();
 
             if let Some(ref block) = genesis_block {
-                configure_env_block(&mut env.as_env_mut(), block, config.networks);
-                gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
-                gen_tx_req.gas = Some(block.header.gas_limit);
-                gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
+                configure_env_block(&mut env, block, config.networks);
+                gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas().map(|g| g as u128);
+                gen_tx_req.gas = Some(block.header.gas_limit());
+                gen_tx_req.gas_price = block.header.base_fee_per_gas().map(|g| g as u128);
             }
 
-            configure_tx_req_env(&mut env.as_env_mut(), &gen_tx_req, None)
-                .wrap_err("Failed to configure tx request env")?;
+            let kind = gen_tx_req.kind();
+            env.tx = gen_tx_req.try_into_tx_env(&env.evm_env)?;
 
             // Seed deployer account with funds
             let account_info = AccountInfo {
@@ -273,9 +270,10 @@ impl VerifyBytecodeArgs {
 
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
-                &env,
+                &env.evm_env,
+                &env.tx,
                 config.evm_spec_id(),
-                gen_tx_req.to,
+                kind,
             )?;
 
             // Compare runtime bytecode
@@ -482,7 +480,7 @@ impl VerifyBytecodeArgs {
                     transaction.set_nonce(prev_block_nonce);
 
                     if let Some(ref block) = block {
-                        configure_env_block(&mut env.as_env_mut(), block, config.networks);
+                        configure_env_block(&mut env, block, config.networks);
 
                         let BlockTransactions::Full(ref txs) = block.transactions else {
                             return Err(eyre::eyre!("Could not get block txs"));
@@ -500,28 +498,34 @@ impl VerifyBytecodeArgs {
                                 break;
                             }
 
-                            configure_tx_env(&mut env.as_env_mut(), tx);
+                            if let Some(tx_envelope) = tx.as_envelope() {
+                                env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());
+                            }
 
                             if let TxKind::Call(_) = tx.inner.kind() {
-                                executor.transact_with_env(env.clone()).wrap_err_with(|| {
-                                    format!(
-                                        "Failed to execute transaction: {:?} in block {}",
-                                        tx.tx_hash(),
-                                        env.evm_env.block_env.number
-                                    )
-                                })?;
-                            } else if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                                executor
+                                    .transact_with_env(env.evm_env.clone(), env.tx.clone())
+                                    .wrap_err_with(|| {
+                                        format!(
+                                            "Failed to execute transaction: {:?} in block {}",
+                                            tx.tx_hash(),
+                                            env.evm_env.block_env.number
+                                        )
+                                    })?;
+                            } else if let Err(error) =
+                                executor.deploy_with_env(env.evm_env.clone(), env.tx.clone(), None)
+                            {
                                 match error {
                                     // Reverted transactions should be skipped
                                     EvmError::Execution(_) => (),
                                     error => {
                                         return Err(error).wrap_err_with(|| {
                                             format!(
-                                                "Failed to deploy transaction: {:?} in block {}",
+                                                "Failed to execute transaction: {:?} in block {}",
                                                 tx.tx_hash(),
                                                 env.evm_env.block_env.number
                                             )
-                                        });
+                                        })?;
                                     }
                                 }
                             }
@@ -545,15 +549,15 @@ impl VerifyBytecodeArgs {
                             TransactionInput::both(Bytes::from(local_bytecode_vec));
                     }
 
-                    // configure_req__env(&mut env, &transaction.inner);
-                    configure_tx_req_env(&mut env.as_env_mut(), &transaction, None)
-                        .wrap_err("Failed to configure tx request env")?;
+                    let kind = transaction.kind();
+                    env.tx = transaction.try_into_tx_env(&env.evm_env)?;
 
                     let fork_address = crate::utils::deploy_contract(
                         &mut executor,
-                        &env,
+                        &env.evm_env,
+                        &env.tx,
                         config.evm_spec_id(),
-                        transaction.to,
+                        kind,
                     )?;
                     trace!(target: "forge::verify", "fetching runtime code");
 

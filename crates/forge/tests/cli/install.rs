@@ -591,6 +591,49 @@ async fn correctly_sync_dep_with_multiple_version() {
     assert_eq!(solday_v_245.rev(), submod_solday_v_245.rev());
 }
 
+// Regression test: `forge install --no-git` should clean up nested submodule contents
+// when installing a tag that does not use submodules for its dependencies.
+// https://github.com/foundry-rs/foundry/issues/13688
+forgetest!(flaky_install_no_git_cleans_nested_submodules, |prj, cmd| {
+    cmd.git_init();
+
+    // Install openzeppelin-contracts-upgradeable at v4.7.3 with --no-git.
+    // The default branch has submodules in lib/ (e.g. openzeppelin-contracts, erc4626-tests),
+    // but v4.7.3 does not use submodules for dependencies.
+    cmd.forge_fuse()
+        .args(["install", "--no-git", "OpenZeppelin/openzeppelin-contracts-upgradeable@v4.7.3"])
+        .assert_success();
+
+    let dep_dir = prj.root().join("lib").join("openzeppelin-contracts-upgradeable");
+    assert!(dep_dir.exists(), "dependency should be installed");
+
+    // The nested lib/ directory should either not exist or be empty — v4.7.3 does not use
+    // submodules so there should be no leftover submodule contents from the default branch.
+    let nested_lib = dep_dir.join("lib");
+    if nested_lib.exists() {
+        let entries: Vec<_> = fs::read_dir(&nested_lib).unwrap().collect();
+        assert!(
+            entries.is_empty(),
+            "nested lib/ should be empty after --no-git install at v4.7.3, found: {entries:?}"
+        );
+    }
+
+    // There should be no .git file or directory anywhere under the installed dependency.
+    fn assert_no_git(dir: &Path) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.file_name() == Some(".git".as_ref()) {
+                panic!("found leftover .git at {}", path.display());
+            }
+            if path.is_dir() {
+                assert_no_git(&path);
+            }
+        }
+    }
+    assert_no_git(&dep_dir);
+});
+
 forgetest_init!(sync_on_forge_update, |prj, cmd| {
     let git = Git::new(prj.root());
 

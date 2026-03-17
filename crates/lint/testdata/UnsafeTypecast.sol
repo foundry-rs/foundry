@@ -1,3 +1,5 @@
+//@compile-flags: --severity high med low info
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 

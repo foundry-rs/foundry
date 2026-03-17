@@ -23,6 +23,7 @@ foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
+foundry-primitives.workspace = true
 forge-script-sequence.workspace = true
 
 serde.workspace = true
@@ -46,7 +47,6 @@ dialoguer.workspace = true
 indicatif.workspace = true
 
 alloy-signer.workspace = true
-alloy-serde.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-chains.workspace = true

@@ -205,13 +205,15 @@ impl Cheatcode for writeToml_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json: value, path, valueKey } = self;
 
-        // Read and parse the TOML file
+        // Read and parse the TOML file.
+        // If the file doesn't exist, start with an empty object so the file is created.
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let toml_data = fs::locked_read_to_string(&data_path)?;
-
-        // Convert to JSON and update the object
-        let mut json_data: JsonValue =
-            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
+        let mut json_data: JsonValue = if data_path.exists() {
+            let toml_data = fs::locked_read_to_string(&data_path)?;
+            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?
+        } else {
+            JsonValue::Object(Default::default())
+        };
         upsert_json_value(&mut json_data, value, valueKey)?;
 
         // Serialize back to TOML and write the updated content back to the file

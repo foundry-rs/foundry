@@ -10,6 +10,8 @@ use crate::{
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
 };
+use alloy_network::Network;
+use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
@@ -25,28 +27,28 @@ use tokio::{task::JoinHandle, time::Interval};
 /// transactions for the next block, then those transactions are handed off to the backend to
 /// construct a new block, if all transactions were successfully included in a new block they get
 /// purged from the `Pool`.
-pub struct NodeService {
+pub struct NodeService<N: Network> {
     /// The pool that holds all transactions.
-    pool: Arc<Pool>,
+    pool: Arc<Pool<N::TxEnvelope>>,
     /// Creates new blocks.
-    block_producer: BlockProducer,
+    block_producer: BlockProducer<N>,
     /// The miner responsible to select transactions from the `pool`.
-    miner: Miner,
+    miner: Miner<N::TxEnvelope>,
     /// Maintenance task for fee history related tasks.
     fee_history: FeeHistoryService,
     /// Tracks all active filters
-    filters: Filters,
+    filters: Filters<N>,
     /// The interval at which to check for filters that need to be evicted
     filter_eviction_interval: Interval,
 }
 
-impl NodeService {
+impl NodeService<FoundryNetwork> {
     pub fn new(
         pool: Arc<Pool>,
-        backend: Arc<Backend>,
+        backend: Arc<Backend<FoundryNetwork>>,
         miner: Miner,
         fee_history: FeeHistoryService,
-        filters: Filters,
+        filters: Filters<FoundryNetwork>,
     ) -> Self {
         let start = tokio::time::Instant::now() + filters.keep_alive();
         let filter_eviction_interval = tokio::time::interval_at(start, filters.keep_alive());
@@ -61,7 +63,7 @@ impl NodeService {
     }
 }
 
-impl Future for NodeService {
+impl Future for NodeService<FoundryNetwork> {
     type Output = NodeResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -100,24 +102,26 @@ impl Future for NodeService {
     }
 }
 
+type MiningResult<N> = (MinedBlockOutcome<<N as Network>::TxEnvelope>, Arc<Backend<N>>);
+
 /// A type that exclusively mines one block at a time
 #[must_use = "streams do nothing unless polled"]
-struct BlockProducer {
+struct BlockProducer<N: Network> {
     /// Holds the backend if no block is being mined
-    idle_backend: Option<Arc<Backend>>,
+    idle_backend: Option<Arc<Backend<N>>>,
     /// Single active future that mines a new block
-    block_mining: Option<JoinHandle<(MinedBlockOutcome, Arc<Backend>)>>,
+    block_mining: Option<JoinHandle<MiningResult<N>>>,
     /// backlog of sets of transactions ready to be mined
-    queued: VecDeque<Vec<Arc<PoolTransaction>>>,
+    queued: VecDeque<Vec<Arc<PoolTransaction<N::TxEnvelope>>>>,
 }
 
-impl BlockProducer {
-    fn new(backend: Arc<Backend>) -> Self {
+impl BlockProducer<FoundryNetwork> {
+    fn new(backend: Arc<Backend<FoundryNetwork>>) -> Self {
         Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }
     }
 }
 
-impl Stream for BlockProducer {
+impl Stream for BlockProducer<FoundryNetwork> {
     type Item = MinedBlockOutcome;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

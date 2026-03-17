@@ -1,5 +1,6 @@
 use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_changes};
-use alloy_consensus::Transaction;
+use alloy_consensus::{BlockHeader, Transaction};
+use alloy_evm::{EvmEnv, FromRecoveredTx};
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
@@ -23,15 +24,12 @@ use foundry_config::{
     },
 };
 use foundry_evm::{
-    Env,
-    core::env::AsEnvMut,
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
-    utils::configure_tx_env,
 };
 use futures::TryFutureExt;
-use revm::DatabaseRef;
+use revm::{DatabaseRef, context::TxEnv};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -184,23 +182,23 @@ impl RunArgs {
         env.evm_env.block_env.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
-            env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
-            env.evm_env.block_env.beneficiary = block.header.beneficiary;
-            env.evm_env.block_env.difficulty = block.header.difficulty;
-            env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.evm_env.block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-            env.evm_env.block_env.gas_limit = block.header.gas_limit;
+            env.evm_env.block_env.timestamp = U256::from(block.header.timestamp());
+            env.evm_env.block_env.beneficiary = block.header.beneficiary();
+            env.evm_env.block_env.difficulty = block.header.difficulty();
+            env.evm_env.block_env.prevrandao = Some(block.header.mix_hash().unwrap_or_default());
+            env.evm_env.block_env.basefee = block.header.base_fee_per_gas().unwrap_or_default();
+            env.evm_env.block_env.gas_limit = block.header.gas_limit();
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains
             if evm_version.is_none() {
                 // if the block has the excess_blob_gas field, we assume it's a Cancun block
-                if block.header.excess_blob_gas.is_some() {
+                if block.header.excess_blob_gas().is_some() {
                     evm_version = Some(EvmVersion::Prague);
                 }
             }
             apply_chain_and_block_specific_env_changes::<AnyNetwork>(
-                env.as_env_mut(),
+                &mut env.evm_env,
                 block,
                 config.networks,
             );
@@ -223,12 +221,8 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
-        let mut env = Env::new_with_spec_id(
-            env.evm_env.cfg_env.clone(),
-            env.evm_env.block_env.clone(),
-            env.tx.clone(),
-            executor.spec_id(),
-        );
+        let mut evm_env = EvmEnv::new(env.evm_env.cfg_env, env.evm_env.block_env);
+        evm_env.cfg_env.set_spec(executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {
@@ -259,22 +253,28 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env.as_env_mut(), tx);
+                    let tx_env = tx.as_envelope().map_or(Default::default(), |tx_envelope| {
+                        TxEnv::from_recovered_tx(tx_envelope, tx.from())
+                    });
 
-                    env.evm_env.cfg_env.disable_balance_check = true;
+                    evm_env.cfg_env.disable_balance_check = true;
 
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
-                            format!(
-                                "Failed to execute transaction: {:?} in block {}",
-                                tx.tx_hash(),
-                                env.evm_env.block_env.number
-                            )
-                        })?;
+                        executor.transact_with_env(evm_env.clone(), tx_env.clone()).wrap_err_with(
+                            || {
+                                format!(
+                                    "Failed to execute transaction: {:?} in block {}",
+                                    tx.tx_hash(),
+                                    evm_env.block_env.number
+                                )
+                            },
+                        )?;
                     } else {
                         trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                        if let Err(error) =
+                            executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
+                        {
                             match error {
                                 // Reverted transactions should be skipped
                                 EvmError::Execution(_) => (),
@@ -283,7 +283,7 @@ impl RunArgs {
                                         format!(
                                             "Failed to deploy transaction: {:?} in block {}",
                                             tx.tx_hash(),
-                                            env.evm_env.block_env.number
+                                            evm_env.block_env.number
                                         )
                                     });
                                 }
@@ -300,17 +300,20 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env.as_env_mut(), &tx);
+            let tx_env = tx.as_envelope().map_or(Default::default(), |tx_envelope| {
+                TxEnv::from_recovered_tx(tx_envelope, tx.from())
+            });
+
             if is_impersonated_tx(tx.as_ref()) {
-                env.evm_env.cfg_env.disable_balance_check = true;
+                evm_env.cfg_env.disable_balance_check = true;
             }
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::try_from(executor.transact_with_env(env))?
+                TraceResult::try_from(executor.transact_with_env(evm_env, tx_env))?
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
-                TraceResult::try_from(executor.deploy_with_env(env, None))?
+                TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
             }
         };
 

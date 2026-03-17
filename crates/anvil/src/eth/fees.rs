@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::{Header, Transaction};
+use alloy_consensus::{BlockHeader, Header, Transaction};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_primitives::B256;
 use futures::StreamExt;
@@ -17,6 +17,7 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use foundry_primitives::FoundryNetwork;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
@@ -167,9 +168,9 @@ impl FeeManager {
         self.blob_params().calc_blob_fee(self.blob_excess_gas_and_price.read().excess_blob_gas)
     }
 
-    /// Calculates the next block blob excess gas, using the provided parent blob gas used and
-    /// parent blob excess gas
-    pub fn get_next_block_blob_excess_gas(&self, blob_gas_used: u64, blob_excess_gas: u64) -> u64 {
+    /// Calculates the next block blob excess gas, using the provided parent blob excess gas and
+    /// parent blob gas used
+    pub fn get_next_block_blob_excess_gas(&self, blob_excess_gas: u64, blob_gas_used: u64) -> u64 {
         self.blob_params().next_block_excess_blob_gas_osaka(
             blob_excess_gas,
             blob_gas_used,
@@ -199,7 +200,7 @@ pub struct FeeHistoryService {
     /// number of items to consider
     fee_history_limit: u64,
     /// a type that can fetch ethereum-storage data
-    storage_info: StorageInfo,
+    storage_info: StorageInfo<FoundryNetwork>,
 }
 
 impl FeeHistoryService {
@@ -207,7 +208,7 @@ impl FeeHistoryService {
         blob_params: BlobParams,
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
-        storage_info: StorageInfo,
+        storage_info: StorageInfo<FoundryNetwork>,
     ) -> Self {
         Self {
             blob_params,
@@ -268,11 +269,11 @@ impl FeeHistoryService {
         let current_receipts = self.storage_info.receipts(hash);
 
         if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
-            block_number = Some(block.header.number);
+            block_number = Some(block.header.number());
 
-            let gas_used = block.header.gas_used as f64;
-            let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
-            item.gas_used_ratio = gas_used / block.header.gas_limit as f64;
+            let gas_used = block.header.gas_used() as f64;
+            let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
+            item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
             item.blob_gas_used_ratio = blob_gas_used
                 .map(|g| {
                     let max = self.blob_params.max_blob_gas_per_block() as f64;

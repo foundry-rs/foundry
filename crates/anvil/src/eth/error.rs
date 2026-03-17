@@ -1,9 +1,8 @@
 //! Aggregated error type for this module
 
-use crate::eth::pool::transactions::PoolTransaction;
 use alloy_consensus::crypto::RecoveryError;
 use alloy_evm::overrides::StateOverrideError;
-use alloy_primitives::{B256, Bytes, SignatureError};
+use alloy_primitives::{B256, Bytes, SignatureError, TxHash};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
@@ -210,9 +209,9 @@ pub enum PoolError {
     CyclicTransaction,
     /// Thrown if a replacement transaction's gas price is below the already imported transaction
     #[error("Tx: [{0:?}] insufficient gas price to replace existing transaction")]
-    ReplacementUnderpriced(Box<PoolTransaction>),
+    ReplacementUnderpriced(TxHash),
     #[error("Tx: [{0:?}] already Imported")]
-    AlreadyImported(Box<PoolTransaction>),
+    AlreadyImported(TxHash),
 }
 
 /// Errors that can occur with `eth_feeHistory`
