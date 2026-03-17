@@ -319,7 +319,7 @@ impl Cheatcode for loadCall {
 }
 
 impl Cheatcode for loadAllocsCall {
-    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt<CTX>, Db: DatabaseExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -347,7 +347,7 @@ impl Cheatcode for loadAllocsCall {
 }
 
 impl Cheatcode for cloneAccountCall {
-    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt<CTX>, Db: DatabaseExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {

@@ -22,7 +22,7 @@ pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
     Database, DatabaseCommit, Journal, JournalEntry,
     bytecode::Bytecode,
-    context::{BlockEnv, JournalInner, TxEnv},
+    context::{BlockEnv, Cfg, ContextTr, JournalInner, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice, journaled_state::account::JournaledAccountTr,
         result::ResultAndState,
@@ -399,9 +399,9 @@ struct _ObjectSafe(dyn DatabaseExt);
 /// Generic code accesses the journal via `ctx.journal_mut()` which returns `&mut impl JournalTr`.
 /// This trait adds the ability to split the journal into its database and inner state components,
 /// enabling direct [`DatabaseExt`] method calls with zero-copy borrow splitting.
-pub trait FoundryJournalExt: JournalExt {
+pub trait FoundryJournalExt<CTX: ContextTr + ?Sized>: JournalExt {
     /// The database type backing this journal.
-    type DB: DatabaseExt;
+    type DB: DatabaseExt<<CTX::Cfg as Cfg>::Spec, CTX::Block, CTX::Tx>;
 
     /// Returns mutable references to the database and journal inner state.
     fn as_db_and_inner(&mut self) -> (&mut Self::DB, &mut JournaledState);
@@ -412,7 +412,11 @@ pub trait FoundryJournalExt: JournalExt {
     fn set_inner(&mut self, inner: JournaledState);
 }
 
-impl<DB: DatabaseExt> FoundryJournalExt for Journal<DB, JournalEntry> {
+impl<DB, CTX> FoundryJournalExt<CTX> for Journal<DB, JournalEntry>
+where
+    CTX: ContextTr + ?Sized,
+    DB: DatabaseExt<<CTX::Cfg as Cfg>::Spec, CTX::Block, CTX::Tx>,
+{
     type DB = DB;
 
     fn as_db_and_inner(&mut self) -> (&mut DB, &mut JournaledState) {

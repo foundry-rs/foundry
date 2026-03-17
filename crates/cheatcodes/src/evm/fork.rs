@@ -131,7 +131,7 @@ impl Cheatcode for selectForkCall {
 }
 
 impl Cheatcode for transact_0Call {
-    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt>>(
+    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -142,7 +142,7 @@ impl Cheatcode for transact_0Call {
 }
 
 impl Cheatcode for transact_1Call {
-    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt>>(
+    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -429,7 +429,7 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     }
 }
 
-fn transact<CTX: ContextTr<Journal: FoundryJournalExt>>(
+fn transact<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     transaction: B256,
