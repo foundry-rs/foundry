@@ -381,11 +381,6 @@ impl BundledState {
                             fees.max_priority_fee_per_gas = priority_gas_price.to();
                         }
 
-                        // Ensure the invariant maxFeePerGas >= maxPriorityFeePerGas
-                        // holds, even when user-provided overrides break it.
-                        if fees.max_priority_fee_per_gas > fees.max_fee_per_gas {
-                            fees.max_fee_per_gas = fees.max_priority_fee_per_gas;
-                        }
 
                         (None, Some(fees))
                     }
