@@ -21,7 +21,7 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
@@ -36,12 +36,12 @@ use foundry_common::{
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, Env, EthCheatCtx, EvmEnv, FoundryInspectorExt, FoundryTransaction,
+    Breakpoints, EthCheatCtx, EvmEnv, FoundryCfg, FoundryInspectorExt, FoundryTransaction,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
+    evm::{EthNestedEvmClosure, NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -66,7 +66,6 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
-    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
@@ -85,18 +84,7 @@ mod utils;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
-/// Closure type used by [`CheatcodesExecutor`] methods that run nested EVM operations.
-///
-/// The associated types are pinned to Eth types for now. When Tempo support is added,
-/// this will either become generic or a separate `TempoNestedEvmClosure` will be introduced.
-pub type NestedEvmClosure<'a> = &'a mut dyn FnMut(
-    &mut dyn NestedEvm<Tx = TxEnv, Block = BlockEnv, Spec = SpecId>,
-) -> Result<(), EVMError<DatabaseError>>;
-
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
-///
-/// The executor assembles the full inspector stack internally and never exposes it across the
-/// trait boundary. This keeps the trait free of `InspectorExt` (which is Eth-specific).
 pub trait CheatcodesExecutor<CTX: ContextTr> {
     /// Runs a closure with a nested EVM built from the current context.
     /// The inspector is assembled internally — never exposed to the caller.
@@ -104,7 +92,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
@@ -133,7 +121,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
         db: &mut dyn DatabaseExt,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
@@ -151,7 +139,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
-pub(crate) fn exec_create<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
+pub(crate) fn exec_create<CTX: EthCheatCtx>(
     executor: &mut dyn CheatcodesExecutor<CTX>,
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, CTX>,
@@ -187,7 +175,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
             let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
@@ -205,7 +193,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         db: &mut dyn DatabaseExt,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
         f(&mut evm)
@@ -218,7 +206,8 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()> {
-        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
+        let evm_env = ecx.evm_clone();
+        let tx_env = ecx.tx_clone();
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
         db.transact(fork_id, transaction, evm_env, tx_env, inner, cheats)
     }
@@ -229,9 +218,9 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         ecx: &mut CTX,
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
-        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
+        let evm_env = ecx.evm_clone();
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, evm_env, tx_env, inner, cheats)
+        db.transact_from_tx(tx, evm_env, inner, cheats)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
@@ -269,11 +258,11 @@ impl TestContext {
 
 /// Helps collecting transactions from different forks.
 #[derive(Clone, Debug)]
-pub struct BroadcastableTransaction {
+pub struct BroadcastableTransaction<N: Network = Ethereum> {
     /// The optional RPC URL.
     pub rpc: Option<String>,
     /// The transaction to broadcast.
-    pub transaction: TransactionMaybeSigned,
+    pub transaction: TransactionMaybeSigned<N>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -585,7 +574,7 @@ pub struct Cheatcodes<CTX: FoundryContextExt = Context<BlockEnv, TxEnv, CfgEnv>>
     /// Used to determine whether the broadcasted call has dynamic gas limit.
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
-    pub execution_evm_version: Option<<CTX::Cfg as Cfg>::Spec>,
+    pub execution_evm_version: Option<<CTX::Cfg as FoundryCfg>::Spec>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -778,7 +767,7 @@ impl Cheatcodes {
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.eth_cfg_mut().set_spec(spec_id);
+            ecx.cfg_mut().set_spec(spec_id);
         }
 
         let gas = Gas::new(call.gas_limit);
@@ -1036,8 +1025,10 @@ impl Cheatcodes {
                         tx_req.authorization_list = Some(active_delegations);
                     }
 
-                    self.broadcastable_transactions
-                        .push_back(BroadcastableTransaction { rpc, transaction: tx_req.into() });
+                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                        rpc,
+                        transaction: TransactionMaybeSigned::new(tx_req),
+                    });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     // Explicitly increment nonce if calls are not isolated.
@@ -1192,7 +1183,7 @@ impl<CTX: EthCheatCtx> Inspector<CTX> for Cheatcodes {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
-            *ecx.eth_block_mut() = block;
+            ecx.set_block(block);
         }
         if let Some(gas_price) = self.gas_price.take() {
             ecx.tx_mut().set_gas_price(gas_price);
@@ -1702,7 +1693,7 @@ impl<CTX: EthCheatCtx> Inspector<CTX> for Cheatcodes {
     fn create(&mut self, ecx: &mut CTX, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.eth_cfg_mut().set_spec(spec_id);
+            ecx.cfg_mut().set_spec(spec_id);
         }
 
         let gas = Gas::new(input.gas_limit());
@@ -1781,15 +1772,14 @@ impl<CTX: EthCheatCtx> Inspector<CTX> for Cheatcodes {
                 let account = &ecx.journal().evm_state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
-                    transaction: TransactionRequest {
+                    transaction: TransactionMaybeSigned::new(TransactionRequest {
                         from: Some(broadcast.new_origin),
                         to: None,
                         value: Some(input.value()),
                         input: TransactionInput::new(input.init_code()),
                         nonce: Some(account.info.nonce),
                         ..Default::default()
-                    }
-                    .into(),
+                    }),
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));

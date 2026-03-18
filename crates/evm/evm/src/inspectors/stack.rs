@@ -10,12 +10,12 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::request::TransactionRequest;
 use foundry_cheatcodes::{
-    CheatcodeAnalysis, CheatcodesExecutor, EthCheatCtx, NestedEvmClosure, Wallets,
+    CheatcodeAnalysis, CheatcodesExecutor, EthCheatCtx, EthNestedEvmClosure, Wallets,
 };
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    Env, FoundryBlock, FoundryInspectorExt, FoundryTransaction, InspectorExt,
+    FoundryBlock, FoundryInspectorExt, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, JournaledState},
     env::FoundryContextExt,
     evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
@@ -26,7 +26,7 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
     context::{
-        Block, BlockEnv, Cfg, ContextTr, JournalTr, Transaction,
+        Block, BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TxEnv,
         result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
@@ -347,7 +347,7 @@ pub struct InspectorStackInner {
     pub script_execution_inspector: Option<Box<ScriptExecutionInspector>>,
     pub tracer: Option<Box<TracingInspector>>,
 
-    // InspectorExt and other internal data.
+    // EthInspectorExt and other internal data.
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -371,7 +371,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
@@ -390,7 +390,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         db: &mut dyn DatabaseExt,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: NestedEvmClosure<'_>,
+        f: EthNestedEvmClosure<'_>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let mut evm = new_evm_with_inspector(db, evm_env, tx_env, &mut inspector);
@@ -404,7 +404,8 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()> {
-        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
+        let evm_env = ecx.evm_clone();
+        let tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
         db.transact(fork_id, transaction, evm_env, tx_env, inner, &mut inspector)
@@ -416,10 +417,10 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         ecx: &mut CTX,
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
-        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
+        let evm_env = ecx.evm_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, evm_env, tx_env, inner, &mut inspector)
+        db.transact_from_tx(tx, evm_env, inner, &mut inspector)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {
@@ -484,9 +485,9 @@ impl InspectorStack {
 
     /// Set variables from an environment for the relevant inspectors.
     #[inline]
-    pub fn set_env(&mut self, env: &Env) {
-        self.set_block(&env.evm_env.block_env);
-        self.set_gas_price(env.tx.gas_price);
+    pub fn set_env(&mut self, evm_env: &EvmEnv, tx_env: &TxEnv) {
+        self.set_block(&evm_env.block_env);
+        self.set_gas_price(tx_env.gas_price);
     }
 
     /// Sets the block for the relevant inspectors.
@@ -598,12 +599,6 @@ impl InspectorStack {
     #[inline(always)]
     fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_deref_mut(), inner: &mut self.inner }
-    }
-
-    /// Returns an [`InspectorExt`] using this stack's inspectors.
-    #[inline]
-    pub fn as_inspector(&mut self) -> impl InspectorExt + '_ {
-        self
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -730,7 +725,7 @@ impl InspectorStackRefMut<'_> {
         outcome.clone()
     }
 
-    fn transact_inner<CTX: FoundryContextExt>(
+    fn transact_inner<CTX: EthCheatCtx>(
         &mut self,
         ecx: &mut CTX,
         kind: TxKind,
@@ -738,11 +733,9 @@ impl InspectorStackRefMut<'_> {
         input: Bytes,
         gas_limit: u64,
         value: U256,
-    ) -> (InterpreterResult, Option<Address>)
-    where
-        CTX::Journal: FoundryJournalExt,
-    {
-        let (cached_evm_env, cached_tx_env) = Env::clone_evm_and_tx(ecx);
+    ) -> (InterpreterResult, Option<Address>) {
+        let cached_evm_env = ecx.evm_clone();
+        let cached_tx_env = ecx.tx_clone();
 
         ecx.block_mut().set_basefee(0);
 
@@ -766,7 +759,8 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_tx_env.caller });
         self.in_inner_context = true;
 
-        let (evm_env, tx_env) = Env::clone_evm_and_tx(ecx);
+        let evm_env = ecx.evm_clone();
+        let tx_env = ecx.tx_clone();
 
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
@@ -804,7 +798,8 @@ impl InspectorStackRefMut<'_> {
             // but restoring the original tx and basefee (which we zeroed for the nested call).
             let mut restored_evm_env = nested_env;
             restored_evm_env.block_env.basefee = cached_evm_env.block_env.basefee;
-            Env::apply_evm_and_tx(ecx, restored_evm_env, cached_tx_env);
+            ecx.set_evm(restored_evm_env);
+            ecx.set_tx(cached_tx_env);
 
             res
         });

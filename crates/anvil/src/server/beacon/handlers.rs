@@ -44,12 +44,31 @@ pub async fn handle_get_blobs(
         return BeaconError::invalid_block_id(block_id).into_response();
     };
 
-    // Parse indices from query parameters
-    // Supports both comma-separated (?indices=1,2,3) and repeated parameters (?indices=1&indices=2)
-    let versioned_hashes: Vec<B256> = versioned_hashes
-        .get("versioned_hashes")
-        .map(|s| s.split(',').filter_map(|hash| B256::from_str(hash.trim()).ok()).collect())
-        .unwrap_or_default();
+    // Parse versioned hashes from query parameters
+    // Supports comma-separated format: ?versioned_hashes=0x...,0x...
+    let versioned_hashes: Vec<B256> = match versioned_hashes.get("versioned_hashes") {
+        Some(s) => {
+            let mut hashes = Vec::new();
+            for hash in s.split(',') {
+                let hash = hash.trim();
+                if hash.is_empty() {
+                    continue;
+                }
+                match B256::from_str(hash) {
+                    Ok(h) => hashes.push(h),
+                    Err(_) => {
+                        return BeaconError::new(
+                            super::error::BeaconErrorCode::BadRequest,
+                            format!("Invalid versioned hash: {hash}"),
+                        )
+                        .into_response();
+                    }
+                }
+            }
+            hashes
+        }
+        None => Vec::new(),
+    };
 
     // Get the blob sidecars using existing EthApi logic
     match api.anvil_get_blobs_by_block_id(block_id, versioned_hashes) {

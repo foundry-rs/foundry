@@ -15,6 +15,7 @@ use alloy_primitives::{
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
+    TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
@@ -23,7 +24,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
-    Env, FoundryBlock, FoundryCfg, FoundryTransaction,
+    FoundryBlock, FoundryTransaction,
     backend::{DatabaseExt, FoundryJournalExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
@@ -318,7 +319,7 @@ impl Cheatcode for loadCall {
 }
 
 impl Cheatcode for loadAllocsCall {
-    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt<CTX>, Db: DatabaseExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -346,7 +347,7 @@ impl Cheatcode for loadAllocsCall {
 }
 
 impl Cheatcode for cloneAccountCall {
-    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt<CTX>, Db: DatabaseExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -495,10 +496,10 @@ impl Cheatcode for getChainIdCall {
 }
 
 impl Cheatcode for chainIdCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
-        ccx.ecx.cfg_mut().set_chain_id(newChainId.to());
+        ccx.ecx.cfg_mut().chain_id = newChainId.to();
         Ok(Default::default())
     }
 }
@@ -889,20 +890,14 @@ impl Cheatcode for stopSnapshotGas_2Call {
 
 // Deprecated in favor of `snapshotStateCall`
 impl Cheatcode for snapshotCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
 }
 
 impl Cheatcode for snapshotStateCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
@@ -910,20 +905,14 @@ impl Cheatcode for snapshotStateCall {
 
 // Deprecated in favor of `revertToStateCall`
 impl Cheatcode for revertToCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
@@ -931,20 +920,14 @@ impl Cheatcode for revertToStateCall {
 
 // Deprecated in favor of `revertToStateAndDeleteCall`
 impl Cheatcode for revertToAndDeleteCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateAndDeleteCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
@@ -1143,7 +1126,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
                 rpc: ccx.ecx.db().active_fork_url(),
-                transaction: tx.try_into()?,
+                transaction: TransactionMaybeSigned::new_signed(tx)?,
             });
         }
 
@@ -1207,24 +1190,25 @@ impl Cheatcode for executeTransactionCall {
         let tx_env = <TxEnv as FromRecoveredTx<FoundryTxEnvelope>>::from_recovered_tx(&tx, sender);
 
         // Save current env for restoration after execution.
-        let (cached_evm_env, cached_tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+        let cached_evm_env = ccx.ecx.evm_clone();
+        let cached_tx_env = ccx.ecx.tx_clone();
 
         // Override env for isolated execution.
         ccx.ecx.block_mut().set_basefee(0);
-        *ccx.ecx.eth_tx_mut() = tx_env;
+        ccx.ecx.set_tx(tx_env);
         ccx.ecx.tx_mut().set_gas_price(0);
         ccx.ecx.tx_mut().set_gas_priority_fee(None);
 
         // Enable nonce checks for realistic simulation.
-        ccx.ecx.cfg_mut().set_disable_nonce_check(false);
+        ccx.ecx.cfg_mut().disable_nonce_check = false;
 
         // EIP-3860: enforce initcode size limit.
-        ccx.ecx
-            .cfg_mut()
-            .set_limit_contract_initcode_size(Some(revm::primitives::eip3860::MAX_INITCODE_SIZE));
+        ccx.ecx.cfg_mut().limit_contract_initcode_size =
+            Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
 
         // Snapshot the modified env for EVM construction.
-        let (modified_evm_env, modified_tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+        let modified_evm_env = ccx.ecx.evm_clone();
+        let modified_tx_env = ccx.ecx.tx_clone();
 
         // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
         // when the inner EVM executes calls at depth == 1.
@@ -1277,7 +1261,8 @@ impl Cheatcode for executeTransactionCall {
         nested_evm_env.cfg_env.disable_nonce_check = cached_evm_env.cfg_env.disable_nonce_check;
         nested_evm_env.cfg_env.limit_contract_initcode_size =
             cached_evm_env.cfg_env.limit_contract_initcode_size;
-        Env::apply_evm_and_tx(ccx.ecx, nested_evm_env, cached_tx_env);
+        ccx.ecx.set_evm(nested_evm_env);
+        ccx.ecx.set_tx(cached_tx_env);
 
         // Reset inner context flag.
         executor.set_in_inner_context(false, None);
@@ -1422,23 +1407,20 @@ pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
     Ok(account.data.info.nonce.abi_encode())
 }
 
-fn inner_snapshot_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
-) -> Result {
-    let evm_env = EvmEnv {
-        cfg_env: ccx.ecx.eth_cfg_mut().clone(),
-        block_env: ccx.ecx.eth_block_mut().clone(),
-    };
+fn inner_snapshot_state<CTX: EthCheatCtx>(ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    let evm_env =
+        EvmEnv { cfg_env: ccx.ecx.cfg_mut().clone(), block_env: ccx.ecx.block_mut().clone() };
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
     let id = db.snapshot_state(inner, &evm_env);
     Ok(id.abi_encode())
 }
 
-fn inner_revert_to_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
+fn inner_revert_to_state<CTX: EthCheatCtx>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
-    let (mut evm_env, mut tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+    let mut evm_env = ccx.ecx.evm_clone();
+    let mut tx_env = ccx.ecx.tx_clone();
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
     if let Some(restored) = db.revert_state(
         snapshot_id,
@@ -1448,18 +1430,20 @@ fn inner_revert_to_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
         RevertStateSnapshotAction::RevertKeep,
     ) {
         *inner = restored;
-        Env::apply_evm_and_tx(ccx.ecx, evm_env, tx_env);
+        ccx.ecx.set_evm(evm_env);
+        ccx.ecx.set_tx(tx_env);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
     }
 }
 
-fn inner_revert_to_state_and_delete<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
+fn inner_revert_to_state_and_delete<CTX: EthCheatCtx>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
-    let (mut evm_env, mut tx_env) = Env::clone_evm_and_tx(ccx.ecx);
+    let mut evm_env = ccx.ecx.evm_clone();
+    let mut tx_env = ccx.ecx.tx_clone();
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
     if let Some(restored) = db.revert_state(
         snapshot_id,
@@ -1469,7 +1453,8 @@ fn inner_revert_to_state_and_delete<CTX: FoundryContextExt<Journal: FoundryJourn
         RevertStateSnapshotAction::RevertRemove,
     ) {
         *inner = restored;
-        Env::apply_evm_and_tx(ccx.ecx, evm_env, tx_env);
+        ccx.ecx.set_evm(evm_env);
+        ccx.ecx.set_tx(tx_env);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())

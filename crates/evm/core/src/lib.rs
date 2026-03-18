@@ -76,14 +76,13 @@ pub trait FoundryInspectorExt {
 
 /// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
 ///
-/// Used as a trait object (`dyn InspectorExt`) in backend code that is Eth-specific.
 /// For generic multi-network code, use `I: FoundryInspectorExt + Inspector<CTX>` instead.
-pub trait InspectorExt:
+pub trait EthInspectorExt:
     for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
 {
 }
 
-impl<T> InspectorExt for T where
+impl<T> EthInspectorExt for T where
     T: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
 {
 }

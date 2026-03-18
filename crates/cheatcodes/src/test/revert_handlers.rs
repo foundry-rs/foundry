@@ -102,7 +102,8 @@ fn handle_revert(
 
     // If expected reason is `Error(string)` then decode and compare with actual revert.
     // See <https://github.com/foundry-rs/foundry/issues/12511>
-    if let Ok(e) = get_error("Error(string)")
+    if expected_reason.len() >= 4
+        && let Ok(e) = get_error("Error(string)")
         && let Ok(dec) = e.decode_error(expected_reason)
         && let Some(DynSolValue::String(revert_str)) = dec.body.first()
         && revert_str.as_str() == String::from_utf8_lossy(&actual_revert)

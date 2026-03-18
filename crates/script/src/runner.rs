@@ -5,6 +5,7 @@ use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
+use foundry_common::TransactionMaybeSigned;
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -73,13 +74,12 @@ impl ScriptRunner {
 
                 library_transactions.push_back(BroadcastableTransaction {
                     rpc: self.evm_opts.fork_url.clone(),
-                    transaction: TransactionRequest {
+                    transaction: TransactionMaybeSigned::new(TransactionRequest {
                         from: Some(self.evm_opts.sender),
                         input: code.clone().into(),
                         nonce: Some(sender_nonce + library_transactions.len() as u64),
                         ..Default::default()
-                    }
-                    .into(),
+                    }),
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
@@ -107,14 +107,13 @@ impl ScriptRunner {
 
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
-                        transaction: TransactionRequest {
+                        transaction: TransactionMaybeSigned::new(TransactionRequest {
                             from: Some(self.evm_opts.sender),
                             input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
                             to: Some(TxKind::Call(create2_deployer)),
                             ..Default::default()
-                        }
-                        .into(),
+                        }),
                     });
                 }
 

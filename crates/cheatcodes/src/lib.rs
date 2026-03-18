@@ -22,10 +22,9 @@ use revm::context::{ContextTr, JournalTr};
 pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
-pub use foundry_evm_core::EthCheatCtx;
+pub use foundry_evm_core::{EthCheatCtx, evm::EthNestedEvmClosure};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    NestedEvmClosure,
 };
 pub use spec::{CheatcodeDef, Vm};
 

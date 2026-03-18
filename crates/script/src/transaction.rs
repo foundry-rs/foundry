@@ -1,7 +1,7 @@
 use super::ScriptResult;
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_network::TransactionBuilder;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxKind, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
@@ -12,12 +12,12 @@ use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
-pub struct ScriptTransactionBuilder {
-    transaction: TransactionWithMetadata,
+pub struct ScriptTransactionBuilder<N: Network> {
+    transaction: TransactionWithMetadata<N>,
 }
 
-impl ScriptTransactionBuilder {
-    pub fn new(transaction: TransactionMaybeSigned, rpc: String) -> Self {
+impl<N: Network> ScriptTransactionBuilder<N> {
+    pub fn new(transaction: TransactionMaybeSigned<N>, rpc: String) -> Self {
         let mut transaction = TransactionWithMetadata::from_tx_request(transaction);
         transaction.rpc = rpc;
         // If tx.gas is already set that means it was specified in script
@@ -171,13 +171,13 @@ impl ScriptTransactionBuilder {
         self
     }
 
-    pub fn build(self) -> TransactionWithMetadata {
+    pub fn build(self) -> TransactionWithMetadata<N> {
         self.transaction
     }
 }
 
-impl From<TransactionWithMetadata> for ScriptTransactionBuilder {
-    fn from(transaction: TransactionWithMetadata) -> Self {
+impl<N: Network> From<TransactionWithMetadata<N>> for ScriptTransactionBuilder<N> {
+    fn from(transaction: TransactionWithMetadata<N>) -> Self {
         Self { transaction }
     }
 }

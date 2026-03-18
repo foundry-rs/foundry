@@ -321,7 +321,7 @@ impl TestArgs {
             evm_opts.verbosity = 3;
         }
 
-        let env = evm_opts.env().await?;
+        let (evm_env, tx_env) = evm_opts.env().await?;
 
         // Enable internal tracing for more informative flamegraph.
         if should_draw && !self.decode_internal {
@@ -345,12 +345,12 @@ impl TestArgs {
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, env.evm_env.clone()))
+            .with_fork(evm_opts.get_fork(&config, evm_env.clone()))
             .enable_isolation(evm_opts.isolate)
             .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
-            .build::<MultiCompiler>(output, env, evm_opts)?;
+            .build::<MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
@@ -522,7 +522,7 @@ impl TestArgs {
         }
 
         let remote_chain =
-            if runner.fork.is_some() { runner.env.tx.chain_id.map(Into::into) } else { None };
+            if runner.fork.is_some() { runner.tx_env.chain_id.map(Into::into) } else { None };
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();

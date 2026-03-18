@@ -1,3 +1,4 @@
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes};
 use foundry_common::TransactionMaybeSigned;
 use revm_inspectors::tracing::types::CallKind;
@@ -14,8 +15,14 @@ pub struct AdditionalContract {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TransactionWithMetadata {
+#[serde(
+    rename_all = "camelCase",
+    bound(
+        serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
+        deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+    )
+)]
+pub struct TransactionWithMetadata<N: Network> {
     pub hash: Option<B256>,
     #[serde(rename = "transactionType")]
     pub opcode: CallKind,
@@ -29,7 +36,7 @@ pub struct TransactionWithMetadata {
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
     pub rpc: String,
-    pub transaction: TransactionMaybeSigned,
+    pub transaction: TransactionMaybeSigned<N>,
     #[serde(default)]
     pub additional_contracts: Vec<AdditionalContract>,
     #[serde(default)]
@@ -48,8 +55,8 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
     Some(vec![])
 }
 
-impl TransactionWithMetadata {
-    pub fn from_tx_request(transaction: TransactionMaybeSigned) -> Self {
+impl<N: Network> TransactionWithMetadata<N> {
+    pub fn from_tx_request(transaction: TransactionMaybeSigned<N>) -> Self {
         Self {
             transaction,
             hash: Default::default(),
@@ -64,11 +71,11 @@ impl TransactionWithMetadata {
         }
     }
 
-    pub fn tx(&self) -> &TransactionMaybeSigned {
+    pub fn tx(&self) -> &TransactionMaybeSigned<N> {
         &self.transaction
     }
 
-    pub fn tx_mut(&mut self) -> &mut TransactionMaybeSigned {
+    pub fn tx_mut(&mut self) -> &mut TransactionMaybeSigned<N> {
         &mut self.transaction
     }
 

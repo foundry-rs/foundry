@@ -127,18 +127,18 @@ impl EvmOpts {
             .build()
     }
 
-    /// Assembles a complete [`Env`]
+    /// Returns a tuple with [`EvmEnv`] and [`TxEnv`]
     ///
     /// If a `fork_url` is set, creates a provider and passes it to both `EvmOpts::fork_evm_env`
     /// and `EvmOpts::fork_tx_env`. Falls back to local settings when no fork URL is configured.
-    pub async fn env(&self) -> eyre::Result<crate::Env> {
+    pub async fn env(&self) -> eyre::Result<(EvmEnv, TxEnv)> {
         if let Some(ref fork_url) = self.fork_url {
             let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
             let ((evm_env, _block), tx) =
                 tokio::try_join!(self.fork_evm_env(&provider), self.fork_tx_env(&provider))?;
-            Ok(crate::Env { evm_env, tx })
+            Ok((evm_env, tx))
         } else {
-            Ok(crate::Env { evm_env: self.local_evm_env(), tx: self.local_tx_env() })
+            Ok((self.local_evm_env(), self.local_tx_env()))
         }
     }
 
@@ -428,12 +428,12 @@ mod tests {
         assert!(evm_opts.fork_block_number.is_none());
 
         // Fetch the environment (this resolves "latest" to an actual block number)
-        let env = evm_opts.env().await.unwrap();
-        let resolved_block = env.evm_env.block_env.number;
+        let (evm_env, _) = evm_opts.env().await.unwrap();
+        let resolved_block = evm_env.block_env.number;
         assert!(resolved_block > U256::ZERO, "should have resolved to a real block number");
 
         // Create the fork - this should pin the block number
-        let fork = evm_opts.get_fork(&Config::default(), env.evm_env).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), evm_env).unwrap();
 
         // The fork's evm_opts should now have fork_block_number set to the resolved block
         assert_eq!(
@@ -453,9 +453,9 @@ mod tests {
         // Set an explicit block number
         evm_opts.fork_block_number = Some(12345678);
 
-        let env = evm_opts.env().await.unwrap();
+        let (evm_env, _) = evm_opts.env().await.unwrap();
 
-        let fork = evm_opts.get_fork(&Config::default(), env.evm_env).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), evm_env).unwrap();
 
         // Should preserve the explicit block number, not override it
         assert_eq!(

@@ -10,7 +10,7 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::NamedChain;
-use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
@@ -19,6 +19,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{ContractData, shell};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
+use foundry_primitives::FoundryTransactionBuilder;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
@@ -99,10 +100,13 @@ impl PreSimulationState {
     /// transactions in those environments.
     ///
     /// Collects gas usage and metadata for each transaction.
-    pub async fn simulate_and_fill(
+    pub async fn simulate_and_fill<N: Network>(
         &self,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<VecDeque<TransactionWithMetadata>> {
+        transactions: VecDeque<TransactionWithMetadata<N>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<N>>>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         trace!(target: "script", "executing onchain simulation");
 
         let runners = Arc::new(
@@ -255,7 +259,7 @@ pub struct FilledTransactionsState {
     pub script_wallets: Wallets<Ethereum>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
-    pub transactions: VecDeque<TransactionWithMetadata>,
+    pub transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
 }
 
 impl FilledTransactionsState {
@@ -264,7 +268,7 @@ impl FilledTransactionsState {
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
-    pub async fn bundle(mut self) -> Result<BundledState> {
+    pub async fn bundle(mut self) -> Result<BundledState<Ethereum>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
@@ -424,14 +428,14 @@ impl FilledTransactionsState {
         &self,
         multi: bool,
         chain: u64,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<ScriptSequence> {
+        transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
+    ) -> Result<ScriptSequence<Ethereum>> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
         let paths = if multi {
             None
         } else {
-            Some(ScriptSequence::get_paths(
+            Some(ScriptSequence::<Ethereum>::get_paths(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.build_data.target,

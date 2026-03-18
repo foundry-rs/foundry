@@ -8,6 +8,7 @@ use std::{
 
 use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip4895::Withdrawals;
+use alloy_evm::block::StateDB;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{AddressMap, HashMap},
@@ -88,6 +89,16 @@ pub trait MaybeForkedDatabase {
     fn maybe_flush_cache(&self) -> Result<(), String>;
 
     fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
+}
+
+/// `dyn Db` satisfies all `alloy_evm::Database` requirements via its supertraits, but the
+/// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
+impl alloy_evm::Database for dyn Db {}
+
+impl StateDB for dyn Db {
+    fn set_state_clear_flag(&mut self, _has_state_clear: bool) {
+        // Anvil does not use the revm State wrapper, so this is a no-op.
+    }
 }
 
 /// This bundles all required revm traits
