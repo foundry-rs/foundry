@@ -34,7 +34,7 @@ use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
     provider::{ProviderBuilder, RetryProvider},
 };
-use foundry_config::Config;
+use foundry_config::{Config, cache::StorageCachingConfig};
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
@@ -149,6 +149,8 @@ pub struct NodeConfig {
     pub enable_tracing: bool,
     /// Explicitly disables the use of RPC caching.
     pub no_storage_caching: bool,
+    /// RPC storage caching strategy from foundry config.
+    pub rpc_storage_caching: StorageCachingConfig,
     /// How to configure the server
     pub server_config: ServerConfig,
     /// The host the server will listen on
@@ -473,6 +475,7 @@ impl Default for NodeConfig {
             print_traces: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
+            rpc_storage_caching: Default::default(),
             server_config: Default::default(),
             host: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
             transaction_order: Default::default(),
@@ -832,6 +835,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets RPC storage caching strategy.
+    #[must_use]
+    pub fn with_rpc_storage_caching(mut self, rpc_storage_caching: StorageCachingConfig) -> Self {
+        self.rpc_storage_caching = rpc_storage_caching;
+        self
+    }
+
     /// Sets the `eth_rpc_url` to use when forking
     #[must_use]
     pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
@@ -991,10 +1001,16 @@ impl NodeConfig {
     ///
     /// See also [ Config::foundry_block_cache_file()]
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
-        if self.no_storage_caching || self.eth_rpc_url.is_none() {
+        let endpoint = self.eth_rpc_url.as_deref()?;
+        let chain_id = self.get_chain_id();
+        if !Config::storage_caching_enabled(
+            self.no_storage_caching,
+            &self.rpc_storage_caching,
+            endpoint,
+            chain_id,
+        ) {
             return None;
         }
-        let chain_id = self.get_chain_id();
 
         Config::foundry_block_cache_file(chain_id, block)
     }
@@ -1670,6 +1686,7 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::cache::{CachedChains, CachedEndpoints};
 
     #[test]
     fn test_prune_history() {
@@ -1679,5 +1696,54 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[test]
+    fn block_cache_path_respects_storage_caching_endpoint_policy() {
+        let config = NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_eth_rpc_url(Some("http://127.0.0.1:8545"))
+            .with_rpc_storage_caching(StorageCachingConfig {
+                chains: CachedChains::All,
+                endpoints: CachedEndpoints::Remote,
+            });
+        assert_eq!(config.block_cache_path(100), None);
+    }
+
+    #[test]
+    fn block_cache_path_respects_storage_caching_chain_policy() {
+        let config = NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_eth_rpc_url(Some("https://rpc.example"))
+            .with_rpc_storage_caching(StorageCachingConfig {
+                chains: CachedChains::None,
+                endpoints: CachedEndpoints::All,
+            });
+        assert_eq!(config.block_cache_path(100), None);
+    }
+
+    #[test]
+    fn block_cache_path_honors_cli_no_storage_caching_override() {
+        let config = NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_eth_rpc_url(Some("https://rpc.example"))
+            .with_rpc_storage_caching(StorageCachingConfig {
+                chains: CachedChains::All,
+                endpoints: CachedEndpoints::All,
+            })
+            .with_no_storage_caching(true);
+        assert_eq!(config.block_cache_path(100), None);
+    }
+
+    #[test]
+    fn block_cache_path_enabled_when_policy_allows() {
+        let config = NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_eth_rpc_url(Some("https://rpc.example"))
+            .with_rpc_storage_caching(StorageCachingConfig {
+                chains: CachedChains::All,
+                endpoints: CachedEndpoints::All,
+            });
+        assert_eq!(config.block_cache_path(100), Config::foundry_block_cache_file(1u64, 100));
     }
 }

@@ -1342,11 +1342,26 @@ impl Config {
         self.auto_detect_solc
     }
 
-    /// Whether caching should be enabled for the given chain id
+    /// Returns whether storage caching is enabled for the given endpoint and chain id.
+    pub fn storage_caching_enabled(
+        no_storage_caching: bool,
+        rpc_storage_caching: &StorageCachingConfig,
+        endpoint: &str,
+        chain_id: impl Into<u64>,
+    ) -> bool {
+        !no_storage_caching
+            && rpc_storage_caching.enable_for_chain_id(chain_id.into())
+            && rpc_storage_caching.enable_for_endpoint(endpoint)
+    }
+
+    /// Whether caching should be enabled for the given chain id.
     pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
-        !self.no_storage_caching
-            && self.rpc_storage_caching.enable_for_chain_id(chain_id.into())
-            && self.rpc_storage_caching.enable_for_endpoint(endpoint)
+        Self::storage_caching_enabled(
+            self.no_storage_caching,
+            &self.rpc_storage_caching,
+            endpoint,
+            chain_id,
+        )
     }
 
     /// Returns the `ProjectPathsConfig` sub set of the config.

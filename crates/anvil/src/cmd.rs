@@ -13,7 +13,6 @@ use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryNetwork;
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
@@ -224,6 +223,11 @@ impl NodeArgs {
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let compute_units_per_second =
             if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
+        let foundry_config = Config::load_with_providers(FigmentProviders::Anvil).ok();
+        let no_storage_caching = self.evm.no_storage_caching
+            || foundry_config.as_ref().is_some_and(|config| config.no_storage_caching);
+        let rpc_storage_caching =
+            foundry_config.map(|config| config.rpc_storage_caching).unwrap_or_default();
 
         let hardfork = match &self.hardfork {
             Some(hf) => {
@@ -269,7 +273,8 @@ impl NodeArgs {
             .with_eth_rpc_url(self.evm.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm.block_base_fee_per_gas)
             .disable_min_priority_fee(self.evm.disable_min_priority_fee)
-            .with_no_storage_caching(self.evm.no_storage_caching)
+            .with_no_storage_caching(no_storage_caching)
+            .with_rpc_storage_caching(rpc_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
             .set_silent(shell::is_quiet())
@@ -640,7 +645,7 @@ impl AnvilEvmArgs {
 /// Helper type to periodically dump the state of the chain to disk
 struct PeriodicStateDumper {
     in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
-    api: EthApi<FoundryNetwork>,
+    api: EthApi,
     dump_state: Option<PathBuf>,
     preserve_historical_states: bool,
     interval: Interval,
@@ -648,7 +653,7 @@ struct PeriodicStateDumper {
 
 impl PeriodicStateDumper {
     fn new(
-        api: EthApi<FoundryNetwork>,
+        api: EthApi,
         dump_state: Option<PathBuf>,
         interval: Duration,
         preserve_historical_states: bool,
@@ -672,11 +677,7 @@ impl PeriodicStateDumper {
     }
 
     /// Infallible state dump
-    async fn dump_state(
-        api: EthApi<FoundryNetwork>,
-        dump_state: PathBuf,
-        preserve_historical_states: bool,
-    ) {
+    async fn dump_state(api: EthApi, dump_state: PathBuf, preserve_historical_states: bool) {
         trace!(path=?dump_state, "Dumping state on shutdown");
         match api.serialized_state(preserve_historical_states).await {
             Ok(state) => {
