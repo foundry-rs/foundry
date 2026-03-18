@@ -104,8 +104,8 @@ pub trait DatabaseExt<Spec = SpecId, Block = BlockEnv, Tx = TxEnv>:
     /// **N.B.** While this reverts the state of the evm to the snapshot, it keeps new logs made
     /// since the snapshots was created. This way we can show logs that were emitted between
     /// snapshot and its revert.
-    /// This will also revert any changes in the `Env` and replace it with the captured `Env` of
-    /// `Self::snapshot_state`.
+    /// This will also revert any changes in the `EvmEnv` and `TxEnv` and replace them with the
+    /// captured values from `Self::snapshot_state`.
     ///
     /// Depending on [RevertStateSnapshotAction] it will keep the snapshot alive or delete it.
     fn revert_state(
@@ -169,7 +169,7 @@ pub trait DatabaseExt<Spec = SpecId, Block = BlockEnv, Tx = TxEnv>:
 
     /// Selects the fork's state
     ///
-    /// This will also modify the current `Env`.
+    /// This will also modify the current `EvmEnv` and `TxEnv`.
     ///
     /// **Note**: this does not change the local state, but swaps the remote state
     ///
@@ -459,7 +459,7 @@ where
 /// Multiple "forks" can be created `Backend::create_fork()`, however only 1 can be used by the
 /// `db`. However, their state can be hot-swapped by swapping the read half of `db` from one fork to
 /// another.
-/// When swapping forks (`Backend::select_fork()`) we also update the current `Env` of the `EVM`
+/// When swapping forks (`Backend::select_fork()`) we also update the current `EvmEnv` of the `EVM`
 /// accordingly, so that all `block.*` config values match
 ///
 /// When another for is selected [`DatabaseExt::select_fork()`] the entire storage, including

@@ -363,7 +363,7 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.kind` is not `TxKind::Create(_)`.
+    /// Panics if `tx_env.kind` is not `TxKind::Create(_)`.
     #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
@@ -529,7 +529,7 @@ impl Executor {
         self.transact_with_env(evm_env, tx_env)
     }
 
-    /// Execute the transaction configured in `env.tx`.
+    /// Execute the transaction configured in `tx_env`.
     ///
     /// The state after the call is **not** persisted.
     #[instrument(name = "call", level = "debug", skip_all)]
@@ -550,7 +550,7 @@ impl Executor {
         )
     }
 
-    /// Execute the transaction configured in `env.tx`.
+    /// Execute the transaction configured in `tx_env`.
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(
         &mut self,
