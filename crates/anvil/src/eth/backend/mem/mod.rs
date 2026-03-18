@@ -3989,6 +3989,22 @@ mod tests {
     use crate::{NodeConfig, spawn};
 
     #[tokio::test]
+    async fn test_prune_history_zero_does_not_store_state_history() {
+        let config = NodeConfig::test().set_pruned_history(Some(Some(0)));
+        let (api, _handle) = spawn(config).await;
+
+        assert!(api.backend.prune_state_history_config.is_config_enabled());
+        assert!(!api.backend.prune_state_history_config.is_state_history_supported());
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), api.backend.mine_block(vec![]))
+            .await
+            .expect("mining with `--prune-history 0` should not hang");
+
+        let historical_states = api.backend.states.write().serialized_states();
+        assert!(historical_states.into_iter().next().is_none());
+    }
+
+    #[tokio::test]
     async fn test_deterministic_block_mining() {
         // Test that mine_block produces deterministic block hashes with same initial conditions
         let genesis_timestamp = 1743944919u64;
