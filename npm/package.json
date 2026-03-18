@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@types/bun": "^1.3.10",
-    "@types/node": "^24.12.0",
+    "@types/node": "^25.5.0",
     "bun": "^1.3.10",
     "typescript": "^5.9.3"
   },
