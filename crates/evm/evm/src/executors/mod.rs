@@ -6,8 +6,11 @@
 // `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
 // the concrete `Executor` type.
 
-use crate::inspectors::{
-    Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+use crate::{
+    evm_factory::EthEvmFactory,
+    inspectors::{
+        Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    },
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -102,6 +105,8 @@ pub struct Executor {
     tx_env: TxEnv,
     /// The Revm inspector stack.
     inspector: InspectorStack,
+    /// Factory used to construct the EVM for each transaction.
+    evm_factory: EthEvmFactory,
     /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
@@ -137,6 +142,7 @@ impl Executor {
             evm_env,
             tx_env,
             inspector,
+            evm_factory: EthEvmFactory,
             gas_limit,
             legacy_assertions,
         }
@@ -150,6 +156,7 @@ impl Executor {
             evm_env,
             tx_env: self.tx_env.clone(),
             inspector: self.inspector().clone(),
+            evm_factory: self.evm_factory.clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
         }
@@ -540,7 +547,7 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
+        let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack, &self.evm_factory)?;
         convert_executed_result(
             evm_env,
             tx_env,
@@ -558,9 +565,10 @@ impl Executor {
         mut tx_env: TxEnv,
     ) -> eyre::Result<RawCallResult> {
         let mut stack = self.inspector().clone();
+        let factory = self.evm_factory.clone();
         let backend = self.backend_mut();
         let result: revm::context::result::ExecResultAndState<ExecutionResult> =
-            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
+            backend.inspect(&mut evm_env, &mut tx_env, &mut stack, &factory)?;
         let mut result = convert_executed_result(
             evm_env,
             tx_env,

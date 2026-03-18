@@ -8,6 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
+pub mod evm_factory;
 pub mod executors;
 pub mod inspectors;
 

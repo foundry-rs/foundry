@@ -407,7 +407,18 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         let tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact(fork_id, transaction, evm_env, tx_env, inner, &mut inspector)
+        db.transact(
+            fork_id,
+            transaction,
+            evm_env,
+            tx_env,
+            inner,
+            &mut |db, evm_env, tx_env, depth| {
+                let mut evm = new_evm_with_inspector(db, evm_env, tx_env.clone(), &mut inspector);
+                evm.journaled_state.depth = depth;
+                Ok(evm.transact(tx_env)?)
+            },
+        )
     }
 
     fn transact_from_tx_on_db(
@@ -419,7 +430,11 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         let evm_env = ecx.evm_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, evm_env, inner, &mut inspector)
+        db.transact_from_tx(tx, evm_env, inner, &mut |db, evm_env, tx_env, depth| {
+            let mut evm = new_evm_with_inspector(db, evm_env, tx_env.clone(), &mut inspector);
+            evm.journaled_state.depth = depth;
+            Ok(evm.transact(tx_env)?)
+        })
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {

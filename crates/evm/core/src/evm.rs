@@ -1,10 +1,12 @@
 use std::{
+    fmt::Debug,
+    hash::Hash,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
 use crate::{
-    EthCheatCtx, EthInspectorExt,
+    EthCheatCtx, EthInspectorExt, FoundryBlock, FoundryInspectorExt, FoundryTransaction,
     backend::{DatabaseExt, FoundryJournalExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
@@ -17,7 +19,9 @@ use revm::{
     context::{
         BlockEnv, Cfg, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext,
         LocalContextTr, TxEnv,
-        result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
+        result::{
+            EVMError, ExecResultAndState, ExecutionResult, HaltReason, HaltReasonTr, ResultAndState,
+        },
     },
     handler::{
         EthFrame, EthPrecompiles, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult,
@@ -32,6 +36,44 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
+
+/// Trait abstracting EVM construction away from the backend.
+///
+/// `Backend::inspect` and `CowBackend::inspect` delegate to an implementor instead of
+/// calling `new_evm_with_inspector` directly. This decouples the backend from any
+/// particular EVM flavour (Eth, Tempo, etc.).
+///
+/// The trait is **not** dyn-compatible — it is used as a generic parameter, so concrete
+/// types are monomorphised throughout the call chain.
+pub trait FoundryEvmFactory: Debug + Clone + Send + Sync + 'static {
+    /// The concrete inspector type this factory works with.
+    type Inspector: FoundryInspectorExt;
+
+    /// The spec/hardfork type (e.g. `SpecId` for Eth, `TempoHardfork` for Tempo).
+    type Spec: Into<SpecId> + Copy + Hash + Eq + Default + Send + Sync + 'static;
+
+    /// The block environment type (e.g. `BlockEnv`, `TempoBlockEnv`).
+    type Block: FoundryBlock + Clone + Send + Sync + 'static;
+
+    /// The transaction environment type (e.g. `TxEnv`, `TempoTxEnv`).
+    type Tx: FoundryTransaction + Clone + Send + Sync + 'static;
+
+    /// The halt reason type returned by this EVM flavour.
+    type HaltReason: HaltReasonTr + Send + Sync + 'static;
+
+    /// Build an EVM from `db` + `evm_env` + `tx_env` + `inspector`, execute a single
+    /// transaction, and return the result.
+    ///
+    /// The modified `evm_env` and `tx_env` are written back through the mutable references
+    /// so callers can observe cheatcode side-effects on the environment.
+    fn inspect(
+        &self,
+        db: &mut dyn DatabaseExt<Self::Block, Self::Tx, Self::Spec>,
+        evm_env: &mut EvmEnv<Self::Spec, Self::Block>,
+        tx_env: &mut Self::Tx,
+        inspector: &mut Self::Inspector,
+    ) -> eyre::Result<ResultAndState<Self::HaltReason>>;
+}
 
 pub fn new_evm_with_inspector<'db, I: EthInspectorExt>(
     db: &'db mut dyn DatabaseExt,

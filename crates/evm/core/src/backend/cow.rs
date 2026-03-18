@@ -2,24 +2,23 @@
 
 use super::BackendError;
 use crate::{
-    EthInspectorExt,
     backend::{
-        Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
-        diagnostic::RevertDiagnostic,
+        Backend, DatabaseExt, ExecuteTransactionFn, JournaledState, LocalForkId,
+        RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
     },
+    evm::FoundryEvmFactory,
     fork::{CreateFork, ForkId},
 };
-use alloy_evm::{Evm, EvmEnv};
+use alloy_evm::EvmEnv;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;
-use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::TxEnv,
-    context_interface::result::ResultAndState,
+    context_interface::{Transaction as TransactionTr, result::ResultAndState},
     database::DatabaseRef,
     primitives::{HashMap as Map, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState},
@@ -63,26 +62,24 @@ impl<'a> CowBackend<'a> {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
+    ///
+    /// The `factory` determines which EVM flavour (Eth, Tempo, …) is used for execution.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: EthInspectorExt>(
+    pub fn inspect<F: FoundryEvmFactory>(
         &mut self,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
-        inspector: I,
-    ) -> eyre::Result<ResultAndState> {
+        evm_env: &mut EvmEnv<F::Spec, F::Block>,
+        tx_env: &mut F::Tx,
+        inspector: &mut F::Inspector,
+        factory: &F,
+    ) -> eyre::Result<ResultAndState<F::HaltReason>>
+    where
+        Self: DatabaseExt<F::Block, F::Tx, F::Spec>,
+    {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
-        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller, tx_env.kind));
+        self.pending_init = Some((evm_env.cfg_env.spec.into(), tx_env.caller(), tx_env.kind()));
 
-        let mut evm =
-            crate::evm::new_evm_with_inspector(self, evm_env.clone(), tx_env.clone(), inspector);
-
-        let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
-
-        *evm_env = EvmEnv::new(evm.cfg.clone(), evm.block.clone());
-        *tx_env = evm.tx.clone();
-
-        Ok(res)
+        factory.inspect(self, evm_env, tx_env, inspector)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
@@ -200,9 +197,9 @@ impl DatabaseExt for CowBackend<'_> {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        execute: &mut ExecuteTransactionFn<'_>,
     ) -> eyre::Result<()> {
-        self.backend_mut().transact(id, transaction, evm_env, tx_env, journaled_state, inspector)
+        self.backend_mut().transact(id, transaction, evm_env, tx_env, journaled_state, execute)
     }
 
     fn transact_from_tx(
@@ -210,9 +207,9 @@ impl DatabaseExt for CowBackend<'_> {
         transaction: &TransactionRequest,
         evm_env: EvmEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        execute: &mut ExecuteTransactionFn<'_>,
     ) -> eyre::Result<()> {
-        self.backend_mut().transact_from_tx(transaction, evm_env, journaled_state, inspector)
+        self.backend_mut().transact_from_tx(transaction, evm_env, journaled_state, execute)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

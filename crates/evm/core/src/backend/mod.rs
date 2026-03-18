@@ -1,9 +1,9 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    EthInspectorExt, FoundryBlock, FoundryTransaction,
+    FoundryBlock, FoundryTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    evm::new_evm_with_inspector,
+    evm::{FoundryEvmFactory, new_evm_with_inspector},
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::get_blob_base_fee_update_fraction,
@@ -23,7 +23,10 @@ use revm::{
     Database, DatabaseCommit, Journal, JournalEntry,
     bytecode::Bytecode,
     context::{BlockEnv, Cfg, ContextTr, JournalInner, TxEnv},
-    context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
+    context_interface::{
+        Transaction as TransactionTr, journaled_state::account::JournaledAccountTr,
+        result::ResultAndState,
+    },
     database::{CacheDB, DatabaseRef},
     inspector::{JournalExt, NoOpInspector},
     precompile::{PrecompileSpecId, Precompiles},
@@ -76,6 +79,16 @@ pub const GLOBAL_FAIL_SLOT: U256 =
     uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
 pub type JournaledState = JournalInner<JournalEntry>;
+
+/// Callback that constructs and runs an EVM for a single transaction.
+///
+/// Receives:
+/// - `&mut dyn DatabaseExt` — the database to execute against
+/// - `EvmEnv` — the block/cfg environment
+/// - `TxEnv` — the transaction environment
+/// - `usize` — the journal depth to set before transacting
+pub type ExecuteTransactionFn<'a> =
+    dyn FnMut(&mut dyn DatabaseExt, EvmEnv, TxEnv, usize) -> eyre::Result<ResultAndState> + 'a;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
@@ -214,7 +227,13 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
-    /// Fetches the given transaction for the fork and executes it, committing the state in the DB
+    /// Fetches the given transaction for the fork and executes it, committing the state in the DB.
+    ///
+    /// The `execute` callback constructs and runs the EVM. It receives:
+    /// - `&mut dyn DatabaseExt` — a fresh database for the fork
+    /// - `EvmEnv` — the block/cfg environment
+    /// - `TxEnv` — the transaction environment
+    /// - `usize` — the journal depth to set before transacting
     fn transact(
         &mut self,
         id: Option<LocalForkId>,
@@ -222,16 +241,21 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
         evm_env: EvmEnv<SPEC, BLOCK>,
         tx_env: TX,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt<BLOCK, TX, SPEC>,
+        execute: &mut ExecuteTransactionFn<'_>,
     ) -> eyre::Result<()>;
 
-    /// Executes a given TransactionRequest, commits the new state to the DB
+    /// Executes a given TransactionRequest, commits the new state to the DB.
+    ///
+    /// The transaction environment is derived from the `TransactionRequest`, not from the
+    /// caller's current `tx_env`.
+    ///
+    /// The `execute` callback constructs and runs the EVM (see [`transact`](Self::transact)).
     fn transact_from_tx(
         &mut self,
         transaction: &TransactionRequest,
         evm_env: EvmEnv<SPEC, BLOCK>,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt<BLOCK, TX, SPEC>,
+        execute: &mut ExecuteTransactionFn<'_>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -807,27 +831,21 @@ impl Backend {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
+    ///
+    /// The `factory` determines which EVM flavour (Eth, Tempo, …) is used for execution.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: EthInspectorExt>(
+    pub fn inspect<F: FoundryEvmFactory>(
         &mut self,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
-        inspector: I,
-    ) -> eyre::Result<ResultAndState> {
-        self.initialize(evm_env.cfg_env.spec, tx_env.caller, tx_env.kind);
-        let mut evm = crate::evm::new_evm_with_inspector(
-            self,
-            evm_env.to_owned(),
-            tx_env.to_owned(),
-            inspector,
-        );
-
-        let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
-
-        *evm_env = EvmEnv::new(evm.cfg.clone(), evm.block.clone());
-        *tx_env = evm.tx.clone();
-
-        Ok(res)
+        evm_env: &mut EvmEnv<F::Spec, F::Block>,
+        tx_env: &mut F::Tx,
+        inspector: &mut F::Inspector,
+        factory: &F,
+    ) -> eyre::Result<ResultAndState<F::HaltReason>>
+    where
+        Self: DatabaseExt<F::Block, F::Tx, F::Spec>,
+    {
+        self.initialize(evm_env.cfg_env.spec.into(), tx_env.caller(), tx_env.kind());
+        factory.inspect(self, evm_env, tx_env, inspector)
     }
 
     /// Returns true if the address is a precompile
@@ -957,7 +975,12 @@ impl Backend {
                 fork,
                 &fork_id,
                 &persistent_accounts,
-                &mut NoOpInspector,
+                &mut |db, evm_env, tx_env, depth| {
+                    let mut evm =
+                        new_evm_with_inspector(db, evm_env, tx_env.clone(), NoOpInspector);
+                    evm.journaled_state.depth = depth;
+                    Ok(evm.transact(tx_env)?)
+                },
             )?;
         }
 
@@ -1326,7 +1349,7 @@ impl DatabaseExt for Backend {
         mut evm_env: EvmEnv,
         mut tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        execute: &mut ExecuteTransactionFn<'_>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1357,7 +1380,7 @@ impl DatabaseExt for Backend {
             fork,
             &fork_id,
             &persistent_accounts,
-            inspector,
+            execute,
         )
     }
 
@@ -1366,7 +1389,7 @@ impl DatabaseExt for Backend {
         tx: &TransactionRequest,
         evm_env: EvmEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        execute: &mut ExecuteTransactionFn<'_>,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -1376,9 +1399,8 @@ impl DatabaseExt for Backend {
 
         let res = {
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, evm_env, tx_env.to_owned(), inspector);
-            evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact(tx_env)?
+            let depth = journaled_state.depth + 1;
+            execute(&mut db, evm_env, tx_env, depth)?
         };
 
         self.commit(res.state);
@@ -2036,7 +2058,7 @@ fn commit_transaction(
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn EthInspectorExt,
+    execute: &mut ExecuteTransactionFn<'_>,
 ) -> eyre::Result<()> {
     if let Some(tx_envelope) = tx.as_envelope() {
         *tx_env = TxEnv::from_recovered_tx(tx_envelope, tx.from());
@@ -2049,15 +2071,8 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(
-            &mut db as _,
-            evm_env.to_owned(),
-            tx_env.to_owned(),
-            inspector,
-        );
-        // Adjust inner EVM depth to ensure that inspectors receive accurate data.
-        evm.journaled_state.depth = depth + 1;
-        evm.transact(tx_env.clone()).wrap_err("backend: failed committing transaction")?
+        execute(&mut db, evm_env.clone(), tx_env.clone(), depth + 1)
+            .wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
