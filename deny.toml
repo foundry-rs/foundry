@@ -111,4 +111,6 @@ allow-git = [
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
     "https://github.com/stevencartavia/reth",
+    # MPP (Machine Payments Protocol)
+    "https://github.com/tempoxyz/mpp-rs",
 ]
