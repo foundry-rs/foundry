@@ -73,7 +73,6 @@ pub struct RpcOpts {
     /// Print the equivalent curl command instead of making the RPC request.
     #[arg(long)]
     pub curl: bool,
-
 }
 
 impl_figment_convert_cast!(RpcOpts);
