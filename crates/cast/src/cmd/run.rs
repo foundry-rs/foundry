@@ -1,4 +1,7 @@
-use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_changes};
+use crate::{
+    debug::handle_traces,
+    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
+};
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyNetwork, TransactionResponse};
@@ -182,12 +185,7 @@ impl RunArgs {
         evm_env.block_env.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
-            evm_env.block_env.timestamp = U256::from(block.header.timestamp());
-            evm_env.block_env.beneficiary = block.header.beneficiary();
-            evm_env.block_env.difficulty = block.header.difficulty();
-            evm_env.block_env.prevrandao = Some(block.header.mix_hash().unwrap_or_default());
-            evm_env.block_env.basefee = block.header.base_fee_per_gas().unwrap_or_default();
-            evm_env.block_env.gas_limit = block.header.gas_limit();
+            evm_env.block_env = block_env_from_header(&block.header);
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains

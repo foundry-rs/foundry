@@ -42,7 +42,10 @@ use foundry_evm::{
         FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
         spec_id_from_ethereum_hardfork,
     },
-    utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
+    utils::{
+        apply_chain_and_block_specific_env_changes, block_env_from_header,
+        get_blob_base_fee_update_fraction,
+    },
 };
 use itertools::Itertools;
 use op_revm::OpTransaction;
@@ -1286,16 +1289,11 @@ latest block number: {latest_block}"
         self.gas_limit = Some(gas_limit);
 
         env.evm_env.block_env = BlockEnv {
-            number: U256::from(fork_block_number),
-            timestamp: U256::from(block.header.timestamp()),
-            difficulty: block.header.difficulty(),
-            // ensures prevrandao is set
-            prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
             beneficiary: env.evm_env.block_env.beneficiary,
             basefee: env.evm_env.block_env.basefee,
-            ..Default::default()
+            ..block_env_from_header(&block.header)
         };
 
         // Determine chain_id early so we can use it consistently

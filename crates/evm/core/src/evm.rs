@@ -110,32 +110,6 @@ pub struct FoundryEvm<'db, I: EthInspectorExt> {
         EthFrame<EthInterpreter>,
     >,
 }
-impl<'db, I: EthInspectorExt> FoundryEvm<'db, I> {
-    /// Consumes the EVM and returns the inner context.
-    pub fn into_context(self) -> EthEvmContext<&'db mut dyn DatabaseExt> {
-        self.inner.ctx
-    }
-
-    pub fn run_execution(
-        &mut self,
-        frame: FrameInput,
-    ) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = FoundryHandler::<I>::default();
-
-        // Create first frame
-        let memory =
-            SharedMemory::new_with_buffer(self.inner.ctx().local().shared_memory_buffer().clone());
-        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
-
-        // Run execution loop
-        let mut frame_result = handler.inspect_run_exec_loop(&mut self.inner, first_frame_input)?;
-
-        // Handle last frame result
-        handler.last_frame_result(&mut self.inner, &mut frame_result)?;
-
-        Ok(frame_result)
-    }
-}
 
 impl<'db, I: EthInspectorExt> Evm for FoundryEvm<'db, I> {
     type Precompiles = PrecompilesMap;
@@ -274,7 +248,20 @@ impl<I: EthInspectorExt> NestedEvm for FoundryEvm<'_, I> {
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        FoundryEvm::run_execution(self, frame)
+        let mut handler = FoundryHandler::<I>::default();
+
+        // Create first frame
+        let memory =
+            SharedMemory::new_with_buffer(self.inner.ctx().local().shared_memory_buffer().clone());
+        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
+
+        // Run execution loop
+        let mut frame_result = handler.inspect_run_exec_loop(&mut self.inner, first_frame_input)?;
+
+        // Handle last frame result
+        handler.last_frame_result(&mut self.inner, &mut frame_result)?;
+
+        Ok(frame_result)
     }
 
     fn transact(

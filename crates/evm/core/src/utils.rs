@@ -7,17 +7,34 @@ use alloy_primitives::{B256, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use foundry_config::NamedChain;
 use foundry_evm_networks::NetworkConfigs;
-use revm::primitives::{
-    eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    hardfork::SpecId,
-};
 pub use revm::state::EvmState as StateChangeset;
+use revm::{
+    context::BlockEnv,
+    primitives::{
+        eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+        hardfork::SpecId,
+    },
+};
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
 #[inline(always)]
 pub fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
+}
+
+/// Constructs a [`BlockEnv`] from a block header.
+pub fn block_env_from_header(header: &impl BlockHeader) -> BlockEnv {
+    BlockEnv {
+        number: U256::from(header.number()),
+        beneficiary: header.beneficiary(),
+        timestamp: U256::from(header.timestamp()),
+        difficulty: header.difficulty(),
+        prevrandao: header.mix_hash(),
+        basefee: header.base_fee_per_gas().unwrap_or_default(),
+        gas_limit: header.gas_limit(),
+        ..Default::default()
+    }
 }
 
 /// Depending on the configured chain id and block number this should apply any specific changes

@@ -96,7 +96,10 @@ use foundry_evm::{
         CallTraceDecoder, FourByteInspector, GethTraceBuilder, TracingInspector,
         TracingInspectorConfig,
     },
-    utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
+    utils::{
+        block_env_from_header, get_blob_base_fee_update_fraction,
+        get_blob_base_fee_update_fraction_by_spec_id,
+    },
 };
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -4199,20 +4202,6 @@ impl Backend<FoundryNetwork> {
         }
 
         Ok(None)
-    }
-}
-
-/// Constructs a `BlockEnv` from a block header.
-fn block_env_from_header(header: &impl BlockHeader) -> BlockEnv {
-    BlockEnv {
-        number: U256::from(header.number()),
-        beneficiary: header.beneficiary(),
-        timestamp: U256::from(header.timestamp()),
-        difficulty: header.difficulty(),
-        prevrandao: header.mix_hash(),
-        basefee: header.base_fee_per_gas().unwrap_or_default(),
-        gas_limit: header.gas_limit(),
-        ..Default::default()
     }
 }
 
