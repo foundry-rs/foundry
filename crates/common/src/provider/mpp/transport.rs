@@ -551,7 +551,7 @@ mod tests {
             version: KeychainVersion::V2,
         };
 
-        let rpc_url = "https://rpc.tempo.xyz";
+        let rpc_url = mpp::tempo::DEFAULT_RPC_URL;
         let provider = MultiProvider::new()
             .with(
                 TempoProvider::new(signer.clone(), rpc_url)

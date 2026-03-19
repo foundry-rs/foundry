@@ -256,14 +256,11 @@ impl RuntimeTransport {
                 mpp::client::tempo::signing::TempoSigningMode::Direct
             };
 
-            // Use the user-provided RPC URL for payment providers.
-            let rpc_url = self.url.as_str();
-
             let mut multi = mpp::client::MultiProvider::new();
 
             // Charge provider
             multi.add(
-                mpp::client::TempoProvider::new(signer.clone(), rpc_url)
+                mpp::client::TempoProvider::new(signer.clone(), mpp::tempo::DEFAULT_RPC_URL)
                     .map_err(|e| {
                         RuntimeTransportError::BadHeader(format!("MPP provider error: {e}"))
                     })?
@@ -271,13 +268,15 @@ impl RuntimeTransport {
             );
 
             // Session provider
-            let mut session =
-                mpp::client::tempo::session::TempoSessionProvider::new(signer, rpc_url)
-                    .map_err(|e| {
-                        RuntimeTransportError::BadHeader(format!("MPP session provider error: {e}"))
-                    })?
-                    .with_signing_mode(signing_mode)
-                    .with_default_deposit(100_000);
+            let mut session = mpp::client::tempo::session::TempoSessionProvider::new(
+                signer,
+                mpp::tempo::DEFAULT_RPC_URL,
+            )
+            .map_err(|e| {
+                RuntimeTransportError::BadHeader(format!("MPP session provider error: {e}"))
+            })?
+            .with_signing_mode(signing_mode)
+            .with_default_deposit(100_000);
 
             // Set authorized signer for keychain mode (voucher signing address)
             if let Some(ref key_addr) = config.key_address
