@@ -7,9 +7,10 @@
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, TransportResult};
 use mpp::{
-    client::PaymentProvider,
+    MppError, PaymentChallenge,
     protocol::core::{
-        AUTHORIZATION_HEADER, WWW_AUTHENTICATE_HEADER, format_authorization, parse_www_authenticate,
+        AUTHORIZATION_HEADER, PaymentCredential, PaymentPayload, WWW_AUTHENTICATE_HEADER,
+        format_authorization, parse_www_authenticate,
     },
 };
 use reqwest::StatusCode;
@@ -23,25 +24,25 @@ use url::Url;
 /// When an RPC endpoint is 402-gated, this transport:
 /// 1. Sends the initial JSON-RPC request
 /// 2. If 402 is returned, parses the challenge from `WWW-Authenticate`
-/// 3. Pays via the configured payment provider
+/// 3. Pays via the configured [`MppSigner`]
 /// 4. Retries the request with the payment credential
 #[derive(Clone)]
-pub struct MppHttpTransport<P> {
+pub struct MppHttpTransport {
     client: reqwest::Client,
     url: Url,
-    provider: P,
+    signer: MppSigner,
 }
 
-impl<P> std::fmt::Debug for MppHttpTransport<P> {
+impl std::fmt::Debug for MppHttpTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MppHttpTransport").field("url", &self.url).finish_non_exhaustive()
     }
 }
 
-impl<P: PaymentProvider> MppHttpTransport<P> {
+impl MppHttpTransport {
     /// Create a new MPP HTTP transport.
-    pub fn new(client: reqwest::Client, url: Url, provider: P) -> Self {
-        Self { client, url, provider }
+    pub fn new(client: reqwest::Client, url: Url, signer: MppSigner) -> Self {
+        Self { client, url, signer }
     }
 
     /// Send a JSON-RPC request with automatic 402 payment handling.
@@ -88,7 +89,7 @@ impl<P: PaymentProvider> MppHttpTransport<P> {
         debug!(id = %challenge.id, method = %challenge.method, "received MPP 402 challenge, paying");
 
         // Pay the challenge
-        let credential = self.provider.pay(&challenge).await.map_err(|e| {
+        let credential = self.signer.pay(&challenge).await.map_err(|e| {
             TransportErrorKind::custom(std::io::Error::other(format!("MPP payment failed: {e}")))
         })?;
 
@@ -137,7 +138,7 @@ impl<P: PaymentProvider> MppHttpTransport<P> {
     }
 }
 
-impl<P: PaymentProvider + 'static> Service<RequestPacket> for MppHttpTransport<P> {
+impl Service<RequestPacket> for MppHttpTransport {
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = TransportFut<'static>;
@@ -155,50 +156,37 @@ impl<P: PaymentProvider + 'static> Service<RequestPacket> for MppHttpTransport<P
     }
 }
 
-/// A minimal EVM payment provider that signs MPP challenges.
+/// Signs MPP payment challenges using an EVM private key.
 #[derive(Clone)]
-pub struct EvmSigningProvider {
+pub struct MppSigner {
     signer: alloy_signer_local::PrivateKeySigner,
-    /// RPC URL for future use (e.g., nonce/gas queries for full tx signing).
-    _rpc_url: Url,
 }
 
-impl EvmSigningProvider {
-    /// Create a new EVM signing provider.
-    pub fn new(signer: alloy_signer_local::PrivateKeySigner, rpc_url: Url) -> Self {
-        Self { signer, _rpc_url: rpc_url }
-    }
-}
-
-impl PaymentProvider for EvmSigningProvider {
-    fn supports(&self, _method: &str, _intent: &str) -> bool {
-        true
+impl MppSigner {
+    /// Create a new MPP signer.
+    pub fn new(signer: alloy_signer_local::PrivateKeySigner) -> Self {
+        Self { signer }
     }
 
-    async fn pay(
-        &self,
-        challenge: &mpp::PaymentChallenge,
-    ) -> Result<mpp::PaymentCredential, mpp::MppError> {
+    /// Sign an MPP challenge and produce a credential.
+    async fn pay(&self, challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
         use alloy_signer::Signer;
-        use mpp::protocol::core::PaymentPayload;
 
         let message = format!("MPP Payment: {}", challenge.id);
         let signature = self
             .signer
             .sign_message(message.as_bytes())
             .await
-            .map_err(|e| mpp::MppError::Http(format!("failed to sign: {e}")))?;
+            .map_err(|e| MppError::Http(format!("failed to sign: {e}")))?;
 
         let addr = self.signer.address();
-        let credential = mpp::PaymentCredential::with_source(
+        Ok(PaymentCredential::with_source(
             challenge.to_echo(),
             format!("did:pkh:eip155:1:{addr}"),
             PaymentPayload::hash(format!(
                 "0x{}",
                 alloy_primitives::hex::encode(signature.as_bytes())
             )),
-        );
-
-        Ok(credential)
+        ))
     }
 }

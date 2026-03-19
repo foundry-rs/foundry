@@ -27,7 +27,7 @@ pub enum InnerTransport {
     Http(Http<reqwest::Client>),
     /// HTTP transport with MPP (Machine Payments Protocol) support for 402-gated RPCs
     #[cfg(feature = "mpp")]
-    MppHttp(super::mpp_transport::MppHttpTransport<mpp::client::MultiProvider>),
+    MppHttp(super::mpp_transport::MppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -253,12 +253,11 @@ impl RuntimeTransport {
             let signer: alloy_signer_local::PrivateKeySigner = mpp_key
                 .parse()
                 .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP key: {e}")))?;
-            let provider = super::mpp_transport::EvmSigningProvider::new(signer, self.url.clone());
-            let mpp_provider = mpp::client::MultiProvider::new().with(provider);
+            let mpp_signer = super::mpp_transport::MppSigner::new(signer);
             return Ok(InnerTransport::MppHttp(super::mpp_transport::MppHttpTransport::new(
                 client,
                 self.url.clone(),
-                mpp_provider,
+                mpp_signer,
             )));
         }
 
