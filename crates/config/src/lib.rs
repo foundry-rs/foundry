@@ -306,6 +306,8 @@ pub struct Config {
     pub eth_rpc_headers: Option<Vec<String>>,
     /// Print the equivalent curl command instead of making the RPC request.
     pub eth_rpc_curl: bool,
+    /// MPP (Machine Payments Protocol) private key for paying 402-gated RPC endpoints.
+    pub mpp_key: Option<String>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -2597,6 +2599,7 @@ impl Default for Config {
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
             eth_rpc_curl: false,
+            mpp_key: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],

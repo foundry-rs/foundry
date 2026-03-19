@@ -25,6 +25,9 @@ use url::Url;
 pub enum InnerTransport {
     /// HTTP transport
     Http(Http<reqwest::Client>),
+    /// HTTP transport with MPP (Machine Payments Protocol) support for 402-gated RPCs
+    #[cfg(feature = "mpp")]
+    MppHttp(super::mpp_transport::MppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -82,6 +85,9 @@ pub struct RuntimeTransport {
     accept_invalid_certs: bool,
     /// Whether to disable automatic proxy detection.
     no_proxy: bool,
+    /// MPP private key for paying 402-gated RPC endpoints.
+    #[cfg(feature = "mpp")]
+    mpp_key: Option<String>,
 }
 
 /// A builder for [RuntimeTransport].
@@ -93,6 +99,8 @@ pub struct RuntimeTransportBuilder {
     timeout: std::time::Duration,
     accept_invalid_certs: bool,
     no_proxy: bool,
+    #[cfg(feature = "mpp")]
+    mpp_key: Option<String>,
 }
 
 impl RuntimeTransportBuilder {
@@ -105,6 +113,8 @@ impl RuntimeTransportBuilder {
             timeout: REQUEST_TIMEOUT,
             accept_invalid_certs: false,
             no_proxy: false,
+            #[cfg(feature = "mpp")]
+            mpp_key: None,
         }
     }
 
@@ -141,6 +151,13 @@ impl RuntimeTransportBuilder {
         self
     }
 
+    /// Set the MPP private key for paying 402-gated RPC endpoints.
+    #[cfg(feature = "mpp")]
+    pub fn with_mpp_key(mut self, mpp_key: Option<String>) -> Self {
+        self.mpp_key = mpp_key;
+        self
+    }
+
     /// Builds the [RuntimeTransport] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
@@ -152,6 +169,8 @@ impl RuntimeTransportBuilder {
             timeout: self.timeout,
             accept_invalid_certs: self.accept_invalid_certs,
             no_proxy: self.no_proxy,
+            #[cfg(feature = "mpp")]
+            mpp_key: self.mpp_key,
         }
     }
 }
@@ -228,6 +247,25 @@ impl RuntimeTransport {
     /// Connects to an HTTP [alloy_transport_http::Http] transport.
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
+
+        #[cfg(feature = "mpp")]
+        if let Some(mpp_key) = &self.mpp_key {
+            let signer: alloy_signer_local::PrivateKeySigner = mpp_key
+                .parse()
+                .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP key: {e}")))?;
+            let mpp_provider =
+                mpp::client::TempoProvider::new(signer, self.url.as_str()).map_err(|e| {
+                    RuntimeTransportError::BadHeader(format!("invalid MPP provider: {e}"))
+                })?;
+            return Ok(InnerTransport::MppHttp(
+                super::mpp_transport::MppHttpTransport::new(
+                    client,
+                    self.url.clone(),
+                    mpp_provider,
+                ),
+            ));
+        }
+
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
     }
 
@@ -282,6 +320,8 @@ impl RuntimeTransport {
             // SAFETY: We just checked that the inner transport exists.
             match inner.clone().expect("must've been initialized") {
                 InnerTransport::Http(mut http) => http.call(req),
+                #[cfg(feature = "mpp")]
+                InnerTransport::MppHttp(mut mpp) => mpp.call(req),
                 InnerTransport::Ws(mut ws) => ws.call(req),
                 InnerTransport::Ipc(mut ipc) => ipc.call(req),
             }
