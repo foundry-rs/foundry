@@ -6895,7 +6895,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.5.0"
-source = "git+https://github.com/tempoxyz/mpp-rs#d3d63d353c3934f9eeecb9b9e0292d2df8bfacdb"
+source = "git+https://github.com/tempoxyz/mpp-rs?branch=alloy-2.0#260a6dcd326e525ae03c6608cc8e2b308bd0b2a2"
 dependencies = [
  "base64 0.22.1",
  "hmac",
