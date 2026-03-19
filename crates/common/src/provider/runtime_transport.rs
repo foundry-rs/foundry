@@ -84,8 +84,6 @@ pub struct RuntimeTransport {
     accept_invalid_certs: bool,
     /// Whether to disable automatic proxy detection.
     no_proxy: bool,
-    /// MPP private key for paying 402-gated RPC endpoints.
-    mpp_key: Option<String>,
 }
 
 /// A builder for [RuntimeTransport].
@@ -97,7 +95,6 @@ pub struct RuntimeTransportBuilder {
     timeout: std::time::Duration,
     accept_invalid_certs: bool,
     no_proxy: bool,
-    mpp_key: Option<String>,
 }
 
 impl RuntimeTransportBuilder {
@@ -110,7 +107,6 @@ impl RuntimeTransportBuilder {
             timeout: REQUEST_TIMEOUT,
             accept_invalid_certs: false,
             no_proxy: false,
-            mpp_key: None,
         }
     }
 
@@ -147,12 +143,6 @@ impl RuntimeTransportBuilder {
         self
     }
 
-    /// Set the MPP private key for paying 402-gated RPC endpoints.
-    pub fn with_mpp_key(mut self, mpp_key: Option<String>) -> Self {
-        self.mpp_key = mpp_key;
-        self
-    }
-
     /// Builds the [RuntimeTransport] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
@@ -164,7 +154,6 @@ impl RuntimeTransportBuilder {
             timeout: self.timeout,
             accept_invalid_certs: self.accept_invalid_certs,
             no_proxy: self.no_proxy,
-            mpp_key: self.mpp_key,
         }
     }
 }
@@ -242,7 +231,8 @@ impl RuntimeTransport {
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
 
-        if let Some(mpp_key) = &self.mpp_key {
+        // Auto-discover MPP key from Tempo wallet (TEMPO_PRIVATE_KEY env or ~/.tempo/wallet/keys.toml).
+        if let Some(mpp_key) = &super::tempo_keys::discover_mpp_key() {
             let signer: alloy_signer_local::PrivateKeySigner = mpp_key
                 .parse()
                 .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP key: {e}")))?;

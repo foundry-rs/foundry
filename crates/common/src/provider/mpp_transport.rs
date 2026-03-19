@@ -495,13 +495,13 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
 
-        // Use a random private key (hex-encoded without 0x prefix)
+        // Set TEMPO_PRIVATE_KEY so auto-discovery picks it up
         let signer = alloy_signer_local::PrivateKeySigner::random();
         let mpp_key = alloy_primitives::hex::encode(signer.credential().to_bytes());
+        // SAFETY: This test runs in isolation and sets the env var before any concurrent access.
+        unsafe { std::env::set_var("TEMPO_PRIVATE_KEY", &mpp_key) };
 
-        let transport = RuntimeTransportBuilder::new(Url::parse(&base_url).unwrap())
-            .with_mpp_key(Some(mpp_key))
-            .build();
+        let transport = RuntimeTransportBuilder::new(Url::parse(&base_url).unwrap()).build();
 
         let resp = transport.request(test_request()).await.unwrap();
 
