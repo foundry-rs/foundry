@@ -1,7 +1,6 @@
 //! Provider-related instantiation and usage utilities.
 
 pub mod curl_transport;
-#[cfg(feature = "mpp")]
 pub mod mpp_transport;
 pub mod runtime_transport;
 
@@ -100,7 +99,6 @@ pub struct ProviderBuilder<N: Network = AnyNetwork> {
     /// Whether to output curl commands instead of making requests.
     curl_mode: bool,
     /// MPP private key for paying 402-gated RPC endpoints.
-    #[cfg(feature = "mpp")]
     mpp_key: Option<String>,
     /// Phantom data for the network type.
     _network: PhantomData<N>,
@@ -156,7 +154,6 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs: false,
             no_proxy: false,
             curl_mode: false,
-            #[cfg(feature = "mpp")]
             mpp_key: None,
             _network: PhantomData,
         }
@@ -188,7 +185,6 @@ impl<N: Network> ProviderBuilder<N> {
             builder = builder.headers(rpc_headers);
         }
 
-        #[cfg(feature = "mpp")]
         if let Some(mpp_key) = config.mpp_key.clone() {
             builder = builder.mpp_key(mpp_key);
         }
@@ -315,7 +311,6 @@ impl<N: Network> ProviderBuilder<N> {
     }
 
     /// Sets the MPP private key for paying 402-gated RPC endpoints.
-    #[cfg(feature = "mpp")]
     pub fn mpp_key(mut self, mpp_key: impl Into<String>) -> Self {
         self.mpp_key = Some(mpp_key.into());
         self
@@ -323,9 +318,6 @@ impl<N: Network> ProviderBuilder<N> {
 
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
-        #[cfg(feature = "mpp")]
-        let mpp_key = self.mpp_key;
-
         let Self {
             url,
             chain,
@@ -339,6 +331,7 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
+            mpp_key,
             ..
         } = self;
         let url = url?;
@@ -357,7 +350,6 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
-        #[allow(unused_mut)]
         let mut transport_builder = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
@@ -365,10 +357,7 @@ impl<N: Network> ProviderBuilder<N> {
             .accept_invalid_certs(accept_invalid_certs)
             .no_proxy(no_proxy);
 
-        #[cfg(feature = "mpp")]
-        {
-            transport_builder = transport_builder.with_mpp_key(mpp_key);
-        }
+        transport_builder = transport_builder.with_mpp_key(mpp_key);
 
         let transport = transport_builder.build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
@@ -401,9 +390,6 @@ impl<N: Network> ProviderBuilder<N> {
     where
         N: RecommendedFillers,
     {
-        #[cfg(feature = "mpp")]
-        let mpp_key = self.mpp_key;
-
         let Self {
             url,
             chain,
@@ -417,6 +403,7 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
+            mpp_key,
             ..
         } = self;
         let url = url?;
@@ -437,7 +424,6 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
-        #[allow(unused_mut)]
         let mut transport_builder = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
@@ -445,10 +431,7 @@ impl<N: Network> ProviderBuilder<N> {
             .accept_invalid_certs(accept_invalid_certs)
             .no_proxy(no_proxy);
 
-        #[cfg(feature = "mpp")]
-        {
-            transport_builder = transport_builder.with_mpp_key(mpp_key);
-        }
+        transport_builder = transport_builder.with_mpp_key(mpp_key);
 
         let transport = transport_builder.build();
 

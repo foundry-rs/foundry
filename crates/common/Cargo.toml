@@ -46,7 +46,7 @@ alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
 
 # mpp
-mpp = { workspace = true, optional = true }
+mpp.workspace = true
 
 revm.workspace = true
 
@@ -80,12 +80,8 @@ ciborium.workspace = true
 
 flate2.workspace = true
 
-alloy-signer = { workspace = true, optional = true }
-alloy-signer-local = { workspace = true, optional = true }
-
-[features]
-default = []
-mpp = ["dep:mpp", "dep:alloy-signer", "dep:alloy-signer-local"]
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 
 [build-dependencies]
 chrono.workspace = true

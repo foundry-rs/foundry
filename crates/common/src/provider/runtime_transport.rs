@@ -26,7 +26,6 @@ pub enum InnerTransport {
     /// HTTP transport
     Http(Http<reqwest::Client>),
     /// HTTP transport with MPP (Machine Payments Protocol) support for 402-gated RPCs
-    #[cfg(feature = "mpp")]
     MppHttp(super::mpp_transport::MppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
@@ -86,7 +85,6 @@ pub struct RuntimeTransport {
     /// Whether to disable automatic proxy detection.
     no_proxy: bool,
     /// MPP private key for paying 402-gated RPC endpoints.
-    #[cfg(feature = "mpp")]
     mpp_key: Option<String>,
 }
 
@@ -99,7 +97,6 @@ pub struct RuntimeTransportBuilder {
     timeout: std::time::Duration,
     accept_invalid_certs: bool,
     no_proxy: bool,
-    #[cfg(feature = "mpp")]
     mpp_key: Option<String>,
 }
 
@@ -113,7 +110,6 @@ impl RuntimeTransportBuilder {
             timeout: REQUEST_TIMEOUT,
             accept_invalid_certs: false,
             no_proxy: false,
-            #[cfg(feature = "mpp")]
             mpp_key: None,
         }
     }
@@ -152,7 +148,6 @@ impl RuntimeTransportBuilder {
     }
 
     /// Set the MPP private key for paying 402-gated RPC endpoints.
-    #[cfg(feature = "mpp")]
     pub fn with_mpp_key(mut self, mpp_key: Option<String>) -> Self {
         self.mpp_key = mpp_key;
         self
@@ -169,7 +164,6 @@ impl RuntimeTransportBuilder {
             timeout: self.timeout,
             accept_invalid_certs: self.accept_invalid_certs,
             no_proxy: self.no_proxy,
-            #[cfg(feature = "mpp")]
             mpp_key: self.mpp_key,
         }
     }
@@ -248,7 +242,6 @@ impl RuntimeTransport {
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
 
-        #[cfg(feature = "mpp")]
         if let Some(mpp_key) = &self.mpp_key {
             let signer: alloy_signer_local::PrivateKeySigner = mpp_key
                 .parse()
@@ -315,7 +308,6 @@ impl RuntimeTransport {
             // SAFETY: We just checked that the inner transport exists.
             match inner.clone().expect("must've been initialized") {
                 InnerTransport::Http(mut http) => http.call(req),
-                #[cfg(feature = "mpp")]
                 InnerTransport::MppHttp(mut mpp) => mpp.call(req),
                 InnerTransport::Ws(mut ws) => ws.call(req),
                 InnerTransport::Ipc(mut ipc) => ipc.call(req),
