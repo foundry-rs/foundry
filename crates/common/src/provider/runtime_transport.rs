@@ -234,7 +234,8 @@ impl RuntimeTransport {
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
 
-        // Auto-discover MPP key from Tempo wallet (TEMPO_PRIVATE_KEY env or ~/.tempo/wallet/keys.toml).
+        // Auto-discover MPP key from Tempo wallet (TEMPO_PRIVATE_KEY env or
+        // ~/.tempo/wallet/keys.toml).
         if let Some(config) = &discover_mpp_config() {
             let signer: mpp::PrivateKeySigner = config
                 .key
@@ -243,9 +244,9 @@ impl RuntimeTransport {
 
             // Build signing mode: keychain if wallet_address is present, direct otherwise.
             let signing_mode = if let Some(ref wallet_addr) = config.wallet_address {
-                let wallet: alloy_primitives::Address = wallet_addr
-                    .parse()
-                    .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP wallet address: {e}")))?;
+                let wallet: alloy_primitives::Address = wallet_addr.parse().map_err(|e| {
+                    RuntimeTransportError::BadHeader(format!("invalid MPP wallet address: {e}"))
+                })?;
                 mpp::client::tempo::signing::TempoSigningMode::Keychain {
                     wallet,
                     key_authorization: None,
@@ -262,21 +263,26 @@ impl RuntimeTransport {
             // Charge provider
             multi.add(
                 mpp::client::TempoProvider::new(signer.clone(), rpc_url)
-                    .map_err(|e| RuntimeTransportError::BadHeader(format!("MPP provider error: {e}")))?
+                    .map_err(|e| {
+                        RuntimeTransportError::BadHeader(format!("MPP provider error: {e}"))
+                    })?
                     .with_signing_mode(signing_mode.clone()),
             );
 
             // Session provider
-            let mut session = mpp::client::tempo::session::TempoSessionProvider::new(signer, rpc_url)
-                .map_err(|e| RuntimeTransportError::BadHeader(format!("MPP session provider error: {e}")))?
-                .with_signing_mode(signing_mode)
-                .with_default_deposit(100_000);
+            let mut session =
+                mpp::client::tempo::session::TempoSessionProvider::new(signer, rpc_url)
+                    .map_err(|e| {
+                        RuntimeTransportError::BadHeader(format!("MPP session provider error: {e}"))
+                    })?
+                    .with_signing_mode(signing_mode)
+                    .with_default_deposit(100_000);
 
             // Set authorized signer for keychain mode (voucher signing address)
-            if let Some(ref key_addr) = config.key_address {
-                if let Ok(addr) = key_addr.parse() {
-                    session = session.with_authorized_signer(addr);
-                }
+            if let Some(ref key_addr) = config.key_address
+                && let Ok(addr) = key_addr.parse()
+            {
+                session = session.with_authorized_signer(addr);
             }
 
             multi.add(session);
@@ -340,13 +346,34 @@ impl RuntimeTransport {
             }
 
             // SAFETY: We just checked that the inner transport exists.
-            match inner.clone().expect("must've been initialized") {
+            let is_http = matches!(*inner, Some(InnerTransport::Http(_)));
+            let result = match inner.clone().expect("must've been initialized") {
                 InnerTransport::Http(mut http) => http.call(req),
                 InnerTransport::MppHttp(mut mpp) => mpp.call(req),
                 InnerTransport::Ws(mut ws) => ws.call(req),
                 InnerTransport::Ipc(mut ipc) => ipc.call(req),
             }
-            .await
+            .await;
+
+            // If a plain HTTP transport received a 402 Payment Required, the RPC
+            // endpoint is likely gated by the Machine Payments Protocol (MPP).
+            // Provide actionable guidance on how to configure MPP.
+            if is_http
+                && let Err(TransportError::Transport(ref kind)) = result
+                && let Some(http_err) = kind.as_http_error()
+                && http_err.status == 402
+            {
+                return Err(TransportErrorKind::custom(std::io::Error::other(
+                    "RPC endpoint returned HTTP 402 Payment Required. \
+                     This endpoint requires payment via the Machine Payments Protocol (MPP).\n\n\
+                     To configure MPP, install the Tempo wallet CLI and create a key:\n\
+                     \n  curl -sSL https://tempo.xyz/install.sh | bash\
+                     \n  tempo wallet create\
+                     \n\nSee https://docs.tempo.xyz for more information.",
+                )));
+            }
+
+            result
         })
     }
 

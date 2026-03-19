@@ -9,8 +9,7 @@ use alloy_transport::{TransportError, TransportErrorKind, TransportFut, Transpor
 use mpp::{
     client::PaymentProvider,
     protocol::core::{
-        AUTHORIZATION_HEADER, WWW_AUTHENTICATE_HEADER, format_authorization,
-        parse_www_authenticate,
+        AUTHORIZATION_HEADER, WWW_AUTHENTICATE_HEADER, format_authorization, parse_www_authenticate,
     },
 };
 use reqwest::StatusCode;
@@ -166,13 +165,12 @@ impl<P: PaymentProvider + 'static> Service<RequestPacket> for MppHttpTransport<P
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::mpp::keys::discover_mpp_key;
+    use crate::provider::{
+        mpp::keys::discover_mpp_key, runtime_transport::RuntimeTransportBuilder,
+    };
     use alloy_json_rpc::{Id, Request, RequestMeta};
     use axum::{
-        extract::State,
-        http::StatusCode as AxumStatusCode,
-        response::IntoResponse,
-        routing::post,
+        extract::State, http::StatusCode as AxumStatusCode, response::IntoResponse, routing::post,
     };
     use mpp::{
         MppError,
@@ -205,10 +203,7 @@ mod tests {
             method == "tempo" && intent == "charge"
         }
 
-        async fn pay(
-            &self,
-            challenge: &PaymentChallenge,
-        ) -> Result<PaymentCredential, MppError> {
+        async fn pay(&self, challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
             Ok(PaymentCredential::with_source(
                 challenge.to_echo(),
                 "did:pkh:eip155:42431:0xmockpayer",
@@ -226,13 +221,8 @@ mod tests {
             "methodDetails": { "chainId": 42431 }
         }))
         .unwrap();
-        let challenge = mpp::PaymentChallenge::new(
-            "test-id-42",
-            "rpc.example.com",
-            "tempo",
-            "charge",
-            request,
-        );
+        let challenge =
+            mpp::PaymentChallenge::new("test-id-42", "rpc.example.com", "tempo", "charge", request);
         let header = format_www_authenticate(&challenge).unwrap();
         (challenge, header)
     }
@@ -445,6 +435,38 @@ mod tests {
         handle.abort();
     }
 
+    /// Verify that a 402 response on a plain HTTP transport (no MPP configured)
+    /// produces an actionable error message with setup instructions.
+    #[tokio::test]
+    async fn test_plain_http_402_shows_mpp_setup_instructions() {
+        let app = axum::Router::new()
+            .route("/", post(|| async { (AxumStatusCode::PAYMENT_REQUIRED, "Payment Required") }));
+
+        let (base_url, handle) = spawn_server(app).await;
+
+        // Ensure no MPP key is discovered so RuntimeTransport uses plain Http.
+        unsafe {
+            std::env::set_var("TEMPO_HOME", "/nonexistent/path");
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+
+        let transport = RuntimeTransportBuilder::new(Url::parse(&base_url).unwrap()).build();
+        let err = transport.request(test_request()).await.unwrap_err();
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("402 Payment Required"),
+            "expected 402 Payment Required in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("tempo wallet create"),
+            "expected setup instructions in error, got: {msg}"
+        );
+
+        handle.abort();
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
+
     /// Verify that `rpc.mpp.tempo.xyz` returns a valid 402 MPP challenge.
     ///
     /// This test confirms the endpoint is 402-gated and returns a parseable
@@ -496,9 +518,8 @@ mod tests {
             "no MPP key found; set TEMPO_PRIVATE_KEY or configure ~/.tempo/wallet/keys.toml",
         );
 
-        let signer: mpp::PrivateKeySigner = mpp_key
-            .parse()
-            .expect("failed to parse MPP key as PrivateKeySigner");
+        let signer: mpp::PrivateKeySigner =
+            mpp_key.parse().expect("failed to parse MPP key as PrivateKeySigner");
 
         // Read keys.toml to get wallet_address for keychain signing.
         // The key is already provisioned on-chain by `tempo wallet`, so we don't
@@ -556,7 +577,7 @@ mod tests {
         match resp {
             ResponsePacket::Single(r) => {
                 assert!(r.is_success(), "expected successful JSON-RPC response, got: {r:?}");
-                eprintln!("got live MPP response: {r:?}");
+                let _ = sh_eprintln!("got live MPP response: {r:?}");
             }
             _ => panic!("expected single response"),
         }
