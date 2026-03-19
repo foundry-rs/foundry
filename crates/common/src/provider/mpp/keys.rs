@@ -141,6 +141,123 @@ fn tempo_keys_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    /// Write a keys.toml to a temp dir and set TEMPO_HOME to point at it.
+    /// Returns the tempdir (must be kept alive for the duration of the test)
+    /// and the private key that was written.
+    fn setup_keys_toml(toml_content: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wallet_dir = dir.path().join("wallet");
+        std::fs::create_dir_all(&wallet_dir).expect("create wallet dir");
+        let keys_path = wallet_dir.join("keys.toml");
+        let mut f = std::fs::File::create(&keys_path).expect("create keys.toml");
+        f.write_all(toml_content.as_bytes()).expect("write keys.toml");
+        (dir, keys_path)
+    }
+
+    #[test]
+    fn discover_from_tempo_home_keys_toml() {
+        let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let toml_content = format!(
+            r#"
+[[keys]]
+wallet_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+key_address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+key = "{key}"
+chain_id = 4217
+"#
+        );
+        let (dir, _) = setup_keys_toml(&toml_content);
+
+        // Point TEMPO_HOME at the temp dir so discover_mpp_key reads our file.
+        // Clear TEMPO_PRIVATE_KEY so it doesn't short-circuit.
+        // SAFETY: test-only env manipulation.
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+
+        let discovered = discover_mpp_key();
+        assert_eq!(discovered.as_deref(), Some(key));
+
+        // Cleanup
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
+
+    #[test]
+    fn discover_env_var_takes_priority_over_keys_toml() {
+        let file_key = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        let env_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let toml_content = format!(
+            r#"
+[[keys]]
+wallet_address = "0xAAAA"
+key = "{file_key}"
+"#
+        );
+        let (dir, _) = setup_keys_toml(&toml_content);
+
+        // SAFETY: test-only env manipulation.
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::set_var("TEMPO_PRIVATE_KEY", env_key);
+        }
+
+        let discovered = discover_mpp_key();
+        assert_eq!(discovered.as_deref(), Some(env_key));
+
+        // Cleanup
+        unsafe {
+            std::env::remove_var("TEMPO_HOME");
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+    }
+
+    #[test]
+    fn discover_returns_none_when_no_keys() {
+        let (dir, _) = setup_keys_toml(""); // empty file, no [[keys]]
+
+        // SAFETY: test-only env manipulation.
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+
+        let discovered = discover_mpp_key();
+        assert!(discovered.is_none());
+
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
+
+    #[test]
+    fn discover_skips_entries_without_inline_key() {
+        let key = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        let toml_content = format!(
+            r#"
+[[keys]]
+wallet_address = "0xNoKey"
+chain_id = 4217
+
+[[keys]]
+wallet_address = "0xHasKey"
+key = "{key}"
+chain_id = 4217
+"#
+        );
+        let (dir, _) = setup_keys_toml(&toml_content);
+
+        // SAFETY: test-only env manipulation.
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+
+        let discovered = discover_mpp_key();
+        assert_eq!(discovered.as_deref(), Some(key));
+
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
 
     #[test]
     fn parse_keys_toml() {
