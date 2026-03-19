@@ -4,7 +4,7 @@
 
 use crate::{
     DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
-    provider::mpp::{keys::discover_mpp_key, transport::MppHttpTransport, transport::MppSigner},
+    provider::mpp::{keys::discover_mpp_config, transport::MppHttpTransport},
 };
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -29,7 +29,7 @@ pub enum InnerTransport {
     /// HTTP transport
     Http(Http<reqwest::Client>),
     /// HTTP transport with MPP (Machine Payments Protocol) support for 402-gated RPCs
-    MppHttp(MppHttpTransport),
+    MppHttp(MppHttpTransport<mpp::client::MultiProvider>),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -235,15 +235,56 @@ impl RuntimeTransport {
         let client = self.reqwest_client()?;
 
         // Auto-discover MPP key from Tempo wallet (TEMPO_PRIVATE_KEY env or ~/.tempo/wallet/keys.toml).
-        if let Some(mpp_key) = &discover_mpp_key() {
-            let signer: alloy_signer_local::PrivateKeySigner = mpp_key
+        if let Some(config) = &discover_mpp_config() {
+            let signer: mpp::PrivateKeySigner = config
+                .key
                 .parse()
                 .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP key: {e}")))?;
-            let mpp_signer = MppSigner::new(signer);
+
+            // Build signing mode: keychain if wallet_address is present, direct otherwise.
+            let signing_mode = if let Some(ref wallet_addr) = config.wallet_address {
+                let wallet: alloy_primitives::Address = wallet_addr
+                    .parse()
+                    .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP wallet address: {e}")))?;
+                mpp::client::tempo::signing::TempoSigningMode::Keychain {
+                    wallet,
+                    key_authorization: None,
+                    version: mpp::client::tempo::signing::KeychainVersion::V2,
+                }
+            } else {
+                mpp::client::tempo::signing::TempoSigningMode::Direct
+            };
+
+            let rpc_url = "https://rpc.tempo.xyz";
+
+            let mut multi = mpp::client::MultiProvider::new();
+
+            // Charge provider
+            multi.add(
+                mpp::client::TempoProvider::new(signer.clone(), rpc_url)
+                    .map_err(|e| RuntimeTransportError::BadHeader(format!("MPP provider error: {e}")))?
+                    .with_signing_mode(signing_mode.clone()),
+            );
+
+            // Session provider
+            let mut session = mpp::client::tempo::session::TempoSessionProvider::new(signer, rpc_url)
+                .map_err(|e| RuntimeTransportError::BadHeader(format!("MPP session provider error: {e}")))?
+                .with_signing_mode(signing_mode)
+                .with_default_deposit(100_000);
+
+            // Set authorized signer for keychain mode (voucher signing address)
+            if let Some(ref key_addr) = config.key_address {
+                if let Ok(addr) = key_addr.parse() {
+                    session = session.with_authorized_signer(addr);
+                }
+            }
+
+            multi.add(session);
+
             return Ok(InnerTransport::MppHttp(MppHttpTransport::new(
                 client,
                 self.url.clone(),
-                mpp_signer,
+                multi,
             )));
         }
 

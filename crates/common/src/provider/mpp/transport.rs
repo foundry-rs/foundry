@@ -7,10 +7,10 @@
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, TransportResult};
 use mpp::{
-    MppError, PaymentChallenge,
+    client::PaymentProvider,
     protocol::core::{
-        AUTHORIZATION_HEADER, PaymentCredential, PaymentPayload, WWW_AUTHENTICATE_HEADER,
-        format_authorization, parse_www_authenticate,
+        AUTHORIZATION_HEADER, WWW_AUTHENTICATE_HEADER, format_authorization,
+        parse_www_authenticate,
     },
 };
 use reqwest::StatusCode;
@@ -24,25 +24,25 @@ use url::Url;
 /// When an RPC endpoint is 402-gated, this transport:
 /// 1. Sends the initial JSON-RPC request
 /// 2. If 402 is returned, parses the challenge from `WWW-Authenticate`
-/// 3. Pays via the configured [`MppSigner`]
+/// 3. Pays via the configured payment provider
 /// 4. Retries the request with the payment credential
 #[derive(Clone)]
-pub struct MppHttpTransport {
+pub struct MppHttpTransport<P = mpp::client::TempoProvider> {
     client: reqwest::Client,
     url: Url,
-    signer: MppSigner,
+    provider: P,
 }
 
-impl std::fmt::Debug for MppHttpTransport {
+impl<P> std::fmt::Debug for MppHttpTransport<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MppHttpTransport").field("url", &self.url).finish_non_exhaustive()
     }
 }
 
-impl MppHttpTransport {
+impl<P: PaymentProvider> MppHttpTransport<P> {
     /// Create a new MPP HTTP transport.
-    pub fn new(client: reqwest::Client, url: Url, signer: MppSigner) -> Self {
-        Self { client, url, signer }
+    pub fn new(client: reqwest::Client, url: Url, provider: P) -> Self {
+        Self { client, url, provider }
     }
 
     /// Send a JSON-RPC request with automatic 402 payment handling.
@@ -86,10 +86,17 @@ impl MppHttpTransport {
             TransportErrorKind::custom(std::io::Error::other(format!("invalid MPP challenge: {e}")))
         })?;
 
-        debug!(id = %challenge.id, method = %challenge.method, "received MPP 402 challenge, paying");
+        debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP 402 challenge, paying");
 
-        // Pay the challenge
-        let credential = self.signer.pay(&challenge).await.map_err(|e| {
+        if !self.provider.supports(challenge.method.as_str(), challenge.intent.as_str()) {
+            return Err(TransportErrorKind::custom(std::io::Error::other(format!(
+                "MPP challenge requires method={} intent={}, which is not supported by the configured provider",
+                challenge.method, challenge.intent,
+            ))));
+        }
+
+        // Pay the challenge via the configured provider
+        let credential = self.provider.pay(&challenge).await.map_err(|e| {
             TransportErrorKind::custom(std::io::Error::other(format!("MPP payment failed: {e}")))
         })?;
 
@@ -138,7 +145,7 @@ impl MppHttpTransport {
     }
 }
 
-impl Service<RequestPacket> for MppHttpTransport {
+impl<P: PaymentProvider + 'static> Service<RequestPacket> for MppHttpTransport<P> {
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = TransportFut<'static>;
@@ -156,59 +163,76 @@ impl Service<RequestPacket> for MppHttpTransport {
     }
 }
 
-/// Signs MPP payment challenges using an EVM private key.
-///
-/// Produces a credential by signing the challenge ID with EIP-191 personal_sign.
-#[derive(Clone)]
-pub struct MppSigner {
-    signer: alloy_signer_local::PrivateKeySigner,
-}
-
-impl MppSigner {
-    /// Create a new MPP signer.
-    pub fn new(signer: alloy_signer_local::PrivateKeySigner) -> Self {
-        Self { signer }
-    }
-
-    /// Sign an MPP challenge and produce a credential.
-    async fn pay(&self, challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
-        use alloy_signer::Signer;
-
-        let message = format!("MPP Payment: {}", challenge.id);
-        let signature = self
-            .signer
-            .sign_message(message.as_bytes())
-            .await
-            .map_err(|e| MppError::Http(format!("failed to sign: {e}")))?;
-
-        let addr = self.signer.address();
-        Ok(PaymentCredential::with_source(
-            challenge.to_echo(),
-            format!("did:pkh:eip155:1:{addr}"),
-            PaymentPayload::hash(format!(
-                "0x{}",
-                alloy_primitives::hex::encode(signature.as_bytes())
-            )),
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::mpp::keys::discover_mpp_key;
     use alloy_json_rpc::{Id, Request, RequestMeta};
-    use axum::response::IntoResponse;
-    use mpp::protocol::core::{Base64UrlJson, format_www_authenticate, parse_authorization};
+    use axum::{
+        extract::State,
+        http::StatusCode as AxumStatusCode,
+        response::IntoResponse,
+        routing::post,
+    };
+    use mpp::{
+        MppError,
+        client::{
+            MultiProvider, TempoProvider,
+            tempo::{
+                session::TempoSessionProvider,
+                signing::{KeychainVersion, TempoSigningMode},
+            },
+        },
+        protocol::core::{
+            Base64UrlJson, PaymentChallenge, PaymentCredential, PaymentPayload,
+            format_www_authenticate, parse_authorization,
+        },
+    };
     use std::sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
     };
 
+    /// Mock payment provider for unit tests.
+    ///
+    /// Returns a simple hash-type credential without making any on-chain calls,
+    /// unlike [`mpp::client::TempoProvider`] which performs real gas estimation.
+    #[derive(Clone)]
+    struct MockPaymentProvider;
+
+    impl PaymentProvider for MockPaymentProvider {
+        fn supports(&self, method: &str, intent: &str) -> bool {
+            method == "tempo" && intent == "charge"
+        }
+
+        async fn pay(
+            &self,
+            challenge: &PaymentChallenge,
+        ) -> Result<PaymentCredential, MppError> {
+            Ok(PaymentCredential::with_source(
+                challenge.to_echo(),
+                "did:pkh:eip155:42431:0xmockpayer",
+                PaymentPayload::hash("0xmocktxhash"),
+            ))
+        }
+    }
+
     /// Build a test challenge and its formatted WWW-Authenticate header.
-    fn test_challenge() -> (PaymentChallenge, String) {
-        let request = Base64UrlJson::from_value(&serde_json::json!({"amount": "1000"})).unwrap();
-        let challenge =
-            PaymentChallenge::new("test-id-42", "rpc.example.com", "tempo", "charge", request);
+    fn test_challenge() -> (mpp::PaymentChallenge, String) {
+        let request = Base64UrlJson::from_value(&serde_json::json!({
+            "amount": "1000",
+            "currency": "0x20c0000000000000000000000000000000000000",
+            "recipient": "0x742d35Cc6634C0532925a3b844Bc9e7595f1B0F2",
+            "methodDetails": { "chainId": 42431 }
+        }))
+        .unwrap();
+        let challenge = mpp::PaymentChallenge::new(
+            "test-id-42",
+            "rpc.example.com",
+            "tempo",
+            "charge",
+            request,
+        );
         let header = format_www_authenticate(&challenge).unwrap();
         (challenge, header)
     }
@@ -233,33 +257,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mpp_signer_produces_valid_credential() {
-        let signer = alloy_signer_local::PrivateKeySigner::random();
-        let mpp_signer = MppSigner::new(signer.clone());
-
-        let (challenge, _) = test_challenge();
-        let credential = mpp_signer.pay(&challenge).await.unwrap();
-
-        // Credential echoes the challenge fields
-        assert_eq!(credential.challenge.id, "test-id-42");
-        assert_eq!(credential.challenge.method.as_str(), "tempo");
-
-        // Source contains the signer address
-        let source = credential.source.as_ref().unwrap();
-        assert!(source.starts_with("did:pkh:eip155:1:"));
-        assert!(source.contains(&format!("{}", signer.address())));
-
-        // Payload is a hash type with a 0x-prefixed hex signature
-        let payload: PaymentPayload = serde_json::from_value(credential.payload).unwrap();
-        assert!(payload.is_hash());
-        assert!(payload.data().starts_with("0x"));
-    }
-
-    #[tokio::test]
     async fn test_mpp_transport_non_402_passthrough() {
-        use axum::routing::post;
-
-        // Server always returns 200 with a JSON-RPC response
         let app = axum::Router::new().route(
             "/",
             post(|| async {
@@ -272,13 +270,14 @@ mod tests {
         );
 
         let (base_url, handle) = spawn_server(app).await;
-        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
-        let mut transport =
-            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
 
         let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
 
-        // Should get the response directly without any payment flow
         match resp {
             ResponsePacket::Single(r) => {
                 assert!(r.is_success());
@@ -291,8 +290,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mpp_transport_402_then_200() {
-        use axum::{extract::State, http::StatusCode as AxumStatusCode, routing::post};
-
         let (_, www_auth) = test_challenge();
         let call_count = Arc::new(AtomicU32::new(0));
 
@@ -339,9 +336,11 @@ mod tests {
                 .with_state(state);
 
         let (base_url, handle) = spawn_server(app).await;
-        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
-        let mut transport =
-            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
 
         let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
 
@@ -360,8 +359,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mpp_transport_402_credential_is_valid() {
-        use axum::{extract::State, http::StatusCode as AxumStatusCode, routing::post};
-
         let (_, www_auth) = test_challenge();
 
         #[derive(Clone)]
@@ -409,9 +406,11 @@ mod tests {
                 .with_state(state);
 
         let (base_url, handle) = spawn_server(app).await;
-        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
-        let mut transport =
-            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
 
         // If the credential is invalid, the server-side assert will panic
         // and the request will fail
@@ -426,16 +425,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_mpp_transport_402_missing_www_authenticate() {
-        use axum::{http::StatusCode as AxumStatusCode, routing::post};
-
         // Server returns 402 without WWW-Authenticate header
         let app = axum::Router::new()
             .route("/", post(|| async { (AxumStatusCode::PAYMENT_REQUIRED, "pay up") }));
 
         let (base_url, handle) = spawn_server(app).await;
-        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
-        let mut transport =
-            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
 
         let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
         assert!(
@@ -446,107 +445,118 @@ mod tests {
         handle.abort();
     }
 
-    #[tokio::test]
-    async fn test_mpp_transport_via_runtime_transport() {
-        use crate::provider::runtime_transport::RuntimeTransportBuilder;
-        use axum::{extract::State, http::StatusCode as AxumStatusCode, routing::post};
-
-        let (_, www_auth) = test_challenge();
-        let call_count = Arc::new(AtomicU32::new(0));
-
-        #[derive(Clone)]
-        struct AppState {
-            www_auth: String,
-            call_count: Arc<AtomicU32>,
-        }
-
-        let state = AppState { www_auth, call_count: call_count.clone() };
-
-        let app =
-            axum::Router::new()
-                .route(
-                    "/",
-                    post(
-                        |State(state): State<AppState>,
-                         req: axum::http::Request<axum::body::Body>| async move {
-                            state.call_count.fetch_add(1, Ordering::SeqCst);
-                            if req.headers().get("authorization").is_some() {
-                                (
-                                    AxumStatusCode::OK,
-                                    axum::Json(serde_json::json!({
-                                        "jsonrpc": "2.0",
-                                        "id": 1,
-                                        "result": "0xmpp_works"
-                                    })),
-                                )
-                                    .into_response()
-                            } else {
-                                (
-                                    AxumStatusCode::PAYMENT_REQUIRED,
-                                    [("www-authenticate", state.www_auth)],
-                                    "Payment Required",
-                                )
-                                    .into_response()
-                            }
-                        },
-                    ),
-                )
-                .with_state(state);
-
-        let (base_url, handle) = spawn_server(app).await;
-
-        // Write a temp keys.toml and point TEMPO_HOME at it for auto-discovery.
-        let signer = alloy_signer_local::PrivateKeySigner::random();
-        let mpp_key = alloy_primitives::hex::encode(signer.credential().to_bytes());
-        let dir = tempfile::tempdir().unwrap();
-        let wallet_dir = dir.path().join("wallet");
-        std::fs::create_dir_all(&wallet_dir).unwrap();
-        std::fs::write(
-            wallet_dir.join("keys.toml"),
-            format!("[[keys]]\nkey = \"{mpp_key}\"\n"),
-        )
-        .unwrap();
-        // SAFETY: test-only env manipulation.
-        unsafe {
-            std::env::set_var("TEMPO_HOME", dir.path());
-            std::env::remove_var("TEMPO_PRIVATE_KEY");
-        }
-
-        let transport = RuntimeTransportBuilder::new(Url::parse(&base_url).unwrap()).build();
-
-        let resp = transport.request(test_request()).await.unwrap();
-
-        assert_eq!(call_count.load(Ordering::SeqCst), 2);
-        match resp {
-            ResponsePacket::Single(r) => assert!(r.is_success()),
-            _ => panic!("expected single response"),
-        }
-
-        handle.abort();
-        unsafe { std::env::remove_var("TEMPO_HOME") };
-    }
-
-    /// End-to-end test against the live `rpc.tempo.xyz` 402-gated endpoint.
+    /// Verify that `rpc.mpp.tempo.xyz` returns a valid 402 MPP challenge.
     ///
-    /// Requires a valid Tempo wallet key via `TEMPO_PRIVATE_KEY` env var or
-    /// `~/.tempo/wallet/keys.toml`. Skipped in CI — run manually with:
+    /// This test confirms the endpoint is 402-gated and returns a parseable
+    /// `WWW-Authenticate` header. It does NOT complete the payment flow
+    /// (the endpoint uses `session` intent which requires on-chain escrow).
     ///
     /// ```sh
-    /// cargo test -p foundry-common test_mpp_live_rpc_tempo -- --ignored
+    /// cargo test -p foundry-common test_mpp_live_402 -- --ignored
     /// ```
     #[tokio::test]
-    #[ignore = "requires network access and a funded Tempo wallet key"]
-    async fn test_mpp_live_rpc_tempo() {
-        use crate::provider::runtime_transport::RuntimeTransportBuilder;
+    #[ignore = "requires network access"]
+    async fn test_mpp_live_402() {
+        let client = reqwest::Client::new();
+        let resp = client
+            .post("https://rpc.mpp.tempo.xyz")
+            .header("content-type", "application/json")
+            .body(r#"{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}"#)
+            .send()
+            .await
+            .unwrap();
 
-        let transport =
-            RuntimeTransportBuilder::new(Url::parse("https://rpc.tempo.xyz").unwrap()).build();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
 
-        let resp = transport.request(test_request()).await.unwrap();
+        let www_auth = resp
+            .headers()
+            .get(WWW_AUTHENTICATE_HEADER)
+            .expect("missing WWW-Authenticate header")
+            .to_str()
+            .unwrap();
+
+        let challenge = parse_www_authenticate(www_auth).unwrap();
+        assert_eq!(challenge.realm, "rpc.mpp.tempo.xyz");
+        assert_eq!(challenge.method.as_str(), "tempo");
+    }
+
+    /// End-to-end integration test: pay a real 402 challenge on `rpc.mpp.tempo.xyz`
+    /// and get a valid JSON-RPC response.
+    ///
+    /// Requires a funded Tempo wallet with keychain access key configured in
+    /// `~/.tempo/wallet/keys.toml` (managed by `tempo wallet`).
+    ///
+    /// ```sh
+    /// cargo test -p foundry-common test_mpp_live_pay -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "requires network access and a funded Tempo wallet"]
+    async fn test_mpp_live_pay() {
+        let mpp_key = discover_mpp_key().expect(
+            "no MPP key found; set TEMPO_PRIVATE_KEY or configure ~/.tempo/wallet/keys.toml",
+        );
+
+        let signer: mpp::PrivateKeySigner = mpp_key
+            .parse()
+            .expect("failed to parse MPP key as PrivateKeySigner");
+
+        // Read keys.toml to get wallet_address for keychain signing.
+        // The key is already provisioned on-chain by `tempo wallet`, so we don't
+        // need to pass key_authorization (it's only needed for first-time provisioning).
+        let keys_path = dirs::home_dir().unwrap().join(".tempo/wallet/keys.toml");
+        let keys_toml: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&keys_path).unwrap()).unwrap();
+
+        let key_entry = keys_toml["keys"]
+            .as_array()
+            .and_then(|keys| keys.first())
+            .expect("no key entries in keys.toml");
+
+        let wallet_address: alloy_primitives::Address = key_entry["wallet_address"]
+            .as_str()
+            .expect("missing wallet_address")
+            .parse()
+            .expect("invalid wallet_address");
+
+        let signer_address: alloy_primitives::Address = key_entry["key_address"]
+            .as_str()
+            .expect("missing key_address")
+            .parse()
+            .expect("invalid key_address");
+
+        let signing_mode = TempoSigningMode::Keychain {
+            wallet: wallet_address,
+            key_authorization: None,
+            version: KeychainVersion::V2,
+        };
+
+        let rpc_url = "https://rpc.tempo.xyz";
+        let provider = MultiProvider::new()
+            .with(
+                TempoProvider::new(signer.clone(), rpc_url)
+                    .expect("failed to create TempoProvider")
+                    .with_signing_mode(signing_mode.clone()),
+            )
+            .with(
+                TempoSessionProvider::new(signer, rpc_url)
+                    .expect("failed to create TempoSessionProvider")
+                    .with_signing_mode(signing_mode)
+                    .with_authorized_signer(signer_address)
+                    .with_default_deposit(100_000),
+            );
+
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse("https://rpc.mpp.tempo.xyz").unwrap(),
+            provider,
+        );
+
+        let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
 
         match resp {
             ResponsePacket::Single(r) => {
-                assert!(r.is_success(), "expected successful response, got: {r:?}");
+                assert!(r.is_success(), "expected successful JSON-RPC response, got: {r:?}");
+                eprintln!("got live MPP response: {r:?}");
             }
             _ => panic!("expected single response"),
         }
