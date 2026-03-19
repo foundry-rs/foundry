@@ -448,7 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mpp_transport_via_runtime_transport() {
-        use super::super::runtime_transport::RuntimeTransportBuilder;
+        use crate::provider::runtime_transport::RuntimeTransportBuilder;
         use axum::{extract::State, http::StatusCode as AxumStatusCode, routing::post};
 
         let (_, www_auth) = test_challenge();
@@ -495,11 +495,22 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
 
-        // Set TEMPO_PRIVATE_KEY so auto-discovery picks it up
+        // Write a temp keys.toml and point TEMPO_HOME at it for auto-discovery.
         let signer = alloy_signer_local::PrivateKeySigner::random();
         let mpp_key = alloy_primitives::hex::encode(signer.credential().to_bytes());
-        // SAFETY: This test runs in isolation and sets the env var before any concurrent access.
-        unsafe { std::env::set_var("TEMPO_PRIVATE_KEY", &mpp_key) };
+        let dir = tempfile::tempdir().unwrap();
+        let wallet_dir = dir.path().join("wallet");
+        std::fs::create_dir_all(&wallet_dir).unwrap();
+        std::fs::write(
+            wallet_dir.join("keys.toml"),
+            format!("[[keys]]\nkey = \"{mpp_key}\"\n"),
+        )
+        .unwrap();
+        // SAFETY: test-only env manipulation.
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
 
         let transport = RuntimeTransportBuilder::new(Url::parse(&base_url).unwrap()).build();
 
@@ -512,5 +523,32 @@ mod tests {
         }
 
         handle.abort();
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
+
+    /// End-to-end test against the live `rpc.tempo.xyz` 402-gated endpoint.
+    ///
+    /// Requires a valid Tempo wallet key via `TEMPO_PRIVATE_KEY` env var or
+    /// `~/.tempo/wallet/keys.toml`. Skipped in CI — run manually with:
+    ///
+    /// ```sh
+    /// cargo test -p foundry-common test_mpp_live_rpc_tempo -- --ignored
+    /// ```
+    #[tokio::test]
+    #[ignore = "requires network access and a funded Tempo wallet key"]
+    async fn test_mpp_live_rpc_tempo() {
+        use crate::provider::runtime_transport::RuntimeTransportBuilder;
+
+        let transport =
+            RuntimeTransportBuilder::new(Url::parse("https://rpc.tempo.xyz").unwrap()).build();
+
+        let resp = transport.request(test_request()).await.unwrap();
+
+        match resp {
+            ResponsePacket::Single(r) => {
+                assert!(r.is_success(), "expected successful response, got: {r:?}");
+            }
+            _ => panic!("expected single response"),
+        }
     }
 }

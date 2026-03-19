@@ -2,7 +2,10 @@
 //! WebSocket, or IPC transport. Retries are handled by a client layer (e.g.,
 //! `RetryBackoffLayer`) when used.
 
-use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT};
+use crate::{
+    DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
+    provider::mpp::{keys::discover_mpp_key, transport::MppHttpTransport, transport::MppSigner},
+};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_types::engine::{Claims, JwtSecret};
@@ -26,7 +29,7 @@ pub enum InnerTransport {
     /// HTTP transport
     Http(Http<reqwest::Client>),
     /// HTTP transport with MPP (Machine Payments Protocol) support for 402-gated RPCs
-    MppHttp(super::mpp_transport::MppHttpTransport),
+    MppHttp(MppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -232,12 +235,12 @@ impl RuntimeTransport {
         let client = self.reqwest_client()?;
 
         // Auto-discover MPP key from Tempo wallet (TEMPO_PRIVATE_KEY env or ~/.tempo/wallet/keys.toml).
-        if let Some(mpp_key) = &super::tempo_keys::discover_mpp_key() {
+        if let Some(mpp_key) = &discover_mpp_key() {
             let signer: alloy_signer_local::PrivateKeySigner = mpp_key
                 .parse()
                 .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP key: {e}")))?;
-            let mpp_signer = super::mpp_transport::MppSigner::new(signer);
-            return Ok(InnerTransport::MppHttp(super::mpp_transport::MppHttpTransport::new(
+            let mpp_signer = MppSigner::new(signer);
+            return Ok(InnerTransport::MppHttp(MppHttpTransport::new(
                 client,
                 self.url.clone(),
                 mpp_signer,

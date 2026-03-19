@@ -1,9 +1,8 @@
 //! Provider-related instantiation and usage utilities.
 
 pub mod curl_transport;
-pub mod mpp_transport;
+pub mod mpp;
 pub mod runtime_transport;
-pub mod tempo_keys;
 
 use crate::{
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
