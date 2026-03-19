@@ -6,11 +6,10 @@
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, TransportResult};
-use mpp::client::tempo::TempoProvider;
-use mpp::client::Fetch;
+use mpp::client::{Fetch, tempo::TempoProvider};
 use std::task;
 use tower::Service;
-use tracing::{debug, debug_span, trace, Instrument};
+use tracing::{Instrument, debug, debug_span, trace};
 use url::Url;
 
 /// HTTP transport that automatically handles MPP 402 challenges.
@@ -29,9 +28,7 @@ pub struct MppHttpTransport {
 
 impl std::fmt::Debug for MppHttpTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MppHttpTransport")
-            .field("url", &self.url)
-            .finish_non_exhaustive()
+        f.debug_struct("MppHttpTransport").field("url", &self.url).finish_non_exhaustive()
     }
 }
 
@@ -81,10 +78,7 @@ impl Service<RequestPacket> for MppHttpTransport {
     type Future = TransportFut<'static>;
 
     #[inline]
-    fn poll_ready(
-        &mut self,
-        _cx: &mut task::Context<'_>,
-    ) -> task::Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> task::Poll<Result<(), Self::Error>> {
         task::Poll::Ready(Ok(()))
     }
 

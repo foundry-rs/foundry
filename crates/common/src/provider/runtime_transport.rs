@@ -257,13 +257,11 @@ impl RuntimeTransport {
                 mpp::client::TempoProvider::new(signer, self.url.as_str()).map_err(|e| {
                     RuntimeTransportError::BadHeader(format!("invalid MPP provider: {e}"))
                 })?;
-            return Ok(InnerTransport::MppHttp(
-                super::mpp_transport::MppHttpTransport::new(
-                    client,
-                    self.url.clone(),
-                    mpp_provider,
-                ),
-            ));
+            return Ok(InnerTransport::MppHttp(super::mpp_transport::MppHttpTransport::new(
+                client,
+                self.url.clone(),
+                mpp_provider,
+            )));
         }
 
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))

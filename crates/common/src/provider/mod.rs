@@ -357,6 +357,7 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
+        #[allow(unused_mut)]
         let mut transport_builder = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
@@ -436,6 +437,7 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
+        #[allow(unused_mut)]
         let mut transport_builder = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
