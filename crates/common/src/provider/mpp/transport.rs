@@ -54,7 +54,7 @@ impl LazySessionProvider {
                  This endpoint requires payment via the Machine Payments Protocol (MPP).\n\n\
                  To configure MPP, install the Tempo wallet CLI and create a key:\n\
                  \n  curl -sSL https://tempo.xyz/install.sh | bash\
-                 \n  tempo wallet create\
+                 \n  tempo wallet login\
                  \n\nSee https://docs.tempo.xyz for more information.",
             ))
         })?;
@@ -592,7 +592,7 @@ mod tests {
             "expected 402 Payment Required in error, got: {msg}"
         );
         assert!(
-            msg.contains("tempo wallet create"),
+            msg.contains("tempo wallet login"),
             "expected setup instructions in error, got: {msg}"
         );
 
