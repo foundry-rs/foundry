@@ -2,19 +2,14 @@
 //! WebSocket, or IPC transport. Retries are handled by a client layer (e.g.,
 //! `RetryBackoffLayer`) when used.
 
-use crate::{
-    DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
-    provider::mpp::{
-        keys::discover_mpp_config, session::SessionProvider, transport::MppHttpTransport,
-    },
-};
+use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT, provider::mpp::transport::LazyMppHttpTransport};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_types::engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
-use alloy_transport_http::Http;
+
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -28,10 +23,8 @@ use url::Url;
 /// Only meant to be used internally by [RuntimeTransport].
 #[derive(Clone, Debug)]
 pub enum InnerTransport {
-    /// HTTP transport
-    Http(Http<reqwest::Client>),
-    /// HTTP transport with MPP (Machine Payments Protocol) support for 402-gated RPCs
-    MppHttp(Box<MppHttpTransport<SessionProvider>>),
+    /// HTTP transport with lazy MPP 402 handling
+    Http(LazyMppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -235,48 +228,7 @@ impl RuntimeTransport {
     /// Connects to an HTTP [alloy_transport_http::Http] transport.
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
-
-        // Auto-discover MPP key from Tempo wallet (TEMPO_PRIVATE_KEY env or
-        // ~/.tempo/wallet/keys.toml).
-        if let Some(config) = &discover_mpp_config() {
-            let signer: mpp::PrivateKeySigner = config
-                .key
-                .parse()
-                .map_err(|e| RuntimeTransportError::BadHeader(format!("invalid MPP key: {e}")))?;
-
-            // Build signing mode: keychain if wallet_address is present, direct otherwise.
-            let signing_mode = if let Some(ref wallet_addr) = config.wallet_address {
-                let wallet: alloy_primitives::Address = wallet_addr.parse().map_err(|e| {
-                    RuntimeTransportError::BadHeader(format!("invalid MPP wallet address: {e}"))
-                })?;
-                mpp::client::tempo::signing::TempoSigningMode::Keychain {
-                    wallet,
-                    key_authorization: None,
-                    version: mpp::client::tempo::signing::KeychainVersion::V2,
-                }
-            } else {
-                mpp::client::tempo::signing::TempoSigningMode::Direct
-            };
-
-            let mut provider = SessionProvider::new(signer)
-                .with_signing_mode(signing_mode)
-                .with_default_deposit(100_000);
-
-            // Set authorized signer for keychain mode (voucher signing address)
-            if let Some(ref key_addr) = config.key_address
-                && let Ok(addr) = key_addr.parse()
-            {
-                provider = provider.with_authorized_signer(addr);
-            }
-
-            return Ok(InnerTransport::MppHttp(Box::new(MppHttpTransport::new(
-                client,
-                self.url.clone(),
-                provider,
-            ))));
-        }
-
-        Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
+        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone())))
     }
 
     /// Connects to a WS transport.
@@ -328,34 +280,12 @@ impl RuntimeTransport {
             }
 
             // SAFETY: We just checked that the inner transport exists.
-            let is_http = matches!(*inner, Some(InnerTransport::Http(_)));
-            let result = match inner.clone().expect("must've been initialized") {
+            match inner.clone().expect("must've been initialized") {
                 InnerTransport::Http(mut http) => http.call(req),
-                InnerTransport::MppHttp(mut mpp) => mpp.call(req),
                 InnerTransport::Ws(mut ws) => ws.call(req),
                 InnerTransport::Ipc(mut ipc) => ipc.call(req),
             }
-            .await;
-
-            // If a plain HTTP transport received a 402 Payment Required, the RPC
-            // endpoint is likely gated by the Machine Payments Protocol (MPP).
-            // Provide actionable guidance on how to configure MPP.
-            if is_http
-                && let Err(TransportError::Transport(ref kind)) = result
-                && let Some(http_err) = kind.as_http_error()
-                && http_err.status == 402
-            {
-                return Err(TransportErrorKind::custom(std::io::Error::other(
-                    "RPC endpoint returned HTTP 402 Payment Required. \
-                     This endpoint requires payment via the Machine Payments Protocol (MPP).\n\n\
-                     To configure MPP, install the Tempo wallet CLI and create a key:\n\
-                     \n  curl -sSL https://tempo.xyz/install.sh | bash\
-                     \n  tempo wallet create\
-                     \n\nSee https://docs.tempo.xyz for more information.",
-                )));
-            }
-
-            result
+            .await
         })
     }
 
