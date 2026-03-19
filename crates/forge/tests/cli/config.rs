@@ -330,6 +330,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         eth_rpc_curl: false,
+        mpp_key: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -1237,6 +1238,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "eth_rpc_curl": false,
+  "mpp_key": null,
   "etherscan_api_key": null,
   "ignored_error_codes": [
     "license",
