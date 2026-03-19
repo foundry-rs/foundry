@@ -3,6 +3,11 @@
 //! Wraps a standard reqwest HTTP transport with automatic 402 Payment Required
 //! handling via the MPP protocol. When the RPC endpoint returns a 402 response,
 //! this transport automatically pays the challenge and retries the request.
+//!
+//! - [`MppHttpTransport<P>`]: Generic transport that delegates 402 payment to any `PaymentProvider`
+//!   implementation. Used directly in tests with mock providers.
+//! - [`LazyMppHttpTransport`]: Production alias that lazily discovers Tempo wallet keys on first
+//!   402 response.
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, TransportResult};
@@ -13,37 +18,119 @@ use mpp::{
     },
 };
 use reqwest::StatusCode;
-use std::task;
+use std::{fmt, sync::Mutex, task};
 use tower::Service;
 use tracing::{Instrument, debug, debug_span, trace};
 use url::Url;
 
-/// HTTP transport that automatically handles MPP 402 challenges.
+use super::{keys::discover_mpp_config, session::SessionProvider};
+
+/// Production transport: lazily discovers MPP keys from the Tempo wallet on
+/// first 402 response. Used by [`super::super::runtime_transport::InnerTransport`].
+pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
+
+/// A payment provider that lazily initializes a [`SessionProvider`] from the
+/// Tempo wallet configuration on first use.
+#[derive(Clone, Debug)]
+pub struct LazySessionProvider {
+    inner: std::sync::Arc<Mutex<Option<SessionProvider>>>,
+}
+
+impl LazySessionProvider {
+    fn new() -> Self {
+        Self { inner: std::sync::Arc::new(Mutex::new(None)) }
+    }
+
+    /// Get or lazily initialize the session provider from Tempo wallet config.
+    fn get_or_init(&self) -> TransportResult<SessionProvider> {
+        let mut guard = self.inner.lock().unwrap();
+        if let Some(ref provider) = *guard {
+            return Ok(provider.clone());
+        }
+
+        let config = discover_mpp_config().ok_or_else(|| {
+            TransportErrorKind::custom(std::io::Error::other(
+                "RPC endpoint returned HTTP 402 Payment Required. \
+                 This endpoint requires payment via the Machine Payments Protocol (MPP).\n\n\
+                 To configure MPP, install the Tempo wallet CLI and create a key:\n\
+                 \n  curl -sSL https://tempo.xyz/install.sh | bash\
+                 \n  tempo wallet create\
+                 \n\nSee https://docs.tempo.xyz for more information.",
+            ))
+        })?;
+
+        let signer: mpp::PrivateKeySigner = config.key.parse().map_err(|e| {
+            TransportErrorKind::custom(std::io::Error::other(format!("invalid MPP key: {e}")))
+        })?;
+
+        let signing_mode = if let Some(ref wallet_addr) = config.wallet_address {
+            let wallet: alloy_primitives::Address = wallet_addr.parse().map_err(|e| {
+                TransportErrorKind::custom(std::io::Error::other(format!(
+                    "invalid MPP wallet address: {e}"
+                )))
+            })?;
+            mpp::client::tempo::signing::TempoSigningMode::Keychain {
+                wallet,
+                key_authorization: None,
+                version: mpp::client::tempo::signing::KeychainVersion::V2,
+            }
+        } else {
+            mpp::client::tempo::signing::TempoSigningMode::Direct
+        };
+
+        let mut provider = SessionProvider::new(signer)
+            .with_signing_mode(signing_mode)
+            .with_default_deposit(100_000);
+
+        if let Some(ref key_addr) = config.key_address
+            && let Ok(addr) = key_addr.parse()
+        {
+            provider = provider.with_authorized_signer(addr);
+        }
+
+        *guard = Some(provider.clone());
+        Ok(provider)
+    }
+}
+
+/// HTTP transport with automatic MPP (Machine Payments Protocol) 402 handling.
 ///
-/// When an RPC endpoint is 402-gated, this transport:
-/// 1. Sends the initial JSON-RPC request
-/// 2. If 402 is returned, parses the challenge from `WWW-Authenticate`
-/// 3. Pays via the configured payment provider
-/// 4. Retries the request with the payment credential
-#[derive(Clone)]
-pub struct MppHttpTransport<P = mpp::client::TempoProvider> {
+/// Generic over the payment provider `P`. Works as a normal HTTP transport until
+/// a 402 Payment Required response is received, then delegates payment to `P`.
+///
+/// Use [`LazyMppHttpTransport`] for production (lazy key discovery) or
+/// `MppHttpTransport<YourProvider>` for testing with mock providers.
+#[derive(Clone, Debug)]
+pub struct MppHttpTransport<P> {
     client: reqwest::Client,
     url: Url,
     provider: P,
 }
 
-impl<P> std::fmt::Debug for MppHttpTransport<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MppHttpTransport").field("url", &self.url).finish_non_exhaustive()
+impl MppHttpTransport<LazySessionProvider> {
+    /// Create a new lazy MPP transport that discovers keys on first 402.
+    pub fn lazy(client: reqwest::Client, url: Url) -> Self {
+        Self { client, url, provider: LazySessionProvider::new() }
     }
 }
 
-impl<P: PaymentProvider> MppHttpTransport<P> {
-    /// Create a new MPP HTTP transport.
+impl<P> MppHttpTransport<P> {
+    /// Create a new MPP transport with an explicit payment provider.
     pub fn new(client: reqwest::Client, url: Url, provider: P) -> Self {
         Self { client, url, provider }
     }
 
+    /// Returns a reference to the underlying reqwest client.
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
+
+#[allow(private_bounds)]
+impl<P: ResolveProvider + Clone + Send + Sync + 'static> MppHttpTransport<P>
+where
+    P::Provider: Send + Sync + 'static,
+{
     /// Send a JSON-RPC request with automatic 402 payment handling.
     async fn do_request(self, req: RequestPacket) -> TransportResult<ResponsePacket> {
         let body = serde_json::to_vec(&req).map_err(TransportErrorKind::custom)?;
@@ -59,7 +146,7 @@ impl<P: PaymentProvider> MppHttpTransport<P> {
             .await
             .map_err(TransportErrorKind::custom)?;
 
-        // If not 402, handle normally
+        // If not 402, handle normally — no MPP overhead
         if resp.status() != StatusCode::PAYMENT_REQUIRED {
             return Self::handle_response(resp).await;
         }
@@ -87,15 +174,18 @@ impl<P: PaymentProvider> MppHttpTransport<P> {
 
         debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP 402 challenge, paying");
 
-        if !self.provider.supports(challenge.method.as_str(), challenge.intent.as_str()) {
+        // Resolve the payment provider (lazy init for production, direct for tests)
+        let resolved = self.provider.resolve()?;
+
+        if !resolved.supports(challenge.method.as_str(), challenge.intent.as_str()) {
             return Err(TransportErrorKind::custom(std::io::Error::other(format!(
-                "MPP challenge requires method={} intent={}, which is not supported by the configured provider",
+                "MPP challenge requires method={} intent={}, which is not supported",
                 challenge.method, challenge.intent,
             ))));
         }
 
-        // Pay the challenge via the configured provider
-        let credential = self.provider.pay(&challenge).await.map_err(|e| {
+        // Pay the challenge
+        let credential = resolved.pay(&challenge).await.map_err(|e| {
             TransportErrorKind::custom(std::io::Error::other(format!("MPP payment failed: {e}")))
         })?;
 
@@ -144,7 +234,43 @@ impl<P: PaymentProvider> MppHttpTransport<P> {
     }
 }
 
-impl<P: PaymentProvider + 'static> Service<RequestPacket> for MppHttpTransport<P> {
+/// Trait for resolving a concrete `PaymentProvider` from a potentially lazy wrapper.
+///
+/// Direct providers (like `MockPaymentProvider` or `SessionProvider`) return
+/// themselves. [`LazySessionProvider`] discovers keys and creates a
+/// `SessionProvider` on first call.
+pub(crate) trait ResolveProvider {
+    type Provider: PaymentProvider;
+    fn resolve(&self) -> TransportResult<Self::Provider>;
+}
+
+/// Any direct `PaymentProvider` resolves to itself.
+impl<P: PaymentProvider + Clone> ResolveProvider for P {
+    type Provider = P;
+    fn resolve(&self) -> TransportResult<P> {
+        Ok(self.clone())
+    }
+}
+
+impl ResolveProvider for LazySessionProvider {
+    type Provider = SessionProvider;
+    fn resolve(&self) -> TransportResult<SessionProvider> {
+        self.get_or_init()
+    }
+}
+
+impl<P> fmt::Display for MppHttpTransport<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MppHttpTransport({})", self.url)
+    }
+}
+
+#[allow(private_bounds)]
+impl<P: ResolveProvider + Clone + Send + Sync + fmt::Debug + 'static> Service<RequestPacket>
+    for MppHttpTransport<P>
+where
+    P::Provider: Send + Sync + 'static,
+{
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = TransportFut<'static>;
@@ -189,7 +315,7 @@ mod tests {
     ///
     /// Returns a simple hash-type credential without making any on-chain calls,
     /// unlike [`mpp::client::TempoProvider`] which performs real gas estimation.
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     struct MockPaymentProvider;
 
     impl PaymentProvider for MockPaymentProvider {
@@ -429,16 +555,29 @@ mod tests {
         handle.abort();
     }
 
-    /// Verify that a 402 response on a plain HTTP transport (no MPP configured)
+    /// Verify that a 402 response on a lazy MPP transport (no MPP configured)
     /// produces an actionable error message with setup instructions.
     #[tokio::test]
     async fn test_plain_http_402_shows_mpp_setup_instructions() {
-        let app = axum::Router::new()
-            .route("/", post(|| async { (AxumStatusCode::PAYMENT_REQUIRED, "Payment Required") }));
+        let (_, www_auth) = test_challenge();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move || {
+                let www_auth = www_auth.clone();
+                async move {
+                    (
+                        AxumStatusCode::PAYMENT_REQUIRED,
+                        [("www-authenticate", www_auth)],
+                        "Payment Required",
+                    )
+                }
+            }),
+        );
 
         let (base_url, handle) = spawn_server(app).await;
 
-        // Ensure no MPP key is discovered so RuntimeTransport uses plain Http.
+        // Ensure no MPP key is discovered so lazy init fails with instructions.
         unsafe {
             std::env::set_var("TEMPO_HOME", "/nonexistent/path");
             std::env::remove_var("TEMPO_PRIVATE_KEY");
