@@ -80,11 +80,12 @@ ciborium.workspace = true
 
 flate2.workspace = true
 
+alloy-signer = { workspace = true, optional = true }
 alloy-signer-local = { workspace = true, optional = true }
 
 [features]
 default = []
-mpp = ["dep:mpp", "dep:alloy-signer-local"]
+mpp = ["dep:mpp", "dep:alloy-signer", "dep:alloy-signer-local"]
 
 [build-dependencies]
 chrono.workspace = true
