@@ -256,7 +256,8 @@ impl RuntimeTransport {
                 mpp::client::tempo::signing::TempoSigningMode::Direct
             };
 
-            let rpc_url = "https://rpc.tempo.xyz";
+            // Use the user-provided RPC URL for payment providers.
+            let rpc_url = self.url.as_str();
 
             let mut multi = mpp::client::MultiProvider::new();
 
