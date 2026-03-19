@@ -157,6 +157,8 @@ impl Service<RequestPacket> for MppHttpTransport {
 }
 
 /// Signs MPP payment challenges using an EVM private key.
+///
+/// Produces a credential by signing the challenge ID with EIP-191 personal_sign.
 #[derive(Clone)]
 pub struct MppSigner {
     signer: alloy_signer_local::PrivateKeySigner,
@@ -188,5 +190,327 @@ impl MppSigner {
                 alloy_primitives::hex::encode(signature.as_bytes())
             )),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_json_rpc::{Id, Request, RequestMeta};
+    use axum::response::IntoResponse;
+    use mpp::protocol::core::{Base64UrlJson, format_www_authenticate, parse_authorization};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
+
+    /// Build a test challenge and its formatted WWW-Authenticate header.
+    fn test_challenge() -> (PaymentChallenge, String) {
+        let request = Base64UrlJson::from_value(&serde_json::json!({"amount": "1000"})).unwrap();
+        let challenge =
+            PaymentChallenge::new("test-id-42", "rpc.example.com", "tempo", "charge", request);
+        let header = format_www_authenticate(&challenge).unwrap();
+        (challenge, header)
+    }
+
+    /// Build a minimal JSON-RPC request packet.
+    fn test_request() -> RequestPacket {
+        let req = Request {
+            meta: RequestMeta::new("eth_blockNumber".into(), Id::Number(1)),
+            params: serde_json::value::RawValue::from_string("[]".into()).unwrap(),
+        };
+        req.serialize().unwrap().into()
+    }
+
+    /// Spawn an axum server and return its base URL.
+    async fn spawn_server(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    #[tokio::test]
+    async fn test_mpp_signer_produces_valid_credential() {
+        let signer = alloy_signer_local::PrivateKeySigner::random();
+        let mpp_signer = MppSigner::new(signer.clone());
+
+        let (challenge, _) = test_challenge();
+        let credential = mpp_signer.pay(&challenge).await.unwrap();
+
+        // Credential echoes the challenge fields
+        assert_eq!(credential.challenge.id, "test-id-42");
+        assert_eq!(credential.challenge.method.as_str(), "tempo");
+
+        // Source contains the signer address
+        let source = credential.source.as_ref().unwrap();
+        assert!(source.starts_with("did:pkh:eip155:1:"));
+        assert!(source.contains(&format!("{}", signer.address())));
+
+        // Payload is a hash type with a 0x-prefixed hex signature
+        let payload: PaymentPayload = serde_json::from_value(credential.payload).unwrap();
+        assert!(payload.is_hash());
+        assert!(payload.data().starts_with("0x"));
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_non_402_passthrough() {
+        use axum::routing::post;
+
+        // Server always returns 200 with a JSON-RPC response
+        let app = axum::Router::new().route(
+            "/",
+            post(|| async {
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": "0x1234"
+                }))
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
+        let mut transport =
+            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+
+        let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
+
+        // Should get the response directly without any payment flow
+        match resp {
+            ResponsePacket::Single(r) => {
+                assert!(r.is_success());
+            }
+            _ => panic!("expected single response"),
+        }
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_402_then_200() {
+        use axum::{extract::State, http::StatusCode as AxumStatusCode, routing::post};
+
+        let (_, www_auth) = test_challenge();
+        let call_count = Arc::new(AtomicU32::new(0));
+
+        #[derive(Clone)]
+        struct AppState {
+            www_auth: String,
+            call_count: Arc<AtomicU32>,
+        }
+
+        let state = AppState { www_auth, call_count: call_count.clone() };
+
+        let app =
+            axum::Router::new()
+                .route(
+                    "/",
+                    post(
+                        |State(state): State<AppState>,
+                         req: axum::http::Request<axum::body::Body>| async move {
+                            state.call_count.fetch_add(1, Ordering::SeqCst);
+
+                            if req.headers().get("authorization").is_some() {
+                                // Second request: has payment credential → return success
+                                (
+                                    AxumStatusCode::OK,
+                                    axum::Json(serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": 1,
+                                        "result": "0xpaid"
+                                    })),
+                                )
+                                    .into_response()
+                            } else {
+                                // First request: return 402 with challenge
+                                (
+                                    AxumStatusCode::PAYMENT_REQUIRED,
+                                    [("www-authenticate", state.www_auth)],
+                                    "Payment Required",
+                                )
+                                    .into_response()
+                            }
+                        },
+                    ),
+                )
+                .with_state(state);
+
+        let (base_url, handle) = spawn_server(app).await;
+        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
+        let mut transport =
+            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+
+        let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
+
+        // Should have made 2 calls: initial 402 + retry with credential
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+
+        match resp {
+            ResponsePacket::Single(r) => {
+                assert!(r.is_success());
+            }
+            _ => panic!("expected single response"),
+        }
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_402_credential_is_valid() {
+        use axum::{extract::State, http::StatusCode as AxumStatusCode, routing::post};
+
+        let (_, www_auth) = test_challenge();
+
+        #[derive(Clone)]
+        struct AppState {
+            www_auth: String,
+        }
+
+        let state = AppState { www_auth };
+
+        let app =
+            axum::Router::new()
+                .route(
+                    "/",
+                    post(
+                        |State(state): State<AppState>,
+                         req: axum::http::Request<axum::body::Body>| async move {
+                            if let Some(auth) = req.headers().get("authorization") {
+                                // Validate the credential is parseable
+                                let auth_str = auth.to_str().unwrap();
+                                let credential = parse_authorization(auth_str).unwrap();
+                                assert_eq!(credential.challenge.id, "test-id-42");
+                                assert_eq!(credential.challenge.method.as_str(), "tempo");
+                                assert!(credential.source.is_some());
+
+                                (
+                                    AxumStatusCode::OK,
+                                    axum::Json(serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": 1,
+                                        "result": "0xvalidated"
+                                    })),
+                                )
+                                    .into_response()
+                            } else {
+                                (
+                                    AxumStatusCode::PAYMENT_REQUIRED,
+                                    [("www-authenticate", state.www_auth)],
+                                    "Payment Required",
+                                )
+                                    .into_response()
+                            }
+                        },
+                    ),
+                )
+                .with_state(state);
+
+        let (base_url, handle) = spawn_server(app).await;
+        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
+        let mut transport =
+            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+
+        // If the credential is invalid, the server-side assert will panic
+        // and the request will fail
+        let resp = tower::Service::call(&mut transport, test_request()).await.unwrap();
+        match resp {
+            ResponsePacket::Single(r) => assert!(r.is_success()),
+            _ => panic!("expected single response"),
+        }
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_402_missing_www_authenticate() {
+        use axum::{http::StatusCode as AxumStatusCode, routing::post};
+
+        // Server returns 402 without WWW-Authenticate header
+        let app = axum::Router::new()
+            .route("/", post(|| async { (AxumStatusCode::PAYMENT_REQUIRED, "pay up") }));
+
+        let (base_url, handle) = spawn_server(app).await;
+        let signer = MppSigner::new(alloy_signer_local::PrivateKeySigner::random());
+        let mut transport =
+            MppHttpTransport::new(reqwest::Client::new(), Url::parse(&base_url).unwrap(), signer);
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        assert!(
+            err.to_string().contains("WWW-Authenticate"),
+            "expected WWW-Authenticate error, got: {err}"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_via_runtime_transport() {
+        use super::super::runtime_transport::RuntimeTransportBuilder;
+        use axum::{extract::State, http::StatusCode as AxumStatusCode, routing::post};
+
+        let (_, www_auth) = test_challenge();
+        let call_count = Arc::new(AtomicU32::new(0));
+
+        #[derive(Clone)]
+        struct AppState {
+            www_auth: String,
+            call_count: Arc<AtomicU32>,
+        }
+
+        let state = AppState { www_auth, call_count: call_count.clone() };
+
+        let app =
+            axum::Router::new()
+                .route(
+                    "/",
+                    post(
+                        |State(state): State<AppState>,
+                         req: axum::http::Request<axum::body::Body>| async move {
+                            state.call_count.fetch_add(1, Ordering::SeqCst);
+                            if req.headers().get("authorization").is_some() {
+                                (
+                                    AxumStatusCode::OK,
+                                    axum::Json(serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": 1,
+                                        "result": "0xmpp_works"
+                                    })),
+                                )
+                                    .into_response()
+                            } else {
+                                (
+                                    AxumStatusCode::PAYMENT_REQUIRED,
+                                    [("www-authenticate", state.www_auth)],
+                                    "Payment Required",
+                                )
+                                    .into_response()
+                            }
+                        },
+                    ),
+                )
+                .with_state(state);
+
+        let (base_url, handle) = spawn_server(app).await;
+
+        // Use a random private key (hex-encoded without 0x prefix)
+        let signer = alloy_signer_local::PrivateKeySigner::random();
+        let mpp_key = alloy_primitives::hex::encode(signer.credential().to_bytes());
+
+        let transport = RuntimeTransportBuilder::new(Url::parse(&base_url).unwrap())
+            .with_mpp_key(Some(mpp_key))
+            .build();
+
+        let resp = transport.request(test_request()).await.unwrap();
+
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+        match resp {
+            ResponsePacket::Single(r) => assert!(r.is_success()),
+            _ => panic!("expected single response"),
+        }
+
+        handle.abort();
     }
 }
