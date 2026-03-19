@@ -5,8 +5,8 @@
 //! 2. `$TEMPO_HOME/wallet/keys.toml` (default: `~/.tempo/wallet/keys.toml`) → read from disk
 //!
 //! Primary key selection (deterministic, mirrors `Keystore::primary_key()`):
-//! - passkey entry > first entry with inline `key` > first entry
-//! Only entries with a non-empty inline `key` field are usable for signing.
+//! - passkey entry > first entry with inline `key` > first entry Only entries with a non-empty
+//!   inline `key` field are usable for signing.
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -137,17 +137,17 @@ pub fn discover_mpp_config() -> Option<MppKeyConfig> {
         .or_else(|| keys_file.keys.iter().find(|k| k.has_inline_key()))
         .or(keys_file.keys.first());
 
-    if let Some(entry) = primary {
-        if let Some(key) = &entry.key {
-            let key = key.trim().to_string();
-            if !key.is_empty() {
-                debug!(?keys_path, "using MPP key from tempo wallet keys file");
-                return Some(MppKeyConfig {
-                    key,
-                    wallet_address: entry.wallet_address.clone(),
-                    key_address: entry.key_address.clone(),
-                });
-            }
+    if let Some(entry) = primary
+        && let Some(key) = &entry.key
+    {
+        let key = key.trim().to_string();
+        if !key.is_empty() {
+            debug!(?keys_path, "using MPP key from tempo wallet keys file");
+            return Some(MppKeyConfig {
+                key,
+                wallet_address: entry.wallet_address.clone(),
+                key_address: entry.key_address.clone(),
+            });
         }
     }
 
