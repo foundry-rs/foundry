@@ -3,6 +3,7 @@
 pub mod curl_transport;
 pub mod mpp_transport;
 pub mod runtime_transport;
+pub mod tempo_keys;
 
 use crate::{
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
@@ -98,8 +99,6 @@ pub struct ProviderBuilder<N: Network = AnyNetwork> {
     no_proxy: bool,
     /// Whether to output curl commands instead of making requests.
     curl_mode: bool,
-    /// MPP private key for paying 402-gated RPC endpoints.
-    mpp_key: Option<String>,
     /// Phantom data for the network type.
     _network: PhantomData<N>,
 }
@@ -154,7 +153,6 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs: false,
             no_proxy: false,
             curl_mode: false,
-            mpp_key: None,
             _network: PhantomData,
         }
     }
@@ -183,10 +181,6 @@ impl<N: Network> ProviderBuilder<N> {
 
         if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
             builder = builder.headers(rpc_headers);
-        }
-
-        if let Some(mpp_key) = config.mpp_key.clone() {
-            builder = builder.mpp_key(mpp_key);
         }
 
         Ok(builder)
@@ -310,12 +304,6 @@ impl<N: Network> ProviderBuilder<N> {
         self
     }
 
-    /// Sets the MPP private key for paying 402-gated RPC endpoints.
-    pub fn mpp_key(mut self, mpp_key: impl Into<String>) -> Self {
-        self.mpp_key = Some(mpp_key.into());
-        self
-    }
-
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
         let Self {
@@ -331,7 +319,6 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
-            mpp_key,
             ..
         } = self;
         let url = url?;
@@ -350,16 +337,13 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
-        let mut transport_builder = RuntimeTransportBuilder::new(url)
+        let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
             .accept_invalid_certs(accept_invalid_certs)
-            .no_proxy(no_proxy);
-
-        transport_builder = transport_builder.with_mpp_key(mpp_key);
-
-        let transport = transport_builder.build();
+            .no_proxy(no_proxy)
+            .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
         if !is_local {
@@ -403,7 +387,6 @@ impl<N: Network> ProviderBuilder<N> {
             accept_invalid_certs,
             no_proxy,
             curl_mode,
-            mpp_key,
             ..
         } = self;
         let url = url?;
@@ -424,16 +407,13 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
-        let mut transport_builder = RuntimeTransportBuilder::new(url)
+        let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
             .accept_invalid_certs(accept_invalid_certs)
-            .no_proxy(no_proxy);
-
-        transport_builder = transport_builder.with_mpp_key(mpp_key);
-
-        let transport = transport_builder.build();
+            .no_proxy(no_proxy)
+            .build();
 
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 

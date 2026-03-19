@@ -74,12 +74,6 @@ pub struct RpcOpts {
     #[arg(long)]
     pub curl: bool,
 
-    /// MPP (Machine Payments Protocol) private key for paying 402-gated RPC endpoints.
-    ///
-    /// When set, the transport will automatically handle HTTP 402 Payment Required
-    /// responses from the RPC endpoint by paying via the MPP protocol and retrying.
-    #[arg(long, env = "MPP_KEY")]
-    pub mpp_key: Option<String>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -138,9 +132,6 @@ impl RpcOpts {
         }
         if self.curl {
             dict.insert("eth_rpc_curl".into(), true.into());
-        }
-        if let Some(mpp_key) = &self.mpp_key {
-            dict.insert("mpp_key".into(), mpp_key.clone().into());
         }
         dict
     }
