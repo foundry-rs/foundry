@@ -82,9 +82,6 @@ ciborium.workspace = true
 
 flate2.workspace = true
 
-alloy-signer.workspace = true
-alloy-signer-local.workspace = true
-
 dirs.workspace = true
 toml.workspace = true
 

@@ -45,6 +45,26 @@ struct KeyEntry {
     /// Key private key, stored inline in keys.toml.
     #[serde(default)]
     key: Option<String>,
+    /// Smart wallet address (the on-chain account).
+    #[serde(default)]
+    wallet_address: Option<String>,
+    /// Key address (the EOA derived from the private key).
+    #[serde(default)]
+    key_address: Option<String>,
+}
+
+/// Discovered MPP key configuration.
+///
+/// Contains the private key and optional keychain metadata for signing mode
+/// configuration.
+#[derive(Debug, Clone)]
+pub struct MppKeyConfig {
+    /// The hex-encoded private key.
+    pub key: String,
+    /// Smart wallet address (for keychain signing mode).
+    pub wallet_address: Option<String>,
+    /// Key address / signer address (for keychain authorized signer).
+    pub key_address: Option<String>,
 }
 
 impl KeyEntry {
@@ -66,12 +86,20 @@ struct KeysFile {
 /// Returns `Some(hex_key)` if a key is found, `None` otherwise.
 /// Never fails — discovery errors are silently ignored (logged at debug level).
 pub fn discover_mpp_key() -> Option<String> {
-    // 1. Check TEMPO_PRIVATE_KEY env var
+    discover_mpp_config().map(|c| c.key)
+}
+
+/// Attempt to auto-discover MPP key configuration from the Tempo wallet.
+///
+/// Returns the private key along with optional wallet/key addresses needed for
+/// keychain signing mode. Never fails — discovery errors are silently ignored.
+pub fn discover_mpp_config() -> Option<MppKeyConfig> {
+    // 1. Check TEMPO_PRIVATE_KEY env var (no keychain metadata available)
     if let Ok(key) = std::env::var(TEMPO_PRIVATE_KEY_ENV) {
         let key = key.trim().to_string();
         if !key.is_empty() {
             debug!("using MPP key from {TEMPO_PRIVATE_KEY_ENV} env var");
-            return Some(key);
+            return Some(MppKeyConfig { key, wallet_address: None, key_address: None });
         }
     }
 
@@ -114,7 +142,11 @@ pub fn discover_mpp_key() -> Option<String> {
             let key = key.trim().to_string();
             if !key.is_empty() {
                 debug!(?keys_path, "using MPP key from tempo wallet keys file");
-                return Some(key);
+                return Some(MppKeyConfig {
+                    key,
+                    wallet_address: entry.wallet_address.clone(),
+                    key_address: entry.key_address.clone(),
+                });
             }
         }
     }
