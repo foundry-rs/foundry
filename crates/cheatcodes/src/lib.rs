@@ -24,7 +24,8 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use foundry_evm_core::{EthCheatCtx, evm::EthNestedEvmClosure};
 pub use inspector::{
-    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
+    BroadcastKind, BroadcastableTransaction, BroadcastableTransactions, Cheatcodes,
+    CheatcodesExecutor,
 };
 pub use spec::{CheatcodeDef, Vm};
 

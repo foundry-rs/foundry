@@ -458,12 +458,7 @@ impl ScriptArgs {
         };
 
         for (data, to) in result.transactions.iter().flat_map(|txes| {
-            txes.iter().filter_map(|tx| {
-                tx.transaction
-                    .input()
-                    .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to()))
-            })
+            txes.iter().filter_map(|tx| (tx.input.len() > max_size).then_some((&tx.input, tx.to)))
         }) {
             let mut offset = 0;
 

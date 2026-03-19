@@ -2,20 +2,23 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error,
-    EthCheatCtx, Result, Vm::*, inspector::RecordDebugStepInfo,
+    EthCheatCtx, Result,
+    Vm::*,
+    inspector::{BroadcastKind, RecordDebugStepInfo},
 };
-use alloy_consensus::TxEnvelope;
+use alloy_consensus::{
+    Transaction as TransactionTrait, TxEnvelope, transaction::SignerRecoverable,
+};
 use alloy_evm::{EvmEnv, FromRecoveredTx};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
-    Address, B256, U256, hex, keccak256,
+    Address, B256, Bytes, U256, hex, keccak256,
     map::{B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
-    TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
@@ -1124,9 +1127,16 @@ impl Cheatcode for broadcastRawTransactionCall {
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, &tx.clone().into())?;
 
         if ccx.state.broadcast.is_some() {
+            let from = tx.recover_signer()?;
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
                 rpc: ccx.ecx.db().active_fork_url(),
-                transaction: TransactionMaybeSigned::new_signed(tx)?,
+                from,
+                to: Some(tx.kind()),
+                value: tx.value(),
+                input: tx.input().clone(),
+                nonce: tx.nonce(),
+                gas: Some(tx.gas_limit()),
+                kind: BroadcastKind::Signed(Bytes::copy_from_slice(&self.data)),
             });
         }
 
