@@ -58,6 +58,16 @@ pub struct SessionProvider {
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
 }
 
+impl std::fmt::Debug for SessionProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionProvider")
+            .field("signing_mode", &self.signing_mode)
+            .field("authorized_signer", &self.authorized_signer)
+            .field("default_deposit", &self.default_deposit)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SessionProvider {
     /// Create a new session provider with the given signer.
     pub fn new(signer: mpp::PrivateKeySigner) -> Self {

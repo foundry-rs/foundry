@@ -11,6 +11,9 @@ extern crate self as foundry_common;
 #[macro_use]
 extern crate tracing;
 
+// Re-exported transitively by alloy-rpc-client; suppress unused_crate_dependencies.
+use alloy_transport_http as _;
+
 #[macro_use]
 pub mod io;
 
