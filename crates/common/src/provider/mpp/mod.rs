@@ -4,4 +4,5 @@
 //! - [`transport`]: HTTP transport that handles 402 challenges automatically.
 
 pub mod keys;
+pub mod session;
 pub mod transport;

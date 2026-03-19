@@ -4,7 +4,9 @@
 
 use crate::{
     DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
-    provider::mpp::{keys::discover_mpp_config, transport::MppHttpTransport},
+    provider::mpp::{
+        keys::discover_mpp_config, session::SessionProvider, transport::MppHttpTransport,
+    },
 };
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -29,7 +31,7 @@ pub enum InnerTransport {
     /// HTTP transport
     Http(Http<reqwest::Client>),
     /// HTTP transport with MPP (Machine Payments Protocol) support for 402-gated RPCs
-    MppHttp(MppHttpTransport<mpp::client::MultiProvider>),
+    MppHttp(Box<MppHttpTransport<SessionProvider>>),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -256,42 +258,22 @@ impl RuntimeTransport {
                 mpp::client::tempo::signing::TempoSigningMode::Direct
             };
 
-            let mut multi = mpp::client::MultiProvider::new();
-
-            // Charge provider
-            multi.add(
-                mpp::client::TempoProvider::new(signer.clone(), mpp::tempo::DEFAULT_RPC_URL)
-                    .map_err(|e| {
-                        RuntimeTransportError::BadHeader(format!("MPP provider error: {e}"))
-                    })?
-                    .with_signing_mode(signing_mode.clone()),
-            );
-
-            // Session provider
-            let mut session = mpp::client::tempo::session::TempoSessionProvider::new(
-                signer,
-                mpp::tempo::DEFAULT_RPC_URL,
-            )
-            .map_err(|e| {
-                RuntimeTransportError::BadHeader(format!("MPP session provider error: {e}"))
-            })?
-            .with_signing_mode(signing_mode)
-            .with_default_deposit(100_000);
+            let mut provider = SessionProvider::new(signer)
+                .with_signing_mode(signing_mode)
+                .with_default_deposit(100_000);
 
             // Set authorized signer for keychain mode (voucher signing address)
             if let Some(ref key_addr) = config.key_address
                 && let Ok(addr) = key_addr.parse()
             {
-                session = session.with_authorized_signer(addr);
+                provider = provider.with_authorized_signer(addr);
             }
 
-            multi.add(session);
-
-            return Ok(InnerTransport::MppHttp(MppHttpTransport::new(
+            return Ok(InnerTransport::MppHttp(Box::new(MppHttpTransport::new(
                 client,
                 self.url.clone(),
-                multi,
-            )));
+                provider,
+            ))));
         }
 
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))

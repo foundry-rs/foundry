@@ -174,13 +174,7 @@ mod tests {
     };
     use mpp::{
         MppError,
-        client::{
-            MultiProvider, TempoProvider,
-            tempo::{
-                session::TempoSessionProvider,
-                signing::{KeychainVersion, TempoSigningMode},
-            },
-        },
+        client::tempo::signing::{KeychainVersion, TempoSigningMode},
         protocol::core::{
             Base64UrlJson, PaymentChallenge, PaymentCredential, PaymentPayload,
             format_www_authenticate, parse_authorization,
@@ -551,24 +545,15 @@ mod tests {
             version: KeychainVersion::V2,
         };
 
-        let rpc_url = mpp::tempo::DEFAULT_RPC_URL;
-        let provider = MultiProvider::new()
-            .with(
-                TempoProvider::new(signer.clone(), rpc_url)
-                    .expect("failed to create TempoProvider")
-                    .with_signing_mode(signing_mode.clone()),
-            )
-            .with(
-                TempoSessionProvider::new(signer, rpc_url)
-                    .expect("failed to create TempoSessionProvider")
-                    .with_signing_mode(signing_mode)
-                    .with_authorized_signer(signer_address)
-                    .with_default_deposit(100_000),
-            );
+        let service_url = "https://rpc.mpp.tempo.xyz";
+        let provider = super::super::session::SessionProvider::new(signer)
+            .with_signing_mode(signing_mode)
+            .with_authorized_signer(signer_address)
+            .with_default_deposit(100_000);
 
         let mut transport = MppHttpTransport::new(
             reqwest::Client::new(),
-            Url::parse("https://rpc.mpp.tempo.xyz").unwrap(),
+            Url::parse(service_url).unwrap(),
             provider,
         );
 
