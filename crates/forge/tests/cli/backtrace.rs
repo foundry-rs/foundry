@@ -617,7 +617,7 @@ Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])
 Traces:
   [..] BacktraceVerbosityTest::testRevert()
-    ├─ [..] SimpleRevert::doRevert()
+    ├─ [..] SimpleRevert::doRevert() [staticcall]
     │   └─ ← [Revert] Simple revert message
     └─ ← [Revert] Simple revert message
 
@@ -645,7 +645,7 @@ Traces:
     └─ ← [Stop]
 
   [..] BacktraceVerbosityTest::testRevert()
-    ├─ [..] SimpleRevert::doRevert()
+    ├─ [..] SimpleRevert::doRevert() [staticcall]
     │   └─ ← [Revert] Simple revert message
     └─ ← [Revert] Simple revert message
 
@@ -674,7 +674,7 @@ Traces:
     └─ ← [Stop]
 
   [..] BacktraceVerbosityTest::testRevert()
-    ├─ [..] SimpleRevert::doRevert()
+    ├─ [..] SimpleRevert::doRevert() [staticcall]
     │   └─ ← [Revert] Simple revert message
     └─ ← [Revert] Simple revert message
 
