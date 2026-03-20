@@ -345,6 +345,20 @@ forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
         .stdout_eq(file!["../../fixtures/SimpleContractTestNonVerbose.json": Json]);
 });
 
+// Tests that `--debug --json` outputs debug-level traces as JSON without opening the TUI.
+// Stack and memory snapshots should be present in the JSON output.
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest!(debug_json_includes_stack_and_memory, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
+
+    cmd.args(["test", "--debug", "--json", "--mt", "test"])
+        .assert_success()
+        .stdout_eq(file!["../../fixtures/SimpleContractTestDebugJson.json": Json]);
+});
+
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
