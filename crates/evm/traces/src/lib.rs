@@ -405,30 +405,89 @@ impl TraceMode {
 mod tests {
     use super::*;
 
+    // -- TraceMode::with_verbosity level tests --
+
     #[test]
-    fn with_verbosity_noop_below_3() {
-        assert_eq!(TraceMode::None.with_verbosity(0), TraceMode::None);
-        assert_eq!(TraceMode::None.with_verbosity(2), TraceMode::None);
+    fn verbosity_0_through_2_is_noop() {
+        for v in 0..=2 {
+            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::None, "v={v}");
+            assert_eq!(TraceMode::Call.with_verbosity(v), TraceMode::Call, "v={v}");
+            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
+        }
     }
 
     #[test]
-    fn with_verbosity_raises_to_call_at_3() {
-        assert_eq!(TraceMode::None.with_verbosity(3), TraceMode::Call);
-        assert_eq!(TraceMode::None.with_verbosity(4), TraceMode::Call);
+    fn verbosity_3_and_4_raises_to_call() {
+        for v in 3..=4 {
+            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::Call, "v={v}");
+            // Already above Call — must not downgrade.
+            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
+            assert_eq!(
+                TraceMode::RecordStateDiff.with_verbosity(v),
+                TraceMode::RecordStateDiff,
+                "v={v}"
+            );
+        }
     }
 
     #[test]
-    fn with_verbosity_raises_to_record_state_diff_at_5() {
-        // Verbosity 5 should raise `None` all the way to `RecordStateDiff`.
+    fn verbosity_5_raises_to_record_state_diff() {
         assert_eq!(TraceMode::None.with_verbosity(5), TraceMode::RecordStateDiff);
         assert_eq!(TraceMode::Call.with_verbosity(5), TraceMode::RecordStateDiff);
         assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::RecordStateDiff);
+        // Already at the top — stays the same.
+        assert_eq!(
+            TraceMode::RecordStateDiff.with_verbosity(5),
+            TraceMode::RecordStateDiff
+        );
+    }
+
+    // -- into_config at each verbosity level --
+
+    #[test]
+    fn config_at_verbosity_0_is_none() {
+        let mode = TraceMode::None.with_verbosity(0);
+        assert!(mode.into_config().is_none());
     }
 
     #[test]
-    fn with_verbosity_does_not_lower_existing_mode() {
-        // Verbosity must never downgrade a mode already set by another `with_*` call.
-        assert_eq!(TraceMode::Debug.with_verbosity(3), TraceMode::Debug);
-        assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
+    fn config_at_verbosity_3_records_calls_only() {
+        let cfg = TraceMode::None.with_verbosity(3).into_config().unwrap();
+        assert!(!cfg.record_steps, "verbosity 3 should not record steps");
+        assert!(!cfg.record_state_diff, "verbosity 3 should not record state diff");
+        assert!(cfg.record_logs, "verbosity 3 should record logs");
+    }
+
+    #[test]
+    fn config_at_verbosity_5_records_steps_and_state_diff() {
+        let cfg = TraceMode::None.with_verbosity(5).into_config().unwrap();
+        assert!(cfg.record_steps, "verbosity 5 must record steps for backtraces");
+        assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
+        assert!(cfg.record_logs, "verbosity 5 must record logs");
+    }
+
+    // -- Monotonicity: with_verbosity must never lower the mode --
+
+    #[test]
+    fn with_verbosity_is_monotonic() {
+        let all_modes = [
+            TraceMode::None,
+            TraceMode::Call,
+            TraceMode::Steps,
+            TraceMode::JumpSimple,
+            TraceMode::Jump,
+            TraceMode::Debug,
+            TraceMode::RecordStateDiff,
+        ];
+        for mode in all_modes {
+            for v in 0..=5 {
+                assert!(
+                    mode.with_verbosity(v) >= mode,
+                    "with_verbosity({v}) lowered {mode:?} to {:?}",
+                    mode.with_verbosity(v)
+                );
+            }
+        }
     }
 }
