@@ -372,7 +372,7 @@ impl TraceMode {
             3..=4 => std::cmp::max(self, Self::Call),
             // Enable step recording for backtraces when verbosity is 5 or higher.
             // We need to ensure we're recording JUMP AND JUMPDEST steps.
-            _ => std::cmp::min(self, Self::Steps),
+            _ => std::cmp::max(self, Self::Steps),
         }
     }
 
@@ -398,5 +398,40 @@ impl TraceMode {
             }
             .into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_verbosity_raises_to_steps() {
+        // Verbosity 5 should raise `None` to at least `Steps`.
+        assert!(TraceMode::None.with_verbosity(5) >= TraceMode::Steps);
+    }
+
+    #[test]
+    fn with_verbosity_does_not_lower_debug() {
+        // Verbosity 5 must never downgrade a higher mode like `Debug`.
+        assert!(TraceMode::Debug.with_verbosity(5) >= TraceMode::Debug);
+    }
+
+    #[test]
+    fn with_verbosity_raises_call_to_steps() {
+        // `Call` should be raised to `Steps` at verbosity 5.
+        assert!(TraceMode::Call.with_verbosity(5) >= TraceMode::Steps);
+    }
+
+    #[test]
+    fn with_verbosity_noop_below_3() {
+        assert_eq!(TraceMode::None.with_verbosity(0), TraceMode::None);
+        assert_eq!(TraceMode::None.with_verbosity(2), TraceMode::None);
+    }
+
+    #[test]
+    fn with_verbosity_raises_to_call_at_3() {
+        assert_eq!(TraceMode::None.with_verbosity(3), TraceMode::Call);
+        assert_eq!(TraceMode::None.with_verbosity(4), TraceMode::Call);
     }
 }
