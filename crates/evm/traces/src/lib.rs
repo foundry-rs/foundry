@@ -321,7 +321,10 @@ pub enum TraceMode {
     ///
     /// Used by debugger.
     Debug,
-    /// Debug trace with storage changes.
+    /// Step trace with storage change recording.
+    ///
+    /// Records JUMP/JUMPDEST steps (like `Steps`) plus storage diffs on SLOAD/SSTORE.
+    /// Does not enable memory/stack snapshots or unfiltered opcode recording.
     RecordStateDiff,
 }
 
@@ -380,21 +383,26 @@ impl TraceMode {
         if self.is_none() {
             None
         } else {
+            // RecordStateDiff is Steps + state diff recording, not Debug + state diff.
+            // It should not enable memory/stack snapshots or unfiltered opcode recording.
+            let effective = if self.record_state_diff() { Self::Steps } else { self };
             TracingInspectorConfig {
                 record_steps: self >= Self::Steps,
-                record_memory_snapshots: self >= Self::Jump,
-                record_stack_snapshots: if self > Self::Steps {
+                record_memory_snapshots: effective >= Self::Jump,
+                record_stack_snapshots: if effective > Self::Steps {
                     StackSnapshotType::Full
                 } else {
                     StackSnapshotType::None
                 },
                 record_logs: true,
                 record_state_diff: self.record_state_diff(),
-                record_returndata_snapshots: self.is_debug(),
-                record_opcodes_filter: (self.is_steps() || self.is_jump() || self.is_jump_simple())
-                    .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
+                record_returndata_snapshots: effective.is_debug(),
+                record_opcodes_filter: (effective.is_steps()
+                    || effective.is_jump()
+                    || effective.is_jump_simple())
+                .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
                 exclude_precompile_calls: false,
-                record_immediate_bytes: self.is_debug(),
+                record_immediate_bytes: effective.is_debug(),
             }
             .into()
         }
@@ -462,5 +470,16 @@ mod tests {
         assert!(cfg.record_steps, "verbosity 5 must record steps for backtraces");
         assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
         assert!(cfg.record_logs, "verbosity 5 must record logs");
+        // RecordStateDiff should NOT enable expensive debug-level features.
+        assert!(!cfg.record_memory_snapshots, "verbosity 5 should not record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::None,
+            "verbosity 5 should not record stack snapshots"
+        );
+        assert!(
+            cfg.record_opcodes_filter.is_some(),
+            "verbosity 5 should filter to JUMP/JUMPDEST only"
+        );
     }
 }
