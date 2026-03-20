@@ -384,7 +384,9 @@ impl TraceMode {
             None
         } else {
             // RecordStateDiff is Steps + state diff recording, not Debug + state diff.
-            // It should not enable memory/stack snapshots or unfiltered opcode recording.
+            // It should not enable memory/stack snapshots.
+            // State diff recording requires all opcodes (no filter) since it needs
+            // SLOAD/SSTORE steps, not just JUMP/JUMPDEST.
             let effective = if self.record_state_diff() { Self::Steps } else { self };
             TracingInspectorConfig {
                 record_steps: self >= Self::Steps,
@@ -397,10 +399,15 @@ impl TraceMode {
                 record_logs: true,
                 record_state_diff: self.record_state_diff(),
                 record_returndata_snapshots: effective.is_debug(),
-                record_opcodes_filter: (effective.is_steps()
-                    || effective.is_jump()
-                    || effective.is_jump_simple())
-                .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
+                // State diff needs all opcodes recorded to capture SLOAD/SSTORE.
+                record_opcodes_filter: if self.record_state_diff() {
+                    None
+                } else {
+                    (effective.is_steps() || effective.is_jump() || effective.is_jump_simple())
+                        .then(|| {
+                            OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)
+                        })
+                },
                 exclude_precompile_calls: false,
                 record_immediate_bytes: effective.is_debug(),
             }
@@ -477,9 +484,10 @@ mod tests {
             StackSnapshotType::None,
             "verbosity 5 should not record stack snapshots"
         );
+        // State diff requires all opcodes to capture SLOAD/SSTORE, so no filter.
         assert!(
-            cfg.record_opcodes_filter.is_some(),
-            "verbosity 5 should filter to JUMP/JUMPDEST only"
+            cfg.record_opcodes_filter.is_none(),
+            "verbosity 5 needs unfiltered opcodes for state diff"
         );
     }
 
