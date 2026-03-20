@@ -32,7 +32,6 @@ body:
     validations:
       required: true
   - type: textarea
-    id: additional-context
     attributes:
       label: Additional context
       description: Add any other context to the feature (like screenshots, resources)

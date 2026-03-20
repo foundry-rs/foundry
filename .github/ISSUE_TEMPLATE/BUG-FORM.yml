@@ -25,30 +25,25 @@ body:
     validations:
       required: true
   - type: checkboxes
-    id: up-to-date
     attributes:
       label: Have you ensured that all of these are up to date?
       options:
         - label: Foundry
         - label: Foundryup
   - type: input
-    id: foundry-version
     attributes:
       label: What version of Foundry are you on?
       placeholder: "Run forge --version and paste the output here"
   - type: input
-    id: foundryup-version
     attributes:
       label: What version of Foundryup are you on?
       placeholder: "Run foundryup --version and paste the output here"
   - type: input
-    id: command
     attributes:
       label: What command(s) is the bug in?
       description: Leave empty if not relevant
       placeholder: "For example: forge test"
   - type: dropdown
-    id: operating-system
     attributes:
       label: Operating System
       description: What operating system are you on?
