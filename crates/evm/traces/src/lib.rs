@@ -351,7 +351,7 @@ impl TraceMode {
     }
 
     pub const fn is_debug(self) -> bool {
-        matches!(self, Self::Debug)
+        matches!(self, Self::Debug | Self::RecordStateDiff)
     }
 
     pub fn with_debug(self, yes: bool) -> Self {
@@ -371,8 +371,8 @@ impl TraceMode {
             0..3 => self,
             3..=4 => std::cmp::max(self, Self::Call),
             // Enable step recording for backtraces when verbosity is 5 or higher.
-            // We need to ensure we're recording JUMP AND JUMPDEST steps.
-            _ => std::cmp::min(self, Self::Steps),
+            // We need to ensure we're recording at least JUMP AND JUMPDEST steps.
+            _ => std::cmp::max(self, Self::Steps),
         }
     }
 
