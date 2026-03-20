@@ -437,10 +437,7 @@ mod tests {
         assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
         assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::RecordStateDiff);
         // Already at the top — stays the same.
-        assert_eq!(
-            TraceMode::RecordStateDiff.with_verbosity(5),
-            TraceMode::RecordStateDiff
-        );
+        assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
     }
 
     // -- into_config at each verbosity level --
@@ -466,5 +463,4 @@ mod tests {
         assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
         assert!(cfg.record_logs, "verbosity 5 must record logs");
     }
-
 }

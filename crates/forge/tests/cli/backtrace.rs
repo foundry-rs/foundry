@@ -658,7 +658,8 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // -vvvvv (verbosity 5): traces with setup, storage changes, and backtrace WITH source locations.
+    // -vvvvv (verbosity 5): traces with setup, storage changes, and backtrace WITH source
+    // locations.
     cmd.forge_fuse()
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvvv"])
         .assert_failure()
