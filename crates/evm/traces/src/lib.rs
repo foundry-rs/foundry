@@ -482,4 +482,21 @@ mod tests {
             "verbosity 5 should filter to JUMP/JUMPDEST only"
         );
     }
+
+    #[test]
+    fn config_debug_mode_unchanged() {
+        // Debug mode must still enable full recording for the debugger.
+        let cfg = TraceMode::Debug.into_config().unwrap();
+        assert!(cfg.record_steps);
+        assert!(cfg.record_memory_snapshots, "Debug must record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::Full,
+            "Debug must record full stack snapshots"
+        );
+        assert!(cfg.record_returndata_snapshots, "Debug must record returndata");
+        assert!(cfg.record_immediate_bytes, "Debug must record immediate bytes");
+        assert!(cfg.record_opcodes_filter.is_none(), "Debug must record all opcodes (no filter)");
+        assert!(!cfg.record_state_diff, "Debug alone should not record state diff");
+    }
 }
