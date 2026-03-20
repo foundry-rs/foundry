@@ -369,11 +369,7 @@ impl TraceMode {
         // Don't promote past Debug — Debug already records everything RecordStateDiff
         // does, and promoting would lose the is_debug() flag needed for immediate_bytes
         // and returndata snapshots.
-        if yes && !self.is_debug() {
-            std::cmp::max(self, Self::RecordStateDiff)
-        } else {
-            self
-        }
+        if yes && !self.is_debug() { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
@@ -461,7 +457,9 @@ mod tests {
         assert_eq!(TraceMode::None.with_verbosity(5), TraceMode::RecordStateDiff);
         assert_eq!(TraceMode::Call.with_verbosity(5), TraceMode::RecordStateDiff);
         assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
-        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::RecordStateDiff);
+        // Debug must not be promoted — RecordStateDiff would lose is_debug() and
+        // disable immediate_bytes/returndata snapshots.
+        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::Debug);
         // Already at the top — stays the same.
         assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
     }
