@@ -3,7 +3,7 @@
 use crate::{
     FoundryBlock, FoundryTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, new_evm_with_inspector},
+    evm::{FoundryEvmFactory, new_eth_evm_with_inspector},
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::get_blob_base_fee_update_fraction,
@@ -977,7 +977,7 @@ impl Backend {
                 &persistent_accounts,
                 &mut |db, evm_env, tx_env, depth| {
                     let mut evm =
-                        new_evm_with_inspector(db, evm_env, tx_env.clone(), NoOpInspector);
+                        new_eth_evm_with_inspector(db, evm_env, tx_env.clone(), NoOpInspector);
                     evm.journaled_state.depth = depth;
                     Ok(evm.transact(tx_env)?)
                 },

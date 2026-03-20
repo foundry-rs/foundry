@@ -2,7 +2,7 @@ use alloy_evm::{Evm, EvmEnv};
 use eyre::WrapErr;
 use foundry_evm_core::{
     backend::DatabaseExt,
-    evm::{FoundryEvmFactory, new_evm_with_inspector},
+    evm::{FoundryEvmFactory, new_eth_evm_with_inspector},
 };
 use revm::{
     context::{BlockEnv, TxEnv},
@@ -30,7 +30,8 @@ impl FoundryEvmFactory for EthEvmFactory {
         tx_env: &mut TxEnv,
         inspector: &mut InspectorStack,
     ) -> eyre::Result<ResultAndState> {
-        let mut evm = new_evm_with_inspector(db, evm_env.clone(), tx_env.clone(), &mut *inspector);
+        let mut evm =
+            new_eth_evm_with_inspector(db, evm_env.clone(), tx_env.clone(), &mut *inspector);
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
