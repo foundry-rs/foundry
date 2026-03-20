@@ -6,8 +6,18 @@
         "status": "Success",
         "reason": null,
         "counterexample": null,
-        "logs": [],
-        "decoded_logs": [],
+        "logs": [
+          {
+            "address": "0x000000000000000000636f6e736f6c652e6c6f67",
+            "topics": [
+              "0x41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50"
+            ],
+            "data": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000033130300000000000000000000000000000000000000000000000000000000000"
+          }
+        ],
+        "decoded_logs": [
+          "100"
+        ],
         "kind": {
           "Unit": {
             "gas": "{...}"
@@ -91,7 +101,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x80",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -109,7 +119,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -200,7 +210,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x000f",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -272,7 +282,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x04",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -327,7 +337,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x004a",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -398,7 +408,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xe0",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -454,7 +464,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xba414fa6",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -493,7 +503,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x004e",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -550,7 +560,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xf6e62afc",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -589,7 +599,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x006c",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -646,7 +656,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xf8a8fd6d",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -685,7 +695,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x008a",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -741,7 +751,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0092",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -760,7 +770,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x025a",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -838,7 +848,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -880,7 +890,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0267",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -924,7 +934,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x040b",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -991,7 +1001,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0142",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1038,7 +1048,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x06c0",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1198,7 +1208,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1466,7 +1476,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0280",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1617,7 +1627,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xffffffffffffffffffffffffffffffffffffffff",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1660,7 +1670,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xe26d1474",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1682,7 +1692,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x64",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1705,7 +1715,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1778,7 +1788,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xffffffff",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1829,7 +1839,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xe0",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1930,7 +1940,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x04",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -1979,7 +1989,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x02bd",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2054,7 +2064,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0651",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2156,7 +2166,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x20",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2291,7 +2301,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0664",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2432,7 +2442,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0642",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2520,7 +2530,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x064b",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2581,7 +2591,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0621",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2707,7 +2717,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x063b",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2740,7 +2750,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0636",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2774,7 +2784,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0631",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -2845,7 +2855,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0606",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -3284,7 +3294,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0618",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -3711,7 +3721,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x060f",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -4684,7 +4694,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5049,7 +5059,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x02d4",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5298,7 +5308,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x02e6",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5458,7 +5468,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x02f4",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5479,7 +5489,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x64",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5501,7 +5511,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x032e",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5568,7 +5578,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x03c4",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5615,7 +5625,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5665,7 +5675,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x24",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5716,7 +5726,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0342",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5794,7 +5804,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0679",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -5900,7 +5910,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x20",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -6040,7 +6050,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x068c",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -6186,7 +6196,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x066a",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -6277,7 +6287,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0673",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -6340,7 +6350,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x060f",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7057,7 +7067,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7107,7 +7117,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x20",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7318,7 +7328,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7368,7 +7378,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xf82c50f100000000000000000000000000000000000000000000000000000000",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7393,7 +7403,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7470,7 +7480,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x20",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7603,7 +7613,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -7940,7 +7950,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x03c7",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8013,7 +8023,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x03de",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8064,7 +8074,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x03d6",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8091,7 +8101,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x03e1",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8119,7 +8129,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0400",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8204,7 +8214,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0418",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8462,7 +8472,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xffffffff",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8596,7 +8606,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x636f6e736f6c652e6c6f67",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -8796,7 +8806,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x20",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10387,7 +10397,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x80",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10405,7 +10415,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10496,7 +10506,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0e",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10568,7 +10578,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0126",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10605,7 +10615,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x001c",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10779,7 +10789,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x80",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10797,7 +10807,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x40",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10888,7 +10898,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x0e",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -10960,7 +10970,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x04",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11015,7 +11025,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x30",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11086,7 +11096,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xe0",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11142,7 +11152,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x4e70b1dc",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11181,7 +11191,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x34",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11238,7 +11248,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xe26d1474",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11277,7 +11287,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x4e",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11333,7 +11343,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x64",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11352,7 +11362,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x04",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11500,7 +11510,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x60",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11566,7 +11576,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xca",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11656,7 +11666,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x20",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11804,7 +11814,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xdc",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -11899,7 +11909,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xe7",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -12032,7 +12042,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xb8",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -12257,7 +12267,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xc4",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -12316,7 +12326,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xa5",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -12407,7 +12417,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xac",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -12470,7 +12480,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x74",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -12924,7 +12934,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0xb5",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -13461,7 +13471,7 @@
                         "gas_cost": 3,
                         "storage_change": null,
                         "status": null,
-                        "immediate_bytes": "0x6b",
+                        "immediate_bytes": null,
                         "decoded": null
                       },
                       {
@@ -13609,7 +13619,12 @@
                         "gas_refund_counter": 0,
                         "gas_used": 401,
                         "gas_cost": 22100,
-                        "storage_change": null,
+                        "storage_change": {
+                          "key": "0x0",
+                          "value": "0x64",
+                          "had_value": "0x0",
+                          "reason": "SSTORE"
+                        },
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null
