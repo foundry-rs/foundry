@@ -1,6 +1,6 @@
 //! In-memory blockchain backend.
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector;
+use super::executor::new_eth_evm_with_inspector;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::PruneStateHistoryConfig,
@@ -1005,7 +1005,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    fn new_evm_with_inspector_ref<'db, I, DB>(
+    fn new_eth_evm_with_inspector_ref<'db, I, DB>(
         &self,
         db: &'db DB,
         env: &Env,
@@ -1017,7 +1017,7 @@ impl<N: Network> Backend<N> {
             + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = new_evm_with_inspector(WrapDatabaseRef(db), env, inspector);
+        let mut evm = new_eth_evm_with_inspector(WrapDatabaseRef(db), env, inspector);
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
@@ -1161,7 +1161,7 @@ impl<N: Network> Backend<N> {
         let mut inspector = self.build_inspector();
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
+        let mut evm = self.new_eth_evm_with_inspector_ref(state, &env, &mut inspector);
         let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1195,7 +1195,7 @@ impl<N: Network> Backend<N> {
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
+        let mut evm = self.new_eth_evm_with_inspector_ref(state, &env, &mut inspector);
         let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1458,7 +1458,7 @@ impl<N: Network> Backend<N> {
             }
 
             // Execute the transaction with the inspector
-            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+            let mut evm = self.new_eth_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
             let result = evm.transact(tx_env.clone()).ok()?;
 
             // Build TraceResults from the inspector and execution result
@@ -1976,7 +1976,7 @@ impl<N: Network> Backend<N> {
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
-        let mut evm = self.new_evm_with_inspector_ref(&**db, &env, &mut inspector);
+        let mut evm = self.new_eth_evm_with_inspector_ref(&**db, &env, &mut inspector);
         let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -2228,7 +2228,7 @@ where
 
                 // 2. Create EVM
                 let env_struct = Env::new(env.evm_env.clone(), Default::default(), env.networks);
-                let mut evm = new_evm_with_inspector(&mut **db, &env_struct, inspector);
+                let mut evm = new_eth_evm_with_inspector(&mut **db, &env_struct, inspector);
 
                 // 3. Inject precompiles (once, before the tx loop)
                 env.networks.inject_precompiles(evm.precompiles_mut());
@@ -2675,7 +2675,7 @@ where
         }
 
         let env_struct = Env::new(env.evm_env.clone(), Default::default(), env.networks);
-        let mut evm = new_evm_with_inspector(&mut cache_db, &env_struct, inspector);
+        let mut evm = new_eth_evm_with_inspector(&mut cache_db, &env_struct, inspector);
 
         env.networks.inject_precompiles(evm.precompiles_mut());
         if let Some(factory) = &self.precompile_factory {
@@ -2954,8 +2954,11 @@ where
                             );
 
                             let env = self.build_call_env(request, fee_details, block);
-                            let mut evm =
-                                self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+                            let mut evm = self.new_eth_evm_with_inspector_ref(
+                                &cache_db,
+                                &env,
+                                &mut inspector,
+                            );
                             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
@@ -2984,8 +2987,11 @@ where
                             );
 
                             let env = self.build_call_env(request, fee_details, block);
-                            let mut evm =
-                                self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+                            let mut evm = self.new_eth_evm_with_inspector_ref(
+                                &cache_db,
+                                &env,
+                                &mut inspector,
+                            );
                             let result = evm.transact(env.tx)?;
 
                             drop(evm);
@@ -3017,7 +3023,7 @@ where
 
                         let env = self.build_call_env(request, fee_details, block.clone());
                         let mut evm =
-                            self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+                            self.new_eth_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
                         let result = evm.transact(env.tx.clone())?;
                         let res = evm
                             .inspector_mut()
@@ -3035,7 +3041,7 @@ where
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+            let mut evm = self.new_eth_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -3274,7 +3280,7 @@ where
 
             let env_struct = Env::new(env.evm_env.clone(), Default::default(), env.networks);
             let mut evm_replay =
-                new_evm_with_inspector(&mut cache_db, &env_struct, inspector_replay);
+                new_eth_evm_with_inspector(&mut cache_db, &env_struct, inspector_replay);
 
             env.networks.inject_precompiles(evm_replay.precompiles_mut());
             if let Some(factory) = &self.precompile_factory {
@@ -3395,7 +3401,7 @@ where
                 tx_env.enveloped_tx = Some(target_tx.transaction.encoded_2718().into());
             }
 
-            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+            let mut evm = self.new_eth_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
 
             let result = evm
                 .transact(tx_env.clone())
@@ -3794,7 +3800,7 @@ impl Backend<FoundryNetwork> {
                         // prepare inspector to capture transfer inside the evm so they are
                         // recorded and included in logs
                         inspector = inspector.with_transfers();
-                        let mut evm= self.new_evm_with_inspector_ref(
+                        let mut evm= self.new_eth_evm_with_inspector_ref(
                             &cache_db,
                             &env,
                             &mut inspector,
@@ -3803,7 +3809,7 @@ impl Backend<FoundryNetwork> {
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(env.tx)?
                     } else {
-                        let mut evm = self.new_evm_with_inspector_ref(
+                        let mut evm = self.new_eth_evm_with_inspector_ref(
                             &cache_db,
                             &env,
                             &mut inspector,

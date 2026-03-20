@@ -37,7 +37,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{NestedEvm, NestedEvmClosure, new_evm_with_inspector, with_cloned_context},
+    evm::{NestedEvm, NestedEvmClosure, new_eth_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -173,7 +173,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         f: NestedEvmClosure<'_, CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
-            let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
+            let mut evm = new_eth_evm_with_inspector(db, evm_env, tx_env, cheats);
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
             let sub_evm_env = evm.to_evm_env();
@@ -190,7 +190,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         tx_env: CTX::Tx,
         f: NestedEvmClosure<'_, CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
+        let mut evm = new_eth_evm_with_inspector(db, evm_env, tx_env, cheats);
         f(&mut evm)
     }
 

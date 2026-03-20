@@ -3,7 +3,7 @@
 use crate::{
     EthInspectorExt, FoundryBlock, FoundryTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    evm::new_evm_with_inspector,
+    evm::new_eth_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::get_blob_base_fee_update_fraction,
@@ -815,7 +815,7 @@ impl Backend {
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller, tx_env.kind);
-        let mut evm = crate::evm::new_evm_with_inspector(
+        let mut evm = crate::evm::new_eth_evm_with_inspector(
             self,
             evm_env.to_owned(),
             tx_env.to_owned(),
@@ -1376,7 +1376,8 @@ impl DatabaseExt for Backend {
 
         let res = {
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, evm_env, tx_env.to_owned(), inspector);
+            let mut evm =
+                new_eth_evm_with_inspector(&mut db, evm_env, tx_env.to_owned(), inspector);
             evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact(tx_env)?
         };
@@ -2049,7 +2050,7 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(
+        let mut evm = crate::evm::new_eth_evm_with_inspector(
             &mut db as _,
             evm_env.to_owned(),
             tx_env.to_owned(),

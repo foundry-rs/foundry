@@ -9,19 +9,18 @@ use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_evm::{Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
-    Context, Journal,
+    Context,
     context::{
-        BlockEnv, Cfg, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext,
-        LocalContextTr, TxEnv,
+        BlockEnv, Cfg, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr,
+        TxEnv,
         result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
     },
     handler::{
-        EthFrame, EthPrecompiles, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult,
-        instructions::EthInstructions,
+        EthFrame, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult, instructions::EthInstructions,
     },
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
@@ -29,54 +28,24 @@ use revm::{
         FrameInput, Gas, InstructionResult, InterpreterResult, SharedMemory,
         interpreter::EthInterpreter, interpreter_action::FrameInit, return_ok,
     },
-    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
 
-pub fn new_evm_with_inspector<'db, I: EthInspectorExt>(
+pub fn new_eth_evm_with_inspector<'db, I: EthInspectorExt>(
     db: &'db mut dyn DatabaseExt,
     evm_env: EvmEnv,
     tx_env: TxEnv,
     inspector: I,
 ) -> FoundryEvm<'db, I> {
-    let mut ctx = EthEvmContext {
-        journaled_state: {
-            let mut journal = Journal::new(db);
-            journal.set_spec_id(evm_env.cfg_env.spec);
-            journal
-        },
-        block: evm_env.block_env,
-        cfg: evm_env.cfg_env,
-        tx: tx_env,
-        chain: (),
-        local: LocalContext::default(),
-        error: Ok(()),
-    };
-    ctx.cfg.tx_chain_id_check = true;
-    let spec = ctx.cfg.spec;
+    let eth_evm =
+        alloy_evm::EthEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector);
+    let mut inner = eth_evm.into_inner();
+    inner.ctx.cfg.tx_chain_id_check = true;
+    inner.ctx.tx = tx_env;
 
-    let mut evm = FoundryEvm {
-        inner: RevmEvm::new_with_inspector(
-            ctx,
-            inspector,
-            EthInstructions::default(),
-            get_precompiles(spec),
-        ),
-    };
-
+    let mut evm = FoundryEvm { inner };
     evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
-}
-
-/// Get the precompiles for the given spec.
-fn get_precompiles(spec: SpecId) -> PrecompilesMap {
-    PrecompilesMap::from_static(
-        EthPrecompiles {
-            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
-            spec,
-        }
-        .precompiles,
-    )
 }
 
 /// Get the call inputs for the CREATE2 factory.
