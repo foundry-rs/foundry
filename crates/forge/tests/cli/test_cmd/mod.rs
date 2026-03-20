@@ -354,7 +354,7 @@ forgetest!(debug_json_includes_stack_and_memory, |prj, cmd| {
 
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
 
-    cmd.args(["test", "--debug", "--json", "-vvvvv", "--mt", "test"])
+    cmd.args(["test", "--debug", "--json", "-vv", "--mt", "test"])
         .assert_success()
         .stdout_eq(file!["../../fixtures/SimpleContractTestDebugJson.json": Json]);
 });
