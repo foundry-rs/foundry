@@ -1190,6 +1190,18 @@ impl Backend {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
         self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
+        if let Some(fork) = self.get_fork()
+            && env.evm_env.cfg_env.chain_id == 4217
+        {
+            evm.precompiles_mut().extend_precompiles(
+                super::tempo::precompiles_from_env(
+                    env.evm_env.cfg_env.chain_id,
+                    fork.eth_rpc_url(),
+                    fork.block_number(),
+                ),
+            );
+        }
+
         if let Some(factory) = &self.precompile_factory {
             evm.precompiles_mut().extend_precompiles(factory.precompiles());
         }
