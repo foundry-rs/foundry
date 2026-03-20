@@ -3197,10 +3197,6 @@ Traces:
     │   └─ ← [Revert] assertion failed: 1 != 100
     └─ ← [Revert] assertion failed: 1 != 100
 
-Backtrace:
-  at VM.assertEq
-  at SuppressTracesTest.test_increment_failure
-
 [PASS] test_increment_success() ([GAS])
 Logs:
   test increment success

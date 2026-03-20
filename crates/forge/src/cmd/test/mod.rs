@@ -682,10 +682,10 @@ impl TestArgs {
                     }
                 }
 
-                // Extract and display backtrace for failed tests when verbosity >= 3
+                // Extract and display backtrace for failed tests when verbosity >= 5
                 if !silent
                     && result.status.is_failure()
-                    && verbosity >= 3
+                    && verbosity >= 5
                     && !result.traces.is_empty()
                     && let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
