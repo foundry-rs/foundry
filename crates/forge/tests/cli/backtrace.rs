@@ -598,8 +598,7 @@ contract BacktraceVerbosityTest is DSTest {
         r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
