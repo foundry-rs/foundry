@@ -6,10 +6,11 @@ use revm::{
     Context, Database,
     context::{Block, BlockEnv, Cfg, CfgEnv, Transaction, TxEnv},
     context_interface::{ContextTr, transaction::AccessList},
+    inspector::JournalExt,
     primitives::{TxKind, hardfork::SpecId},
 };
 
-use crate::backend::{DatabaseExt, FoundryJournalExt};
+use crate::backend::{DatabaseExt, JournaledState};
 
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
 pub trait FoundryBlock: Block {
@@ -199,6 +200,8 @@ pub trait FoundryContextExt:
     fn tx_mut(&mut self) -> &mut Self::Tx;
     /// Mutable reference to the configuration environment.
     fn cfg_mut(&mut self) -> &mut Self::Cfg;
+    /// Mutable reference to the db and the journal inner.
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState);
     /// Sets block environment.
     fn set_block(&mut self, block: Self::Block) {
         *self.block_mut() = block;
@@ -210,6 +213,10 @@ pub trait FoundryContextExt:
     /// Sets configuration environment.
     fn set_cfg(&mut self, cfg: Self::Cfg) {
         *self.cfg_mut() = cfg;
+    }
+    /// Sets journal inner.
+    fn set_journal_inner(&mut self, journal_inner: JournaledState) {
+        *self.db_journal_inner_mut().1 = journal_inner;
     }
     /// Sets EVM environment.
     fn set_evm(&mut self, evm_env: EvmEnv<<Self::Cfg as FoundryCfg>::Spec, Self::Block>)
@@ -244,6 +251,9 @@ impl<BLOCK: FoundryBlock + Clone, TX: FoundryTransaction + Clone, CFG: FoundryCf
     fn cfg_mut(&mut self) -> &mut Self::Cfg {
         &mut self.cfg
     }
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
+        (&mut self.journaled_state.database, &mut self.journaled_state.inner)
+    }
 }
 
 /// Temporary bound alias used during the transition to a fully generic foundry-evm and
@@ -257,7 +267,7 @@ pub trait EthCheatCtx:
         Block = BlockEnv,
         Tx = TxEnv,
         Cfg = CfgEnv,
-        Journal: FoundryJournalExt<Self>,
+        Journal: JournalExt,
         Db: DatabaseExt<Self::Block, Self::Tx, SpecId>,
     >
 {
@@ -267,7 +277,7 @@ impl<CTX> EthCheatCtx for CTX where
             Block = BlockEnv,
             Tx = TxEnv,
             Cfg = CfgEnv,
-            Journal: FoundryJournalExt<Self>,
+            Journal: JournalExt,
             Db: DatabaseExt<Self::Block, Self::Tx, SpecId>,
         >
 {

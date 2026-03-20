@@ -15,9 +15,9 @@ use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryInspectorExt, FoundryTransaction,
-    backend::{DatabaseError, DatabaseExt, FoundryJournalExt, JournaledState},
+    backend::{DatabaseError, DatabaseExt, JournaledState},
     env::FoundryContextExt,
-    evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
+    evm::{NestedEvm, new_eth_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::NetworkConfigs;
@@ -374,7 +374,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
-            let mut evm = new_evm_with_inspector(db, evm_env, tx_env, &mut inspector);
+            let mut evm = new_eth_evm_with_inspector(db, evm_env, tx_env, &mut inspector);
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
             let sub_evm_env = evm.to_evm_env();
@@ -392,7 +392,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         f: NestedEvmClosure<'_, CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = new_evm_with_inspector(db, evm_env, tx_env, &mut inspector);
+        let mut evm = new_eth_evm_with_inspector(db, evm_env, tx_env, &mut inspector);
         f(&mut evm)
     }
 
@@ -406,7 +406,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        let (db, inner) = ecx.db_journal_inner_mut();
         db.transact(fork_id, transaction, evm_env, tx_env, inner, &mut inspector)
     }
 
@@ -418,7 +418,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        let (db, inner) = ecx.db_journal_inner_mut();
         db.transact_from_tx(tx, evm_env, inner, &mut inspector)
     }
 
@@ -763,8 +763,9 @@ impl InspectorStackRefMut<'_> {
 
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
-                let (db, journal) = ecx.journal_mut().as_db_and_inner();
-                let mut evm = new_evm_with_inspector(db, evm_env, tx_env.clone(), &mut inspector);
+                let (db, journal) = ecx.db_journal_inner_mut();
+                let mut evm =
+                    new_eth_evm_with_inspector(db, evm_env, tx_env.clone(), &mut inspector);
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();
@@ -1064,7 +1065,7 @@ impl<CTX: EthCheatCtx> Inspector<CTX> for InspectorStackRefMut<'_> {
                 }
                 // Mark accounts and storage cold before STATICCALLs
                 CallScheme::StaticCall => {
-                    let (_, journal_inner) = ecx.journal_mut().as_db_and_inner();
+                    let (_, journal_inner) = ecx.db_journal_inner_mut();
                     let JournaledState { state, warm_addresses, .. } = journal_inner;
                     for (addr, acc_mut) in state {
                         // Do not mark accounts and storage cold accounts with arbitrary storage.

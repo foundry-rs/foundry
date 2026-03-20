@@ -356,7 +356,7 @@ pub fn build_tx_env_for_pending(
 }
 
 /// Creates a database with given database and inspector.
-pub fn new_evm_with_inspector<DB, I>(
+pub fn new_eth_evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
     inspector: I,

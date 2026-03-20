@@ -10,10 +10,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::{
-    backend::{FoundryJournalExt, JournaledState},
-    fork::CreateFork,
-};
+use foundry_evm_core::{FoundryContextExt, backend::JournaledState, fork::CreateFork};
 use revm::context::{Cfg, ContextTr};
 
 impl Cheatcode for activeForkCall {
@@ -124,7 +121,7 @@ impl Cheatcode for selectForkCall {
 }
 
 impl Cheatcode for transact_0Call {
-    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
+    fn apply_full<CTX: FoundryContextExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -135,7 +132,7 @@ impl Cheatcode for transact_0Call {
 }
 
 impl Cheatcode for transact_1Call {
-    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
+    fn apply_full<CTX: FoundryContextExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -423,7 +420,7 @@ fn fork_env_op<CTX: EthCheatCtx, T: SolValue>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let mut tx_env = ccx.ecx.tx_clone();
-    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let result = f(db, &mut evm_env, &mut tx_env, inner)?;
     ccx.ecx.set_evm(evm_env);
     ccx.ecx.set_tx(tx_env);
@@ -438,7 +435,7 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     }
 }
 
-fn transact<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
+fn transact<CTX: FoundryContextExt>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     transaction: B256,

@@ -3,7 +3,7 @@
 use crate::{
     EthInspectorExt, FoundryBlock, FoundryTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    evm::new_evm_with_inspector,
+    evm::new_eth_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::get_blob_base_fee_update_fraction,
@@ -20,12 +20,12 @@ use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
-    Database, DatabaseCommit, Journal, JournalEntry,
+    Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
-    context::{BlockEnv, Cfg, ContextTr, JournalInner, TxEnv},
+    context::{BlockEnv, JournalInner, TxEnv},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{CacheDB, DatabaseRef},
-    inspector::{JournalExt, NoOpInspector},
+    inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -389,40 +389,6 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
 }
 
 struct _ObjectSafe(dyn DatabaseExt);
-
-/// Extension trait for [`Journal`] providing borrow splitting and state replacement.
-///
-/// Generic code accesses the journal via `ctx.journal_mut()` which returns `&mut impl JournalTr`.
-/// This trait adds the ability to split the journal into its database and inner state components,
-/// enabling direct [`DatabaseExt`] method calls with zero-copy borrow splitting.
-pub trait FoundryJournalExt<CTX: ContextTr + ?Sized>: JournalExt {
-    /// The database type backing this journal.
-    type DB: DatabaseExt<CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>;
-
-    /// Returns mutable references to the database and journal inner state.
-    fn as_db_and_inner(&mut self) -> (&mut Self::DB, &mut JournaledState);
-
-    /// Replaces the journal inner state.
-    ///
-    /// Used by sub-EVM execution to write back modified state after running a closure.
-    fn set_inner(&mut self, inner: JournaledState);
-}
-
-impl<DB, CTX> FoundryJournalExt<CTX> for Journal<DB, JournalEntry>
-where
-    CTX: ContextTr + ?Sized,
-    DB: DatabaseExt<CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
-{
-    type DB = DB;
-
-    fn as_db_and_inner(&mut self) -> (&mut DB, &mut JournaledState) {
-        (&mut self.database, &mut self.inner)
-    }
-
-    fn set_inner(&mut self, inner: JournaledState) {
-        self.inner = inner;
-    }
-}
 
 /// Provides the underlying `revm::Database` implementation.
 ///
@@ -815,7 +781,7 @@ impl Backend {
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller, tx_env.kind);
-        let mut evm = crate::evm::new_evm_with_inspector(
+        let mut evm = crate::evm::new_eth_evm_with_inspector(
             self,
             evm_env.to_owned(),
             tx_env.to_owned(),
@@ -1376,7 +1342,8 @@ impl DatabaseExt for Backend {
 
         let res = {
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, evm_env, tx_env.to_owned(), inspector);
+            let mut evm =
+                new_eth_evm_with_inspector(&mut db, evm_env, tx_env.to_owned(), inspector);
             evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact(tx_env)?
         };
@@ -2049,7 +2016,7 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(
+        let mut evm = crate::evm::new_eth_evm_with_inspector(
             &mut db as _,
             evm_env.to_owned(),
             tx_env.to_owned(),

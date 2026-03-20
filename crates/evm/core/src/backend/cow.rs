@@ -74,8 +74,12 @@ impl<'a> CowBackend<'a> {
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller, tx_env.kind));
 
-        let mut evm =
-            crate::evm::new_evm_with_inspector(self, evm_env.clone(), tx_env.clone(), inspector);
+        let mut evm = crate::evm::new_eth_evm_with_inspector(
+            self,
+            evm_env.clone(),
+            tx_env.clone(),
+            inspector,
+        );
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
