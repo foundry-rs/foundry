@@ -682,10 +682,12 @@ impl TestArgs {
                     }
                 }
 
-                // Extract and display backtrace for failed tests when verbosity >= 5
+                // Extract and display backtrace for failed tests when verbosity >= 3.
+                // At verbosity 3-4 backtraces show contract/function names only.
+                // At verbosity 5 backtraces include source file locations.
                 if !silent
                     && result.status.is_failure()
-                    && verbosity >= 5
+                    && verbosity >= 3
                     && !result.traces.is_empty()
                     && let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))

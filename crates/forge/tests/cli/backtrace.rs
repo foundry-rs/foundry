@@ -607,7 +607,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#
     ]]);
 
-    // -vvv (verbosity 3): traces but NO backtrace.
+    // -vvv (verbosity 3): traces and backtrace WITHOUT source locations.
     cmd.forge_fuse()
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvv"])
         .assert_failure()
@@ -622,11 +622,15 @@ Traces:
     │   └─ ← [Revert] Simple revert message
     └─ ← [Revert] Simple revert message
 
+Backtrace:
+  at SimpleRevert.doRevert
+  at BacktraceVerbosityTest.testRevert
+
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // -vvvv (verbosity 4): traces with setup but NO backtrace.
+    // -vvvv (verbosity 4): traces with setup and backtrace WITHOUT source locations.
     cmd.forge_fuse()
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvv"])
         .assert_failure()
@@ -646,11 +650,15 @@ Traces:
     │   └─ ← [Revert] Simple revert message
     └─ ← [Revert] Simple revert message
 
+Backtrace:
+  at SimpleRevert.doRevert
+  at BacktraceVerbosityTest.testRevert
+
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // -vvvvv (verbosity 5): traces with setup, storage changes, AND backtrace.
+    // -vvvvv (verbosity 5): traces with setup, storage changes, and backtrace WITH source locations.
     cmd.forge_fuse()
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvvv"])
         .assert_failure()
