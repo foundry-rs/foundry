@@ -13619,12 +13619,7 @@
                         "gas_refund_counter": 0,
                         "gas_used": 401,
                         "gas_cost": 22100,
-                        "storage_change": {
-                          "key": "0x0",
-                          "value": "0x64",
-                          "had_value": "0x0",
-                          "reason": "SSTORE"
-                        },
+                        "storage_change": null,
                         "status": null,
                         "immediate_bytes": null,
                         "decoded": null

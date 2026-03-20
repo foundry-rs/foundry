@@ -351,7 +351,7 @@ impl TraceMode {
     }
 
     pub const fn is_debug(self) -> bool {
-        matches!(self, Self::Debug | Self::RecordStateDiff)
+        matches!(self, Self::Debug)
     }
 
     pub fn with_debug(self, yes: bool) -> Self {
@@ -363,7 +363,14 @@ impl TraceMode {
     }
 
     pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes { std::cmp::max(self, Self::RecordStateDiff) } else { self }
+        // Don't promote past Debug — Debug already records everything RecordStateDiff
+        // does, and promoting would lose the is_debug() flag needed for immediate_bytes
+        // and returndata snapshots.
+        if yes && !self.is_debug() {
+            std::cmp::max(self, Self::RecordStateDiff)
+        } else {
+            self
+        }
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
