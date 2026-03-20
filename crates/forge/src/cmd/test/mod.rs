@@ -82,6 +82,10 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
+    ///
+    /// When combined with `--json`, enables debug-level trace recording (full stack, memory,
+    /// and all opcode steps) without opening the debugger TUI. This is useful for programmatic
+    /// consumption of detailed trace data.
     #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
     debug: bool,
 
@@ -396,7 +400,7 @@ impl TestArgs {
             }
         }
 
-        if should_debug {
+        if should_debug && !shell::is_json() {
             // Get first non-empty suite result. We will have only one such entry.
             let (_, _, test_result) =
                 outcome.remove_first().ok_or_eyre("no tests were executed")?;
@@ -423,6 +427,8 @@ impl TestArgs {
                 debugger.try_run_tui()?;
             }
         }
+        // When --debug --json is used, the JSON output path handles serialization
+        // with debug-level traces (full stack, memory, all opcodes) already recorded.
 
         Ok(outcome)
     }
