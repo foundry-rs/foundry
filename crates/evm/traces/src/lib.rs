@@ -370,9 +370,9 @@ impl TraceMode {
         match verbosity {
             0..3 => self,
             3..=4 => std::cmp::max(self, Self::Call),
-            // Enable step recording for backtraces when verbosity is 5 or higher.
-            // We need to ensure we're recording JUMP AND JUMPDEST steps.
-            _ => std::cmp::max(self, Self::Steps),
+            // Enable step recording and state diff recording when verbosity is 5 or higher.
+            // This includes backtraces (JUMP/JUMPDEST steps) and storage changes.
+            _ => std::cmp::max(self, Self::RecordStateDiff),
         }
     }
 
@@ -406,24 +406,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn with_verbosity_raises_to_steps() {
-        // Verbosity 5 should raise `None` to at least `Steps`.
-        assert!(TraceMode::None.with_verbosity(5) >= TraceMode::Steps);
-    }
-
-    #[test]
-    fn with_verbosity_does_not_lower_debug() {
-        // Verbosity 5 must never downgrade a higher mode like `Debug`.
-        assert!(TraceMode::Debug.with_verbosity(5) >= TraceMode::Debug);
-    }
-
-    #[test]
-    fn with_verbosity_raises_call_to_steps() {
-        // `Call` should be raised to `Steps` at verbosity 5.
-        assert!(TraceMode::Call.with_verbosity(5) >= TraceMode::Steps);
-    }
-
-    #[test]
     fn with_verbosity_noop_below_3() {
         assert_eq!(TraceMode::None.with_verbosity(0), TraceMode::None);
         assert_eq!(TraceMode::None.with_verbosity(2), TraceMode::None);
@@ -433,5 +415,20 @@ mod tests {
     fn with_verbosity_raises_to_call_at_3() {
         assert_eq!(TraceMode::None.with_verbosity(3), TraceMode::Call);
         assert_eq!(TraceMode::None.with_verbosity(4), TraceMode::Call);
+    }
+
+    #[test]
+    fn with_verbosity_raises_to_record_state_diff_at_5() {
+        // Verbosity 5 should raise `None` all the way to `RecordStateDiff`.
+        assert_eq!(TraceMode::None.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Call.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
+    }
+
+    #[test]
+    fn with_verbosity_does_not_lower_existing_mode() {
+        // Verbosity must never downgrade a mode already set by another `with_*` call.
+        assert_eq!(TraceMode::Debug.with_verbosity(3), TraceMode::Debug);
+        assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
     }
 }
