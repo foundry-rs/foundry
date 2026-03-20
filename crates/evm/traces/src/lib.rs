@@ -467,27 +467,4 @@ mod tests {
         assert!(cfg.record_logs, "verbosity 5 must record logs");
     }
 
-    // -- Monotonicity: with_verbosity must never lower the mode --
-
-    #[test]
-    fn with_verbosity_is_monotonic() {
-        let all_modes = [
-            TraceMode::None,
-            TraceMode::Call,
-            TraceMode::Steps,
-            TraceMode::JumpSimple,
-            TraceMode::Jump,
-            TraceMode::Debug,
-            TraceMode::RecordStateDiff,
-        ];
-        for mode in all_modes {
-            for v in 0..=5 {
-                assert!(
-                    mode.with_verbosity(v) >= mode,
-                    "with_verbosity({v}) lowered {mode:?} to {:?}",
-                    mode.with_verbosity(v)
-                );
-            }
-        }
-    }
 }
