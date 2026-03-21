@@ -1,10 +1,24 @@
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::map::{HashMap, hash_map::Entry};
 use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
 use eyre::{Result, WrapErr};
 use foundry_common::provider::ProviderBuilder;
-use foundry_config::Chain;
-use std::{ops::Deref, sync::Arc};
+use foundry_config::{Chain, Config};
+use std::{ops::Deref, sync::Arc, time::Duration};
+
+/// Helper function to build a provider for script with a potential RPC timeout.
+pub fn build_script_provider<N: Network>(
+    rpc_url: &str,
+    config: &Config,
+) -> Result<RootProvider<N>> {
+    let mut builder = ProviderBuilder::new(rpc_url);
+
+    if let Some(rpc_timeout) = config.eth_rpc_timeout {
+        builder = builder.timeout(Duration::from_secs(rpc_timeout));
+    }
+
+    builder.build()
+}
 
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
 #[derive(Default)]
@@ -17,12 +31,13 @@ impl ProvidersManager {
     pub async fn get_or_init_provider(
         &mut self,
         rpc: &str,
+        config: &Config,
         is_legacy: bool,
     ) -> Result<&ProviderInfo> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let info = ProviderInfo::new(rpc, is_legacy).await?;
+                let info = ProviderInfo::new(rpc, config, is_legacy).await?;
                 entry.insert(info)
             }
         })
@@ -53,8 +68,8 @@ pub enum GasPrice {
 }
 
 impl ProviderInfo {
-    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
-        let provider = Arc::new(ProviderBuilder::new(rpc).build()?);
+    pub async fn new(rpc: &str, config: &Config, mut is_legacy: bool) -> Result<Self> {
+        let provider = Arc::new(build_script_provider(rpc, config)?);
         let chain = provider.get_chain_id().await?;
 
         if let Some(chain) = Chain::from(chain).named() {

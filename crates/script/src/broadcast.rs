@@ -3,7 +3,7 @@ use std::{cmp::Ordering, sync::Arc, time::Duration};
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_network::{EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
     Address, TxHash,
     map::{AddressHashMap, AddressHashSet},
@@ -15,11 +15,7 @@ use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
-use foundry_common::{
-    TransactionMaybeSigned,
-    provider::{ProviderBuilder, try_get_http_provider},
-    shell,
-};
+use foundry_common::{TransactionMaybeSigned, shell};
 use foundry_config::Config;
 use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
@@ -29,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
+    providers::build_script_provider, sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
 
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
@@ -55,9 +51,10 @@ where
 pub async fn next_nonce(
     caller: Address,
     provider_url: &str,
+    config: &Config,
     block_number: Option<u64>,
 ) -> eyre::Result<u64> {
-    let provider = try_get_http_provider(provider_url)
+    let provider = build_script_provider::<AnyNetwork>(provider_url, config)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
 
     let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
@@ -260,22 +257,26 @@ where
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
+        let config = self.script_config.config.clone();
         let futs = self
             .sequence
             .sequences_mut()
             .iter_mut()
             .enumerate()
-            .map(|(sequence_idx, sequence)| async move {
-                let rpc_url = sequence.rpc_url();
-                let provider = Arc::new(ProviderBuilder::new(rpc_url).build()?);
-                progress_ref
-                    .wait_for_pending(
-                        sequence_idx,
-                        sequence,
-                        &provider,
-                        self.script_config.config.transaction_timeout,
-                    )
-                    .await
+            .map(|(sequence_idx, sequence)| {
+                let config = config.clone();
+                async move {
+                    let rpc_url = sequence.rpc_url();
+                    let provider = Arc::new(build_script_provider(rpc_url, &config)?);
+                    progress_ref
+                        .wait_for_pending(
+                            sequence_idx,
+                            sequence,
+                            &provider,
+                            config.transaction_timeout,
+                        )
+                        .await
+                }
             })
             .collect::<Vec<_>>();
 
@@ -353,7 +354,8 @@ where
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(ProviderBuilder::new(sequence.rpc_url()).build()?);
+            let provider =
+                Arc::new(build_script_provider(sequence.rpc_url(), &self.script_config.config)?);
             let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);

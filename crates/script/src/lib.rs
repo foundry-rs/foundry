@@ -210,6 +210,14 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    /// Timeout for RPC requests in seconds.
+    ///
+    /// The specified timeout will be used to override the default timeout for RPC requests.
+    ///
+    /// Default value: 45
+    #[arg(long, env = "ETH_RPC_TIMEOUT")]
+    pub rpc_timeout: Option<u64>,
+
     #[command(flatten)]
     pub build: BuildOpts,
 
@@ -527,6 +535,10 @@ impl Provider for ScriptArgs {
             dict.insert("transaction_timeout".to_string(), timeout.into());
         }
 
+        if let Some(rpc_timeout) = self.rpc_timeout {
+            dict.insert("eth_rpc_timeout".to_string(), rpc_timeout.into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -595,7 +607,7 @@ pub struct ScriptConfig {
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
+            next_nonce(evm_opts.sender, fork_url, &config, evm_opts.fork_block_number).await?
         } else {
             // dapptools compatibility
             1
@@ -606,7 +618,7 @@ impl ScriptConfig {
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, None).await?
+            next_nonce(sender, fork_url, &self.config, None).await?
         } else {
             // dapptools compatibility
             1
@@ -947,6 +959,13 @@ mod tests {
         assert_eq!(etherscan, Some("etherscan_api_key".to_string()));
         let etherscan = config.get_etherscan_api_key(None);
         assert_eq!(etherscan, Some("etherscan_api_key".to_string()));
+    }
+
+    #[test]
+    fn can_merge_script_rpc_timeout() {
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--rpc-timeout", "90"]);
+        let config = args.load_config().unwrap();
+        assert_eq!(config.eth_rpc_timeout, Some(90));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5923>
