@@ -4,7 +4,7 @@ use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_provider::{
     Provider,
-    network::{AnyNetwork, AnyRpcBlock},
+    network::{BlockResponse, Network},
 };
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -289,11 +289,15 @@ pub async fn get_tracing_executor(
     Ok((evm_env, tx_env, executor))
 }
 
-pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: NetworkConfigs) {
+pub fn configure_env_block<N: Network>(
+    evm_env: &mut EvmEnv,
+    block: &N::BlockResponse,
+    config: NetworkConfigs,
+) {
     let number = evm_env.block_env.number;
-    evm_env.block_env = block_env_from_header(&block.header);
+    evm_env.block_env = block_env_from_header(block.header());
     evm_env.block_env.number = number;
-    apply_chain_and_block_specific_env_changes::<AnyNetwork>(evm_env, block, config);
+    apply_chain_and_block_specific_env_changes::<N>(evm_env, block, config);
 }
 
 pub fn deploy_contract(
@@ -349,9 +353,9 @@ pub fn deploy_contract(
     }
 }
 
-pub async fn get_runtime_codes(
+pub async fn get_runtime_codes<N: Network>(
     executor: &mut TracingExecutor,
-    provider: &impl Provider<AnyNetwork>,
+    provider: &impl Provider<N>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,

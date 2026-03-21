@@ -7,18 +7,16 @@ use crate::{
     },
     verify::VerifierArgs,
 };
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_evm::{FromRecoveredTx, rpc::TryIntoTxEnv};
 use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
     Provider,
     ext::TraceApi,
-    network::{
-        AnyTxEnvelope, TransactionBuilder, TransactionResponse, primitives::BlockTransactions,
-    },
+    network::{AnyNetwork, TransactionBuilder, TransactionResponse, primitives::BlockTransactions},
 };
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest, TransactionTrait,
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
     trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
 };
 use clap::{Parser, ValueHint};
@@ -31,6 +29,7 @@ use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::EvmError};
+use foundry_primitives::{FoundryTransactionRequest, FoundryTxEnvelope};
 use revm::{context::TxEnv, state::AccountInfo};
 use std::path::PathBuf;
 
@@ -250,7 +249,7 @@ impl VerifyBytecodeArgs {
                 .into_create();
 
             if let Some(ref block) = genesis_block {
-                configure_env_block(&mut evm_env, block, config.networks);
+                configure_env_block::<AnyNetwork>(&mut evm_env, block, config.networks);
                 gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas().map(|g| g as u128);
                 gen_tx_req.gas = Some(block.header.gas_limit());
                 gen_tx_req.gas_price = block.header.base_fee_per_gas().map(|g| g as u128);
@@ -334,10 +333,10 @@ impl VerifyBytecodeArgs {
         };
 
         let creation_block = transaction.block_number;
-        let mut transaction: TransactionRequest = match transaction.inner.inner.inner() {
-            AnyTxEnvelope::Ethereum(tx) => tx.clone().into(),
-            AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
-        };
+        let envelope = FoundryTxEnvelope::try_from(transaction)
+            .map_err(|e| eyre::eyre!("unsupported transaction type: {e}"))?;
+        let req: FoundryTransactionRequest = envelope.into();
+        let mut transaction: TransactionRequest = req.into_inner();
 
         // Extract creation code from creation tx input.
         let maybe_creation_code = if receipt.to.is_none()
@@ -470,7 +469,7 @@ impl VerifyBytecodeArgs {
             transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
-                configure_env_block(&mut evm_env, block, config.networks);
+                configure_env_block::<AnyNetwork>(&mut evm_env, block, config.networks);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"));

@@ -4422,6 +4422,7 @@ dependencies = [
  "foundry-config",
  "foundry-evm",
  "foundry-evm-networks",
+ "foundry-primitives",
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",
