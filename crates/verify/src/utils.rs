@@ -266,7 +266,7 @@ pub async fn get_tracing_executor(
     fork_blk_num: u64,
     evm_version: EvmVersion,
     evm_opts: EvmOpts,
-) -> Result<(Env, TracingExecutor)> {
+) -> Result<(EvmEnv, TxEnv, TracingExecutor)> {
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
 
@@ -284,17 +284,18 @@ pub async fn get_tracing_executor(
         None,
     )?;
 
-    Ok((env, executor))
+    let Env { evm_env, tx } = env;
+    Ok((evm_env, tx, executor))
 }
 
-pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock, config: NetworkConfigs) {
-    env.evm_env.block_env.timestamp = U256::from(block.header.timestamp());
-    env.evm_env.block_env.beneficiary = block.header.beneficiary();
-    env.evm_env.block_env.difficulty = block.header.difficulty();
-    env.evm_env.block_env.prevrandao = Some(block.header.mix_hash().unwrap_or_default());
-    env.evm_env.block_env.basefee = block.header.base_fee_per_gas().unwrap_or_default();
-    env.evm_env.block_env.gas_limit = block.header.gas_limit();
-    apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env.evm_env, block, config);
+pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: NetworkConfigs) {
+    evm_env.block_env.timestamp = U256::from(block.header.timestamp());
+    evm_env.block_env.beneficiary = block.header.beneficiary();
+    evm_env.block_env.difficulty = block.header.difficulty();
+    evm_env.block_env.prevrandao = Some(block.header.mix_hash().unwrap_or_default());
+    evm_env.block_env.basefee = block.header.base_fee_per_gas().unwrap_or_default();
+    evm_env.block_env.gas_limit = block.header.gas_limit();
+    apply_chain_and_block_specific_env_changes::<AnyNetwork>(evm_env, block, config);
 }
 
 pub fn deploy_contract(
