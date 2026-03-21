@@ -232,7 +232,7 @@ impl VerifyBytecodeArgs {
             // Deploy at genesis
             let gen_blk_num = 0_u64;
             let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-            let (mut evm_env, mut tx_env, mut executor) = crate::utils::get_tracing_executor(
+            let (mut evm_env, _, mut executor) = crate::utils::get_tracing_executor(
                 &mut fork_config,
                 gen_blk_num,
                 etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
@@ -243,7 +243,7 @@ impl VerifyBytecodeArgs {
             evm_env.block_env.number = U256::ZERO;
             let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
-            // Setup genesis tx and env.
+            // Setup genesis tx_env and evm_evm.
             let deployer = Address::with_last_byte(0x1);
             let mut gen_tx_req = TransactionRequest::default()
                 .with_from(deployer)
@@ -258,7 +258,7 @@ impl VerifyBytecodeArgs {
             }
 
             let kind = gen_tx_req.kind();
-            tx_env = gen_tx_req.try_into_tx_env(&evm_env)?;
+            let tx_env = gen_tx_req.try_into_tx_env(&evm_env)?;
 
             // Seed deployer account with funds
             let account_info = AccountInfo {

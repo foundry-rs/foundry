@@ -298,21 +298,21 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let (mut env, fork, chain, networks) =
+            let (mut evm_env, tx_env, fork, chain, networks) =
                 TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
-            env.evm_env.cfg_env.disable_block_gas_limit = true;
-            env.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-            env.evm_env.block_env.gas_limit = u64::MAX;
+            evm_env.cfg_env.disable_block_gas_limit = true;
+            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+            evm_env.block_env.gas_limit = u64::MAX;
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    env.evm_env.block_env.number = number.to();
+                    evm_env.block_env.number = number.to();
                 }
                 if let Some(time) = block_overrides.time {
-                    env.evm_env.block_env.timestamp = U256::from(time);
+                    evm_env.block_env.timestamp = U256::from(time);
                 }
             }
 
@@ -325,7 +325,7 @@ impl CallArgs {
                 })
                 .with_state_changes(shell::verbosity() > 4);
             let mut executor = TracingExecutor::new(
-                env,
+                (evm_env, tx_env),
                 fork,
                 evm_version,
                 trace_mode,

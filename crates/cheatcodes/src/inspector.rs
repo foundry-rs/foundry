@@ -21,42 +21,36 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_network::{Ethereum, Network};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
 };
-use alloy_rpc_types::{
-    AccessList,
-    request::{TransactionInput, TransactionRequest},
-};
+use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
-    SELECTOR_LEN, TransactionMaybeSigned,
+    SELECTOR_LEN,
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, EthCheatCtx, EvmEnv, FoundryCfg, FoundryInspectorExt, FoundryTransaction,
+    Breakpoints, EthCheatCtx, EvmEnv, FoundryInspectorExt, FoundryTransaction,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseError, DatabaseExt, FoundryJournalExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{EthNestedEvmClosure, NestedEvm, new_evm_with_inspector, with_cloned_context},
+    evm::{NestedEvm, NestedEvmClosure, new_eth_evm_with_inspector, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
-    Context, Inspector,
+    Inspector,
     bytecode::opcode as op,
     context::{
-        BlockEnv, Cfg, CfgEnv, ContextTr, JournalTr, Transaction, TransactionType, TxEnv,
-        result::EVMError,
+        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, result::EVMError,
     },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
@@ -66,6 +60,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
+    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
@@ -85,9 +80,6 @@ pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
-///
-/// The executor assembles the full inspector stack internally and never exposes it across the
-/// trait boundary. This keeps the trait free of `InspectorExt` (which is Eth-specific).
 pub trait CheatcodesExecutor<CTX: ContextTr> {
     /// Runs a closure with a nested EVM built from the current context.
     /// The inspector is assembled internally — never exposed to the caller.
@@ -95,7 +87,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: EthNestedEvmClosure<'_>,
+        f: NestedEvmClosure<'_, CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
@@ -112,7 +104,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        tx: &TransactionRequest,
+        tx: &CTX::Tx,
     ) -> eyre::Result<()>;
 
     /// Runs a closure with a fresh nested EVM built from a raw database and environment.
@@ -121,10 +113,10 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes,
-        db: &mut dyn DatabaseExt,
+        db: &mut dyn DatabaseExt<CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: EthNestedEvmClosure<'_>,
+        f: NestedEvmClosure<'_, CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
@@ -178,27 +170,27 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        f: EthNestedEvmClosure<'_>,
+        f: NestedEvmClosure<'_, CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, tx_env, journal_inner| {
-            let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
+            let mut evm = new_eth_evm_with_inspector(db, evm_env, tx_env, cheats);
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
-            let (sub_evm_env, sub_tx) = evm.to_env();
-            let sub_inner = evm.into_context().journaled_state.inner;
-            Ok(((), sub_evm_env, sub_tx, sub_inner))
+            let sub_evm_env = evm.to_evm_env();
+            let sub_inner = evm.journaled_state.inner.clone();
+            Ok((sub_evm_env, sub_inner))
         })
     }
 
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes,
-        db: &mut dyn DatabaseExt,
+        db: &mut dyn DatabaseExt<CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
         evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
         tx_env: CTX::Tx,
-        f: EthNestedEvmClosure<'_>,
+        f: NestedEvmClosure<'_, CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        let mut evm = new_evm_with_inspector(db, evm_env, tx_env, cheats);
+        let mut evm = new_eth_evm_with_inspector(db, evm_env, tx_env, cheats);
         f(&mut evm)
     }
 
@@ -211,7 +203,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
-        let (db, inner) = ecx.journal_mut().as_db_and_inner();
+        let (db, inner) = ecx.db_journal_inner_mut();
         db.transact(fork_id, transaction, evm_env, tx_env, inner, cheats)
     }
 
@@ -219,12 +211,11 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         &mut self,
         cheats: &mut Cheatcodes,
         ecx: &mut CTX,
-        tx: &TransactionRequest,
+        tx: &CTX::Tx,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
-        let tx_env = ecx.tx_clone();
-        let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, evm_env, tx_env, inner, cheats)
+        let (db, inner) = ecx.db_journal_inner_mut();
+        db.transact_from_tx(tx, evm_env, inner, cheats)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
@@ -261,12 +252,49 @@ impl TestContext {
 }
 
 /// Helps collecting transactions from different forks.
+///
+/// This type is intentionally network-agnostic — it stores raw EVM data (from, to, value, input,
+/// etc.) without requiring a `Network` type parameter. Conversion to network-specific types
+/// (e.g. `TransactionRequest`, `TxEnvelope`) happens later in the script layer.
 #[derive(Clone, Debug)]
-pub struct BroadcastableTransaction<N: Network = Ethereum> {
+pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<String>,
-    /// The transaction to broadcast.
-    pub transaction: TransactionMaybeSigned<N>,
+    /// Sender address.
+    pub from: Address,
+    /// Recipient (None for contract creation).
+    pub to: Option<TxKind>,
+    /// Ether value.
+    pub value: U256,
+    /// Calldata or init code.
+    pub input: Bytes,
+    /// Sender nonce.
+    pub nonce: u64,
+    /// Gas limit, if explicitly set.
+    pub gas: Option<u64>,
+    /// Whether this transaction was pre-signed or needs signing.
+    pub kind: BroadcastKind,
+}
+
+/// Distinguishes between unsigned transactions (from `startBroadcast`) that need signing, and
+/// pre-signed transactions (from `broadcastRawTransaction`) that carry raw RLP-encoded bytes.
+#[derive(Clone, Debug)]
+pub enum BroadcastKind {
+    /// Unsigned transaction collected during `startBroadcast`. Needs signing before broadcast.
+    Unsigned {
+        chain_id: Option<u64>,
+        blob_sidecar: Option<BlobTransactionSidecarVariant>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
+    },
+    /// Pre-signed transaction from `broadcastRawTransaction`. Contains raw RLP-encoded bytes.
+    Signed(Bytes),
+}
+
+impl BroadcastKind {
+    /// Creates an unsigned broadcast with no chain-specific fields set.
+    pub fn unsigned() -> Self {
+        Self::Unsigned { chain_id: None, blob_sidecar: None, authorization_list: None }
+    }
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -439,7 +467,7 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   cheatcode address: by default, the caller, test contract and newly deployed contracts are
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
-pub struct Cheatcodes<CTX: FoundryContextExt = Context<BlockEnv, TxEnv, CfgEnv>> {
+pub struct Cheatcodes {
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
     pub analysis: Option<CheatcodeAnalysis>,
 
@@ -447,7 +475,7 @@ pub struct Cheatcodes<CTX: FoundryContextExt = Context<BlockEnv, TxEnv, CfgEnv>>
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
-    pub block: Option<CTX::Block>,
+    pub block: Option<BlockEnv>,
 
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
@@ -572,13 +600,13 @@ pub struct Cheatcodes<CTX: FoundryContextExt = Context<BlockEnv, TxEnv, CfgEnv>>
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
-    pub wallets: Option<Wallets<Ethereum>>,
+    pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
     signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
     /// Used to determine whether the broadcasted call has dynamic gas limit.
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
-    pub execution_evm_version: Option<<CTX::Cfg as FoundryCfg>::Spec>,
+    pub execution_evm_version: Option<SpecId>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -653,12 +681,12 @@ impl Cheatcodes {
     }
 
     /// Returns the configured wallets if available, else creates a new instance.
-    pub fn wallets(&mut self) -> &Wallets<Ethereum> {
+    pub fn wallets(&mut self) -> &Wallets {
         self.wallets.get_or_insert_with(|| Wallets::new(MultiWallet::default(), None))
     }
 
     /// Sets the unlocked wallets.
-    pub fn set_wallets(&mut self, wallets: Wallets<Ethereum>) {
+    pub fn set_wallets(&mut self, wallets: Wallets) {
         self.wallets = Some(wallets);
     }
 
@@ -977,45 +1005,36 @@ impl Cheatcodes {
                         });
                     }
 
-                    let input = TransactionInput::new(call.input.bytes(ecx));
+                    let input = call.input.bytes(ecx);
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let account =
                         ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
 
-                    let mut tx_req = TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to: Some(TxKind::from(Some(call.target_address))),
-                        value: call.transfer_value(),
-                        input,
-                        nonce: Some(account.info.nonce),
-                        chain_id: Some(chain_id),
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
-                        ..Default::default()
-                    };
-
+                    let blob_sidecar = self.active_blob_sidecar.take();
                     let active_delegations = std::mem::take(&mut self.active_delegations);
-                    // Set active blob sidecar, if any.
-                    if let Some(blob_sidecar) = self.active_blob_sidecar.take() {
-                        // Ensure blob and delegation are not set for the same tx.
-                        if !active_delegations.is_empty() {
-                            let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
-                            return Some(CallOutcome {
-                                result: InterpreterResult {
-                                    result: InstructionResult::Revert,
-                                    output: Error::encode(msg),
-                                    gas,
-                                },
-                                memory_offset: call.return_memory_offset.clone(),
-                                was_precompile_called: false,
-                                precompile_call_logs: vec![],
-                            });
-                        }
-                        tx_req.set_blob_sidecar(blob_sidecar);
+
+                    // Ensure blob and delegation are not set for the same tx.
+                    if blob_sidecar.is_some() && !active_delegations.is_empty() {
+                        let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
+                        return Some(CallOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: Error::encode(msg),
+                                gas,
+                            },
+                            memory_offset: call.return_memory_offset.clone(),
+                            was_precompile_called: false,
+                            precompile_call_logs: vec![],
+                        });
                     }
 
+                    // Capture nonce before delegation bump (delegations increment the
+                    // account nonce but the transaction itself uses the pre-bump nonce).
+                    let nonce = account.info.nonce;
+
                     // Apply active EIP-7702 delegations, if any.
-                    if !active_delegations.is_empty() {
+                    let authorization_list = if !active_delegations.is_empty() {
                         for auth in &active_delegations {
                             let Ok(authority) = auth.recover_authority() else {
                                 continue;
@@ -1026,12 +1045,24 @@ impl Cheatcodes {
                                 account.info.nonce += 1;
                             }
                         }
-                        tx_req.authorization_list = Some(active_delegations);
-                    }
+                        Some(active_delegations)
+                    } else {
+                        None
+                    };
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc,
-                        transaction: TransactionMaybeSigned::new(tx_req),
+                        from: broadcast.new_origin,
+                        to: Some(TxKind::from(Some(call.target_address))),
+                        value: call.transfer_value().unwrap_or_default(),
+                        input,
+                        nonce,
+                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
+                        kind: BroadcastKind::Unsigned {
+                            chain_id: Some(chain_id),
+                            blob_sidecar,
+                            authorization_list,
+                        },
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -1776,14 +1807,13 @@ impl<CTX: EthCheatCtx> Inspector<CTX> for Cheatcodes {
                 let account = &ecx.journal().evm_state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
-                    transaction: TransactionMaybeSigned::new(TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to: None,
-                        value: Some(input.value()),
-                        input: TransactionInput::new(input.init_code()),
-                        nonce: Some(account.info.nonce),
-                        ..Default::default()
-                    }),
+                    from: broadcast.new_origin,
+                    to: None,
+                    value: input.value(),
+                    input: input.init_code(),
+                    nonce: account.info.nonce,
+                    gas: None,
+                    kind: BroadcastKind::unsigned(),
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));

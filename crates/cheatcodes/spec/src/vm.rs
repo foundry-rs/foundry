@@ -1828,6 +1828,11 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function projectRoot() external view returns (string memory path);
 
+    /// Get the source file path of the currently running test or script contract,
+    /// relative to the project root.
+    #[cheatcode(group = Filesystem)]
+    function currentFilePath() external view returns (string memory path);
+
     /// Returns the time since unix epoch in milliseconds.
     #[cheatcode(group = Filesystem)]
     function unixTime() external view returns (uint256 milliseconds);

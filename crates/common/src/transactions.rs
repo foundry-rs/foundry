@@ -2,7 +2,7 @@
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network::{AnyTransactionReceipt, Network, TransactionBuilder7702, TransactionResponse};
+use alloy_network::{AnyTransactionReceipt, Network, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{
     Provider,
@@ -245,7 +245,7 @@ impl<N: Network> TransactionMaybeSigned<N> {
 
     pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>>
     where
-        N::TransactionRequest: TransactionBuilder7702,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         match self {
             Self::Signed { tx, .. } => tx.authorization_list().map(|auths| auths.to_vec()),

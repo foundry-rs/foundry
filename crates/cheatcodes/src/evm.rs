@@ -2,20 +2,23 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error,
-    EthCheatCtx, Result, Vm::*, inspector::RecordDebugStepInfo,
+    EthCheatCtx, Result,
+    Vm::*,
+    inspector::{BroadcastKind, RecordDebugStepInfo},
 };
-use alloy_consensus::TxEnvelope;
+use alloy_consensus::{
+    Transaction as TransactionTrait, TxEnvelope, transaction::SignerRecoverable,
+};
 use alloy_evm::{EvmEnv, FromRecoveredTx};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
-    Address, B256, U256, hex, keccak256,
+    Address, B256, Bytes, U256, hex, keccak256,
     map::{B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
-    TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
@@ -25,7 +28,7 @@ use foundry_common::{
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
-    backend::{DatabaseExt, FoundryJournalExt, RevertStateSnapshotAction},
+    backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
@@ -319,7 +322,7 @@ impl Cheatcode for loadCall {
 }
 
 impl Cheatcode for loadAllocsCall {
-    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt<CTX>, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -339,7 +342,7 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+        let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.load_allocs(&allocs, inner)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
@@ -347,7 +350,7 @@ impl Cheatcode for loadAllocsCall {
 }
 
 impl Cheatcode for cloneAccountCall {
-    fn apply_stateful<CTX: ContextTr<Journal: FoundryJournalExt<CTX>, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -355,7 +358,7 @@ impl Cheatcode for cloneAccountCall {
 
         let account = ccx.ecx.journal_mut().load_account(*source)?;
         let genesis = genesis_account(account.data);
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+        let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
@@ -1121,12 +1124,21 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, &tx.clone().into())?;
+        let from = tx.recover_signer()?;
+        let tx_env = FromRecoveredTx::from_recovered_tx(&tx, from);
+
+        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, &tx_env)?;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
                 rpc: ccx.ecx.db().active_fork_url(),
-                transaction: TransactionMaybeSigned::new_signed(tx)?,
+                from,
+                to: Some(tx.kind()),
+                value: tx.value(),
+                input: tx.input().clone(),
+                nonce: tx.nonce(),
+                gas: Some(tx.gas_limit()),
+                kind: BroadcastKind::Signed(Bytes::copy_from_slice(&self.data)),
             });
         }
 
@@ -1216,7 +1228,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = {
-            let (_, journal) = ccx.ecx.journal_mut().as_db_and_inner();
+            let (_, journal) = ccx.ecx.db_journal_inner_mut();
             let mut state = journal.state.clone();
             for (addr, acc_mut) in &mut state {
                 if journal.warm_addresses.is_cold(addr) {
@@ -1235,7 +1247,7 @@ impl Cheatcode for executeTransactionCall {
         let mut cold_state = Some(cold_state);
         let modified_tx = modified_tx_env.clone();
         {
-            let (db, _) = ccx.ecx.journal_mut().as_db_and_inner();
+            let (db, _) = ccx.ecx.db_journal_inner_mut();
             executor.with_fresh_nested_evm(
                 ccx.state,
                 db,
@@ -1247,12 +1259,12 @@ impl Cheatcode for executeTransactionCall {
                     // Set depth to 1 for proper trace collection.
                     evm.journal_inner_mut().depth = 1;
                     res = Some(evm.transact(modified_tx.clone()));
-                    nested_env = Some(evm.to_env());
+                    nested_env = Some(evm.to_evm_env());
                     Ok(())
                 },
             )?;
         }
-        let (res, (mut nested_evm_env, _)) = (res.unwrap(), nested_env.unwrap());
+        let (res, mut nested_evm_env) = (res.unwrap(), nested_env.unwrap());
 
         // Restore env, preserving cheatcode cfg/block changes from the nested EVM
         // but restoring the original tx and basefee (which we zeroed for the nested call)
@@ -1410,7 +1422,7 @@ pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
 fn inner_snapshot_state<CTX: EthCheatCtx>(ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
     let evm_env =
         EvmEnv { cfg_env: ccx.ecx.cfg_mut().clone(), block_env: ccx.ecx.block_mut().clone() };
-    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
     Ok(id.abi_encode())
 }
@@ -1421,7 +1433,7 @@ fn inner_revert_to_state<CTX: EthCheatCtx>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let mut tx_env = ccx.ecx.tx_clone();
-    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    let (db, inner) = ccx.ecx.db_journal_inner_mut();
     if let Some(restored) = db.revert_state(
         snapshot_id,
         inner,
@@ -1444,7 +1456,7 @@ fn inner_revert_to_state_and_delete<CTX: EthCheatCtx>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let mut tx_env = ccx.ecx.tx_clone();
-    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
+    let (db, inner) = ccx.ecx.db_journal_inner_mut();
     if let Some(restored) = db.revert_state(
         snapshot_id,
         inner,

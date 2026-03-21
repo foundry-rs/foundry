@@ -1,4 +1,4 @@
-use alloy_network::{Ethereum, Network};
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes};
 use foundry_common::TransactionMaybeSigned;
 use revm_inspectors::tracing::types::CallKind;
@@ -22,7 +22,7 @@ pub struct AdditionalContract {
         deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
     )
 )]
-pub struct TransactionWithMetadata<N: Network = Ethereum> {
+pub struct TransactionWithMetadata<N: Network> {
     pub hash: Option<B256>,
     #[serde(rename = "transactionType")]
     pub opcode: CallKind,

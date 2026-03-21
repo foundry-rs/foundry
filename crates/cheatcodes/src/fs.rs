@@ -7,9 +7,8 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_network::ReceiptResponse;
+use alloy_network::{Ethereum, Network, ReceiptResponse};
 use alloy_primitives::{Bytes, U256, hex, map::Entry};
-use alloy_rpc_types::TransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
@@ -85,6 +84,19 @@ impl Cheatcode for projectRootCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state.config.root.display().to_string().abi_encode())
+    }
+}
+
+impl Cheatcode for currentFilePathCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let artifact = state
+            .config
+            .running_artifact
+            .as_ref()
+            .ok_or_else(|| fmt_err!("no running contract found"))?;
+        let relative = artifact.source.strip_prefix(&state.config.root).unwrap_or(&artifact.source);
+        Ok(relative.display().to_string().abi_encode())
     }
 }
 
@@ -785,7 +797,7 @@ impl Cheatcode for getBroadcasts_0Call {
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<Ethereum>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -805,7 +817,7 @@ impl Cheatcode for getBroadcasts_1Call {
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<Ethereum>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -858,7 +870,7 @@ impl Cheatcode for getDeploymentsCall {
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<Ethereum>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -884,8 +896,8 @@ fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
     }
 }
 
-fn parse_broadcast_results(
-    results: Vec<(TransactionWithMetadata, TransactionReceipt)>,
+fn parse_broadcast_results<N: Network>(
+    results: Vec<(TransactionWithMetadata<N>, N::ReceiptResponse)>,
 ) -> Vec<BroadcastTxSummary> {
     results
         .into_iter()
@@ -916,7 +928,7 @@ fn latest_broadcast(
         reader = reader.with_tx_type(filter);
     }
 
-    let broadcast = reader.read_latest()?;
+    let broadcast = reader.read_latest::<Ethereum>()?;
 
     let results = reader.into_tx_receipts(broadcast);
 

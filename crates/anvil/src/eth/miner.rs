@@ -2,7 +2,6 @@
 
 use crate::eth::pool::{Pool, transactions::PoolTransaction};
 use alloy_primitives::TxHash;
-use foundry_primitives::FoundryTxEnvelope;
 use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, StreamExt},
@@ -17,7 +16,7 @@ use std::{
 };
 use tokio::time::{Interval, MissedTickBehavior};
 
-pub struct Miner<T = FoundryTxEnvelope> {
+pub struct Miner<T> {
     /// The mode this miner currently operates in
     mode: Arc<RwLock<MiningMode>>,
     /// used for task wake up when the mining mode was forcefully changed

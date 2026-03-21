@@ -199,13 +199,13 @@ impl SessionSource {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
-        let env = self.config.evm_opts.env().await?;
+        let (evm_env, tx_env) = self.config.evm_opts.env().await?;
 
         let backend = match self.config.backend.clone() {
             Some(backend) => backend,
             None => {
                 let fork =
-                    self.config.evm_opts.get_fork(&self.config.foundry_config, env.evm_env.clone());
+                    self.config.evm_opts.get_fork(&self.config.foundry_config, evm_env.clone());
                 let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
                 backend
@@ -231,7 +231,7 @@ impl SessionSource {
             .gas_limit(self.config.evm_opts.gas_limit())
             .spec_id(self.config.foundry_config.evm_spec_id())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(env.evm_env, env.tx, backend);
+            .build(evm_env, tx_env, backend);
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }

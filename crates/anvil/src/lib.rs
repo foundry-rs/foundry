@@ -23,7 +23,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 pub use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryNetwork;
@@ -140,7 +140,13 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
-    let backend = Arc::new(config.setup().await?);
+    let backend = config.setup::<FoundryNetwork>().await?;
+
+    if let Some(state) = config.init_state.clone() {
+        backend.load_state(state).await.wrap_err("failed to load init state")?;
+    }
+
+    let backend = Arc::new(backend);
 
     if config.enable_auto_impersonate {
         backend.auto_impersonate_account(true);

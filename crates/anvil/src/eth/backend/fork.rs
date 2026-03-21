@@ -26,7 +26,7 @@ use alloy_rpc_types::{
 };
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
-use foundry_primitives::FoundryTxReceipt;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -664,7 +664,7 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
     /// Transactions to force include in the forked chain
-    pub force_transactions: Option<Vec<PoolTransaction>>,
+    pub force_transactions: Option<Vec<PoolTransaction<FoundryTxEnvelope>>>,
 }
 
 impl<N: Network> ClientForkConfig<N> {

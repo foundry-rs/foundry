@@ -1,8 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
-use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_provider::{
     Provider,
     network::{AnyNetwork, AnyRpcBlock},
@@ -19,9 +18,12 @@ use foundry_common::{abi::encode_args, compile::ProjectCompiler, ignore_metadata
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, constants::DEFAULT_CREATE2_DEPLOYER, core::decode::RevertDecoder,
-    executors::TracingExecutor, opts::EvmOpts, traces::TraceMode,
-    utils::apply_chain_and_block_specific_env_changes,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    core::decode::RevertDecoder,
+    executors::TracingExecutor,
+    opts::EvmOpts,
+    traces::TraceMode,
+    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
@@ -271,11 +273,11 @@ pub async fn get_tracing_executor(
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (env, fork, _chain, networks) =
+    let (evm_env, tx_env, fork, _chain, networks) =
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
     let executor = TracingExecutor::new(
-        env.clone(),
+        (evm_env.clone(), tx_env.clone()),
         fork,
         Some(fork_config.evm_version),
         TraceMode::Call,
@@ -284,17 +286,13 @@ pub async fn get_tracing_executor(
         None,
     )?;
 
-    let Env { evm_env, tx } = env;
-    Ok((evm_env, tx, executor))
+    Ok((evm_env, tx_env, executor))
 }
 
 pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: NetworkConfigs) {
-    evm_env.block_env.timestamp = U256::from(block.header.timestamp());
-    evm_env.block_env.beneficiary = block.header.beneficiary();
-    evm_env.block_env.difficulty = block.header.difficulty();
-    evm_env.block_env.prevrandao = Some(block.header.mix_hash().unwrap_or_default());
-    evm_env.block_env.basefee = block.header.base_fee_per_gas().unwrap_or_default();
-    evm_env.block_env.gas_limit = block.header.gas_limit();
+    let number = evm_env.block_env.number;
+    evm_env.block_env = block_env_from_header(&block.header);
+    evm_env.block_env.number = number;
     apply_chain_and_block_specific_env_changes::<AnyNetwork>(evm_env, block, config);
 }
 
