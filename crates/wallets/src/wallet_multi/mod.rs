@@ -2,7 +2,9 @@ use crate::{
     BrowserWalletOpts,
     signer::{PendingSigner, WalletSigner},
     utils,
+    wallet_browser::signer::BrowserSigner,
 };
+use alloy_network::Network;
 use alloy_primitives::map::AddressHashMap;
 use alloy_signer::Signer;
 use clap::Parser;
@@ -257,9 +259,6 @@ impl MultiWalletOpts {
         if let Some(turnkey_signers) = self.turnkey_signers()? {
             signers.extend(turnkey_signers);
         }
-        if let Some(browser_signer) = self.browser_signer().await? {
-            signers.push(browser_signer);
-        }
         if let Some((pending_keystores, unlocked)) = self.keystores()? {
             pending.extend(pending_keystores);
             signers.extend(unlocked);
@@ -496,18 +495,9 @@ impl MultiWalletOpts {
         None
     }
 
-    pub async fn browser_signer(&self) -> Result<Option<WalletSigner>> {
-        if self.browser.browser {
-            let browser_signer = WalletSigner::from_browser(
-                self.browser.browser_port,
-                !self.browser.browser_disable_open,
-                self.browser.browser_development,
-            )
-            .await?;
-            Ok(Some(browser_signer))
-        } else {
-            Ok(None)
-        }
+    /// Launches and returns the Browser signer if `--browser` flag is set
+    pub async fn browser_signer<N: Network>(&self) -> Result<Option<BrowserSigner<N>>> {
+        self.browser.run().await
     }
 }
 

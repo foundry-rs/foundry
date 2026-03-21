@@ -11,7 +11,10 @@ use foundry_common::{
     sh_warn,
 };
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
-use foundry_config::{DenyLevel, lint::Severity};
+use foundry_config::{
+    DenyLevel,
+    lint::{LintSpecificConfig, Severity},
+};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as _},
@@ -49,6 +52,9 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     lints.into_iter().map(|lint| lint.id()).collect()
 });
 
+static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
+    LazyLock::new(LintSpecificConfig::default);
+
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.
 #[derive(Debug)]
@@ -60,7 +66,7 @@ pub struct SolidityLinter<'a> {
     with_description: bool,
     with_json_emitter: bool,
     // lint-specific configuration
-    mixed_case_exceptions: &'a [String],
+    lint_specific: &'a LintSpecificConfig,
 }
 
 impl<'a> SolidityLinter<'a> {
@@ -72,7 +78,7 @@ impl<'a> SolidityLinter<'a> {
             lints_included: None,
             lints_excluded: None,
             with_json_emitter: false,
-            mixed_case_exceptions: &[],
+            lint_specific: &DEFAULT_LINT_SPECIFIC_CONFIG,
         }
     }
 
@@ -101,13 +107,13 @@ impl<'a> SolidityLinter<'a> {
         self
     }
 
-    pub fn with_mixed_case_exceptions(mut self, exceptions: &'a [String]) -> Self {
-        self.mixed_case_exceptions = exceptions;
+    pub fn with_lint_specific(mut self, lint_specific: &'a LintSpecificConfig) -> Self {
+        self.lint_specific = lint_specific;
         self
     }
 
     fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
-        LinterConfig { inline, mixed_case_exceptions: self.mixed_case_exceptions }
+        LinterConfig { inline, lint_specific: self.lint_specific }
     }
 
     fn include_lint(&self, lint: SolLint) -> bool {

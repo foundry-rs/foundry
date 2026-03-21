@@ -1,11 +1,26 @@
 use alloy_chains::{Chain, NamedChain};
-use alloy_network::{AnyTransactionReceipt, ReceiptResponse};
-use alloy_primitives::{TxHash, U256, utils::format_units};
-use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
+use alloy_network::{Network, ReceiptResponse};
+use alloy_primitives::{Address, TxHash, U256, utils::format_units};
+use alloy_provider::{
+    PendingTransactionBuilder, PendingTransactionError, Provider, RootProvider, WatchTxError,
+};
+use alloy_rpc_types::TransactionReceipt;
 use eyre::{Result, eyre};
 use forge_script_sequence::ScriptSequence;
-use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
+use foundry_common::{retry, retry::RetryError, shell};
 use std::time::Duration;
+
+/// Helper trait providing `contract_address` setter for generic `ReceiptResponse`
+pub trait FoundryReceiptResponse {
+    /// Sets address of the created contract, or `None` if the transaction was not a deployment.
+    fn set_contract_address(&mut self, contract_address: Address);
+}
+
+impl FoundryReceiptResponse for TransactionReceipt {
+    fn set_contract_address(&mut self, contract_address: Address) {
+        self.contract_address = Some(contract_address);
+    }
+}
 
 /// Marker error type for pending receipts
 #[derive(Debug, thiserror::Error)]
@@ -17,25 +32,25 @@ pub struct PendingReceiptError {
 }
 
 /// Convenience enum for internal signalling of transaction status
-pub enum TxStatus {
+pub enum TxStatus<R: ReceiptResponse> {
     Dropped,
-    Success(AnyTransactionReceipt),
-    Revert(AnyTransactionReceipt),
+    Success(R),
+    Revert(R),
 }
 
-impl From<AnyTransactionReceipt> for TxStatus {
-    fn from(receipt: AnyTransactionReceipt) -> Self {
+impl<R: ReceiptResponse> From<R> for TxStatus<R> {
+    fn from(receipt: R) -> Self {
         if !receipt.status() { Self::Revert(receipt) } else { Self::Success(receipt) }
     }
 }
 
 /// Checks the status of a txhash by first polling for a receipt, then for
 /// mempool inclusion. Returns the tx hash, and a status
-pub async fn check_tx_status(
-    provider: &RetryProvider,
+pub async fn check_tx_status<N: Network>(
+    provider: &RootProvider<N>,
     hash: TxHash,
     timeout: u64,
-) -> (TxHash, Result<TxStatus, eyre::Report>) {
+) -> (TxHash, Result<TxStatus<N::ReceiptResponse>, eyre::Report>) {
     let result = retry::Retry::new_no_delay(3)
         .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)
@@ -45,9 +60,9 @@ pub async fn check_tx_status(
             {
                 Ok(receipt) => {
                     // Check if the receipt is pending (missing block information)
-                    let is_pending = receipt.block_number.is_none()
-                        || receipt.block_hash.is_none()
-                        || receipt.transaction_index.is_none();
+                    let is_pending = receipt.block_number().is_none()
+                        || receipt.block_hash().is_none()
+                        || receipt.transaction_index().is_none();
 
                     if !is_pending {
                         return Ok(receipt.into());
@@ -86,21 +101,21 @@ pub async fn check_tx_status(
 }
 
 /// Prints parts of the receipt to stdout
-pub fn format_receipt(
+pub fn format_receipt<N: Network>(
     chain: Chain,
-    receipt: &AnyTransactionReceipt,
-    sequence: Option<&ScriptSequence>,
+    receipt: &N::ReceiptResponse,
+    sequence: Option<&ScriptSequence<N>>,
 ) -> String {
-    let gas_used = receipt.gas_used;
-    let gas_price = receipt.effective_gas_price;
-    let block_number = receipt.block_number.unwrap_or_default();
-    let success = receipt.inner.inner.inner.receipt.status.coerce_status();
+    let gas_used = receipt.gas_used();
+    let gas_price = receipt.effective_gas_price();
+    let block_number = receipt.block_number().unwrap_or_default();
+    let success = receipt.status();
 
     let (contract_name, function) = sequence
         .and_then(|seq| {
             seq.transactions
                 .iter()
-                .find(|tx| tx.hash == Some(receipt.transaction_hash))
+                .find(|tx| tx.hash == Some(receipt.transaction_hash()))
                 .map(|tx| (tx.contract_name.clone(), tx.function.clone()))
         })
         .unwrap_or((None, None));
@@ -113,8 +128,8 @@ pub fn format_receipt(
             } else {
                 "failed"
             },
-            "tx_hash": receipt.transaction_hash,
-            "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
+            "tx_hash": receipt.transaction_hash(),
+            "contract_address": receipt.contract_address().map(|addr| addr.to_string()),
             "block_number": block_number,
             "gas_used": gas_used,
             "gas_price": gas_price,
@@ -148,8 +163,8 @@ pub fn format_receipt(
         format!(
             "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_info}{function_info}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
             status = if success { "✅  [Success]" } else { "❌  [Failed]" },
-            tx_hash = receipt.transaction_hash,
-            contract_address = if let Some(addr) = &receipt.contract_address {
+            tx_hash = receipt.transaction_hash(),
+            contract_address = if let Some(addr) = receipt.contract_address() {
                 format!("\nContract Address: {}", addr.to_checksum(None))
             } else {
                 String::new()
@@ -179,10 +194,11 @@ pub fn format_receipt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::Ethereum;
     use alloy_primitives::B256;
     use std::collections::VecDeque;
 
-    fn mock_receipt(tx_hash: B256, success: bool) -> AnyTransactionReceipt {
+    fn mock_receipt(tx_hash: B256, success: bool) -> TransactionReceipt {
         serde_json::from_value(serde_json::json!({
             "type": "0x02", "status": if success { "0x1" } else { "0x0" },
             "cumulativeGasUsed": "0x5208", "logs": [], "transactionHash": tx_hash,
@@ -195,7 +211,11 @@ mod tests {
         .unwrap()
     }
 
-    fn mock_sequence(tx_hash: B256, contract: Option<&str>, func: Option<&str>) -> ScriptSequence {
+    fn mock_sequence(
+        tx_hash: B256,
+        contract: Option<&str>,
+        func: Option<&str>,
+    ) -> ScriptSequence<Ethereum> {
         let tx = serde_json::from_value(serde_json::json!({
             "hash": tx_hash, "transactionType": "CALL",
             "contractName": contract, "contractAddress": null, "function": func,
@@ -225,7 +245,7 @@ mod tests {
     #[test]
     fn format_receipt_without_sequence_omits_metadata() {
         let hash = B256::repeat_byte(0x42);
-        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, true), None);
+        let out = format_receipt::<Ethereum>(Chain::mainnet(), &mock_receipt(hash, true), None);
 
         assert!(!out.contains("Contract:"));
         assert!(!out.contains("Function:"));

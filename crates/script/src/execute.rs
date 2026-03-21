@@ -6,19 +6,19 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
+use alloy_network::{AnyNetwork, Ethereum};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
 };
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionInput;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     ContractsByArtifact,
     fmt::{format_token, format_token_raw},
-    provider::get_http_provider,
+    provider::ProviderBuilder,
 };
 use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
@@ -31,6 +31,7 @@ use foundry_evm::{
         render_trace_arena,
     },
 };
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::join_all;
 use itertools::Itertools;
 use std::path::Path;
@@ -42,6 +43,7 @@ pub struct LinkedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
 }
 
@@ -62,7 +64,7 @@ impl LinkedState {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     /// This includes the function to call and the calldata to pass to it.
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
-        let Self { args, script_config, script_wallets, build_data } = self;
+        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
 
         let target_contract = build_data.get_target_contract()?;
 
@@ -76,6 +78,7 @@ impl LinkedState {
             args,
             script_config,
             script_wallets,
+            browser_wallet,
             execution_data: ExecutionData {
                 func,
                 calldata,
@@ -93,6 +96,7 @@ pub struct PreExecutionState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
 }
@@ -122,6 +126,7 @@ impl PreExecutionState {
                 args: self.args,
                 script_config: self.script_config,
                 script_wallets: self.script_wallets,
+                browser_wallet: self.browser_wallet,
                 build_data: self.build_data.build_data,
             };
 
@@ -132,6 +137,7 @@ impl PreExecutionState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_result: result,
@@ -189,8 +195,8 @@ impl PreExecutionState {
                 && self.args.evm.sender.is_none()
             {
                 for tx in txs {
-                    if tx.transaction.to().is_none() {
-                        let sender = tx.transaction.from().expect("no sender");
+                    if tx.to.is_none() {
+                        let sender = tx.from;
                         if let Some(ns) = new_sender {
                             if sender != ns {
                                 sh_warn!(
@@ -236,7 +242,7 @@ impl RpcData {
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = get_http_provider(rpc);
+            let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
             let id = provider.get_chain_id().await.ok()?;
             NamedChain::try_from(id).ok()
         });
@@ -275,6 +281,7 @@ pub struct ExecutedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,
@@ -287,16 +294,7 @@ impl ExecutedState {
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
-        let mut txs = self.execution_result.transactions.clone().unwrap_or_default();
-
-        // Ensure that unsigned transactions have both `data` and `input` populated to avoid
-        // issues with eth_estimateGas and eth_sendTransaction requests.
-        for tx in &mut txs {
-            if let Some(req) = tx.transaction.as_unsigned_mut() {
-                req.input =
-                    TransactionInput::maybe_both(std::mem::take(&mut req.input).into_input());
-            }
-        }
+        let txs = self.execution_result.transactions.clone().unwrap_or_default();
         let rpc_data = RpcData::from_transactions(&txs);
 
         if rpc_data.is_multi_chain() {
@@ -313,6 +311,7 @@ impl ExecutedState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             execution_data: self.execution_data,
             execution_result: self.execution_result,

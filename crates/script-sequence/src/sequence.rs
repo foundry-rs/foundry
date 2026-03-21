@@ -1,5 +1,5 @@
 use crate::transaction::TransactionWithMetadata;
-use alloy_network::AnyTransactionReceipt;
+use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{TxHash, hex, map::HashMap};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, fs, shell};
@@ -20,24 +20,6 @@ pub struct NestedValue {
     pub value: String,
 }
 
-/// Helper that saves the transactions sequence and its state on which transactions have been
-/// broadcasted
-#[derive(Clone, Default, Serialize, Deserialize)]
-pub struct ScriptSequence {
-    pub transactions: VecDeque<TransactionWithMetadata>,
-    pub receipts: Vec<AnyTransactionReceipt>,
-    pub libraries: Vec<String>,
-    pub pending: Vec<TxHash>,
-    #[serde(skip)]
-    /// Contains paths to the sequence files
-    /// None if sequence should not be saved to disk (e.g. part of a multi-chain sequence)
-    pub paths: Option<(PathBuf, PathBuf)>,
-    pub returns: HashMap<String, NestedValue>,
-    pub timestamp: u128,
-    pub chain: u64,
-    pub commit: Option<String>,
-}
-
 /// Sensitive values from the transactions in a script sequence
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SensitiveTransactionMetadata {
@@ -50,8 +32,46 @@ pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }
 
-impl From<&ScriptSequence> for SensitiveScriptSequence {
-    fn from(sequence: &ScriptSequence) -> Self {
+/// Helper that saves the transactions sequence and its state on which transactions have been
+/// broadcasted
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
+    deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+))]
+pub struct ScriptSequence<N: Network> {
+    pub transactions: VecDeque<TransactionWithMetadata<N>>,
+    pub receipts: Vec<N::ReceiptResponse>,
+    pub libraries: Vec<String>,
+    pub pending: Vec<TxHash>,
+    #[serde(skip)]
+    /// Contains paths to the sequence files
+    /// None if sequence should not be saved to disk (e.g. part of a multi-chain sequence)
+    pub paths: Option<(PathBuf, PathBuf)>,
+    pub returns: HashMap<String, NestedValue>,
+    pub timestamp: u128,
+    pub chain: u64,
+    pub commit: Option<String>,
+}
+
+impl<N: Network> Default for ScriptSequence<N> {
+    fn default() -> Self {
+        Self {
+            transactions: Default::default(),
+            receipts: Default::default(),
+            libraries: Default::default(),
+            pending: Default::default(),
+            paths: Default::default(),
+            returns: Default::default(),
+            timestamp: Default::default(),
+            chain: Default::default(),
+            commit: Default::default(),
+        }
+    }
+}
+
+impl<N: Network> From<&ScriptSequence<N>> for SensitiveScriptSequence {
+    fn from(sequence: &ScriptSequence<N>) -> Self {
         Self {
             transactions: sequence
                 .transactions
@@ -62,7 +82,7 @@ impl From<&ScriptSequence> for SensitiveScriptSequence {
     }
 }
 
-impl ScriptSequence {
+impl<N: Network> ScriptSequence<N> {
     /// Loads The sequence for the corresponding json file
     pub fn load(
         config: &Config,
@@ -70,7 +90,10 @@ impl ScriptSequence {
         target: &ArtifactId,
         chain_id: u64,
         dry_run: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
         let (path, sensitive_path) = Self::get_paths(config, sig, target, chain_id, dry_run)?;
 
         let mut script_sequence: Self = fs::read_json_file(&path)
@@ -91,7 +114,10 @@ impl ScriptSequence {
     /// Saves the transactions as file if it's a standalone deployment.
     /// `save_ts` should be set to true for checkpoint updates, which might happen many times and
     /// could result in us saving many identical files.
-    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()>
+    where
+        N::TxEnvelope: Serialize,
+    {
         self.sort_receipts();
 
         if self.transactions.is_empty() {
@@ -140,13 +166,13 @@ impl ScriptSequence {
         Ok(())
     }
 
-    pub fn add_receipt(&mut self, receipt: AnyTransactionReceipt) {
+    pub fn add_receipt(&mut self, receipt: N::ReceiptResponse) {
         self.receipts.push(receipt);
     }
 
     /// Sorts all receipts with ascending transaction index
     pub fn sort_receipts(&mut self) {
-        self.receipts.sort_by_key(|r| (r.block_number, r.transaction_index));
+        self.receipts.sort_by_key(|r| (r.block_number(), r.transaction_index()));
     }
 
     pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
@@ -203,7 +229,7 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn transactions(&self) -> impl Iterator<Item = &TransactionMaybeSigned> {
+    pub fn transactions(&self) -> impl Iterator<Item = &TransactionMaybeSigned<N>> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 

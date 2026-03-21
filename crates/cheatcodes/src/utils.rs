@@ -177,10 +177,10 @@ impl Cheatcode for randomBytes8Call {
 }
 
 impl Cheatcode for pauseTracingCall {
-    fn apply_full(
+    fn apply_full<CTX: ContextTr>(
         &self,
-        ccx: &mut crate::CheatsCtxt,
-        executor: &mut dyn CheatcodesExecutor,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to pause
@@ -200,10 +200,10 @@ impl Cheatcode for pauseTracingCall {
 }
 
 impl Cheatcode for resumeTracingCall {
-    fn apply_full(
+    fn apply_full<CTX: ContextTr>(
         &self,
-        ccx: &mut crate::CheatsCtxt,
-        executor: &mut dyn CheatcodesExecutor,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+        executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to unpause
@@ -235,7 +235,7 @@ impl Cheatcode for interceptInitcodeCall {
 }
 
 impl Cheatcode for setArbitraryStorage_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target } = self;
         ccx.state.arbitrary_storage().mark_arbitrary(target, false);
 
@@ -244,7 +244,7 @@ impl Cheatcode for setArbitraryStorage_0Call {
 }
 
 impl Cheatcode for setArbitraryStorage_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { target, overwrite } = self;
         ccx.state.arbitrary_storage().mark_arbitrary(target, *overwrite);
 
@@ -253,7 +253,10 @@ impl Cheatcode for setArbitraryStorage_1Call {
 }
 
 impl Cheatcode for copyStorageCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { from, to } = self;
 
         ensure!(
@@ -300,7 +303,7 @@ impl Cheatcode for shuffleCall {
 }
 
 impl Cheatcode for setSeedCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { seed } = self;
         ccx.state.set_seed(*seed);
         Ok(Default::default())

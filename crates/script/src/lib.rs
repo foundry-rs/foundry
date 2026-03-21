@@ -13,6 +13,7 @@ extern crate tracing;
 
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
+use alloy_network::Ethereum;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -228,25 +229,28 @@ pub struct ScriptArgs {
 impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
+        let browser_wallet = self.wallets.browser_signer::<Ethereum>().await?;
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
         } else if self.evm.sender.is_none() {
-            // If no sender was explicitly set via --sender and there's exactly one signer
-            // (e.g. from --account or --keystore), use that signer's address as the sender.
-            // This makes --account behave consistently with --private-key.
+            // If no sender was explicitly set via --sender, auto-detect it from available signers:
+            // use the sole signer's address if there's exactly one, or fall back to the browser
+            // wallet address if present.
             if let Ok(signers) = script_wallets.signers()
                 && signers.len() == 1
             {
                 evm_opts.sender = signers[0];
+            } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
+                evm_opts.sender = signer
             }
         }
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
-        Ok(PreprocessedState { args: self, script_config, script_wallets })
+        Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
     /// Executes the script
@@ -454,12 +458,7 @@ impl ScriptArgs {
         };
 
         for (data, to) in result.transactions.iter().flat_map(|txes| {
-            txes.iter().filter_map(|tx| {
-                tx.transaction
-                    .input()
-                    .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to()))
-            })
+            txes.iter().filter_map(|tx| (tx.input.len() > max_size).then_some((&tx.input, tx.to)))
         }) {
             let mut offset = 0;
 
@@ -636,13 +635,13 @@ impl ScriptConfig {
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
-        let env = self.evm_opts.evm_env().await?;
+        let (evm_env, tx_env) = self.evm_opts.env().await?;
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
-                    let fork = self.evm_opts.get_fork(&self.config, env.clone());
+                    let fork = self.evm_opts.get_fork(&self.config, evm_env.clone());
                     let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
@@ -685,7 +684,7 @@ impl ScriptConfig {
             });
         }
 
-        Ok(ScriptRunner::new(builder.build(env, db), self.evm_opts.clone()))
+        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
 }
 

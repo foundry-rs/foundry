@@ -38,7 +38,6 @@ mesc.workspace = true
 unit-prefix = "0.5.2"
 rayon.workspace = true
 regex.workspace = true
-reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 serde.workspace = true

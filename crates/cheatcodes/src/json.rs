@@ -352,11 +352,15 @@ impl Cheatcode for writeJson_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json: value, path, valueKey } = self;
 
-        // Read, parse, and update the JSON object
+        // Read, parse, and update the JSON object.
+        // If the file doesn't exist, start with an empty JSON object so the file is created.
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let data_string = fs::locked_read_to_string(&data_path)?;
-        let mut data =
-            serde_json::from_str(&data_string).unwrap_or_else(|_| Value::String(data_string));
+        let mut data = if data_path.exists() {
+            let data_string = fs::locked_read_to_string(&data_path)?;
+            serde_json::from_str(&data_string).unwrap_or_else(|_| Value::String(data_string))
+        } else {
+            Value::Object(Default::default())
+        };
         upsert_json_value(&mut data, value, valueKey)?;
 
         // Write the updated content back to the file

@@ -6,11 +6,8 @@
 // `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
 // the concrete `Executor` type.
 
-use crate::{
-    Env,
-    inspectors::{
-        Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
-    },
+use crate::inspectors::{
+    Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -99,8 +96,10 @@ pub struct Executor {
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
     backend: Arc<Backend>,
-    /// The EVM environment.
-    env: Env,
+    /// The EVM environment (block and cfg).
+    evm_env: EvmEnv,
+    /// The transaction environment.
+    tx_env: TxEnv,
     /// The Revm inspector stack.
     inspector: InspectorStack,
     /// The gas limit for calls and deployments.
@@ -114,7 +113,8 @@ impl Executor {
     #[inline]
     pub fn new(
         mut backend: Backend,
-        env: Env,
+        evm_env: EvmEnv,
+        tx_env: TxEnv,
         inspector: InspectorStack,
         gas_limit: u64,
         legacy_assertions: bool,
@@ -132,19 +132,23 @@ impl Executor {
             },
         );
 
-        Self { backend: Arc::new(backend), env, inspector, gas_limit, legacy_assertions }
+        Self {
+            backend: Arc::new(backend),
+            evm_env,
+            tx_env,
+            inspector,
+            gas_limit,
+            legacy_assertions,
+        }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
-        let env = Env::new_with_spec_id(
-            self.env.evm_env.cfg_env.clone(),
-            self.env.evm_env.block_env.clone(),
-            self.env.tx.clone(),
-            self.spec_id(),
-        );
+        let mut evm_env = self.evm_env.clone();
+        evm_env.cfg_env.spec = self.spec_id();
         Self {
             backend: Arc::new(backend),
-            env,
+            evm_env,
+            tx_env: self.tx_env.clone(),
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
@@ -164,14 +168,24 @@ impl Executor {
         Arc::make_mut(&mut self.backend)
     }
 
-    /// Returns a reference to the EVM environment.
-    pub fn env(&self) -> &Env {
-        &self.env
+    /// Returns a reference to the EVM environment (block and cfg).
+    pub fn evm_env(&self) -> &EvmEnv {
+        &self.evm_env
     }
 
-    /// Returns a mutable reference to the EVM environment.
-    pub fn env_mut(&mut self) -> &mut Env {
-        &mut self.env
+    /// Returns a mutable reference to the EVM environment (block and cfg).
+    pub fn evm_env_mut(&mut self) -> &mut EvmEnv {
+        &mut self.evm_env
+    }
+
+    /// Returns a reference to the transaction environment.
+    pub fn tx_env(&self) -> &TxEnv {
+        &self.tx_env
+    }
+
+    /// Returns a mutable reference to the transaction environment.
+    pub fn tx_env_mut(&mut self) -> &mut TxEnv {
+        &mut self.tx_env
     }
 
     /// Returns a reference to the EVM inspector.
@@ -186,12 +200,12 @@ impl Executor {
 
     /// Returns the EVM spec ID.
     pub fn spec_id(&self) -> SpecId {
-        self.env.evm_env.cfg_env.spec
+        self.evm_env.cfg_env.spec
     }
 
     /// Sets the EVM spec ID.
     pub fn set_spec_id(&mut self, spec_id: SpecId) {
-        self.env.evm_env.cfg_env.spec = spec_id;
+        self.evm_env.cfg_env.spec = spec_id;
     }
 
     /// Returns the gas limit for calls and deployments.
@@ -263,7 +277,7 @@ impl Executor {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
-        self.env_mut().tx.nonce = nonce;
+        self.tx_env_mut().nonce = nonce;
         Ok(())
     }
 
@@ -340,8 +354,8 @@ impl Executor {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TxKind::Create, code, value);
-        self.deploy_with_env(env, rd)
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
+        self.deploy_with_env(evm_env, tx_env, rd)
     }
 
     /// Deploys a contract using the given `env` and commits the new state to the underlying
@@ -349,21 +363,22 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.kind` is not `TxKind::Create(_)`.
+    /// Panics if `tx_env.kind` is not `TxKind::Create(_)`.
     #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
-        env: Env,
+        evm_env: EvmEnv,
+        tx_env: TxEnv,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.kind, TxKind::Create),
+            matches!(tx_env.kind, TxKind::Create),
             "Expected create transaction, got {:?}",
-            env.tx.kind
+            tx_env.kind
         );
-        trace!(sender=%env.tx.caller, "deploying contract");
+        trace!(sender=%tx_env.caller, "deploying contract");
 
-        let mut result = self.transact_with_env(env)?;
+        let mut result = self.transact_with_env(evm_env, tx_env)?;
         result = result.into_result(rd)?;
         let Some(Output::Create(_, Some(address))) = result.out else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
@@ -400,9 +415,9 @@ impl Executor {
         res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
-        self.env_mut().evm_env.block_env = res.env.evm_env.block_env.clone();
+        self.evm_env_mut().block_env = res.evm_env.block_env.clone();
         // and also the chainid, which can be set manually
-        self.env_mut().evm_env.cfg_env.chain_id = res.env.evm_env.cfg_env.chain_id;
+        self.evm_env_mut().cfg_env.chain_id = res.evm_env.cfg_env.chain_id;
 
         let success =
             self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
@@ -466,8 +481,8 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
-        self.call_with_env(env)
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.call_with_env(evm_env, tx_env)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -480,10 +495,10 @@ impl Executor {
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult> {
-        let mut env = self.build_test_env(from, to.into(), calldata, value);
-        env.tx.set_signed_authorization(authorization_list);
-        env.tx.tx_type = 4;
-        self.call_with_env(env)
+        let (evm_env, mut tx_env) = self.build_test_env(from, to.into(), calldata, value);
+        tx_env.set_signed_authorization(authorization_list);
+        tx_env.tx_type = 4;
+        self.call_with_env(evm_env, tx_env)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -494,8 +509,8 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
-        self.transact_with_env(env)
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.transact_with_env(evm_env, tx_env)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -508,31 +523,51 @@ impl Executor {
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult> {
-        let mut env = self.build_test_env(from, TxKind::Call(to), calldata, value);
-        env.tx.set_signed_authorization(authorization_list);
-        env.tx.tx_type = 4;
-        self.transact_with_env(env)
+        let (evm_env, mut tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        tx_env.set_signed_authorization(authorization_list);
+        tx_env.tx_type = 4;
+        self.transact_with_env(evm_env, tx_env)
     }
 
-    /// Execute the transaction configured in `env.tx`.
+    /// Execute the transaction configured in `tx_env`.
     ///
     /// The state after the call is **not** persisted.
     #[instrument(name = "call", level = "debug", skip_all)]
-    pub fn call_with_env(&self, mut env: Env) -> eyre::Result<RawCallResult> {
+    pub fn call_with_env(
+        &self,
+        mut evm_env: EvmEnv,
+        mut tx_env: TxEnv,
+    ) -> eyre::Result<RawCallResult> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut env, stack.as_inspector())?;
-        convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())
+        let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
+        convert_executed_result(
+            evm_env,
+            tx_env,
+            stack,
+            result,
+            backend.has_state_snapshot_failure(),
+        )
     }
 
-    /// Execute the transaction configured in `env.tx`.
+    /// Execute the transaction configured in `tx_env`.
     #[instrument(name = "transact", level = "debug", skip_all)]
-    pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
+    pub fn transact_with_env(
+        &mut self,
+        mut evm_env: EvmEnv,
+        mut tx_env: TxEnv,
+    ) -> eyre::Result<RawCallResult> {
         let mut stack = self.inspector().clone();
         let backend = self.backend_mut();
-        let result = backend.inspect(&mut env, stack.as_inspector())?;
-        let mut result =
-            convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())?;
+        let result: revm::context::result::ExecResultAndState<ExecutionResult> =
+            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
+        let mut result = convert_executed_result(
+            evm_env,
+            tx_env,
+            stack,
+            result,
+            backend.has_state_snapshot_failure(),
+        )?;
         self.commit(&mut result);
         Ok(result)
     }
@@ -561,7 +596,7 @@ impl Executor {
         }
 
         // Persist the changed environment.
-        self.inspector_mut().set_env(&result.env);
+        self.inspector_mut().set_env(&result.evm_env, &result.tx_env);
     }
 
     /// Returns `true` if a test can be considered successful.
@@ -703,36 +738,41 @@ impl Executor {
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
     /// the cheatcode state in between calls.
-    fn build_test_env(&self, caller: Address, kind: TxKind, data: Bytes, value: U256) -> Env {
-        Env {
-            evm_env: EvmEnv {
-                cfg_env: {
-                    let mut cfg = self.env().evm_env.cfg_env.clone();
-                    cfg.spec = self.spec_id();
-                    cfg
-                },
-                // We always set the gas price to 0 so we can execute the transaction regardless of
-                // network conditions - the actual gas price is kept in `self.block` and is applied
-                // by the cheatcode handler if it is enabled
-                block_env: BlockEnv {
-                    basefee: 0,
-                    gas_limit: self.gas_limit,
-                    ..self.env().evm_env.block_env.clone()
-                },
+    fn build_test_env(
+        &self,
+        caller: Address,
+        kind: TxKind,
+        data: Bytes,
+        value: U256,
+    ) -> (EvmEnv, TxEnv) {
+        let evm_env = EvmEnv {
+            cfg_env: {
+                let mut cfg = self.evm_env.cfg_env.clone();
+                cfg.spec = self.spec_id();
+                cfg
             },
-            tx: TxEnv {
-                caller,
-                kind,
-                data,
-                value,
-                // As above, we set the gas price to 0.
-                gas_price: 0,
-                gas_priority_fee: None,
+            // We always set the gas price to 0 so we can execute the transaction regardless of
+            // network conditions - the actual gas price is kept in `self.block` and is applied
+            // by the cheatcode handler if it is enabled
+            block_env: BlockEnv {
+                basefee: 0,
                 gas_limit: self.gas_limit,
-                chain_id: Some(self.env().evm_env.cfg_env.chain_id),
-                ..self.env().tx.clone()
+                ..self.evm_env.block_env.clone()
             },
-        }
+        };
+        let tx_env = TxEnv {
+            caller,
+            kind,
+            data,
+            value,
+            // As above, we set the gas price to 0.
+            gas_price: 0,
+            gas_priority_fee: None,
+            gas_limit: self.gas_limit,
+            chain_id: Some(self.evm_env.cfg_env.chain_id),
+            ..self.tx_env.clone()
+        };
+        (evm_env, tx_env)
     }
 
     pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
@@ -869,8 +909,10 @@ pub struct RawCallResult {
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
     pub state_changeset: StateChangeset,
-    /// The `revm::Env` after the call
-    pub env: Env,
+    /// The `EvmEnv` after the call
+    pub evm_env: EvmEnv,
+    /// The `TxEnv` after the call
+    pub tx_env: TxEnv,
     /// The cheatcode states after execution
     pub cheatcodes: Option<Box<Cheatcodes>>,
     /// The raw output of the execution
@@ -897,7 +939,8 @@ impl Default for RawCallResult {
             edge_coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
-            env: Env::default(),
+            evm_env: EvmEnv::default(),
+            tx_env: TxEnv::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -1032,7 +1075,8 @@ impl std::ops::DerefMut for CallResult {
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
 fn convert_executed_result(
-    env: Env,
+    evm_env: EvmEnv,
+    tx_env: TxEnv,
     inspector: InspectorStack,
     ResultAndState { result, state: state_changeset }: ResultAndState,
     has_state_snapshot_failure: bool,
@@ -1050,10 +1094,10 @@ fn convert_executed_result(
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas(
-        env.evm_env.cfg_env.spec,
-        &env.tx.data,
-        env.tx.kind.is_create(),
-        env.tx.access_list.len().try_into()?,
+        evm_env.cfg_env.spec,
+        &tx_env.data,
+        tx_env.kind.is_create(),
+        tx_env.access_list.len().try_into()?,
         0,
         0,
     );
@@ -1098,7 +1142,8 @@ fn convert_executed_result(
         edge_coverage,
         transactions,
         state_changeset,
-        env,
+        evm_env,
+        tx_env,
         cheatcodes,
         out,
         chisel_state,

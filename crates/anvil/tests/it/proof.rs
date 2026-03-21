@@ -2,10 +2,11 @@
 
 use alloy_primitives::{Address, B256, Bytes, U256, address, fixed_bytes};
 use anvil::{NodeConfig, eth::EthApi, spawn};
+use foundry_primitives::FoundryNetwork;
 use std::{collections::BTreeMap, str::FromStr};
 
 async fn verify_account_proof(
-    api: &EthApi,
+    api: &EthApi<FoundryNetwork>,
     address: Address,
     proof: impl IntoIterator<Item = &str>,
 ) {
@@ -17,7 +18,7 @@ async fn verify_account_proof(
 }
 
 async fn verify_storage_proof(
-    api: &EthApi,
+    api: &EthApi<FoundryNetwork>,
     address: Address,
     slot: B256,
     proof: impl IntoIterator<Item = &str>,

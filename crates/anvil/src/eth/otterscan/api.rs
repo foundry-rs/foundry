@@ -3,7 +3,7 @@ use crate::eth::{
     error::{BlockchainError, Result},
     macros::node_info,
 };
-use alloy_consensus::Transaction as TransactionTrait;
+use alloy_consensus::{BlockHeader, Transaction as TransactionTrait};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse,
     ReceiptResponse, TransactionResponse,
@@ -19,10 +19,11 @@ use alloy_rpc_types::{
         parity::{Action, CreateAction, CreateOutput, TraceOutput},
     },
 };
+use foundry_primitives::FoundryNetwork;
 use futures::future::join_all;
 use itertools::Itertools;
 
-impl EthApi {
+impl EthApi<FoundryNetwork> {
     /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
     /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
     ///
@@ -376,7 +377,7 @@ impl EthApi {
         let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
         // Reuse timestamp from the block we already have
-        let timestamp = block.header.timestamp;
+        let timestamp = block.header.timestamp();
 
         let receipts = join_all(receipt_futs.map(|r| async move {
             if let Ok(Some(r)) = r.await {
@@ -425,7 +426,7 @@ impl EthApi {
                     ts
                 } else {
                     let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                    block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp
+                    block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp()
                 };
                 let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })

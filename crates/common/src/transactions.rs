@@ -1,6 +1,6 @@
 //! Wrappers for transactions.
 
-use alloy_consensus::{Transaction, TxEnvelope, transaction::SignerRecoverable};
+use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{AnyTransactionReceipt, Network, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -8,10 +8,10 @@ use alloy_provider::{
     Provider,
     network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
 };
-use alloy_rpc_types::{BlockId, TransactionRequest};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::BlockId;
 use eyre::Result;
 use foundry_common_fmt::{UIfmt, UIfmtReceiptExt, get_pretty_receipt_attr};
+use foundry_primitives::FoundryTransactionBuilder;
 use serde::{Deserialize, Serialize};
 
 /// Helper type to carry a transaction along with an optional revert reason
@@ -33,12 +33,12 @@ where
 {
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<P: Provider<N>>(&mut self, provider: &P) -> Result<()> {
+    pub async fn update_revert_reason(&mut self, provider: &dyn Provider<N>) -> Result<()> {
         self.revert_reason = self.fetch_revert_reason(provider).await?;
         Ok(())
     }
 
-    async fn fetch_revert_reason<P: Provider<N>>(&self, provider: &P) -> Result<Option<String>> {
+    async fn fetch_revert_reason(&self, provider: &dyn Provider<N>) -> Result<Option<String>> {
         // If the transaction succeeded, there is no revert reason to fetch
         if self.receipt.status() {
             return Ok(None);
@@ -92,7 +92,11 @@ revertReason         {}",
     }
 }
 
-impl UIfmt for TransactionMaybeSigned {
+impl<N: Network> UIfmt for TransactionMaybeSigned<N>
+where
+    N::TxEnvelope: UIfmt,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
     fn pretty(&self) -> String {
         match self {
             Self::Signed { tx, .. } => tx.pretty(),
@@ -110,22 +114,22 @@ nonce                {}
 to                   {}
 type                 {}
 value                {}",
-                tx.access_list
+                tx.access_list()
                     .as_ref()
                     .map(|a| a.iter().collect::<Vec<_>>())
                     .unwrap_or_default()
                     .pretty(),
-                tx.chain_id.pretty(),
+                tx.chain_id().pretty(),
                 tx.gas_limit().unwrap_or_default(),
-                tx.gas_price.pretty(),
-                tx.input.input.pretty(),
-                tx.max_fee_per_blob_gas.pretty(),
-                tx.max_fee_per_gas.pretty(),
-                tx.max_priority_fee_per_gas.pretty(),
-                tx.nonce.pretty(),
-                tx.to.as_ref().map(|a| a.to()).unwrap_or_default().pretty(),
-                tx.transaction_type.unwrap_or_default(),
-                tx.value.pretty(),
+                tx.gas_price().pretty(),
+                tx.input().pretty(),
+                tx.max_fee_per_blob_gas().pretty(),
+                tx.max_fee_per_gas().pretty(),
+                tx.max_priority_fee_per_gas().pretty(),
+                tx.nonce().pretty(),
+                tx.to().pretty(),
+                tx.output_tx_type(),
+                tx.value().pretty(),
             ),
         }
     }
@@ -156,29 +160,32 @@ where
 }
 
 /// Used for broadcasting transactions
-/// A transaction can either be a [`TransactionRequest`] waiting to be signed
-/// or a [`TxEnvelope`], already signed
+/// A transaction can either be a `TransactionRequest` waiting to be signed
+/// or a `TxEnvelope`, already signed
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum TransactionMaybeSigned {
+pub enum TransactionMaybeSigned<N: Network> {
     Signed {
         #[serde(flatten)]
-        tx: TxEnvelope,
+        tx: N::TxEnvelope,
         from: Address,
     },
-    Unsigned(WithOtherFields<TransactionRequest>),
+    Unsigned(N::TransactionRequest),
 }
 
-impl TransactionMaybeSigned {
+impl<N: Network> TransactionMaybeSigned<N> {
     /// Creates a new (unsigned) transaction for broadcast
-    pub fn new(tx: WithOtherFields<TransactionRequest>) -> Self {
+    pub fn new(tx: N::TransactionRequest) -> Self {
         Self::Unsigned(tx)
     }
 
     /// Creates a new signed transaction for broadcast.
     pub fn new_signed(
-        tx: TxEnvelope,
-    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError> {
+        tx: N::TxEnvelope,
+    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError>
+    where
+        N::TxEnvelope: SignerRecoverable,
+    {
         let from = tx.recover_signer()?;
         Ok(Self::Signed { tx, from })
     }
@@ -187,7 +194,7 @@ impl TransactionMaybeSigned {
         matches!(self, Self::Unsigned(_))
     }
 
-    pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {
+    pub fn as_unsigned_mut(&mut self) -> Option<&mut N::TransactionRequest> {
         match self {
             Self::Unsigned(tx) => Some(tx),
             _ => None,
@@ -197,28 +204,28 @@ impl TransactionMaybeSigned {
     pub fn from(&self) -> Option<Address> {
         match self {
             Self::Signed { from, .. } => Some(*from),
-            Self::Unsigned(tx) => tx.from,
+            Self::Unsigned(tx) => tx.from(),
         }
     }
 
     pub fn input(&self) -> Option<&Bytes> {
         match self {
             Self::Signed { tx, .. } => Some(tx.input()),
-            Self::Unsigned(tx) => tx.input.input(),
+            Self::Unsigned(tx) => tx.input(),
         }
     }
 
     pub fn to(&self) -> Option<TxKind> {
         match self {
             Self::Signed { tx, .. } => Some(tx.kind()),
-            Self::Unsigned(tx) => tx.to,
+            Self::Unsigned(tx) => tx.kind(),
         }
     }
 
     pub fn value(&self) -> Option<U256> {
         match self {
             Self::Signed { tx, .. } => Some(tx.value()),
-            Self::Unsigned(tx) => tx.value,
+            Self::Unsigned(tx) => tx.value(),
         }
     }
 
@@ -232,30 +239,19 @@ impl TransactionMaybeSigned {
     pub fn nonce(&self) -> Option<u64> {
         match self {
             Self::Signed { tx, .. } => Some(tx.nonce()),
-            Self::Unsigned(tx) => tx.nonce,
+            Self::Unsigned(tx) => tx.nonce(),
         }
     }
 
-    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>> {
+    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         match self {
             Self::Signed { tx, .. } => tx.authorization_list().map(|auths| auths.to_vec()),
-            Self::Unsigned(tx) => tx.authorization_list.as_deref().map(|auths| auths.to_vec()),
+            Self::Unsigned(tx) => tx.authorization_list().map(|auths| auths.to_vec()),
         }
         .filter(|auths| !auths.is_empty())
-    }
-}
-
-impl From<TransactionRequest> for TransactionMaybeSigned {
-    fn from(tx: TransactionRequest) -> Self {
-        Self::new(WithOtherFields::new(tx))
-    }
-}
-
-impl TryFrom<TxEnvelope> for TransactionMaybeSigned {
-    type Error = alloy_consensus::crypto::RecoveryError;
-
-    fn try_from(tx: TxEnvelope) -> core::result::Result<Self, Self::Error> {
-        Self::new_signed(tx)
     }
 }
 

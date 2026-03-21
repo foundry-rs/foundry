@@ -18,6 +18,7 @@ foundry-cli-markdown.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-primitives.workspace = true
 foundry-wallets.workspace = true
 
 foundry-compilers.workspace = true
@@ -25,6 +26,8 @@ solar.workspace = true
 
 alloy-eips.workspace = true
 alloy-dyn-abi.workspace = true
+alloy-network.workspace = true
+alloy-signer.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true

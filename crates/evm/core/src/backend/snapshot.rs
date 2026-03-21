@@ -1,5 +1,5 @@
 use super::JournaledState;
-use crate::Env;
+use alloy_evm::EvmEnv;
 use alloy_primitives::{
     B256, U256,
     map::{AddressHashMap, HashMap},
@@ -21,14 +21,14 @@ pub struct BackendStateSnapshot<T> {
     pub db: T,
     /// The journaled_state state at a specific point
     pub journaled_state: JournaledState,
-    /// Contains the env at the time of the snapshot
-    pub env: Env,
+    /// Contains the evm env at the time of the snapshot
+    pub snap_evm_env: EvmEnv,
 }
 
 impl<T> BackendStateSnapshot<T> {
     /// Takes a new state snapshot.
-    pub fn new(db: T, journaled_state: JournaledState, env: Env) -> Self {
-        Self { db, journaled_state, env }
+    pub fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv) -> Self {
+        Self { db, journaled_state, snap_evm_env: evm_env }
     }
 
     /// Called when this state snapshot is reverted.

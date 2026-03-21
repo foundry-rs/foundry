@@ -17,6 +17,7 @@ foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
+foundry-primitives.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
@@ -33,7 +34,6 @@ alloy-provider.workspace = true
 alloy-pubsub.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
-alloy-serde.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport-http = { workspace = true, features = [
     "reqwest",

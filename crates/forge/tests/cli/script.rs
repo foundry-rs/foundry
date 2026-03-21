@@ -2,6 +2,7 @@
 
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_hardforks::EthereumHardfork;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
@@ -2419,7 +2420,8 @@ contract ContractScript is Script {
         .find(|file| file.ends_with("run-latest.json"))
         .expect("No broadcast artifacts");
 
-    let sequence: ScriptSequence = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let sequence: ScriptSequence<Ethereum> =
+        foundry_common::fs::read_json_file(&run_latest).unwrap();
 
     assert_eq!(sequence.transactions.len(), 2);
     assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
@@ -2566,7 +2568,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                0
 to                   
-type                 0
+type                 EIP-1559
 value                0
 
 ### Transaction 2 ###
@@ -2581,7 +2583,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
-type                 0
+type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
 data (decoded): run(uint256,uint256)(
@@ -3061,7 +3063,7 @@ contract FactoryScript is Script {
     .assert_success();
 
     let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
-    let script_sequence: ScriptSequence = serde_json::from_reader(
+    let script_sequence: ScriptSequence<Ethereum> = serde_json::from_reader(
         fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
     )
     .expect("no script sequence");

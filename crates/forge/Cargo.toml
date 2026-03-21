@@ -54,15 +54,17 @@ foundry-debugger.workspace = true
 foundry-wallets = { workspace = true, optional = true }
 
 alloy-chains.workspace = true
+alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-network.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
-alloy-rpc-types.workspace = true
-alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
+
+foundry-primitives.workspace = true
+tempo-alloy.workspace = true
 
 revm.workspace = true
 
@@ -106,7 +108,6 @@ alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 
 mockall = "0.14"
 globset = "0.4"

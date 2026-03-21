@@ -10,7 +10,6 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, TestFunctionExt, get_contract_name,
-    shell::verbosity,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -18,7 +17,7 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
-    Env,
+    EvmEnv,
     backend::Backend,
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder},
@@ -31,7 +30,7 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
-use revm::primitives::hardfork::SpecId;
+use revm::{context::TxEnv, primitives::hardfork::SpecId};
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -294,7 +293,9 @@ pub struct TestRunnerConfig {
     /// EVM configuration.
     pub evm_opts: EvmOpts,
     /// EVM environment.
-    pub env: Env,
+    pub evm_env: EvmEnv,
+    /// Transaction environment.
+    pub tx_env: TxEnv,
     /// EVM version.
     pub spec_id: SpecId,
     /// The address which will be used to deploy the initial contracts and send all transactions.
@@ -389,7 +390,7 @@ impl TestRunnerConfig {
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.env.clone(), db)
+            .build(self.evm_env.clone(), self.tx_env.clone(), db)
     }
 
     fn trace_mode(&self) -> TraceMode {
@@ -397,7 +398,6 @@ impl TestRunnerConfig {
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)
-            .with_state_changes(verbosity() > 4)
     }
 }
 
@@ -502,7 +502,8 @@ impl MultiContractRunnerBuilder {
     pub fn build<C: Compiler<CompilerContract = Contract>>(
         self,
         output: &ProjectCompileOutput,
-        env: Env,
+        evm_env: EvmEnv,
+        tx_env: TxEnv,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
         let root = &self.config.root;
@@ -601,7 +602,8 @@ impl MultiContractRunnerBuilder {
 
             tcfg: TestRunnerConfig {
                 evm_opts,
-                env,
+                evm_env,
+                tx_env,
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,

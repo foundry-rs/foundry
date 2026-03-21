@@ -3,9 +3,11 @@ use std::str::FromStr;
 use super::TempoOpts;
 use crate::utils::{parse_ether_value, parse_json};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, hex};
 use alloy_rlp::Decodable;
 use clap::Parser;
+use foundry_primitives::FoundryTransactionBuilder;
 
 /// CLI helper to parse a EIP-7702 authorization list.
 /// Can be either a hex-encoded signed authorization or an address.
@@ -108,6 +110,41 @@ pub struct TransactionOpts {
 
     #[command(flatten)]
     pub tempo: TempoOpts,
+}
+
+impl TransactionOpts {
+    /// Applies gas, value, fee, and network-specific options to a transaction request.
+    pub fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        if let Some(gas_limit) = self.gas_limit {
+            tx.set_gas_limit(gas_limit.to());
+        }
+
+        if let Some(value) = self.value {
+            tx.set_value(value);
+        }
+
+        if let Some(gas_price) = self.gas_price {
+            if legacy {
+                tx.set_gas_price(gas_price.to());
+            } else {
+                tx.set_max_fee_per_gas(gas_price.to());
+            }
+        }
+
+        if !legacy && let Some(priority_fee) = self.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
+        }
+
+        if let Some(max_blob_fee) = self.blob_gas_price {
+            tx.set_max_fee_per_blob_gas(max_blob_fee.to())
+        }
+
+        // set network-specific options
+        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
+    }
 }
 
 #[cfg(test)]

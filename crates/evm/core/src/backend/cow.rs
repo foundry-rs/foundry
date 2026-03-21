@@ -2,22 +2,22 @@
 
 use super::BackendError;
 use crate::{
-    AsEnvMut, Env, EnvMut, InspectorExt,
+    EthInspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
     fork::{CreateFork, ForkId},
 };
-use alloy_evm::Evm;
+use alloy_evm::{Evm, EvmEnv};
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types::TransactionRequest;
+use alloy_primitives::{Address, B256, TxKind, U256};
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
+    context::TxEnv,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
     primitives::{HashMap as Map, hardfork::SpecId},
@@ -47,15 +47,15 @@ pub struct CowBackend<'a> {
     ///
     /// No calls on the `CowBackend` will ever persistently modify the `backend`'s state.
     pub backend: Cow<'a, Backend>,
-    /// The [SpecId] to initialize the backend with on first mutable access.
+    /// Pending initialization params for the backend on first mutable access.
     /// `None` means the backend has already been initialized for the current call.
-    spec_id: Option<SpecId>,
+    pending_init: Option<(SpecId, Address, TxKind)>,
 }
 
 impl<'a> CowBackend<'a> {
     /// Creates a new `CowBackend` with the given `Backend`.
     pub fn new_borrowed(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), spec_id: Some(SpecId::default()) }
+        Self { backend: Cow::Borrowed(backend), pending_init: None }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -63,20 +63,27 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: InspectorExt>(
+    pub fn inspect<I: EthInspectorExt>(
         &mut self,
-        env: &mut Env,
+        evm_env: &mut EvmEnv,
+        tx_env: &mut TxEnv,
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
-        self.spec_id = Some(env.evm_env.cfg_env.spec);
+        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller, tx_env.kind));
 
-        let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
+        let mut evm = crate::evm::new_eth_evm_with_inspector(
+            self,
+            evm_env.clone(),
+            tx_env.clone(),
+            inspector,
+        );
 
-        let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
+        let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
-        *env = evm.as_env_mut().to_owned();
+        *evm_env = EvmEnv::new(evm.cfg.clone(), evm.block.clone());
+        *tx_env = evm.tx.clone();
 
         Ok(res)
     }
@@ -91,12 +98,10 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend.
     ///
     /// If this is the first time this is called, the backed is cloned and initialized.
-    fn backend_mut(&mut self, env: &EnvMut<'_>) -> &mut Backend {
-        if let Some(spec_id) = self.spec_id.take() {
+    fn backend_mut(&mut self) -> &mut Backend {
+        if let Some((spec_id, caller, tx_kind)) = self.pending_init.take() {
             let backend = self.backend.to_mut();
-            let mut env = env.to_owned();
-            env.evm_env.cfg_env.spec = spec_id;
-            backend.initialize(&env);
+            backend.initialize(spec_id, caller, tx_kind);
             return backend;
         }
         self.backend.to_mut()
@@ -104,7 +109,7 @@ impl<'a> CowBackend<'a> {
 
     /// Returns a mutable instance of the Backend if it is initialized.
     fn initialized_backend_mut(&mut self) -> Option<&mut Backend> {
-        if self.spec_id.is_none() {
+        if self.pending_init.is_none() {
             return Some(self.backend.to_mut());
         }
         None
@@ -112,18 +117,19 @@ impl<'a> CowBackend<'a> {
 }
 
 impl DatabaseExt for CowBackend<'_> {
-    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &mut EnvMut<'_>) -> U256 {
-        self.backend_mut(env).snapshot_state(journaled_state, env)
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, evm_env: &EvmEnv) -> U256 {
+        self.backend_mut().snapshot_state(journaled_state, evm_env)
     }
 
     fn revert_state(
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
-        current: &mut EnvMut<'_>,
+        evm_env: &mut EvmEnv,
+        tx_env: &mut TxEnv,
         action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
-        self.backend_mut(current).revert_state(id, journaled_state, current, action)
+        self.backend_mut().revert_state(id, journaled_state, evm_env, tx_env, action)
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
@@ -155,62 +161,61 @@ impl DatabaseExt for CowBackend<'_> {
     fn select_fork(
         &mut self,
         id: LocalForkId,
-        env: &mut EnvMut<'_>,
+        evm_env: &mut EvmEnv,
+        tx_env: &mut TxEnv,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut(env).select_fork(id, env, journaled_state)
+        self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)
     }
 
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        env: &mut EnvMut<'_>,
+        evm_env: &mut EvmEnv,
+        tx_env: &mut TxEnv,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut(env).roll_fork(id, block_number, env, journaled_state)
+        self.backend_mut().roll_fork(id, block_number, evm_env, tx_env, journaled_state)
     }
 
     fn roll_fork_to_transaction(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut EnvMut<'_>,
+        evm_env: &mut EvmEnv,
+        tx_env: &mut TxEnv,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
+        self.backend_mut().roll_fork_to_transaction(
+            id,
+            transaction,
+            evm_env,
+            tx_env,
+            journaled_state,
+        )
     }
 
     fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        mut env: Env,
+        evm_env: EvmEnv,
+        tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(&env.as_env_mut()).transact(
-            id,
-            transaction,
-            env,
-            journaled_state,
-            inspector,
-        )
+        self.backend_mut().transact(id, transaction, evm_env, tx_env, journaled_state, inspector)
     }
 
     fn transact_from_tx(
         &mut self,
-        transaction: &TransactionRequest,
-        mut env: Env,
+        tx_env: &TxEnv,
+        evm_env: EvmEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(&env.as_env_mut()).transact_from_tx(
-            transaction,
-            env,
-            journaled_state,
-            inspector,
-        )
+        self.backend_mut().transact_from_tx(tx_env, evm_env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
