@@ -10,7 +10,6 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, TestFunctionExt, get_contract_name,
-    shell::verbosity,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -399,7 +398,6 @@ impl TestRunnerConfig {
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)
-            .with_state_changes(verbosity() > 4)
     }
 }
 

@@ -685,7 +685,10 @@ impl EthApi<FoundryNetwork> {
         self.backend.revert_state_snapshot(id).await
     }
 
-    async fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest> {
+    async fn block_request(
+        &self,
+        block_number: Option<BlockId>,
+    ) -> Result<BlockRequest<FoundryTxEnvelope>> {
         let block_request = match block_number {
             Some(BlockId::Number(BlockNumber::Pending)) => {
                 let pending_txs = self.pool.ready_transactions().collect();
@@ -2919,7 +2922,8 @@ impl EthApi<FoundryNetwork> {
             // address -> cumulative nonce
             let mut nonces: HashMap<Address, u64> = HashMap::default();
 
-            let mut txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::default();
+            let mut txs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>> =
+                HashMap::default();
             for pair in pairs {
                 let (tx_data, block_index) = pair;
 
@@ -3085,7 +3089,7 @@ impl EthApi<FoundryNetwork> {
         node_info!("txpool_inspect");
         let mut inspect = TxpoolInspect::default();
 
-        fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
+        fn convert(tx: Arc<PoolTransaction<FoundryTxEnvelope>>) -> TxpoolInspectSummary {
             let tx = &tx.pending_transaction.transaction;
             let to = tx.to();
             let gas_price = tx.max_fee_per_gas();
@@ -3122,7 +3126,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         node_info!("txpool_content");
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
-        fn convert(tx: Arc<PoolTransaction>) -> Result<AnyRpcTransaction> {
+        fn convert(tx: Arc<PoolTransaction<FoundryTxEnvelope>>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
             let tx = transaction_build(
                 Some(tx.hash()),
@@ -3419,7 +3423,7 @@ impl EthApi<FoundryNetwork> {
     /// Adds the given transaction to the pool
     fn add_pending_transaction(
         &self,
-        pending_transaction: PendingTransaction,
+        pending_transaction: PendingTransaction<FoundryTxEnvelope>,
         requires: Vec<TxMarker>,
         provides: Vec<TxMarker>,
     ) -> Result<TxHash> {

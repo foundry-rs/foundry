@@ -4,12 +4,13 @@ pub use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use revm::{
     Context, Database,
-    context::{Block, BlockEnv, CfgEnv, JournalTr, Transaction, TxEnv},
+    context::{Block, BlockEnv, Cfg, CfgEnv, Transaction, TxEnv},
     context_interface::{ContextTr, transaction::AccessList},
+    inspector::JournalExt,
     primitives::{TxKind, hardfork::SpecId},
 };
 
-use crate::backend::{DatabaseExt, FoundryJournalExt};
+use crate::backend::{DatabaseExt, JournaledState};
 
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
 pub trait FoundryBlock: Block {
@@ -178,7 +179,7 @@ impl FoundryTransaction for TxEnv {
 }
 
 /// Marker trait for Foundry's [`CfgEnv`] type, abstracting `Spec` type.
-pub trait FoundryCfg: Clone + Debug {
+pub trait FoundryCfg: Cfg + Clone + Debug {
     type Spec: Into<SpecId> + Clone + Debug;
 }
 
@@ -191,7 +192,12 @@ impl<SPEC: Into<SpecId> + Clone + Debug> FoundryCfg for CfgEnv<SPEC> {
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
 /// Cheatcodes like `vm.warp()`, `vm.roll()`, `vm.chainId()` need to mutate these fields.
 pub trait FoundryContextExt:
-    ContextTr<Block: FoundryBlock + Clone, Tx: FoundryTransaction + Clone, Cfg: FoundryCfg>
+    ContextTr<
+        Block: FoundryBlock + Clone,
+        Tx: FoundryTransaction + Clone,
+        Cfg: FoundryCfg,
+        Journal: JournalExt,
+    >
 {
     /// Mutable reference to the block environment.
     fn block_mut(&mut self) -> &mut Self::Block;
@@ -199,6 +205,8 @@ pub trait FoundryContextExt:
     fn tx_mut(&mut self) -> &mut Self::Tx;
     /// Mutable reference to the configuration environment.
     fn cfg_mut(&mut self) -> &mut Self::Cfg;
+    /// Mutable reference to the db and the journal inner.
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState);
     /// Sets block environment.
     fn set_block(&mut self, block: Self::Block) {
         *self.block_mut() = block;
@@ -210,6 +218,10 @@ pub trait FoundryContextExt:
     /// Sets configuration environment.
     fn set_cfg(&mut self, cfg: Self::Cfg) {
         *self.cfg_mut() = cfg;
+    }
+    /// Sets journal inner.
+    fn set_journal_inner(&mut self, journal_inner: JournaledState) {
+        *self.db_journal_inner_mut().1 = journal_inner;
     }
     /// Sets EVM environment.
     fn set_evm(&mut self, evm_env: EvmEnv<<Self::Cfg as FoundryCfg>::Spec, Self::Block>)
@@ -232,8 +244,8 @@ pub trait FoundryContextExt:
     }
 }
 
-impl<DB: Database, J: JournalTr<Database = DB>, C> FoundryContextExt
-    for Context<BlockEnv, TxEnv, CfgEnv, DB, J, C>
+impl<BLOCK: FoundryBlock + Clone, TX: FoundryTransaction + Clone, CFG: FoundryCfg, DB: Database>
+    FoundryContextExt for Context<BLOCK, TX, CFG, DB>
 {
     fn block_mut(&mut self) -> &mut Self::Block {
         &mut self.block
@@ -243,6 +255,9 @@ impl<DB: Database, J: JournalTr<Database = DB>, C> FoundryContextExt
     }
     fn cfg_mut(&mut self) -> &mut Self::Cfg {
         &mut self.cfg
+    }
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
+        (&mut self.journaled_state.database, &mut self.journaled_state.inner)
     }
 }
 
@@ -257,8 +272,7 @@ pub trait EthCheatCtx:
         Block = BlockEnv,
         Tx = TxEnv,
         Cfg = CfgEnv,
-        Journal: FoundryJournalExt<Self>,
-        Db: DatabaseExt,
+        Db: DatabaseExt<Self::Block, Self::Tx, <Self::Cfg as FoundryCfg>::Spec>,
     >
 {
 }
@@ -267,8 +281,7 @@ impl<CTX> EthCheatCtx for CTX where
             Block = BlockEnv,
             Tx = TxEnv,
             Cfg = CfgEnv,
-            Journal: FoundryJournalExt<Self>,
-            Db: DatabaseExt,
+            Db: DatabaseExt<Self::Block, Self::Tx, <Self::Cfg as FoundryCfg>::Spec>,
         >
 {
 }

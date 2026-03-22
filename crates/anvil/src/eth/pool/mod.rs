@@ -40,7 +40,6 @@ use alloy_consensus::Transaction;
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_primitives::FoundryTxEnvelope;
 use futures::channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -48,7 +47,7 @@ use std::{collections::VecDeque, fmt, sync::Arc};
 pub mod transactions;
 
 /// Transaction pool that performs validation.
-pub struct Pool<T = FoundryTxEnvelope> {
+pub struct Pool<T> {
     /// processes all pending transactions
     inner: RwLock<PoolInner<T>>,
     /// listeners for new ready transactions
@@ -226,7 +225,7 @@ impl<T: Transaction> Pool<T> {
 ///
 /// Contains all transactions that are ready to be executed
 #[derive(Debug)]
-struct PoolInner<T = FoundryTxEnvelope> {
+struct PoolInner<T> {
     ready_transactions: ReadyTransactions<T>,
     pending_transactions: PendingTransactions<T>,
 }
@@ -434,7 +433,7 @@ impl<T: Transaction> PoolInner<T> {
 }
 
 /// Represents the outcome of a prune
-pub struct PruneResult<T = FoundryTxEnvelope> {
+pub struct PruneResult<T> {
     /// a list of added transactions that a pruned marker satisfied
     pub promoted: Vec<AddedTransaction<T>>,
     /// all transactions that  failed to be promoted and now are discarded
@@ -463,7 +462,7 @@ impl<T> fmt::Debug for PruneResult<T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ReadyTransaction<T = FoundryTxEnvelope> {
+pub struct ReadyTransaction<T> {
     /// the hash of the submitted transaction
     hash: TxHash,
     /// transactions promoted to the ready queue
@@ -486,7 +485,7 @@ impl<T> ReadyTransaction<T> {
 }
 
 #[derive(Clone, Debug)]
-pub enum AddedTransaction<T = FoundryTxEnvelope> {
+pub enum AddedTransaction<T> {
     /// transaction was successfully added and being processed
     Ready(ReadyTransaction<T>),
     /// Transaction was successfully added but not yet queued for processing

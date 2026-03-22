@@ -45,7 +45,7 @@ pub struct NodeService<N: Network> {
 
 impl<N: Network> NodeService<N>
 where
-    Backend<N>: TransactionValidator,
+    Backend<N>: TransactionValidator<N::TxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     pub fn new(
@@ -70,7 +70,7 @@ where
 
 impl<N: Network> Future for NodeService<N>
 where
-    Backend<N>: TransactionValidator,
+    Backend<N>: TransactionValidator<N::TxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     type Output = NodeResult<()>;
@@ -126,7 +126,7 @@ struct BlockProducer<N: Network> {
 
 impl<N: Network> BlockProducer<N>
 where
-    Backend<N>: TransactionValidator,
+    Backend<N>: TransactionValidator<N::TxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     fn new(backend: Arc<Backend<N>>) -> Self {
@@ -136,10 +136,10 @@ where
 
 impl<N: Network> Stream for BlockProducer<N>
 where
-    Backend<N>: TransactionValidator + Send + Sync + 'static,
+    Backend<N>: TransactionValidator<N::TxEnvelope> + Send + Sync + 'static,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static,
 {
-    type Item = MinedBlockOutcome;
+    type Item = MinedBlockOutcome<N::TxEnvelope>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();

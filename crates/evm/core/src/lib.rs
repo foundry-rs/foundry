@@ -6,11 +6,16 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
-use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
+use revm::{
+    Context, Inspector,
+    context::{BlockEnv, CfgEnv, TxEnv},
+    inspector::NoOpInspector,
+    interpreter::CreateInputs,
+    primitives::hardfork::SpecId,
+};
 use revm_inspectors::access_list::AccessListInspector;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
@@ -74,16 +79,17 @@ pub trait FoundryInspectorExt {
     }
 }
 
-/// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
+/// Combined trait: `Inspector<Context<...>>` + [`FoundryInspectorExt`].
 ///
 /// For generic multi-network code, use `I: FoundryInspectorExt + Inspector<CTX>` instead.
-pub trait EthInspectorExt:
-    for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
+pub trait EthInspectorExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
+    for<'a> Inspector<Context<BLOCK, TX, CfgEnv<SPEC>, &'a mut dyn DatabaseExt>> + FoundryInspectorExt
 {
 }
 
-impl<T> EthInspectorExt for T where
-    T: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
+impl<BLOCK, TX, SPEC, T> EthInspectorExt<BLOCK, TX, SPEC> for T where
+    T: for<'a> Inspector<Context<BLOCK, TX, CfgEnv<SPEC>, &'a mut dyn DatabaseExt>>
+        + FoundryInspectorExt
 {
 }
 

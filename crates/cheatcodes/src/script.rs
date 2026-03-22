@@ -2,7 +2,6 @@
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
-use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
@@ -349,30 +348,30 @@ pub struct Broadcast {
 
 /// Contains context for wallet management.
 #[derive(Debug)]
-pub struct WalletsInner<N: Network> {
+pub struct WalletsInner {
     /// All signers in scope of the script.
-    pub multi_wallet: MultiWallet<N>,
+    pub multi_wallet: MultiWallet,
     /// Optional signer provided as `--sender` flag.
     pub provided_sender: Option<Address>,
 }
 
 /// Cloneable wrapper around [`WalletsInner`].
 #[derive(Debug, Clone)]
-pub struct Wallets<N: Network> {
+pub struct Wallets {
     /// Inner data.
-    pub inner: Arc<Mutex<WalletsInner<N>>>,
+    pub inner: Arc<Mutex<WalletsInner>>,
 }
 
-impl<N: Network> Wallets<N> {
+impl Wallets {
     #[expect(missing_docs)]
-    pub fn new(multi_wallet: MultiWallet<N>, provided_sender: Option<Address>) -> Self {
+    pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
         Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }
 
     /// Consumes [Wallets] and returns [MultiWallet].
     ///
     /// Panics if [Wallets] is still in use.
-    pub fn into_multi_wallet(self) -> MultiWallet<N> {
+    pub fn into_multi_wallet(self) -> MultiWallet {
         Arc::into_inner(self.inner)
             .map(|m| m.into_inner().multi_wallet)
             .unwrap_or_else(|| panic!("not all instances were dropped"))
@@ -385,18 +384,13 @@ impl<N: Network> Wallets<N> {
 
     /// Locks inner Mutex and returns all signer addresses in the [MultiWallet].
     pub fn signers(&self) -> Result<Vec<Address>> {
-        let mut wallets = self.inner.lock();
-        let (signers, browser) = wallets.multi_wallet.signers()?;
-        Ok(signers.keys().copied().chain(browser.map(|b| b.address())).collect())
+        Ok(self.inner.lock().multi_wallet.signers()?.keys().copied().collect())
     }
 
     /// Number of signers in the [MultiWallet].
     pub fn len(&self) -> usize {
         let mut inner = self.inner.lock();
-        match inner.multi_wallet.signers() {
-            Ok((signers, browser)) => signers.len() + usize::from(browser.is_some()),
-            Err(_) => 0,
-        }
+        inner.multi_wallet.signers().map_or(0, |signers| signers.len())
     }
 
     /// Whether the [MultiWallet] is empty.
@@ -425,7 +419,7 @@ fn broadcast<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
         if let Some(provided_sender) = wallets.provided_sender {
             new_origin = Some(provided_sender);
         } else {
-            let (signers, _) = wallets.multi_wallet.signers()?;
+            let signers = wallets.multi_wallet.signers()?;
             if signers.len() == 1 {
                 let address = signers.keys().next().unwrap();
                 new_origin = Some(*address);

@@ -682,7 +682,9 @@ impl TestArgs {
                     }
                 }
 
-                // Extract and display backtrace for failed tests when verbosity >= 3
+                // Extract and display backtrace for failed tests when verbosity >= 3.
+                // At verbosity 3-4 backtraces show contract/function names only.
+                // At verbosity 5 backtraces include source file locations.
                 if !silent
                     && result.status.is_failure()
                     && verbosity >= 3

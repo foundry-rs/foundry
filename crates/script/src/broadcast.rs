@@ -246,7 +246,8 @@ where
 {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets<N>,
+    pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<N>>,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind<N>,
 }
@@ -317,8 +318,13 @@ where
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
-            let signers: Vec<Address> =
-                self.script_wallets.signers().map_err(|e| eyre::eyre!("{e}"))?;
+            let signers: Vec<Address> = self
+                .script_wallets
+                .signers()
+                .map_err(|e| eyre::eyre!("{e}"))?
+                .into_iter()
+                .chain(self.browser_wallet.as_ref().map(|b| b.address()))
+                .collect();
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
@@ -335,11 +341,11 @@ where
                 );
             }
 
-            let (signers, browser) = self.script_wallets.into_multi_wallet().into_signers()?;
+            let signers = self.script_wallets.into_multi_wallet().into_signers()?;
             let eth_wallets =
                 signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
 
-            SendTransactionsKind::Raw { eth_wallets, browser }
+            SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet }
         };
 
         let progress = ScriptProgress::default();

@@ -12,7 +12,6 @@ use crate::{
 use alloy_evm::{Evm, EvmEnv};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
-use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -74,8 +73,12 @@ impl<'a> CowBackend<'a> {
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller, tx_env.kind));
 
-        let mut evm =
-            crate::evm::new_evm_with_inspector(self, evm_env.clone(), tx_env.clone(), inspector);
+        let mut evm = crate::evm::new_eth_evm_with_inspector(
+            self,
+            evm_env.clone(),
+            tx_env.clone(),
+            inspector,
+        );
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
@@ -207,12 +210,12 @@ impl DatabaseExt for CowBackend<'_> {
 
     fn transact_from_tx(
         &mut self,
-        transaction: &TransactionRequest,
+        tx_env: &TxEnv,
         evm_env: EvmEnv,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut().transact_from_tx(transaction, evm_env, journaled_state, inspector)
+        self.backend_mut().transact_from_tx(tx_env, evm_env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

@@ -5,12 +5,11 @@ use crate::eth::{
     error::{BlockchainError, InvalidTransactionError},
 };
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_primitives::FoundryTxEnvelope;
 use revm::state::AccountInfo;
 
 /// A trait for validating transactions
 #[async_trait::async_trait]
-pub trait TransactionValidator<T = FoundryTxEnvelope> {
+pub trait TransactionValidator<T> {
     /// Validates the transaction's validity when it comes to nonce, payment
     ///
     /// This is intended to be checked before the transaction makes it into the pool and whether it

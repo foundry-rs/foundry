@@ -15,35 +15,19 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 /// Container for multiple wallets.
-#[derive(Debug)]
-pub struct MultiWallet<N: Network> {
+#[derive(Debug, Default)]
+pub struct MultiWallet {
     /// Vector of wallets that require an action to be unlocked.
     /// Those are lazily unlocked on the first access of the signers.
     pending_signers: Vec<PendingSigner>,
     /// Contains unlocked signers.
     signers: AddressHashMap<WalletSigner>,
-    /// Browser signer
-    browser: Option<BrowserSigner<N>>,
 }
 
-impl<N: Network> Default for MultiWallet<N> {
-    fn default() -> Self {
-        Self {
-            pending_signers: Default::default(),
-            signers: Default::default(),
-            browser: Default::default(),
-        }
-    }
-}
-
-impl<N: Network> MultiWallet<N> {
-    pub fn new(
-        pending_signers: Vec<PendingSigner>,
-        signers: Vec<WalletSigner>,
-        browser: Option<BrowserSigner<N>>,
-    ) -> Self {
+impl MultiWallet {
+    pub fn new(pending_signers: Vec<PendingSigner>, signers: Vec<WalletSigner>) -> Self {
         let signers = signers.into_iter().map(|signer| (signer.address(), signer)).collect();
-        Self { pending_signers, signers, browser }
+        Self { pending_signers, signers }
     }
 
     fn maybe_unlock_pending(&mut self) -> Result<()> {
@@ -54,18 +38,14 @@ impl<N: Network> MultiWallet<N> {
         Ok(())
     }
 
-    pub fn signers(
-        &mut self,
-    ) -> Result<(&AddressHashMap<WalletSigner>, Option<&BrowserSigner<N>>)> {
+    pub fn signers(&mut self) -> Result<&AddressHashMap<WalletSigner>> {
         self.maybe_unlock_pending()?;
-        Ok((&self.signers, self.browser.as_ref()))
+        Ok(&self.signers)
     }
 
-    pub fn into_signers(
-        mut self,
-    ) -> Result<(AddressHashMap<WalletSigner>, Option<BrowserSigner<N>>)> {
+    pub fn into_signers(mut self) -> Result<AddressHashMap<WalletSigner>> {
         self.maybe_unlock_pending()?;
-        Ok((self.signers, self.browser))
+        Ok(self.signers)
     }
 
     pub fn add_signer(&mut self, signer: WalletSigner) {
@@ -260,10 +240,9 @@ pub struct MultiWalletOpts {
 
 impl MultiWalletOpts {
     /// Returns [MultiWallet] container configured with provided options.
-    pub async fn get_multi_wallet<N: Network>(&self) -> Result<MultiWallet<N>> {
+    pub async fn get_multi_wallet(&self) -> Result<MultiWallet> {
         let mut pending = Vec::new();
         let mut signers: Vec<WalletSigner> = Vec::new();
-        let browser = self.browser_signer().await?;
 
         if let Some(ledgers) = self.ledgers().await? {
             signers.extend(ledgers);
@@ -300,7 +279,7 @@ impl MultiWalletOpts {
             ));
         }
 
-        Ok(MultiWallet::new(pending, signers, browser))
+        Ok(MultiWallet::new(pending, signers))
     }
 
     pub fn private_keys(&self) -> Result<Option<Vec<WalletSigner>>> {

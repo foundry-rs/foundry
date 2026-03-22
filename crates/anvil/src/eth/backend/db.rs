@@ -101,6 +101,86 @@ impl StateDB for dyn Db {
     }
 }
 
+/// A wrapper around [`CacheDB`] that implements [`StateDB`].
+///
+/// `StateDB` is a foreign trait with an orphan-rule constraint, so we cannot
+/// implement it directly for `CacheDB<T>`.  This newtype sidesteps the orphan
+/// rule while delegating all [`Database`], [`DatabaseCommit`] and
+/// [`DatabaseRef`] calls to the inner `CacheDB`.
+#[derive(Debug)]
+pub struct AnvilCacheDB<T>(pub CacheDB<T>);
+
+impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
+    pub fn new(inner: T) -> Self {
+        Self(CacheDB::new(inner))
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError>> std::ops::Deref for AnvilCacheDB<T> {
+    type Target = CacheDB<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError>> std::ops::DerefMut for AnvilCacheDB<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> Database for AnvilCacheDB<T> {
+    type Error = DatabaseError;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.0.basic(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.0.code_by_hash(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.0.storage(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        self.0.block_hash(number)
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError>> DatabaseRef for AnvilCacheDB<T> {
+    type Error = DatabaseError;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.0.basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.0.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.0.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.0.block_hash_ref(number)
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for AnvilCacheDB<T> {
+    fn commit(&mut self, changes: revm::state::EvmState) {
+        self.0.commit(changes)
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> StateDB for AnvilCacheDB<T> {
+    fn set_state_clear_flag(&mut self, _has_state_clear: bool) {
+        // Anvil does not use the revm State wrapper, so this is a no-op.
+    }
+}
+
 /// This bundles all required revm traits
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
@@ -587,7 +667,7 @@ where
 #[serde(untagged)]
 pub enum SerializableTransactionType {
     TypedTransaction(FoundryTxEnvelope),
-    MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
+    MaybeImpersonatedTransaction(MaybeImpersonatedTransaction<FoundryTxEnvelope>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -619,13 +699,13 @@ impl From<SerializableBlock> for Block {
     }
 }
 
-impl From<MaybeImpersonatedTransaction> for SerializableTransactionType {
-    fn from(transaction: MaybeImpersonatedTransaction) -> Self {
+impl From<MaybeImpersonatedTransaction<FoundryTxEnvelope>> for SerializableTransactionType {
+    fn from(transaction: MaybeImpersonatedTransaction<FoundryTxEnvelope>) -> Self {
         Self::MaybeImpersonatedTransaction(transaction)
     }
 }
 
-impl From<SerializableTransactionType> for MaybeImpersonatedTransaction {
+impl From<SerializableTransactionType> for MaybeImpersonatedTransaction<FoundryTxEnvelope> {
     fn from(transaction: SerializableTransactionType) -> Self {
         match transaction {
             SerializableTransactionType::TypedTransaction(tx) => Self::new(tx),

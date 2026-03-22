@@ -548,3 +548,141 @@ Backtrace:
 ...
 "#]]);
 });
+
+// Test that backtraces only appear at verbosity 5 (-vvvvv).
+// Runs the same failing test at every verbosity level to assert correct output.
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest!(test_backtrace_verbosity_levels, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    prj.add_source(
+        "SimpleRevert.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract SimpleRevert {
+    function doRevert() public pure {
+        revert("Simple revert message");
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "BacktraceVerbosity.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "../src/test.sol";
+import "../src/SimpleRevert.sol";
+
+contract BacktraceVerbosityTest is DSTest {
+    SimpleRevert simpleRevert;
+
+    function setUp() public {
+        simpleRevert = new SimpleRevert();
+    }
+
+    function testRevert() public {
+        simpleRevert.doRevert();
+    }
+}
+"#,
+    );
+
+    // -v (verbosity 1): no traces, no backtrace.
+    cmd.args(["test", "--mc", "BacktraceVerbosityTest", "-v"]).assert_failure().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
+[FAIL: Simple revert message] testRevert() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+
+    // -vvv (verbosity 3): traces and backtrace WITHOUT source locations.
+    cmd.forge_fuse()
+        .args(["test", "--mc", "BacktraceVerbosityTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
+[FAIL: Simple revert message] testRevert() ([GAS])
+Traces:
+  [..] BacktraceVerbosityTest::testRevert()
+    ├─ [..] SimpleRevert::doRevert() [staticcall]
+    │   └─ ← [Revert] Simple revert message
+    └─ ← [Revert] Simple revert message
+
+Backtrace:
+  at SimpleRevert.doRevert
+  at BacktraceVerbosityTest.testRevert
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // -vvvv (verbosity 4): traces with setup and backtrace WITHOUT source locations.
+    cmd.forge_fuse()
+        .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
+[FAIL: Simple revert message] testRevert() ([GAS])
+Traces:
+  [..] BacktraceVerbosityTest::setUp()
+    ├─ [..] → new SimpleRevert@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] [..]
+    └─ ← [Stop]
+
+  [..] BacktraceVerbosityTest::testRevert()
+    ├─ [..] SimpleRevert::doRevert() [staticcall]
+    │   └─ ← [Revert] Simple revert message
+    └─ ← [Revert] Simple revert message
+
+Backtrace:
+  at SimpleRevert.doRevert
+  at BacktraceVerbosityTest.testRevert
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // -vvvvv (verbosity 5): traces with setup, storage changes, and backtrace WITH source
+    // locations.
+    cmd.forge_fuse()
+        .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
+[FAIL: Simple revert message] testRevert() ([GAS])
+Traces:
+  [..] BacktraceVerbosityTest::setUp()
+    ├─ [..] → new SimpleRevert@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] [..]
+    └─ ← [Stop]
+
+  [..] BacktraceVerbosityTest::testRevert()
+    ├─ [..] SimpleRevert::doRevert() [staticcall]
+    │   └─ ← [Revert] Simple revert message
+    └─ ← [Revert] Simple revert message
+
+Backtrace:
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:[..]:[..])
+  at BacktraceVerbosityTest.testRevert (test/BacktraceVerbosity.t.sol:[..]:[..])
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});

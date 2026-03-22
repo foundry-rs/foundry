@@ -10,16 +10,19 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::NamedChain;
-use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_consensus::TxEnvelope;
+use alloy_network::{Ethereum, Network, TransactionBuilder, eip2718::Decodable2718};
 use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
+use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
-use foundry_cheatcodes::Wallets;
+use foundry_cheatcodes::{BroadcastKind, BroadcastableTransaction, Wallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{ContractData, shell};
+use foundry_common::{ContractData, TransactionMaybeSigned, shell};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use foundry_primitives::FoundryTransactionBuilder;
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
@@ -36,7 +39,8 @@ use std::{
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets<Ethereum>,
+    pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,
@@ -59,12 +63,13 @@ impl PreSimulationState {
             .unwrap_or_default()
             .into_iter()
             .map(|tx| {
-                let rpc = tx.rpc.expect("missing broadcastable tx rpc url");
-                let sender = tx.transaction.from().expect("all transactions should have a sender");
-                let nonce = tx.transaction.nonce().expect("all transactions should have a nonce");
-                let to = tx.transaction.to();
+                let rpc = tx.rpc.clone().expect("missing broadcastable tx rpc url");
+                let sender = tx.from;
+                let nonce = tx.nonce;
+                let to = tx.to;
 
-                let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
+                let maybe_signed = into_maybe_signed(tx);
+                let mut builder = ScriptTransactionBuilder::new(maybe_signed, rpc);
 
                 if let Some(TxKind::Call(_)) = to {
                     builder.set_call(
@@ -90,6 +95,7 @@ impl PreSimulationState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
@@ -256,7 +262,8 @@ impl PreSimulationState {
 pub struct FilledTransactionsState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets<Ethereum>,
+    pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
@@ -418,6 +425,7 @@ impl FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
         })
@@ -469,5 +477,36 @@ impl FilledTransactionsState {
             commit,
         };
         Ok(sequence)
+    }
+}
+
+/// Converts a network-agnostic [`BroadcastableTransaction`] into a
+/// [`TransactionMaybeSigned<Ethereum>`] for use in the script pipeline.
+fn into_maybe_signed(tx: BroadcastableTransaction) -> TransactionMaybeSigned<Ethereum> {
+    match tx.kind {
+        BroadcastKind::Unsigned { chain_id, blob_sidecar, authorization_list } => {
+            let mut req = TransactionRequest {
+                from: Some(tx.from),
+                to: tx.to,
+                value: Some(tx.value),
+                input: TransactionInput::maybe_both(Some(tx.input)),
+                nonce: Some(tx.nonce),
+                chain_id,
+                gas: tx.gas,
+                ..Default::default()
+            };
+            if let Some(sidecar) = blob_sidecar {
+                req.set_blob_sidecar(sidecar);
+            }
+            if let Some(auths) = authorization_list {
+                req.authorization_list = Some(auths);
+            }
+            TransactionMaybeSigned::Unsigned(req)
+        }
+        BroadcastKind::Signed(raw) => {
+            let envelope = TxEnvelope::decode_2718(&mut raw.as_ref())
+                .expect("failed to decode pre-signed transaction");
+            TransactionMaybeSigned::Signed { tx: envelope, from: tx.from }
+        }
     }
 }

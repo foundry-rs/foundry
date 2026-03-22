@@ -229,25 +229,28 @@ pub struct ScriptArgs {
 impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
+        let browser_wallet = self.wallets.browser_signer::<Ethereum>().await?;
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
         } else if self.evm.sender.is_none() {
-            // If no sender was explicitly set via --sender and there's exactly one signer
-            // (e.g. from --account or --keystore), use that signer's address as the sender.
-            // This makes --account behave consistently with --private-key.
+            // If no sender was explicitly set via --sender, auto-detect it from available signers:
+            // use the sole signer's address if there's exactly one, or fall back to the browser
+            // wallet address if present.
             if let Ok(signers) = script_wallets.signers()
                 && signers.len() == 1
             {
                 evm_opts.sender = signers[0];
+            } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
+                evm_opts.sender = signer
             }
         }
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
-        Ok(PreprocessedState { args: self, script_config, script_wallets })
+        Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
     /// Executes the script
@@ -455,12 +458,7 @@ impl ScriptArgs {
         };
 
         for (data, to) in result.transactions.iter().flat_map(|txes| {
-            txes.iter().filter_map(|tx| {
-                tx.transaction
-                    .input()
-                    .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to()))
-            })
+            txes.iter().filter_map(|tx| (tx.input.len() > max_size).then_some((&tx.input, tx.to)))
         }) {
             let mut offset = 0;
 
@@ -624,7 +622,7 @@ impl ScriptConfig {
     async fn get_runner_with_cheatcodes(
         &mut self,
         known_contracts: ContractsByArtifact,
-        script_wallets: Wallets<Ethereum>,
+        script_wallets: Wallets,
         debug: bool,
         target: ArtifactId,
     ) -> Result<ScriptRunner> {
@@ -633,7 +631,7 @@ impl ScriptConfig {
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(ContractsByArtifact, Wallets<Ethereum>, ArtifactId)>,
+        cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");

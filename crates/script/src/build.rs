@@ -20,6 +20,7 @@ use foundry_compilers::{
 };
 use foundry_evm::traces::debug::ContractSources;
 use foundry_linking::Linker;
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 /// Container for the compiled contracts.
@@ -156,14 +157,15 @@ impl LinkedBuildData {
 pub struct PreprocessedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets<Ethereum>,
+    pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
 }
 
 impl PreprocessedState {
     /// Parses user input and compiles the contracts depending on script target.
     /// After compilation, finds exact [ArtifactId] of the target contract.
     pub fn compile(self) -> Result<CompiledState> {
-        let Self { args, script_config, script_wallets } = self;
+        let Self { args, script_config, script_wallets, browser_wallet } = self;
         let project = script_config.config.project()?;
 
         let mut target_name = args.target_contract.clone();
@@ -232,6 +234,7 @@ impl PreprocessedState {
             args,
             script_config,
             script_wallets,
+            browser_wallet,
             build_data: BuildData { output, target, project_root: project.root().to_path_buf() },
         })
     }
@@ -241,18 +244,19 @@ impl PreprocessedState {
 pub struct CompiledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: Wallets<Ethereum>,
+    pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: BuildData,
 }
 
 impl CompiledState {
     /// Uses provided sender address to compute library addresses and link contracts with them.
     pub async fn link(self) -> Result<LinkedState> {
-        let Self { args, script_config, script_wallets, build_data } = self;
+        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
 
         let build_data = build_data.link(&script_config).await?;
 
-        Ok(LinkedState { args, script_config, script_wallets, build_data })
+        Ok(LinkedState { args, script_config, script_wallets, browser_wallet, build_data })
     }
 
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
@@ -285,35 +289,49 @@ impl CompiledState {
             }
         };
 
-        let (args, build_data, script_wallets, script_config) = if !self.args.unlocked {
-            let mut froms = sequence.sequences().iter().flat_map(|s| {
-                s.transactions
-                    .iter()
-                    .skip(s.receipts.len())
-                    .map(|t| t.transaction.from().expect("from is missing in script artifact"))
-            });
+        let (args, build_data, script_wallets, browser_wallet, script_config) =
+            if !self.args.unlocked {
+                let mut froms = sequence.sequences().iter().flat_map(|s| {
+                    s.transactions
+                        .iter()
+                        .skip(s.receipts.len())
+                        .map(|t| t.transaction.from().expect("from is missing in script artifact"))
+                });
 
-            let available_signers = self
-                .script_wallets
-                .signers()
-                .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+                let available_signers = self
+                    .script_wallets
+                    .signers()
+                    .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
 
-            if !froms.all(|from| available_signers.contains(&from)) {
-                // IF we are missing required signers, execute script as we might need to collect
-                // private keys from the execution.
-                let executed = self.link().await?.prepare_execution().await?.execute().await?;
-                (
-                    executed.args,
-                    executed.build_data.build_data,
-                    executed.script_wallets,
-                    executed.script_config,
-                )
+                if !froms.all(|from| available_signers.contains(&from)) {
+                    // IF we are missing required signers, execute script as we might need to
+                    // collect private keys from the execution.
+                    let executed = self.link().await?.prepare_execution().await?.execute().await?;
+                    (
+                        executed.args,
+                        executed.build_data.build_data,
+                        executed.script_wallets,
+                        executed.browser_wallet,
+                        executed.script_config,
+                    )
+                } else {
+                    (
+                        self.args,
+                        self.build_data,
+                        self.script_wallets,
+                        self.browser_wallet,
+                        self.script_config,
+                    )
+                }
             } else {
-                (self.args, self.build_data, self.script_wallets, self.script_config)
-            }
-        } else {
-            (self.args, self.build_data, self.script_wallets, self.script_config)
-        };
+                (
+                    self.args,
+                    self.build_data,
+                    self.script_wallets,
+                    self.browser_wallet,
+                    self.script_config,
+                )
+            };
 
         // Collect libraries from sequence and link contracts with them.
         let libraries = match sequence {
@@ -328,6 +346,7 @@ impl CompiledState {
             args,
             script_config,
             script_wallets,
+            browser_wallet,
             build_data: linked_build_data,
             sequence,
         })

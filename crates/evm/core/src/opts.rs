@@ -1,6 +1,8 @@
 use crate::{
-    EvmEnv, constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork,
-    utils::apply_chain_and_block_specific_env_changes,
+    EvmEnv,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::CreateFork,
+    utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
 use alloy_consensus::BlockHeader;
 use alloy_network::{AnyNetwork, BlockResponse, Network};
@@ -200,16 +202,7 @@ impl EvmOpts {
         let block_number = block.header().number();
         let mut evm_env = EvmEnv {
             cfg_env: self.cfg_env(chain_id),
-            block_env: BlockEnv {
-                number: U256::from(block_number),
-                timestamp: U256::from(block.header().timestamp()),
-                beneficiary: block.header().beneficiary(),
-                difficulty: block.header().difficulty(),
-                prevrandao: block.header().mix_hash(),
-                basefee: block.header().base_fee_per_gas().unwrap_or_default(),
-                gas_limit: block.header().gas_limit(),
-                ..Default::default()
-            },
+            block_env: block_env_from_header(block.header()),
         };
 
         apply_chain_and_block_specific_env_changes::<N>(&mut evm_env, &block, self.networks);

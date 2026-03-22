@@ -42,9 +42,12 @@ use foundry_evm::{
         FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
         spec_id_from_ethereum_hardfork,
     },
-    utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
+    utils::{
+        apply_chain_and_block_specific_env_changes, block_env_from_header,
+        get_blob_base_fee_update_fraction,
+    },
 };
-use foundry_primitives::FoundryNetwork;
+use foundry_primitives::FoundryTxEnvelope;
 use itertools::Itertools;
 use op_revm::OpTransaction;
 use parking_lot::RwLock;
@@ -1053,7 +1056,13 @@ impl NodeConfig {
     /// [Backend](mem::Backend)
     ///
     /// *Note*: only memory based backend for now
-    pub(crate) async fn setup(&mut self) -> Result<mem::Backend<FoundryNetwork>> {
+    pub(crate) async fn setup<N>(&mut self) -> Result<mem::Backend<N>>
+    where
+        N: alloy_network::Network<
+                TxEnvelope = foundry_primitives::FoundryTxEnvelope,
+                ReceiptEnvelope = foundry_primitives::FoundryReceiptEnvelope,
+            >,
+    {
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();
@@ -1175,10 +1184,6 @@ impl NodeConfig {
                 .wrap_err("failed to create default create2 deployer")?;
         }
 
-        if let Some(state) = self.init_state.clone() {
-            backend.load_state(state).await.wrap_err("failed to load init state")?;
-        }
-
         Ok(backend)
     }
 
@@ -1285,16 +1290,11 @@ latest block number: {latest_block}"
         self.gas_limit = Some(gas_limit);
 
         env.evm_env.block_env = BlockEnv {
-            number: U256::from(fork_block_number),
-            timestamp: U256::from(block.header.timestamp()),
-            difficulty: block.header.difficulty(),
-            // ensures prevrandao is set
-            prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
             beneficiary: env.evm_env.block_env.beneficiary,
             basefee: env.evm_env.block_env.basefee,
-            ..Default::default()
+            ..block_env_from_header(&block.header)
         };
 
         // Determine chain_id early so we can use it consistently
@@ -1451,7 +1451,7 @@ latest block number: {latest_block}"
 async fn derive_block_and_transactions(
     fork_choice: &ForkChoice,
     provider: &Arc<RetryProvider>,
-) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
+) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction<FoundryTxEnvelope>>>)> {
     match fork_choice {
         ForkChoice::Block(block_number) => {
             let block_number = *block_number;

@@ -10,8 +10,8 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::{backend::FoundryJournalExt, fork::CreateFork};
-use revm::context::ContextTr;
+use foundry_evm_core::{FoundryContextExt, backend::JournaledState, fork::CreateFork};
+use revm::context::{Cfg, ContextTr};
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
@@ -73,13 +73,9 @@ impl Cheatcode for rollFork_0Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { blockNumber } = self;
         persist_caller(ccx);
-        let mut evm_env = ccx.ecx.evm_clone();
-        let mut tx_env = ccx.ecx.tx_clone();
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-        db.roll_fork(None, (*blockNumber).to(), &mut evm_env, &mut tx_env, inner)?;
-        ccx.ecx.set_evm(evm_env);
-        ccx.ecx.set_tx(tx_env);
-        Ok(Default::default())
+        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
+            db.roll_fork(None, (*blockNumber).to(), evm_env, tx_env, inner)
+        })
     }
 }
 
@@ -87,13 +83,9 @@ impl Cheatcode for rollFork_1Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { txHash } = self;
         persist_caller(ccx);
-        let mut evm_env = ccx.ecx.evm_clone();
-        let mut tx_env = ccx.ecx.tx_clone();
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-        db.roll_fork_to_transaction(None, *txHash, &mut evm_env, &mut tx_env, inner)?;
-        ccx.ecx.set_evm(evm_env);
-        ccx.ecx.set_tx(tx_env);
-        Ok(Default::default())
+        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
+            db.roll_fork_to_transaction(None, *txHash, evm_env, tx_env, inner)
+        })
     }
 }
 
@@ -101,13 +93,9 @@ impl Cheatcode for rollFork_2Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { forkId, blockNumber } = self;
         persist_caller(ccx);
-        let mut evm_env = ccx.ecx.evm_clone();
-        let mut tx_env = ccx.ecx.tx_clone();
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-        db.roll_fork(Some(*forkId), (*blockNumber).to(), &mut evm_env, &mut tx_env, inner)?;
-        ccx.ecx.set_evm(evm_env);
-        ccx.ecx.set_tx(tx_env);
-        Ok(Default::default())
+        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
+            db.roll_fork(Some(*forkId), (*blockNumber).to(), evm_env, tx_env, inner)
+        })
     }
 }
 
@@ -115,13 +103,9 @@ impl Cheatcode for rollFork_3Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { forkId, txHash } = self;
         persist_caller(ccx);
-        let mut evm_env = ccx.ecx.evm_clone();
-        let mut tx_env = ccx.ecx.tx_clone();
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-        db.roll_fork_to_transaction(Some(*forkId), *txHash, &mut evm_env, &mut tx_env, inner)?;
-        ccx.ecx.set_evm(evm_env);
-        ccx.ecx.set_tx(tx_env);
-        Ok(Default::default())
+        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
+            db.roll_fork_to_transaction(Some(*forkId), *txHash, evm_env, tx_env, inner)
+        })
     }
 }
 
@@ -130,18 +114,14 @@ impl Cheatcode for selectForkCall {
         let Self { forkId } = self;
         persist_caller(ccx);
         check_broadcast(ccx.state)?;
-        let mut evm_env = ccx.ecx.evm_clone();
-        let mut tx_env = ccx.ecx.tx_clone();
-        let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-        db.select_fork(*forkId, &mut evm_env, &mut tx_env, inner)?;
-        ccx.ecx.set_evm(evm_env);
-        ccx.ecx.set_tx(tx_env);
-        Ok(Default::default())
+        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
+            db.select_fork(*forkId, evm_env, tx_env, inner)
+        })
     }
 }
 
 impl Cheatcode for transact_0Call {
-    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
+    fn apply_full<CTX: FoundryContextExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -152,7 +132,7 @@ impl Cheatcode for transact_0Call {
 }
 
 impl Cheatcode for transact_1Call {
-    fn apply_full<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
+    fn apply_full<CTX: FoundryContextExt>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -355,13 +335,9 @@ fn create_select_fork<CTX: EthCheatCtx>(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let mut evm_env = ccx.ecx.evm_clone();
-    let mut tx_env = ccx.ecx.tx_clone();
-    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    let id = db.create_select_fork(fork, &mut evm_env, &mut tx_env, inner)?;
-    ccx.ecx.set_evm(evm_env);
-    ccx.ecx.set_tx(tx_env);
-    Ok(id.abi_encode())
+    fork_env_op(ccx, |db, evm_env, tx_env, inner| {
+        db.create_select_fork(fork, evm_env, tx_env, inner)
+    })
 }
 
 /// Creates a new fork
@@ -384,14 +360,9 @@ fn create_select_fork_at_transaction<CTX: EthCheatCtx>(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let mut evm_env = ccx.ecx.evm_clone();
-    let mut tx_env = ccx.ecx.tx_clone();
-    let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    let id =
-        db.create_select_fork_at_transaction(fork, &mut evm_env, &mut tx_env, inner, *transaction)?;
-    ccx.ecx.set_evm(evm_env);
-    ccx.ecx.set_tx(tx_env);
-    Ok(id.abi_encode())
+    fork_env_op(ccx, |db, evm_env, tx_env, inner| {
+        db.create_select_fork_at_transaction(fork, evm_env, tx_env, inner, *transaction)
+    })
 }
 
 /// Creates a new fork at the given transaction
@@ -435,6 +406,27 @@ fn create_fork_request<CTX: EthCheatCtx>(
     Ok(fork)
 }
 
+/// Clones the EVM and tx environments, runs a fork operation that may modify them, then writes
+/// them back. This is the common pattern for all fork-switching cheatcodes (rollFork, selectFork,
+/// createSelectFork).
+fn fork_env_op<CTX: EthCheatCtx, T: SolValue>(
+    ccx: &mut CheatsCtxt<'_, CTX>,
+    f: impl FnOnce(
+        &mut dyn DatabaseExt<CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
+        &mut EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
+        &mut CTX::Tx,
+        &mut JournaledState,
+    ) -> eyre::Result<T>,
+) -> Result {
+    let mut evm_env = ccx.ecx.evm_clone();
+    let mut tx_env = ccx.ecx.tx_clone();
+    let (db, inner) = ccx.ecx.db_journal_inner_mut();
+    let result = f(db, &mut evm_env, &mut tx_env, inner)?;
+    ccx.ecx.set_evm(evm_env);
+    ccx.ecx.set_tx(tx_env);
+    Ok(result.abi_encode())
+}
+
 fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     if state.broadcast.is_none() {
         Ok(())
@@ -443,7 +435,7 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     }
 }
 
-fn transact<CTX: ContextTr<Journal: FoundryJournalExt<CTX>>>(
+fn transact<CTX: FoundryContextExt>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     transaction: B256,
