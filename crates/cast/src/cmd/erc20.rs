@@ -9,7 +9,7 @@ use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
-use alloy_primitives::{U64, U256};
+use alloy_primitives::{Address, U64, U256};
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
 use alloy_sol_types::sol;
@@ -86,6 +86,36 @@ where
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }
     Ok(provider)
+}
+
+/// Fills transaction fields required for browser wallet signing: from, chain_id, nonce,
+/// gas fees, and gas limit. Browser wallets don't have provider fillers, so we need to
+/// fill these manually before sending.
+async fn fill_tx_for_browser<N: Network, P: Provider<N>>(
+    provider: &P,
+    tx: &mut N::TransactionRequest,
+    from: Address,
+) -> eyre::Result<()> {
+    tx.set_from(from);
+    tx.set_chain_id(provider.get_chain_id().await?);
+    tx.set_nonce(provider.get_transaction_count(from).await?);
+
+    if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
+        let estimate = provider.estimate_eip1559_fees().await?;
+        if tx.max_fee_per_gas().is_none() {
+            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+        }
+        if tx.max_priority_fee_per_gas().is_none() {
+            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+        }
+    }
+
+    if tx.gas_limit().is_none() {
+        let gas = provider.estimate_gas(tx.clone()).await?;
+        tx.set_gas_limit(gas);
+    }
+
+    Ok(())
 }
 
 impl Erc20TxOpts {
@@ -465,8 +495,7 @@ impl Erc20Subcommand {
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-                    tx.set_from(browser.address());
-                    tx.set_chain_id(provider.get_chain_id().await?);
+                    fill_tx_for_browser(&provider, &mut tx, browser.address()).await?;
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
@@ -510,8 +539,7 @@ impl Erc20Subcommand {
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-                    tx.set_from(browser.address());
-                    tx.set_chain_id(provider.get_chain_id().await?);
+                    fill_tx_for_browser(&provider, &mut tx, browser.address()).await?;
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
@@ -555,8 +583,7 @@ impl Erc20Subcommand {
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-                    tx.set_from(browser.address());
-                    tx.set_chain_id(provider.get_chain_id().await?);
+                    fill_tx_for_browser(&provider, &mut tx, browser.address()).await?;
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
@@ -600,8 +627,7 @@ impl Erc20Subcommand {
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-                    tx.set_from(browser.address());
-                    tx.set_chain_id(provider.get_chain_id().await?);
+                    fill_tx_for_browser(&provider, &mut tx, browser.address()).await?;
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
