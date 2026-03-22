@@ -457,12 +457,16 @@ impl Erc20Subcommand {
 
                 if let Some(browser) = browser {
                     let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    if let Some(interval) = send_tx.poll_interval {
+                        provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
                     let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                         .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
                     tx.set_from(browser.address());
+                    tx.set_chain_id(provider.get_chain_id().await?);
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
@@ -498,12 +502,16 @@ impl Erc20Subcommand {
 
                 if let Some(browser) = browser {
                     let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    if let Some(interval) = send_tx.poll_interval {
+                        provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
                     let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                         .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
                     tx.set_from(browser.address());
+                    tx.set_chain_id(provider.get_chain_id().await?);
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
@@ -539,12 +547,16 @@ impl Erc20Subcommand {
 
                 if let Some(browser) = browser {
                     let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    if let Some(interval) = send_tx.poll_interval {
+                        provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
                     let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                         .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
                     tx.set_from(browser.address());
+                    tx.set_chain_id(provider.get_chain_id().await?);
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
@@ -580,12 +592,16 @@ impl Erc20Subcommand {
 
                 if let Some(browser) = browser {
                     let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    if let Some(interval) = send_tx.poll_interval {
+                        provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
                     let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
                         .burn(U256::from_str(&amount)?)
                         .into_transaction_request();
                     tx_opts
                         .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
                     tx.set_from(browser.address());
+                    tx.set_chain_id(provider.get_chain_id().await?);
 
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&provider)
