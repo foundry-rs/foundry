@@ -70,6 +70,7 @@ pub struct InMemoryBlockStates {
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
     pub fn new(in_memory_limit: usize, on_disk_limit: usize) -> Self {
+        let in_memory_limit = in_memory_limit.max(1);
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
@@ -196,7 +197,9 @@ impl InMemoryBlockStates {
 
     /// Sets the maximum number of stats we keep in memory
     pub fn set_cache_limit(&mut self, limit: usize) {
+        let limit = limit.max(1);
         self.in_memory_limit = limit;
+        self.min_in_memory_limit = limit.min(MIN_HISTORY_LIMIT);
     }
 
     /// Clears all entries
@@ -650,6 +653,12 @@ mod tests {
         assert_eq!(storage.in_memory_limit, 1);
         assert_eq!(storage.min_in_memory_limit, 1);
         assert_eq!(storage.max_on_disk_limit, 2);
+
+        storage = InMemoryBlockStates::new(0, 0);
+        assert!(storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 0);
     }
 
     #[tokio::test(flavor = "multi_thread")]
