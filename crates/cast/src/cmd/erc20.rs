@@ -1,6 +1,10 @@
 use std::{str::FromStr, time::Duration};
 
-use crate::{cmd::send::cast_send, format_uint_exp, tx::SendTxOpts};
+use crate::{
+    cmd::send::cast_send,
+    format_uint_exp,
+    tx::{CastTxSender, SendTxOpts},
+};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
@@ -448,76 +452,168 @@ impl Erc20Subcommand {
             }
             // State-changing
             Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                let browser = send_tx.browser.run::<N>().await?;
 
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                if let Some(browser) = browser {
+                    let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    tx.set_from(browser.address());
 
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                    let tx_hash = browser.send_transaction_via_browser(tx).await?;
+                    CastTxSender::new(&provider)
+                        .print_tx_result(
+                            tx_hash,
+                            send_tx.cast_async,
+                            send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?
+                } else {
+                    let provider = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
             Self::Approve { token, spender, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                let browser = send_tx.browser.run::<N>().await?;
 
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                if let Some(browser) = browser {
+                    let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    tx.set_from(browser.address());
 
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                    let tx_hash = browser.send_transaction_via_browser(tx).await?;
+                    CastTxSender::new(&provider)
+                        .print_tx_result(
+                            tx_hash,
+                            send_tx.cast_async,
+                            send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?
+                } else {
+                    let provider = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
             Self::Mint { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                let browser = send_tx.browser.run::<N>().await?;
 
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                if let Some(browser) = browser {
+                    let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    tx.set_from(browser.address());
 
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                    let tx_hash = browser.send_transaction_via_browser(tx).await?;
+                    CastTxSender::new(&provider)
+                        .print_tx_result(
+                            tx_hash,
+                            send_tx.cast_async,
+                            send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?
+                } else {
+                    let provider = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
             Self::Burn { token, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .burn(U256::from_str(&amount)?)
-                    .into_transaction_request();
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                let browser = send_tx.browser.run::<N>().await?;
 
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                if let Some(browser) = browser {
+                    let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .burn(U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    tx.set_from(browser.address());
 
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                    let tx_hash = browser.send_transaction_via_browser(tx).await?;
+                    CastTxSender::new(&provider)
+                        .print_tx_result(
+                            tx_hash,
+                            send_tx.cast_async,
+                            send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?
+                } else {
+                    let provider = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .burn(U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
         };
         Ok(())
