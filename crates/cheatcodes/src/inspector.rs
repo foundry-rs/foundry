@@ -21,14 +21,18 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
 };
-use alloy_rpc_types::AccessList;
+use alloy_rpc_types::{
+    AccessList,
+    request::{TransactionInput, TransactionRequest},
+};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
-    SELECTOR_LEN,
+    SELECTOR_LEN, TransactionMaybeSigned,
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
@@ -42,6 +46,7 @@ use foundry_evm_core::{
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
+use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
@@ -252,49 +257,12 @@ impl TestContext {
 }
 
 /// Helps collecting transactions from different forks.
-///
-/// This type is intentionally network-agnostic — it stores raw EVM data (from, to, value, input,
-/// etc.) without requiring a `Network` type parameter. Conversion to network-specific types
-/// (e.g. `TransactionRequest`, `TxEnvelope`) happens later in the script layer.
 #[derive(Clone, Debug)]
-pub struct BroadcastableTransaction {
+pub struct BroadcastableTransaction<N: Network = Ethereum> {
     /// The optional RPC URL.
     pub rpc: Option<String>,
-    /// Sender address.
-    pub from: Address,
-    /// Recipient (None for contract creation).
-    pub to: Option<TxKind>,
-    /// Ether value.
-    pub value: U256,
-    /// Calldata or init code.
-    pub input: Bytes,
-    /// Sender nonce.
-    pub nonce: u64,
-    /// Gas limit, if explicitly set.
-    pub gas: Option<u64>,
-    /// Whether this transaction was pre-signed or needs signing.
-    pub kind: BroadcastKind,
-}
-
-/// Distinguishes between unsigned transactions (from `startBroadcast`) that need signing, and
-/// pre-signed transactions (from `broadcastRawTransaction`) that carry raw RLP-encoded bytes.
-#[derive(Clone, Debug)]
-pub enum BroadcastKind {
-    /// Unsigned transaction collected during `startBroadcast`. Needs signing before broadcast.
-    Unsigned {
-        chain_id: Option<u64>,
-        blob_sidecar: Option<BlobTransactionSidecarVariant>,
-        authorization_list: Option<Vec<SignedAuthorization>>,
-    },
-    /// Pre-signed transaction from `broadcastRawTransaction`. Contains raw RLP-encoded bytes.
-    Signed(Bytes),
-}
-
-impl BroadcastKind {
-    /// Creates an unsigned broadcast with no chain-specific fields set.
-    pub fn unsigned() -> Self {
-        Self::Unsigned { chain_id: None, blob_sidecar: None, authorization_list: None }
-    }
+    /// The transaction to broadcast.
+    pub transaction: TransactionMaybeSigned<N>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -1005,36 +973,45 @@ impl Cheatcodes {
                         });
                     }
 
-                    let input = call.input.bytes(ecx);
+                    let input = TransactionInput::new(call.input.bytes(ecx));
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let account =
                         ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
 
-                    let blob_sidecar = self.active_blob_sidecar.take();
-                    let active_delegations = std::mem::take(&mut self.active_delegations);
+                    let mut tx_req = TransactionRequest {
+                        from: Some(broadcast.new_origin),
+                        to: Some(TxKind::from(Some(call.target_address))),
+                        value: call.transfer_value(),
+                        input,
+                        nonce: Some(account.info.nonce),
+                        chain_id: Some(chain_id),
+                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
+                        ..Default::default()
+                    };
 
-                    // Ensure blob and delegation are not set for the same tx.
-                    if blob_sidecar.is_some() && !active_delegations.is_empty() {
-                        let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
-                        return Some(CallOutcome {
-                            result: InterpreterResult {
-                                result: InstructionResult::Revert,
-                                output: Error::encode(msg),
-                                gas,
-                            },
-                            memory_offset: call.return_memory_offset.clone(),
-                            was_precompile_called: false,
-                            precompile_call_logs: vec![],
-                        });
+                    let active_delegations = std::mem::take(&mut self.active_delegations);
+                    // Set active blob sidecar, if any.
+                    if let Some(blob_sidecar) = self.active_blob_sidecar.take() {
+                        // Ensure blob and delegation are not set for the same tx.
+                        if !active_delegations.is_empty() {
+                            let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: InstructionResult::Revert,
+                                    output: Error::encode(msg),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                            });
+                        }
+                        tx_req.set_blob_sidecar(blob_sidecar);
                     }
 
-                    // Capture nonce before delegation bump (delegations increment the
-                    // account nonce but the transaction itself uses the pre-bump nonce).
-                    let nonce = account.info.nonce;
-
                     // Apply active EIP-7702 delegations, if any.
-                    let authorization_list = if !active_delegations.is_empty() {
+                    if !active_delegations.is_empty() {
                         for auth in &active_delegations {
                             let Ok(authority) = auth.recover_authority() else {
                                 continue;
@@ -1045,24 +1022,12 @@ impl Cheatcodes {
                                 account.info.nonce += 1;
                             }
                         }
-                        Some(active_delegations)
-                    } else {
-                        None
-                    };
+                        tx_req.authorization_list = Some(active_delegations);
+                    }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc,
-                        from: broadcast.new_origin,
-                        to: Some(TxKind::from(Some(call.target_address))),
-                        value: call.transfer_value().unwrap_or_default(),
-                        input,
-                        nonce,
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
-                        kind: BroadcastKind::Unsigned {
-                            chain_id: Some(chain_id),
-                            blob_sidecar,
-                            authorization_list,
-                        },
+                        transaction: TransactionMaybeSigned::new(tx_req),
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -1807,13 +1772,14 @@ impl<CTX: EthCheatCtx> Inspector<CTX> for Cheatcodes {
                 let account = &ecx.journal().evm_state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
-                    from: broadcast.new_origin,
-                    to: None,
-                    value: input.value(),
-                    input: input.init_code(),
-                    nonce: account.info.nonce,
-                    gas: None,
-                    kind: BroadcastKind::unsigned(),
+                    transaction: TransactionMaybeSigned::new(TransactionRequest {
+                        from: Some(broadcast.new_origin),
+                        to: None,
+                        value: Some(input.value()),
+                        input: TransactionInput::new(input.init_code()),
+                        nonce: Some(account.info.nonce),
+                        ..Default::default()
+                    }),
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
