@@ -72,6 +72,7 @@ impl LazySessionProvider {
             mpp::client::tempo::signing::TempoSigningMode::Keychain {
                 wallet,
                 key_authorization: None,
+                version: mpp::client::tempo::signing::KeychainVersion::V2,
             }
         } else {
             mpp::client::tempo::signing::TempoSigningMode::Direct
@@ -299,7 +300,7 @@ mod tests {
     };
     use mpp::{
         MppError,
-        client::tempo::signing::TempoSigningMode,
+        client::tempo::signing::{KeychainVersion, TempoSigningMode},
         protocol::core::{
             Base64UrlJson, PaymentChallenge, PaymentCredential, PaymentPayload,
             format_www_authenticate, parse_authorization,
@@ -677,8 +678,11 @@ mod tests {
             .parse()
             .expect("invalid key_address");
 
-        let signing_mode =
-            TempoSigningMode::Keychain { wallet: wallet_address, key_authorization: None };
+        let signing_mode = TempoSigningMode::Keychain {
+            wallet: wallet_address,
+            key_authorization: None,
+            version: KeychainVersion::V2,
+        };
 
         let service_url = "https://rpc.mpp.tempo.xyz";
         let provider = super::super::session::SessionProvider::new(signer)
