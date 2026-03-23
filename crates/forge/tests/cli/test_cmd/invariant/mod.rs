@@ -7,7 +7,7 @@ mod target;
 
 fn assert_invariant(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[RUNS]", r"runs: \d+, calls: \d+, reverts: \d+"),
+        ("[RUNS]", r"runs: \d+, calls: \d+, reverts: \d+, gas/s: \d+, tx/s: \d+"),
         ("[SEQUENCE]", r"\[Sequence\].*(\n\t\t.*)*"),
         ("[STATS]", r"╭[\s\S]*?╰.*"),
     ])
@@ -71,7 +71,7 @@ contract AssumeTest is Test {
 
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_assume() (runs: 0, calls: 0, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_assume() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 ...
 "#]]);
 });
@@ -122,7 +122,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 2, calls: 1000, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 2, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 ...
 "#]]);
 });
@@ -153,7 +153,7 @@ contract NoSelectorTest is Test {
 
     cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0)
+[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 ...
 "#]]);
 });
@@ -209,33 +209,33 @@ contract AnotherCounterHandler is Test {
 
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter() (runs: 10, calls: 5000, reverts: [..])
+[PASS] invariant_counter() (runs: 10, calls: 5000, reverts: [..], gas/s: [..], tx/s: [..])
 
-╭-----------------------+----------------+-------+---------+----------╮
-| Contract              | Selector       | Calls | Reverts | Discards |
-+=====================================================================+
-| AnotherCounterHandler | doWork         | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| AnotherCounterHandler | doWorkThing    | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| CounterHandler        | doAnotherThing | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| CounterHandler        | doSomething    | [..]  | [..]    | [..]     |
-╰-----------------------+----------------+-------+---------+----------╯
+╭-----------------------+----------------+-------+---------+----------+------╮
+| Contract              | Selector       | Calls | Reverts | Discards | Gas  |
++============================================================================+
+| AnotherCounterHandler | doWork         | [..]  | [..]    | [..]     | [..] |
+|-----------------------+----------------+-------+---------+----------+------|
+| AnotherCounterHandler | doWorkThing    | [..]  | [..]    | [..]     | [..] |
+|-----------------------+----------------+-------+---------+----------+------|
+| CounterHandler        | doAnotherThing | [..]  | [..]    | [..]     | [..] |
+|-----------------------+----------------+-------+---------+----------+------|
+| CounterHandler        | doSomething    | [..]  | [..]    | [..]     | [..] |
+╰-----------------------+----------------+-------+---------+----------+------╯
 
-[PASS] invariant_counter2() (runs: 10, calls: 5000, reverts: [..])
+[PASS] invariant_counter2() (runs: 10, calls: 5000, reverts: [..], gas/s: [..], tx/s: [..])
 
-╭-----------------------+----------------+-------+---------+----------╮
-| Contract              | Selector       | Calls | Reverts | Discards |
-+=====================================================================+
-| AnotherCounterHandler | doWork         | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| AnotherCounterHandler | doWorkThing    | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| CounterHandler        | doAnotherThing | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| CounterHandler        | doSomething    | [..]  | [..]    | [..]     |
-╰-----------------------+----------------+-------+---------+----------╯
+╭-----------------------+----------------+-------+---------+----------+------╮
+| Contract              | Selector       | Calls | Reverts | Discards | Gas  |
++============================================================================+
+| AnotherCounterHandler | doWork         | [..]  | [..]    | [..]     | [..] |
+|-----------------------+----------------+-------+---------+----------+------|
+| AnotherCounterHandler | doWorkThing    | [..]  | [..]    | [..]     | [..] |
+|-----------------------+----------------+-------+---------+----------+------|
+| CounterHandler        | doAnotherThing | [..]  | [..]    | [..]     | [..] |
+|-----------------------+----------------+-------+---------+----------+------|
+| CounterHandler        | doSomething    | [..]  | [..]    | [..]     | [..] |
+╰-----------------------+----------------+-------+---------+----------+------╯
 
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -285,13 +285,13 @@ contract TimeoutTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
-[PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
+[PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 
-╭----------------+-----------+-------+---------+----------╮
-| Contract       | Selector  | Calls | Reverts | Discards |
-+=========================================================+
-| TimeoutHandler | increment | [..]  | [..]    | [..]     |
-╰----------------+-----------+-------+---------+----------╯
+╭----------------+-----------+-------+---------+----------+------╮
+| Contract       | Selector  | Calls | Reverts | Discards | Gas  |
++=================================================================+
+| TimeoutHandler | increment | [..]  | [..]    | [..]     | [..] |
+╰----------------+-----------+-------+---------+----------+------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -425,7 +425,7 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 0, calls: 0, reverts: 0)
+ invariant_increment() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -454,7 +454,7 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
 		vm.prank(0x00000000000000000000000000000000000016Ac);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
- invariant_increment() (runs: 0, calls: 0, reverts: 0)
+ invariant_increment() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -479,7 +479,7 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 1, calls: 1, reverts: 1)
+ invariant_increment() (runs: 1, calls: 1, reverts: 1, gas/s: [..], tx/s: [..])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -577,7 +577,7 @@ Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner
 "#]])
     .stdout_eq(str![[r#"
 ...
-[PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0)
+[PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0, gas/s: [..], tx/s: [..])
 ...
 "#]]);
 });
@@ -611,7 +611,7 @@ contract InvariantTest is Test {
 
     cmd.args(["test", "--mt", "invariant_check_count"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_check_count() (runs: 0, calls: 0, reverts: 0)
+[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_check_count() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 ...
 "#]]);
 
@@ -640,7 +640,7 @@ contract InvariantTest is Test {
     cmd.forge_fuse().args(["test", "--mt", "invariant_check_count"]).assert_success().stdout_eq(
         str![[r#"
 ...
-[PASS] invariant_check_count() (runs: 5, calls: 25, reverts: 0)
+[PASS] invariant_check_count() (runs: 5, calls: 25, reverts: 0, gas/s: [..], tx/s: [..])
 ...
 "#]],
     );
@@ -716,7 +716,7 @@ contract InvariantTargetTest is Test {
 Compiler run successful!
 
 Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
-[PASS] invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_considered_target() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 ╭---------------------+----------+-------+---------+----------╮
 | Contract            | Selector | Calls | Reverts | Discards |
@@ -724,7 +724,7 @@ Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
 | InvariantTargetTest | foo      | 1000  | 0       | 0        |
 ╰---------------------+----------+-------+---------+----------╯
 
-[PASS] invariant_foo_called() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_foo_called() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 ╭---------------------+----------+-------+---------+----------╮
 | Contract            | Selector | Calls | Reverts | Discards |
@@ -732,7 +732,7 @@ Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
 | InvariantTargetTest | foo      | 1000  | 0       | 0        |
 ╰---------------------+----------+-------+---------+----------╯
 
-[PASS] invariant_setUp_considered_target() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_setUp_considered_target() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 ╭---------------------+----------+-------+---------+----------╮
 | Contract            | Selector | Calls | Reverts | Discards |
@@ -740,7 +740,7 @@ Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
 | InvariantTargetTest | foo      | 1000  | 0       | 0        |
 ╰---------------------+----------+-------+---------+----------╯
 
-[PASS] invariant_testSanity_considered_target() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_testSanity_considered_target() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 ╭---------------------+----------+-------+---------+----------╮
 | Contract            | Selector | Calls | Reverts | Discards |
@@ -838,7 +838,7 @@ contract InvariantTargetExcludeTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
-[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 ╭----------------------------+----------------+-------+---------+----------╮
 | Contract                   | Selector       | Calls | Reverts | Discards |
@@ -859,7 +859,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
-[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 ╭----------------------------+----------------+-------+---------+----------╮
 | Contract                   | Selector       | Calls | Reverts | Discards |
@@ -883,7 +883,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
-[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 | Contract                   | Selector       | Calls | Reverts | Discards |
 |----------------------------|----------------|-------|---------|----------|
@@ -903,7 +903,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
-[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0, gas/s: [..], tx/s: [..])
 
 | Contract                   | Selector       | Calls | Reverts | Discards |
 |----------------------------|----------------|-------|---------|----------|
@@ -1039,7 +1039,7 @@ contract CheckIntervalTest is Test {
 
     cmd.args(["test", "--mt", "invariant_counter"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter_multiple_of_depth() (runs: 5, calls: 50, reverts: 0)
+[PASS] invariant_counter_multiple_of_depth() (runs: 5, calls: 50, reverts: 0, gas/s: [..], tx/s: [..])
 ...
 "#]]);
 });
@@ -1130,7 +1130,7 @@ contract CheckIntervalTest is Test {
 
     cmd.args(["test", "--mt", "invariant_counter"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter_multiple_of_five() (runs: 1, calls: 20, reverts: 0)
+[PASS] invariant_counter_multiple_of_five() (runs: 1, calls: 20, reverts: 0, gas/s: [..], tx/s: [..])
 ...
 "#]]);
 });
@@ -1172,7 +1172,7 @@ contract CheckIntervalInlineTest is Test {
     cmd.args(["test", "--mt", "invariant_only_last_checked"]).assert_success().stdout_eq(str![[
         r#"
 ...
-[PASS] invariant_only_last_checked() (runs: 1, calls: 10, reverts: 0)
+[PASS] invariant_only_last_checked() (runs: 1, calls: 10, reverts: 0, gas/s: [..], tx/s: [..])
 ...
 "#
     ]]);

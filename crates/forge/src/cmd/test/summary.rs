@@ -126,17 +126,17 @@ impl TestSummaryReport {
 
 /// Helper function to create the invariant metrics table.
 ///
-/// ╭-----------------------+----------------+-------+---------+----------╮
-/// | Contract              | Selector       | Calls | Reverts | Discards |
-/// +=====================================================================+
-/// | AnotherCounterHandler | doWork         | 7451  | 123     | 4941     |
-/// |-----------------------+----------------+-------+---------+----------|
-/// | AnotherCounterHandler | doWorkThing    | 7279  | 137     | 4849     |
-/// |-----------------------+----------------+-------+---------+----------|
-/// | CounterHandler        | doAnotherThing | 7302  | 150     | 4794     |
-/// |-----------------------+----------------+-------+---------+----------|
-/// | CounterHandler        | doSomething    | 7382  | 160     |4794      |
-/// ╰-----------------------+----------------+-------+---------+----------╯
+/// ╭-----------------------+----------------+-------+---------+----------+----------╮
+/// | Contract              | Selector       | Calls | Reverts | Discards | Gas      |
+/// +========================================================================--------+
+/// | AnotherCounterHandler | doWork         | 7451  | 123     | 4941     | 12345678 |
+/// |-----------------------+----------------+-------+---------+----------+----------|
+/// | AnotherCounterHandler | doWorkThing    | 7279  | 137     | 4849     | 11234567 |
+/// |-----------------------+----------------+-------+---------+----------+----------|
+/// | CounterHandler        | doAnotherThing | 7302  | 150     | 4794     | 10234567 |
+/// |-----------------------+----------------+-------+---------+----------+----------|
+/// | CounterHandler        | doSomething    | 7382  | 160     | 4794     | 10345678 |
+/// ╰-----------------------+----------------+-------+---------+----------+----------╯
 pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,
 ) -> Table {
@@ -153,6 +153,7 @@ pub(crate) fn format_invariant_metrics_table(
         Cell::new("Calls").fg(Color::Green),
         Cell::new("Reverts").fg(Color::Red),
         Cell::new("Discards").fg(Color::Yellow),
+        Cell::new("Gas").fg(Color::Cyan),
     ]);
 
     for name in test_metrics.keys().sorted() {
@@ -182,9 +183,16 @@ pub(crate) fn format_invariant_metrics_table(
                     Color::White
                 });
 
+                let gas_cell = Cell::new(metrics.gas).fg(if metrics.gas > 0 {
+                    Color::Cyan
+                } else {
+                    Color::White
+                });
+
                 row.add_cell(calls_cell);
                 row.add_cell(reverts_cell);
                 row.add_cell(discards_cell);
+                row.add_cell(gas_cell);
             }
 
             table.add_row(row);
@@ -204,11 +212,11 @@ mod tests {
         let mut test_metrics = HashMap::new();
         test_metrics.insert(
             "SystemConfig.setGasLimit".to_string(),
-            InvariantMetrics { calls: 10, reverts: 1, discards: 1 },
+            InvariantMetrics { calls: 10, reverts: 1, discards: 1, gas: 100000 },
         );
         test_metrics.insert(
             "src/universal/Proxy.sol:Proxy.changeAdmin".to_string(),
-            InvariantMetrics { calls: 20, reverts: 2, discards: 2 },
+            InvariantMetrics { calls: 20, reverts: 2, discards: 2, gas: 200000 },
         );
         let table = format_invariant_metrics_table(&test_metrics);
         assert_eq!(table.row_count(), 2);
@@ -219,6 +227,7 @@ mod tests {
         assert_eq!(first_row_content.next().unwrap().content(), "10");
         assert_eq!(first_row_content.next().unwrap().content(), "1");
         assert_eq!(first_row_content.next().unwrap().content(), "1");
+        assert_eq!(first_row_content.next().unwrap().content(), "100000");
 
         let mut second_row_content = table.row(1).unwrap().cell_iter();
         assert_eq!(second_row_content.next().unwrap().content(), "Proxy");
@@ -226,5 +235,6 @@ mod tests {
         assert_eq!(second_row_content.next().unwrap().content(), "20");
         assert_eq!(second_row_content.next().unwrap().content(), "2");
         assert_eq!(second_row_content.next().unwrap().content(), "2");
+        assert_eq!(second_row_content.next().unwrap().content(), "200000");
     }
 }

@@ -820,7 +820,7 @@ Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 	[Sequence] (original: 2, shrunk: 2)
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Jesus][..] calldata=create_fren() args=[]
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
- invariantHideJesus() (runs: 0, calls: 0, reverts: 1)
+ invariantHideJesus() (runs: 0, calls: 0, reverts: 1, gas/s: 0, tx/s: 0)
 ...
 "#]]);
     }
@@ -1678,7 +1678,7 @@ Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=218105 roll=17834 calldata=setNumber(uint256) args=[24752675372815722001736610830 [2.475e28]]
- invariant_warp() (runs: 0, calls: 0, reverts: 0)
+ invariant_warp() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 ...
 
 "#]]);
@@ -1709,7 +1709,7 @@ Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
 		vm.roll(block.number + 24864);
 		vm.prank([..]);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_roll() (runs: 0, calls: 0, reverts: 0)
+ invariant_roll() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 ...
 
 "#]]);
@@ -1762,7 +1762,7 @@ Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
- invariant_handler() (runs: 0, calls: 0, reverts: 1)
+ invariant_handler() (runs: 0, calls: 0, reverts: 1, gas/s: 0, tx/s: 0)
 
 ...
 
@@ -1812,7 +1812,7 @@ contract InvariantReplayStateTest is Test {
     // match the "after" value from the previous call, proving state persists.
     cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter_increases() (runs: 1, calls: 5, reverts: 0)
+[PASS] invariant_counter_increases() (runs: 1, calls: 5, reverts: 0, gas/s: [..], tx/s: [..])
 ...
 Logs:
   before: 0 after: 1

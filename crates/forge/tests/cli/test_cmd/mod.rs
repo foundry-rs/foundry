@@ -955,14 +955,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2103,8 +2103,8 @@ forgetest_init!(skip_output, |prj, cmd| {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
 Ran 6 tests for src/Counter.t.sol:Skips
-[SKIP] invariant_skipInvariant() (runs: 1, calls: 1, reverts: 1)
-[SKIP: invariant] invariant_skipInvariantReason() (runs: 1, calls: 1, reverts: 1)
+[SKIP] invariant_skipInvariant() (runs: 1, calls: 1, reverts: 1, gas/s: [..], tx/s: [..])
+[SKIP: invariant] invariant_skipInvariantReason() (runs: 1, calls: 1, reverts: 1, gas/s: [..], tx/s: [..])
 [SKIP] test_skipFuzz(uint256) (runs: 0, [AVG_GAS])
 [SKIP: fuzz] test_skipFuzzReason(uint256) (runs: 0, [AVG_GAS])
 [SKIP] test_skipUnit() ([GAS])
@@ -4451,8 +4451,8 @@ contract ZeroRuns is Test {
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 3 tests for test/ZeroRuns.t.sol:ZeroRuns
-[PASS] invariant_zeroDepth() (runs: 256, calls: 0, reverts: 0)
-[PASS] invariant_zeroRuns() (runs: 0, calls: 0, reverts: 0)
+[PASS] invariant_zeroDepth() (runs: 256, calls: 0, reverts: 0, gas/s: [..], tx/s: [..])
+[PASS] invariant_zeroRuns() (runs: 0, calls: 0, reverts: 0, gas/s: 0, tx/s: 0)
 [PASS] test_fuzzZeroRuns(uint256) (runs: 0, [AVG_GAS])
 Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
 

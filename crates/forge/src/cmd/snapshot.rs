@@ -22,7 +22,7 @@ use yansi::Paint;
 /// A regex that matches a basic snapshot entry like
 /// `Test:testDeposit() (gas: 58804)`
 pub static RE_BASIC_SNAPSHOT_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+))|(runs:\s*(?P<invruns>\d+),\s*calls:\s*(?P<calls>\d+),\s*reverts:\s*(?P<reverts>\d+)))\)").unwrap()
+    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+))|(runs:\s*(?P<invruns>\d+),\s*calls:\s*(?P<calls>\d+),\s*reverts:\s*(?P<reverts>\d+)(?:,\s*gas/s:\s*\d+,\s*tx/s:\s*\d+)?))\)").unwrap()
 });
 
 /// CLI arguments for `forge snapshot`.
@@ -217,7 +217,7 @@ impl GasSnapshotConfig {
 ///   `<signature>(gas:? 40181)` for normal tests
 ///   `<signature>(runs: 256, μ: 40181, ~: 40181)` for fuzz tests
 ///   `<signature>(runs: 256, calls: 40181, reverts: 40181)` for invariant tests
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GasSnapshotEntry {
     pub contract_name: String,
     pub signature: String,
@@ -271,6 +271,8 @@ impl FromStr for GasSnapshotEntry {
                                         metrics: HashMap::default(),
                                         failed_corpus_replays: 0,
                                         optimization_best_value: None,
+                                        total_gas: 0,
+                                        elapsed_secs: 0.0,
                                     },
                                 })
                         }
@@ -343,7 +345,7 @@ fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
 }
 
 /// A Gas snapshot entry diff.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GasSnapshotDiff {
     pub signature: String,
     pub source_gas_used: TestKindReport,
@@ -613,7 +615,7 @@ mod tests {
 
     #[test]
     fn can_parse_invariant_gas_snapshot_entry() {
-        let s = "Test:deposit() (runs: 256, calls: 100, reverts: 200)";
+        let s = "Test:deposit() (runs: 256, calls: 100, reverts: 200, gas/s: 5000000, tx/s: 500)";
         let entry = GasSnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
@@ -627,6 +629,8 @@ mod tests {
                     metrics: HashMap::default(),
                     failed_corpus_replays: 0,
                     optimization_best_value: None,
+                    total_gas: 0,
+                    elapsed_secs: 0.0,
                 }
             }
         );
@@ -634,7 +638,7 @@ mod tests {
 
     #[test]
     fn can_parse_invariant_gas_snapshot_entry2() {
-        let s = "ERC20Invariants:invariantBalanceSum() (runs: 256, calls: 3840, reverts: 2388)";
+        let s = "ERC20Invariants:invariantBalanceSum() (runs: 256, calls: 3840, reverts: 2388, gas/s: 1000000, tx/s: 768)";
         let entry = GasSnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
@@ -648,6 +652,8 @@ mod tests {
                     metrics: HashMap::default(),
                     failed_corpus_replays: 0,
                     optimization_best_value: None,
+                    total_gas: 0,
+                    elapsed_secs: 0.0,
                 }
             }
         );

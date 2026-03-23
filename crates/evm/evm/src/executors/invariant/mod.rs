@@ -121,6 +121,8 @@ pub struct InvariantMetrics {
     pub reverts: usize,
     // Count of fuzzed selector discards (through assume cheatcodes).
     pub discards: usize,
+    // Cumulative gas used by this selector.
+    pub gas: u64,
 }
 
 /// Contains data collected during invariant test runs.
@@ -223,13 +225,20 @@ impl InvariantTest {
     /// Update metrics for a fuzzed selector, extracted from tx details.
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
-    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+    fn record_metrics(
+        &mut self,
+        tx_details: &BasicTxDetails,
+        gas_used: u64,
+        reverted: bool,
+        discarded: bool,
+    ) {
         if let Some(metric_key) =
             self.targeted_contracts.targets.lock().fuzzed_metric_key(tx_details)
         {
             let test_metrics = &mut self.test_data.metrics;
             let invariant_metrics = test_metrics.entry(metric_key).or_default();
             invariant_metrics.calls += 1;
+            invariant_metrics.gas += gas_used;
             if discarded {
                 invariant_metrics.discards += 1;
             } else if reverted {
@@ -365,6 +374,9 @@ impl<'a> InvariantExecutor<'a> {
         let mut runs = 0;
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut last_metrics_report = Instant::now();
+        let campaign_start = Instant::now();
+        let mut total_txs: u64 = 0;
+        let mut total_gas: u64 = 0;
         let continue_campaign = |runs: u32| {
             if early_exit.should_stop() {
                 return false;
@@ -416,7 +428,12 @@ impl<'a> InvariantExecutor<'a> {
                 let mut call_result = execute_tx(&mut current_run.executor, tx)?;
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
-                    invariant_test.record_metrics(tx, call_result.reverted, discarded);
+                    invariant_test.record_metrics(
+                        tx,
+                        call_result.gas_used,
+                        call_result.reverted,
+                        discarded,
+                    );
                 }
 
                 // Collect line coverage from last fuzzed call.
@@ -473,6 +490,8 @@ impl<'a> InvariantExecutor<'a> {
                     current_run
                         .fuzz_runs
                         .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
+                    total_txs += 1;
+                    total_gas += call_result.gas_used;
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.
@@ -576,12 +595,17 @@ impl<'a> InvariantExecutor<'a> {
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
             {
                 // Display metrics inline if corpus dir set.
+                let elapsed_secs = campaign_start.elapsed().as_secs_f64();
                 let metrics = json!({
                     "timestamp": SystemTime::now()
                         .duration_since(UNIX_EPOCH)?
                         .as_secs(),
                     "invariant": invariant_contract.invariant_function.name,
                     "metrics": &corpus_manager.metrics,
+                    "total_txs": total_txs,
+                    "total_gas": total_gas,
+                    "tx_per_sec": if elapsed_secs > 0.0 { total_txs as f64 / elapsed_secs } else { 0.0 },
+                    "gas_per_sec": if elapsed_secs > 0.0 { total_gas as f64 / elapsed_secs } else { 0.0 },
                 });
                 let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
                 last_metrics_report = Instant::now();
@@ -602,6 +626,8 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
+            total_gas,
+            elapsed: campaign_start.elapsed(),
             failed_corpus_replays: corpus_manager.failed_replays,
             optimization_best_value: result.optimization_best_value,
             optimization_best_sequence: result.optimization_best_sequence,

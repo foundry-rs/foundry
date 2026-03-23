@@ -14,7 +14,7 @@ use foundry_evm_fuzz::{
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
 use revm_inspectors::tracing::CallTraceArena;
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, time::Duration};
 
 /// The outcome of an invariant fuzz test
 #[derive(Debug)]
@@ -33,6 +33,10 @@ pub struct InvariantFuzzTestResult {
     pub line_coverage: Option<HitMaps>,
     /// Fuzzed selectors metrics collected during the invariant test runs.
     pub metrics: HashMap<String, InvariantMetrics>,
+    /// Total gas consumed across all transactions in the campaign.
+    pub total_gas: u64,
+    /// Wall-clock duration of the campaign.
+    pub elapsed: Duration,
     /// Number of failed replays from persisted corpus.
     pub failed_corpus_replays: usize,
     /// For optimization mode (int256 return): the best (maximum) value achieved.

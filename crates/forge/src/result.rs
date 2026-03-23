@@ -671,6 +671,8 @@ impl TestResult {
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
+            total_gas: 0,
+            elapsed_secs: 0.0,
         };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
@@ -690,6 +692,8 @@ impl TestResult {
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
+            total_gas: 0,
+            elapsed_secs: 0.0,
         };
         self.status = TestStatus::Failure;
         self.reason = if replayed_entirely {
@@ -709,6 +713,8 @@ impl TestResult {
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
+            total_gas: 0,
+            elapsed_secs: 0.0,
         };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
@@ -727,6 +733,8 @@ impl TestResult {
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         optimization_best_value: Option<I256>,
+        total_gas: u64,
+        elapsed_secs: f64,
     ) {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
@@ -735,6 +743,8 @@ impl TestResult {
             metrics,
             failed_corpus_replays,
             optimization_best_value,
+            total_gas,
+            elapsed_secs,
         };
         // For optimization mode (Some value), always succeed. For check mode (None), use success.
         self.status = if optimization_best_value.is_some() || success {
@@ -796,7 +806,7 @@ impl TestResult {
 }
 
 /// Data report by a test.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TestKindReport {
     Unit {
         gas: u64,
@@ -815,6 +825,10 @@ pub enum TestKindReport {
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
+        /// Total gas consumed across all transactions in the campaign.
+        total_gas: u64,
+        /// Wall-clock elapsed time of the campaign in seconds.
+        elapsed_secs: f64,
     },
     Table {
         runs: usize,
@@ -846,17 +860,29 @@ impl fmt::Display for TestKindReport {
                 metrics: _,
                 failed_corpus_replays,
                 optimization_best_value,
+                total_gas,
+                elapsed_secs,
             } => {
+                let tx_per_sec =
+                    if *elapsed_secs > 0.0 { *calls as f64 / elapsed_secs } else { 0.0 };
+                let gas_per_sec =
+                    if *elapsed_secs > 0.0 { *total_gas as f64 / elapsed_secs } else { 0.0 };
                 // If optimization_best_value is Some, this is optimization mode.
                 if let Some(best_value) = optimization_best_value {
-                    write!(f, "(best: {best_value}, runs: {runs}, calls: {calls})")
+                    write!(
+                        f,
+                        "(best: {best_value}, runs: {runs}, calls: {calls}, gas/s: {gas_per_sec:.0}, tx/s: {tx_per_sec:.0})"
+                    )
                 } else if *failed_corpus_replays != 0 {
                     write!(
                         f,
-                        "(runs: {runs}, calls: {calls}, reverts: {reverts}, failed corpus replays: {failed_corpus_replays})"
+                        "(runs: {runs}, calls: {calls}, reverts: {reverts}, gas/s: {gas_per_sec:.0}, tx/s: {tx_per_sec:.0}, failed corpus replays: {failed_corpus_replays})"
                     )
                 } else {
-                    write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
+                    write!(
+                        f,
+                        "(runs: {runs}, calls: {calls}, reverts: {reverts}, gas/s: {gas_per_sec:.0}, tx/s: {tx_per_sec:.0})"
+                    )
                 }
             }
             Self::Table { runs, mean_gas, median_gas } => {
@@ -902,6 +928,10 @@ pub enum TestKind {
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
+        /// Total gas consumed across all transactions in the campaign.
+        total_gas: u64,
+        /// Wall-clock elapsed time of the campaign in seconds.
+        elapsed_secs: f64,
     },
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },
@@ -943,6 +973,8 @@ impl TestKind {
                 metrics: _,
                 failed_corpus_replays,
                 optimization_best_value,
+                total_gas,
+                elapsed_secs,
             } => TestKindReport::Invariant {
                 runs: *runs,
                 calls: *calls,
@@ -950,6 +982,8 @@ impl TestKind {
                 metrics: HashMap::default(),
                 failed_corpus_replays: *failed_corpus_replays,
                 optimization_best_value: *optimization_best_value,
+                total_gas: *total_gas,
+                elapsed_secs: *elapsed_secs,
             },
             Self::Table { runs, mean_gas, median_gas } => {
                 TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
@@ -1003,5 +1037,90 @@ impl TestSetup {
 
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.coverage, other_coverage);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn invariant_report_display_includes_throughput() {
+        let report = TestKindReport::Invariant {
+            runs: 10,
+            calls: 5000,
+            reverts: 100,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+            optimization_best_value: None,
+            total_gas: 50_000_000,
+            elapsed_secs: 10.0,
+        };
+        let output = format!("{report}");
+        // tx/s = 5000 / 10.0 = 500
+        // gas/s = 50_000_000 / 10.0 = 5_000_000
+        assert!(output.contains("gas/s: 5000000"), "expected gas/s in output: {output}");
+        assert!(output.contains("tx/s: 500"), "expected tx/s in output: {output}");
+        assert!(output.contains("runs: 10"));
+        assert!(output.contains("calls: 5000"));
+        assert!(output.contains("reverts: 100"));
+    }
+
+    #[test]
+    fn invariant_report_display_zero_elapsed() {
+        let report = TestKindReport::Invariant {
+            runs: 1,
+            calls: 100,
+            reverts: 0,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+            optimization_best_value: None,
+            total_gas: 1_000_000,
+            elapsed_secs: 0.0,
+        };
+        let output = format!("{report}");
+        // Should not panic and should show 0 for rates
+        assert!(output.contains("gas/s: 0"), "expected gas/s: 0 in output: {output}");
+        assert!(output.contains("tx/s: 0"), "expected tx/s: 0 in output: {output}");
+    }
+
+    #[test]
+    fn invariant_report_display_optimization_mode() {
+        let report = TestKindReport::Invariant {
+            runs: 5,
+            calls: 2500,
+            reverts: 0,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+            optimization_best_value: Some(I256::try_from(42).unwrap()),
+            total_gas: 25_000_000,
+            elapsed_secs: 5.0,
+        };
+        let output = format!("{report}");
+        assert!(output.contains("best: 42"), "expected best value in output: {output}");
+        assert!(output.contains("gas/s: 5000000"), "expected gas/s in output: {output}");
+        assert!(output.contains("tx/s: 500"), "expected tx/s in output: {output}");
+    }
+
+    #[test]
+    fn invariant_report_display_failed_corpus_replays() {
+        let report = TestKindReport::Invariant {
+            runs: 10,
+            calls: 1000,
+            reverts: 50,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 3,
+            optimization_best_value: None,
+            total_gas: 10_000_000,
+            elapsed_secs: 2.0,
+        };
+        let output = format!("{report}");
+        assert!(
+            output.contains("failed corpus replays: 3"),
+            "expected failed corpus replays in output: {output}"
+        );
+        assert!(output.contains("gas/s: 5000000"), "expected gas/s in output: {output}");
+        assert!(output.contains("tx/s: 500"), "expected tx/s in output: {output}");
     }
 }

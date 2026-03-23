@@ -989,6 +989,8 @@ impl<'a> FunctionRunner<'a> {
             invariant_result.metrics,
             invariant_result.failed_corpus_replays,
             invariant_result.optimization_best_value,
+            invariant_result.total_gas,
+            invariant_result.elapsed.as_secs_f64(),
         );
         self.result
     }
