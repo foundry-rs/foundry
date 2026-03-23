@@ -11,6 +11,7 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
+use alloy_network::Ethereum;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
@@ -906,7 +907,7 @@ pub struct RawCallResult {
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<BroadcastableTransactions>,
+    pub transactions: Option<BroadcastableTransactions<Ethereum>>,
     /// The changeset of the state.
     pub state_changeset: StateChangeset,
     /// The `EvmEnv` after the call
@@ -1002,7 +1003,7 @@ impl RawCallResult {
     }
 
     /// Returns the transactions generated from this call.
-    pub fn transactions(&self) -> Option<&BroadcastableTransactions> {
+    pub fn transactions(&self) -> Option<&BroadcastableTransactions<Ethereum>> {
         self.cheatcodes.as_ref().map(|c| &c.broadcastable_transactions)
     }
 

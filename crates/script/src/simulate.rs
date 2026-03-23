@@ -11,7 +11,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
-use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
+use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
@@ -68,7 +68,7 @@ impl PreSimulationState {
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
-                if let Some(TxKind::Call(_)) = to {
+                if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
                         &self.execution_artifacts.decoder,
@@ -129,7 +129,7 @@ impl PreSimulationState {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
                 let tx = transaction.tx_mut();
 
-                let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
+                let to = tx.to();
                 let result = runner
                     .simulate(
                         tx.from()

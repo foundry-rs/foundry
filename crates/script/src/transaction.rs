@@ -2,7 +2,7 @@ use super::ScriptResult;
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, TxKind, hex};
+use alloy_primitives::{Address, B256, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
@@ -33,7 +33,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         decoder: &CallTraceDecoder,
         create2_deployer: Address,
     ) -> Result<()> {
-        if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
+        if let Some(to) = self.transaction.transaction.to() {
             if to == create2_deployer {
                 if let Some(input) = self.transaction.transaction.input() {
                     let (salt, init_code) = input.split_at(32);

@@ -15,7 +15,7 @@ use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Ethereum;
 use alloy_primitives::{
-    Address, Bytes, Log, TxKind, U256, hex,
+    Address, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
 };
 use alloy_signer::Signer;
@@ -468,15 +468,13 @@ impl ScriptArgs {
             let mut offset = 0;
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-            if let Some(TxKind::Call(to)) = to {
+            if let Some(to) = to {
                 if to == create2_deployer {
                     // Size of the salt prefix.
                     offset = 32;
                 } else {
                     continue;
                 }
-            } else if let Some(TxKind::Create) = to {
-                // Pass
             }
 
             // Find artifact with a deployment code same as the data.
@@ -545,7 +543,7 @@ pub struct ScriptResult {
     pub gas_used: u64,
     pub labeled_addresses: AddressHashMap<String>,
     #[serde(skip)]
-    pub transactions: Option<BroadcastableTransactions>,
+    pub transactions: Option<BroadcastableTransactions<Ethereum>>,
     pub returned: Bytes,
     pub address: Option<Address>,
     #[serde(skip)]

@@ -21,22 +21,19 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecarVariant;
-use alloy_network::{Ethereum, Network};
+use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
 };
-use alloy_rpc_types::{
-    AccessList,
-    request::{TransactionInput, TransactionRequest},
-};
+use alloy_rpc_types::{AccessList, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     SELECTOR_LEN, TransactionMaybeSigned,
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    Breakpoints, EthCheatCtx, EvmEnv, FoundryInspectorExt, FoundryTransaction,
+    Breakpoints, EthCheatCtx, EvmEnv, FoundryCfg, FoundryInspectorExt, FoundryTransaction,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -52,10 +49,11 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
-    Inspector,
+    Context, Inspector,
     bytecode::opcode as op,
     context::{
-        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, result::EVMError,
+        BlockEnv, Cfg, CfgEnv, ContextTr, JournalTr, Transaction, TransactionType, TxEnv,
+        result::EVMError,
     },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
@@ -65,7 +63,6 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
-    primitives::hardfork::SpecId,
 };
 use serde_json::Value;
 use std::{
@@ -418,7 +415,7 @@ impl ArbitraryStorage {
 }
 
 /// List of transactions that can be broadcasted.
-pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
+pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -438,7 +435,10 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   cheatcode address: by default, the caller, test contract and newly deployed contracts are
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
-pub struct Cheatcodes {
+pub struct Cheatcodes<
+    CTX: FoundryContextExt = Context<BlockEnv, TxEnv, CfgEnv>,
+    N: Network = Ethereum,
+> {
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
     pub analysis: Option<CheatcodeAnalysis>,
 
@@ -446,7 +446,7 @@ pub struct Cheatcodes {
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
-    pub block: Option<BlockEnv>,
+    pub block: Option<CTX::Block>,
 
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
@@ -517,7 +517,7 @@ pub struct Cheatcodes {
     pub broadcast: Option<Broadcast>,
 
     /// Scripting based transactions
-    pub broadcastable_transactions: BroadcastableTransactions,
+    pub broadcastable_transactions: BroadcastableTransactions<N>,
 
     /// Current EIP-2930 access lists.
     pub access_list: Option<AccessList>,
@@ -577,7 +577,7 @@ pub struct Cheatcodes {
     /// Used to determine whether the broadcasted call has dynamic gas limit.
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
-    pub execution_evm_version: Option<SpecId>,
+    pub execution_evm_version: Option<<CTX::Cfg as FoundryCfg>::Spec>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -976,22 +976,22 @@ impl Cheatcodes {
                         });
                     }
 
-                    let input = TransactionInput::new(call.input.bytes(ecx));
+                    let input = call.input.bytes(ecx);
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let account =
                         ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
 
-                    let mut tx_req = TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to: Some(TxKind::from(Some(call.target_address))),
-                        value: call.transfer_value(),
-                        input,
-                        nonce: Some(account.info.nonce),
-                        chain_id: Some(chain_id),
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
-                        ..Default::default()
-                    };
+                    let mut tx_req = TransactionRequest::default()
+                        .with_from(broadcast.new_origin)
+                        .with_to(call.target_address)
+                        .with_value(call.transfer_value().unwrap_or_default())
+                        .with_input(input)
+                        .with_nonce(account.info.nonce)
+                        .with_chain_id(chain_id);
+                    if is_fixed_gas_limit {
+                        tx_req.set_gas_limit(call.gas_limit)
+                    }
 
                     let active_delegations = std::mem::take(&mut self.active_delegations);
                     // Set active blob sidecar, if any.
@@ -1025,7 +1025,7 @@ impl Cheatcodes {
                                 account.info.nonce += 1;
                             }
                         }
-                        tx_req.authorization_list = Some(active_delegations);
+                        tx_req.set_authorization_list(active_delegations);
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1775,14 +1775,14 @@ impl<CTX: EthCheatCtx> Inspector<CTX> for Cheatcodes {
                 let account = &ecx.journal().evm_state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
-                    transaction: TransactionMaybeSigned::new(TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to: None,
-                        value: Some(input.value()),
-                        input: TransactionInput::new(input.init_code()),
-                        nonce: Some(account.info.nonce),
-                        ..Default::default()
-                    }),
+                    transaction: TransactionMaybeSigned::new(
+                        TransactionRequest::default()
+                            .with_from(broadcast.new_origin)
+                            .with_kind(TxKind::Create)
+                            .with_value(input.value())
+                            .with_input(input.init_code())
+                            .with_nonce(account.info.nonce),
+                    ),
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
