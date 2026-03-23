@@ -1006,6 +1006,10 @@ pub struct TestArgs {
     )]
     pub showmap_corpus_dir: Option<PathBuf>,
 
+    /// Hides addresses in trace parameters when a label is available.
+    #[arg(long, help_heading = "Display options")]
+    pub compact_labels: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -2662,6 +2666,7 @@ impl TestArgs {
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
             .with_label_disabled(self.disable_labels)
+            .with_compact_labels(self.compact_labels)
             .with_verbosity(verbosity)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_tempo_hardfork(

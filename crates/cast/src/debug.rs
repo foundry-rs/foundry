@@ -27,6 +27,7 @@ pub(crate) async fn handle_traces(
     debug: bool,
     decode_internal: bool,
     disable_label: bool,
+    compact_labels: bool,
     trace_depth: Option<usize>,
     tempo_hardfork: Option<TempoHardfork>,
 ) -> eyre::Result<()> {
@@ -66,7 +67,8 @@ pub(crate) async fn handle_traces(
         .with_tempo_hardfork(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),
-        );
+        )
+        .with_compact_labels(compact_labels);
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
