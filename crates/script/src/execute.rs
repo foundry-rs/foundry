@@ -368,6 +368,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             .with_tempo_hardfork(
                 is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
             )
+            .with_compact_labels(self.args.tracing.compact_labels)
             .build();
 
         if self.args.tracing.decode_internal(&self.script_config.config.tracing) {

@@ -2655,6 +2655,7 @@ impl TestArgs {
             .with_labels(self.tracing.parsed_labels().into_iter().chain(config.labels.clone()))
             .with_known_contracts(&known_contracts)
             .with_label_disabled(self.tracing.disable_labels(&config.tracing))
+            .with_compact_labels(self.tracing.compact_labels)
             .with_verbosity(verbosity)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_tempo_hardfork(

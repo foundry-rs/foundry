@@ -260,6 +260,7 @@ impl CallArgs {
         if !self.trace
             && !self.debug_trace_call
             && (self.tracing.disable_labels
+                || self.tracing.compact_labels
                 || !self.tracing.labels.is_empty()
                 || self.tracing.trace_depth.is_some())
         {

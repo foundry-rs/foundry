@@ -31,6 +31,11 @@ pub struct TracingArgs {
     #[serde(skip)]
     pub disable_labels: bool,
 
+    /// Hide addresses in trace parameters when a label is available.
+    #[arg(long, help_heading = "Trace options")]
+    #[serde(skip)]
+    pub compact_labels: bool,
+
     /// Label addresses in traces.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth

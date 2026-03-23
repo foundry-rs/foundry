@@ -55,7 +55,8 @@ pub(crate) async fn handle_traces(
         .with_tempo_hardfork(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),
-        );
+        )
+        .with_compact_labels(tracing.compact_labels);
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
