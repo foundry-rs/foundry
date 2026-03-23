@@ -1973,12 +1973,8 @@ impl EthApi<FoundryNetwork> {
                 // execute again but with access list set
                 request.access_list = Some(access_list.clone());
 
-                let (exit, out, gas_used, _) = self.backend.call_with_state(
-                    &state,
-                    request.clone(),
-                    FeeDetails::zero(),
-                    block_env,
-                )?;
+                let (exit, out, gas_used, _) =
+                    self.backend.call_with_state(&state, request, FeeDetails::zero(), block_env)?;
                 ensure_return_ok(exit, &out)?;
 
                 Ok(AccessListResult {
