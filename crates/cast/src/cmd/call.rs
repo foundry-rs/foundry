@@ -100,6 +100,11 @@ pub struct CallArgs {
     #[arg(long, default_value_t = false, requires = "trace")]
     disable_labels: bool,
 
+    /// Hides addresses in trace parameters when a label is available.
+    /// Can only be set with `--trace`.
+    #[arg(long, default_value_t = false, requires = "trace")]
+    compact_labels: bool,
+
     /// Opens an interactive debugger.
     /// Can only be used with `--trace`.
     #[arg(long, requires = "trace")]
@@ -252,6 +257,7 @@ impl CallArgs {
             data,
             with_local_artifacts,
             disable_labels,
+            compact_labels,
             wallet,
             ..
         } = self;
@@ -402,6 +408,7 @@ impl CallArgs {
                 debug,
                 decode_internal,
                 disable_labels,
+                compact_labels,
                 None,
             )
             .await?;

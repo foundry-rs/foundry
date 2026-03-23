@@ -94,6 +94,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Hides addresses in trace parameters when a label is available.
+    #[inline]
+    pub fn with_compact_labels(mut self, compact: bool) -> Self {
+        self.decoder.compact_labels = compact;
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -151,6 +158,9 @@ pub struct CallTraceDecoder {
 
     /// Disable showing of labels.
     pub disable_labels: bool,
+
+    /// Hide addresses when a label is available, showing only the label.
+    pub compact_labels: bool,
 }
 
 impl CallTraceDecoder {
@@ -216,6 +226,7 @@ impl CallTraceDecoder {
             debug_identifier: None,
 
             disable_labels: false,
+            compact_labels: false,
         }
     }
 
@@ -798,6 +809,9 @@ impl CallTraceDecoder {
         if let DynSolValue::Address(addr) = value
             && let Some(label) = self.labels.get(addr)
         {
+            if self.compact_labels {
+                return label.clone();
+            }
             return format!("{label}: [{addr}]");
         }
         format_token(value)

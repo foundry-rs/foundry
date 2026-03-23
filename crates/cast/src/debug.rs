@@ -24,6 +24,7 @@ pub(crate) async fn handle_traces(
     debug: bool,
     decode_internal: bool,
     disable_label: bool,
+    compact_labels: bool,
     trace_depth: Option<usize>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
@@ -56,7 +57,8 @@ pub(crate) async fn handle_traces(
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
-        .with_label_disabled(disable_label);
+        .with_label_disabled(disable_label)
+        .with_compact_labels(compact_labels);
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);

@@ -70,6 +70,10 @@ pub struct RunArgs {
     #[arg(long, default_value_t = false)]
     disable_labels: bool,
 
+    /// Hides addresses in trace parameters when a label is available.
+    #[arg(long, default_value_t = false)]
+    compact_labels: bool,
+
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
@@ -133,6 +137,7 @@ impl RunArgs {
         let debug = self.debug;
         let decode_internal = self.decode_internal;
         let disable_labels = self.disable_labels;
+        let compact_labels = self.compact_labels;
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
@@ -326,6 +331,7 @@ impl RunArgs {
             debug,
             decode_internal,
             disable_labels,
+            compact_labels,
             self.trace_depth,
         )
         .await?;

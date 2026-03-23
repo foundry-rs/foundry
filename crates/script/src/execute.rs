@@ -343,6 +343,7 @@ impl ExecutedState {
                 &self.script_config.config,
             )?)
             .with_label_disabled(self.args.disable_labels)
+            .with_compact_labels(self.args.compact_labels)
             .build();
 
         let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_external(
