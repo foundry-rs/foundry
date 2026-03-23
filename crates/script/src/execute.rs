@@ -196,7 +196,7 @@ impl PreExecutionState {
                 && self.args.evm.sender.is_none()
             {
                 for tx in txs {
-                    if tx.transaction.to().is_none_or(|kind| kind.is_create()) {
+                    if tx.transaction.to().is_none() {
                         let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
