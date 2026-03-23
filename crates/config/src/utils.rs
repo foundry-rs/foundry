@@ -180,7 +180,7 @@ where
     let num: U256 = Numeric::deserialize(deserializer)?.into();
     let num: u64 = num.try_into().map_err(serde::de::Error::custom)?;
     if num <= 100 {
-        num.try_into().map_err(serde::de::Error::custom)
+        Ok(num as u32)
     } else {
         Err(serde::de::Error::custom("percent must be lte 100"))
     }
