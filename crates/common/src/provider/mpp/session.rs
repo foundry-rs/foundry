@@ -134,13 +134,10 @@ impl SessionProvider {
         );
 
         // Build approve + open calls
-        let approve_data = mpp::client::tempo::abi::ITIP20::approveCall::new((
-            options.escrow_contract,
-            U256::from(options.deposit),
-        ))
-        .abi_encode();
-
         alloy_sol_types::sol! {
+            interface ITIP20 {
+                function approve(address spender, uint256 amount) external returns (bool);
+            }
             interface IEscrow {
                 function open(
                     address payee,
@@ -151,6 +148,12 @@ impl SessionProvider {
                 ) external;
             }
         }
+
+        let approve_data = ITIP20::approveCall::new((
+            options.escrow_contract,
+            U256::from(options.deposit),
+        ))
+        .abi_encode();
 
         let open_data = IEscrow::openCall::new((
             options.payee,
