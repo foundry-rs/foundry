@@ -127,7 +127,7 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
     ) -> Result<EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>, EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
-    fn console_log(&mut self, cheats: &mut Cheatcodes, msg: &str);
+    fn console_log(&mut self, msg: &str);
 
     /// Returns a mutable reference to the tracing inspector if it is available.
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
@@ -226,7 +226,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         db.transact_from_tx(tx, evm_env, inner, cheats)
     }
 
-    fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
+    fn console_log(&mut self, _msg: &str) {}
 }
 
 macro_rules! try_or_return {

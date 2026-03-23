@@ -211,7 +211,7 @@ fn handle_assertion_result_mono<CTX: ContextTr<Db: DatabaseExt>>(
     if ccx.state.config.assertions_revert {
         Err(msg.into_owned().into())
     } else {
-        executor.console_log(ccx.state, &msg);
+        executor.console_log(&msg);
         ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
         Ok(Default::default())
     }

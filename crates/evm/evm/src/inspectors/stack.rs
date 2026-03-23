@@ -422,7 +422,7 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         db.transact_from_tx(tx_env, evm_env, inner, &mut inspector)
     }
 
-    fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {
+    fn console_log(&mut self, msg: &str) {
         if let Some(ref mut collector) = self.log_collector {
             FoundryInspectorExt::console_log(&mut **collector, msg);
         }
