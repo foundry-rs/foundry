@@ -12,6 +12,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_provider::Provider;
+use alloy_rpc_types::TransactionInput;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
@@ -195,8 +196,8 @@ impl PreExecutionState {
                 && self.args.evm.sender.is_none()
             {
                 for tx in txs {
-                    if tx.to.is_none() {
-                        let sender = tx.from;
+                    if tx.transaction.to().is_none() {
+                        let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
                                 sh_warn!(
@@ -294,7 +295,16 @@ impl ExecutedState {
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
-        let txs = self.execution_result.transactions.clone().unwrap_or_default();
+        let mut txs = self.execution_result.transactions.clone().unwrap_or_default();
+
+        // Ensure that unsigned transactions have both `data` and `input` populated to avoid
+        // issues with eth_estimateGas and eth_sendTransaction requests.
+        for tx in &mut txs {
+            if let Some(req) = tx.transaction.as_unsigned_mut() {
+                req.input =
+                    TransactionInput::maybe_both(std::mem::take(&mut req.input).into_input());
+            }
+        }
         let rpc_data = RpcData::from_transactions(&txs);
 
         if rpc_data.is_multi_chain() {

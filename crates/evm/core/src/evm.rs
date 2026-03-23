@@ -15,8 +15,8 @@ use foundry_fork_db::DatabaseError;
 use revm::{
     Context,
     context::{
-        BlockEnv, Cfg, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr,
-        TxEnv,
+        BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr,
+        LocalContextTr, TxEnv,
         result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
     },
     handler::{
@@ -118,7 +118,7 @@ impl<'db, I: EthInspectorExt> Evm for FoundryEvm<'db, I> {
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        self.inner.ctx.tx = tx;
+        self.inner.set_tx(tx);
 
         let mut handler = FoundryHandler::<I>::default();
         let result = handler.inspect_run(&mut self.inner)?;
@@ -184,7 +184,7 @@ pub trait NestedEvm {
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
 
     /// Returns a snapshot of the current EVM environment (cfg + block).
-    fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
+    fn to_evm_env(self) -> EvmEnv<Self::Spec, Self::Block>;
 }
 
 impl<I: EthInspectorExt> NestedEvm for FoundryEvm<'_, I> {
@@ -220,8 +220,8 @@ impl<I: EthInspectorExt> NestedEvm for FoundryEvm<'_, I> {
         Evm::transact_raw(self, tx)
     }
 
-    fn to_evm_env(&self) -> EvmEnv {
-        EvmEnv { cfg_env: self.inner.ctx.cfg.clone(), block_env: self.inner.ctx.block.clone() }
+    fn to_evm_env(self) -> EvmEnv {
+        Evm::finish(self).1
     }
 }
 
