@@ -21,7 +21,7 @@ multiple-versions = "allow"
 wildcards = "allow"
 highlight = "all"
 # List of crates to deny
-deny = [{ name = "openssl" }]
+deny = []
 # Certain crates/versions that will be skipped when doing duplicate detection.
 skip = []
 # Similarly to `skip` allows you to skip certain crates during duplicate
@@ -63,12 +63,23 @@ exceptions = [
     # CC0 is a permissive license but somewhat unclear status for source code
     # so we prefer to not have dependencies using it
     # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
-    { allow = ["CC0-1.0"], name = "trezor-client" },
-    { allow = ["CC0-1.0"], name = "notify" },
-    { allow = ["CC0-1.0"], name = "dunce" },
-    { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "trezor-client" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "notify" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "dunce" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "aurora-engine-modexp" },
     # Rendered mdBook HTML source code includes attribution as required by CC-BY-4.0
-    { allow = ["CC-BY-4.0", "MIT"], name = "font-awesome-as-a-crate" },
+    { allow = [
+        "CC-BY-4.0",
+        "MIT",
+    ], name = "font-awesome-as-a-crate" },
 ]
 # copyleft = "deny"
 
