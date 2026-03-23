@@ -71,6 +71,17 @@ mod simulate;
 mod transaction;
 mod verify;
 
+/// Returns the native currency symbol for gas display on a given chain.
+///
+/// All EVM chains use the same 18-decimal internal representation for gas pricing,
+/// so only the symbol changes (e.g. "ETH" vs "USDC" on Tempo).
+fn gas_currency_symbol(chain_id: u64) -> &'static str {
+    foundry_config::NamedChain::try_from(chain_id)
+        .unwrap_or_default()
+        .native_currency_symbol()
+        .unwrap_or("ETH")
+}
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 

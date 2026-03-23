@@ -7,9 +7,9 @@ use crate::{
     broadcast::{BundledState, estimate_gas},
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData},
+    gas_currency_symbol,
     sequence::get_commit_hash,
 };
-use alloy_chains::NamedChain;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
@@ -360,11 +360,7 @@ impl FilledTransactionsState {
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
 
-                // Get the native token symbol for the chain using NamedChain
-                let token_symbol = NamedChain::try_from(provider_info.chain)
-                    .unwrap_or_default()
-                    .native_currency_symbol()
-                    .unwrap_or("ETH");
+                let token_symbol = gas_currency_symbol(provider_info.chain);
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.

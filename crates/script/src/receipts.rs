@@ -1,4 +1,4 @@
-use alloy_chains::{Chain, NamedChain};
+use alloy_chains::Chain;
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{Address, TxHash, U256, utils::format_units};
 use alloy_provider::{
@@ -176,10 +176,7 @@ pub fn format_receipt<N: Network>(
                     .unwrap_or_else(|_| "N/A".into());
                 let gas_price =
                     format_units(U256::from(gas_price), 9).unwrap_or_else(|_| "N/A".into());
-                let token_symbol = NamedChain::try_from(chain)
-                    .unwrap_or_default()
-                    .native_currency_symbol()
-                    .unwrap_or("ETH");
+                let token_symbol = crate::gas_currency_symbol(chain.id());
                 format!(
                     "Paid: {} {} ({gas_used} gas * {} gwei)",
                     paid.trim_end_matches('0'),

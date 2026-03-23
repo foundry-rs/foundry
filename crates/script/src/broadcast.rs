@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
-use alloy_chains::{Chain, NamedChain};
+use alloy_chains::Chain;
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_network::{EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
@@ -629,10 +629,7 @@ where
                 .and_then(|avg| format_units(avg, 9).ok())
                 .unwrap_or_else(|| "N/A".to_string());
 
-            let token_symbol = NamedChain::try_from(sequence.chain)
-                .unwrap_or_default()
-                .native_currency_symbol()
-                .unwrap_or("ETH");
+            let token_symbol = crate::gas_currency_symbol(sequence.chain);
             seq_progress.inner.write().set_status(&format!(
                 "Total Paid: {} {} ({} gas * avg {} gwei)\n",
                 paid.trim_end_matches('0'),
