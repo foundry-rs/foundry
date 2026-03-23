@@ -299,7 +299,7 @@ mod tests {
     };
     use mpp::{
         MppError,
-        client::tempo::signing::{KeychainVersion, TempoSigningMode},
+        client::tempo::signing::TempoSigningMode,
         protocol::core::{
             Base64UrlJson, PaymentChallenge, PaymentCredential, PaymentPayload,
             format_www_authenticate, parse_authorization,
@@ -677,11 +677,8 @@ mod tests {
             .parse()
             .expect("invalid key_address");
 
-        let signing_mode = TempoSigningMode::Keychain {
-            wallet: wallet_address,
-            key_authorization: None,
-            version: KeychainVersion::V2,
-        };
+        let signing_mode =
+            TempoSigningMode::Keychain { wallet: wallet_address, key_authorization: None };
 
         let service_url = "https://rpc.mpp.tempo.xyz";
         let provider = super::super::session::SessionProvider::new(signer)
