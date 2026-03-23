@@ -72,7 +72,6 @@ impl LazySessionProvider {
             mpp::client::tempo::signing::TempoSigningMode::Keychain {
                 wallet,
                 key_authorization: None,
-                version: mpp::client::tempo::signing::KeychainVersion::V2,
             }
         } else {
             mpp::client::tempo::signing::TempoSigningMode::Direct
