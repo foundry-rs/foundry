@@ -18,6 +18,7 @@ pub mod utils;
 pub mod wallet_browser;
 pub mod wallet_multi;
 pub mod wallet_raw;
+pub mod wallet_tempo;
 
 pub use opts::WalletOpts;
 pub use signer::{PendingSigner, WalletSigner};

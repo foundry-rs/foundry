@@ -1,4 +1,4 @@
-use crate::{signer::WalletSigner, utils, wallet_raw::RawWalletOpts};
+use crate::{signer::WalletSigner, utils, wallet_raw::RawWalletOpts, wallet_tempo};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::Result;
@@ -71,6 +71,18 @@ pub struct WalletOpts {
     )]
     pub keystore_password_file: Option<String>,
 
+    /// Use a Tempo wallet.
+    ///
+    /// Resolve the signing key from the Tempo CLI wallet keystore
+    /// (`$TEMPO_HOME/wallet/keys.toml`, default `~/.tempo/wallet/keys.toml`).
+    /// The `TEMPO_PRIVATE_KEY` env var is checked first.
+    ///
+    /// Requires `--from` to specify which address to resolve.
+    ///
+    /// See: <https://docs.tempo.xyz>
+    #[arg(long, help_heading = "Wallet options - keystore")]
+    pub tempo: bool,
+
     /// Use a Ledger hardware wallet.
     #[arg(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
@@ -139,6 +151,11 @@ impl WalletOpts {
                 eyre::eyre!("TURNKEY_ADDRESS could not be parsed as an Ethereum address")
             })?;
             WalletSigner::from_turnkey(api_private_key, organization_id, address)?
+        } else if self.tempo {
+            let sender =
+                self.from.ok_or_else(|| eyre::eyre!("--from is required when using --tempo"))?;
+            wallet_tempo::try_resolve_tempo_signer(sender)?
+                .ok_or_else(|| eyre::eyre!("no matching key found in Tempo wallet for {sender}"))?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -172,6 +189,7 @@ flag to set your key via:
 --aws
 --gcp
 --turnkey
+--tempo
 --trezor
 --ledger
 --browser
@@ -244,6 +262,7 @@ mod tests {
             aws: false,
             gcp: false,
             turnkey: false,
+            tempo: false,
         };
         match wallet.signer().await {
             Ok(_) => {
