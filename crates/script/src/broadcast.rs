@@ -1,16 +1,16 @@
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
 use alloy_chains::{Chain, NamedChain};
-use alloy_consensus::TxEnvelope;
+use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_network::{EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
     Address, TxHash,
     map::{AddressHashMap, AddressHashSet},
     utils::format_units,
 };
 use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
-use alloy_rpc_types::TransactionRequest;
+use alloy_signer::Signature;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
@@ -21,23 +21,28 @@ use foundry_common::{
     shell,
 };
 use foundry_config::Config;
+use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
     sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
 
-pub async fn estimate_gas<P: Provider<Ethereum>>(
-    tx: &mut TransactionRequest,
+pub async fn estimate_gas<N: Network, P: Provider<N>>(
+    tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
-) -> Result<()> {
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
-    tx.gas = None;
+    tx.reset_gas_limit();
 
     tx.set_gas_limit(
         provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
@@ -61,14 +66,19 @@ pub async fn next_nonce(
 
 /// Represents how to send a single transaction.
 #[derive(Clone)]
-pub enum SendTransactionKind<'a> {
-    Unlocked(TransactionRequest),
-    Raw(TransactionRequest, &'a EthereumWallet),
-    Browser(TransactionRequest, &'a BrowserSigner),
-    Signed(TxEnvelope),
+pub enum SendTransactionKind<'a, N: Network> {
+    Unlocked(N::TransactionRequest),
+    Raw(N::TransactionRequest, &'a EthereumWallet),
+    Browser(N::TransactionRequest, &'a BrowserSigner<N>),
+    Signed(N::TxEnvelope),
 }
 
-impl<'a> SendTransactionKind<'a> {
+impl<'a, N: Network> SendTransactionKind<'a, N>
+where
+    N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+    N::UnsignedTx: SignableTransaction<Signature>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
     ///
     /// This method performs two key operations:
@@ -77,7 +87,7 @@ impl<'a> SendTransactionKind<'a> {
     /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
     pub async fn prepare(
         &mut self,
-        provider: &RootProvider<Ethereum>,
+        provider: &RootProvider<N>,
         sequential_broadcast: bool,
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
@@ -85,9 +95,9 @@ impl<'a> SendTransactionKind<'a> {
     ) -> Result<()> {
         if let Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) = self {
             if sequential_broadcast {
-                let from = tx.from.expect("no sender");
+                let from = tx.from().expect("no sender");
 
-                let tx_nonce = tx.nonce.expect("no nonce");
+                let tx_nonce = tx.nonce().expect("no nonce");
                 for attempt in 0..5 {
                     let nonce = provider.get_transaction_count(from).await?;
                     match nonce.cmp(&tx_nonce) {
@@ -131,7 +141,7 @@ impl<'a> SendTransactionKind<'a> {
     /// - Submit via `eth_sendTransaction` for unlocked accounts
     /// - Sign and submit via `eth_sendRawTransaction` for raw transactions
     /// - Submit pre-signed transaction via `eth_sendRawTransaction`
-    pub async fn send(self, provider: Arc<RootProvider<Ethereum>>) -> Result<TxHash> {
+    pub async fn send(self, provider: Arc<RootProvider<N>>) -> Result<TxHash> {
         match self {
             Self::Unlocked(tx) => {
                 debug!("sending transaction from unlocked account {:?}", tx);
@@ -168,7 +178,7 @@ impl<'a> SendTransactionKind<'a> {
     /// [`send`](Self::send) into a single call.
     pub async fn prepare_and_send(
         mut self,
-        provider: Arc<RootProvider<Ethereum>>,
+        provider: Arc<RootProvider<N>>,
         sequential_broadcast: bool,
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
@@ -188,22 +198,22 @@ impl<'a> SendTransactionKind<'a> {
 }
 
 /// Represents how to send _all_ transactions
-pub enum SendTransactionsKind {
+pub enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(AddressHashSet),
     /// Send a signed transaction via `eth_sendRawTransaction`, or via browser
-    Raw { eth_wallets: AddressHashMap<EthereumWallet>, browser: Option<BrowserSigner> },
+    Raw { eth_wallets: AddressHashMap<EthereumWallet>, browser: Option<BrowserSigner<N>> },
 }
 
-impl SendTransactionsKind {
+impl<N: Network> SendTransactionsKind<N> {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked
     pub fn for_sender(
         &self,
         addr: &Address,
-        tx: TransactionRequest,
-    ) -> Result<SendTransactionKind<'_>> {
+        tx: N::TransactionRequest,
+    ) -> Result<SendTransactionKind<'_, N>> {
         match self {
             Self::Unlocked(unlocked) => {
                 if !unlocked.contains(addr) {
@@ -229,15 +239,24 @@ impl SendTransactionsKind {
 /// State after we have bundled all
 /// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
 /// single [`ScriptSequenceKind`] object containing one or more script sequences.
-pub struct BundledState {
+pub struct BundledState<N: Network>
+where
+    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
+    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
+{
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<N>>,
     pub build_data: LinkedBuildData,
-    pub sequence: ScriptSequenceKind,
+    pub sequence: ScriptSequenceKind<N>,
 }
 
-impl BundledState {
+impl<N: Network> BundledState<N>
+where
+    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
+    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
+{
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
@@ -272,7 +291,12 @@ impl BundledState {
     }
 
     /// Broadcasts transactions from all sequences.
-    pub async fn broadcast(mut self) -> Result<BroadcastedState> {
+    pub async fn broadcast(mut self) -> Result<BroadcastedState<N>>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let required_addresses = self
             .sequence
             .sequences()
@@ -294,8 +318,13 @@ impl BundledState {
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
-            let signers: Vec<Address> =
-                self.script_wallets.signers().map_err(|e| eyre::eyre!("{e}"))?;
+            let signers: Vec<Address> = self
+                .script_wallets
+                .signers()
+                .map_err(|e| eyre::eyre!("{e}"))?
+                .into_iter()
+                .chain(self.browser_wallet.as_ref().map(|b| b.address()))
+                .collect();
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
@@ -312,11 +341,11 @@ impl BundledState {
                 );
             }
 
-            let (signers, browser) = self.script_wallets.into_multi_wallet().into_signers()?;
+            let signers = self.script_wallets.into_multi_wallet().into_signers()?;
             let eth_wallets =
                 signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
 
-            SendTransactionsKind::Raw { eth_wallets, browser }
+            SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet }
         };
 
         let progress = ScriptProgress::default();
@@ -375,7 +404,7 @@ impl BundledState {
                                 SendTransactionKind::Signed(tx)
                             }
                             TransactionMaybeSigned::Unsigned(mut tx) => {
-                                let from = tx.from.expect("No sender for onchain transaction!");
+                                let from = tx.from().expect("No sender for onchain transaction!");
 
                                 tx.set_chain_id(sequence.chain);
 

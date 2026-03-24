@@ -1,74 +1,19 @@
+use std::fmt::Debug;
+
+use alloy_consensus::{TxEnvelope, Typed2718};
 pub use alloy_evm::EvmEnv;
+use alloy_evm::FromRecoveredTx;
+use alloy_network::AnyTxEnvelope;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use revm::{
     Context, Database,
-    context::{Block, BlockEnv, Cfg, CfgEnv, JournalTr, Transaction, TxEnv},
+    context::{Block, BlockEnv, Cfg, CfgEnv, Transaction, TxEnv},
     context_interface::{ContextTr, transaction::AccessList},
+    inspector::JournalExt,
     primitives::{TxKind, hardfork::SpecId},
 };
 
-/// Helper container type for [`EvmEnv`] and [`TxEnv`].
-#[derive(Clone, Debug, Default)]
-pub struct Env {
-    pub evm_env: EvmEnv,
-    pub tx: TxEnv,
-}
-
-/// Helper container type for [`EvmEnv`] and [`TxEnv`].
-impl Env {
-    pub fn default_with_spec_id(spec_id: SpecId) -> Self {
-        let mut cfg = CfgEnv::default();
-        cfg.spec = spec_id;
-
-        Self::from(cfg, BlockEnv::default(), TxEnv::default())
-    }
-
-    pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
-        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
-    }
-
-    pub fn new_with_spec_id(cfg: CfgEnv, block: BlockEnv, tx: TxEnv, spec_id: SpecId) -> Self {
-        let mut cfg = cfg;
-        cfg.spec = spec_id;
-
-        Self::from(cfg, block, tx)
-    }
-
-    /// Creates a clone of the env from a [`FoundryContextExt`] context.
-    pub fn clone_from_context(ecx: &mut impl FoundryContextExt) -> Self {
-        Self::from(ecx.cfg_mut().clone(), ecx.block_mut().clone(), ecx.tx_mut().clone())
-    }
-
-    /// Clones the evm env and tx env separately from a [`FoundryContextExt`] context.
-    pub fn clone_evm_and_tx(ecx: &mut impl FoundryContextExt) -> (EvmEnv, TxEnv) {
-        (
-            EvmEnv { cfg_env: ecx.cfg_mut().clone(), block_env: ecx.block_mut().clone() },
-            ecx.tx_mut().clone(),
-        )
-    }
-
-    /// Writes the split evm env and tx env back into a [`FoundryContextExt`] context.
-    pub fn apply_evm_and_tx(ecx: &mut impl FoundryContextExt, evm_env: EvmEnv, tx_env: TxEnv) {
-        *ecx.block_mut() = evm_env.block_env;
-        *ecx.cfg_mut() = evm_env.cfg_env;
-        *ecx.tx_mut() = tx_env;
-    }
-
-    /// Writes this env back into a [`FoundryContextExt`] context.
-    pub fn apply_to(self, ecx: &mut impl FoundryContextExt) {
-        Self::apply_evm_and_tx(ecx, self.evm_env, self.tx);
-    }
-
-    /// Mutable reference to the block environment.
-    pub fn block_mut(&mut self) -> &mut BlockEnv {
-        &mut self.evm_env.block_env
-    }
-
-    /// Mutable reference to the cfg environment.
-    pub fn cfg_mut(&mut self) -> &mut CfgEnv {
-        &mut self.evm_env.cfg_env
-    }
-}
+use crate::backend::{DatabaseExt, JournaledState};
 
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
 pub trait FoundryBlock: Block {
@@ -236,66 +181,13 @@ impl FoundryTransaction for TxEnv {
     }
 }
 
-/// Extension of [`Cfg`] with mutable setters, allowing EVM-agnostic mutation of EVM configuration
-/// fields.
-pub trait FoundryCfg: Cfg {
-    /// Sets the EVM spec (hardfork).
-    fn set_spec(&mut self, spec: SpecId);
-
-    /// Sets the chain ID.
-    fn set_chain_id(&mut self, chain_id: u64);
-
-    /// Sets the contract code size limit.
-    fn set_limit_contract_code_size(&mut self, limit: Option<usize>);
-
-    /// Sets the contract initcode size limit.
-    fn set_limit_contract_initcode_size(&mut self, limit: Option<usize>);
-
-    /// Sets whether nonce checks are disabled.
-    fn set_disable_nonce_check(&mut self, disabled: bool);
-
-    /// Sets the max blobs per transaction.
-    fn set_max_blobs_per_tx(&mut self, max: Option<u64>);
-
-    /// Sets the blob base fee update fraction.
-    fn set_blob_base_fee_update_fraction(&mut self, fraction: Option<u64>);
-
-    /// Sets the transaction gas limit cap.
-    fn set_tx_gas_limit_cap(&mut self, cap: Option<u64>);
+/// Marker trait for Foundry's [`CfgEnv`] type, abstracting `Spec` type.
+pub trait FoundryCfg: Cfg + Clone + Debug {
+    type Spec: Into<SpecId> + Clone + Debug;
 }
 
-impl FoundryCfg for CfgEnv {
-    fn set_spec(&mut self, spec: SpecId) {
-        self.spec = spec;
-    }
-
-    fn set_chain_id(&mut self, chain_id: u64) {
-        self.chain_id = chain_id;
-    }
-
-    fn set_limit_contract_code_size(&mut self, limit: Option<usize>) {
-        self.limit_contract_code_size = limit;
-    }
-
-    fn set_limit_contract_initcode_size(&mut self, limit: Option<usize>) {
-        self.limit_contract_initcode_size = limit;
-    }
-
-    fn set_disable_nonce_check(&mut self, disabled: bool) {
-        self.disable_nonce_check = disabled;
-    }
-
-    fn set_max_blobs_per_tx(&mut self, max: Option<u64>) {
-        self.max_blobs_per_tx = max;
-    }
-
-    fn set_blob_base_fee_update_fraction(&mut self, fraction: Option<u64>) {
-        self.blob_base_fee_update_fraction = fraction;
-    }
-
-    fn set_tx_gas_limit_cap(&mut self, cap: Option<u64>) {
-        self.tx_gas_limit_cap = cap;
-    }
+impl<SPEC: Into<SpecId> + Clone + Debug> FoundryCfg for CfgEnv<SPEC> {
+    type Spec = SPEC;
 }
 
 /// Extension trait providing mutable field access to block, tx, and cfg environments.
@@ -303,26 +195,125 @@ impl FoundryCfg for CfgEnv {
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
 /// Cheatcodes like `vm.warp()`, `vm.roll()`, `vm.chainId()` need to mutate these fields.
 pub trait FoundryContextExt:
-    ContextTr<Block: FoundryBlock, Tx: FoundryTransaction, Cfg: FoundryCfg>
+    ContextTr<
+        Block: FoundryBlock + Clone,
+        Tx: FoundryTransaction + Clone,
+        Cfg: FoundryCfg,
+        Journal: JournalExt,
+    >
 {
     /// Mutable reference to the block environment.
-    fn block_mut(&mut self) -> &mut BlockEnv;
+    fn block_mut(&mut self) -> &mut Self::Block;
     /// Mutable reference to the transaction environment.
-    fn tx_mut(&mut self) -> &mut TxEnv;
+    fn tx_mut(&mut self) -> &mut Self::Tx;
     /// Mutable reference to the configuration environment.
-    fn cfg_mut(&mut self) -> &mut CfgEnv;
+    fn cfg_mut(&mut self) -> &mut Self::Cfg;
+    /// Mutable reference to the db and the journal inner.
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState);
+    /// Sets block environment.
+    fn set_block(&mut self, block: Self::Block) {
+        *self.block_mut() = block;
+    }
+    /// Sets transaction environment.
+    fn set_tx(&mut self, tx: Self::Tx) {
+        *self.tx_mut() = tx;
+    }
+    /// Sets configuration environment.
+    fn set_cfg(&mut self, cfg: Self::Cfg) {
+        *self.cfg_mut() = cfg;
+    }
+    /// Sets journal inner.
+    fn set_journal_inner(&mut self, journal_inner: JournaledState) {
+        *self.db_journal_inner_mut().1 = journal_inner;
+    }
+    /// Sets EVM environment.
+    fn set_evm(&mut self, evm_env: EvmEnv<<Self::Cfg as FoundryCfg>::Spec, Self::Block>)
+    where
+        Self::Cfg: From<CfgEnv<<Self::Cfg as FoundryCfg>::Spec>>,
+    {
+        *self.cfg_mut() = evm_env.cfg_env.into();
+        *self.block_mut() = evm_env.block_env;
+    }
+    /// Cloned transaction environment.
+    fn tx_clone(&self) -> Self::Tx {
+        self.tx().clone()
+    }
+    /// Cloned EVM environment (Cfg + Block).
+    fn evm_clone(&self) -> EvmEnv<<Self::Cfg as FoundryCfg>::Spec, Self::Block>
+    where
+        Self::Cfg: Into<CfgEnv<<Self::Cfg as FoundryCfg>::Spec>>,
+    {
+        EvmEnv::new(self.cfg().clone().into(), self.block().clone())
+    }
 }
 
-impl<DB: Database, J: JournalTr<Database = DB>, C> FoundryContextExt
-    for Context<BlockEnv, TxEnv, CfgEnv, DB, J, C>
+impl<BLOCK: FoundryBlock + Clone, TX: FoundryTransaction + Clone, CFG: FoundryCfg, DB: Database>
+    FoundryContextExt for Context<BLOCK, TX, CFG, DB>
 {
-    fn block_mut(&mut self) -> &mut BlockEnv {
+    fn block_mut(&mut self) -> &mut Self::Block {
         &mut self.block
     }
-    fn tx_mut(&mut self) -> &mut TxEnv {
+    fn tx_mut(&mut self) -> &mut Self::Tx {
         &mut self.tx
     }
-    fn cfg_mut(&mut self) -> &mut CfgEnv {
+    fn cfg_mut(&mut self) -> &mut Self::Cfg {
         &mut self.cfg
+    }
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
+        (&mut self.journaled_state.database, &mut self.journaled_state.inner)
+    }
+}
+
+/// Temporary bound alias used during the transition to a fully generic foundry-evm and
+/// foundry-cheatcodes.
+///
+/// Pins the EVM context to Ethereum-specific environment types (`BlockEnv`, `TxEnv`, `CfgEnv`)
+/// so that cheatcode implementations don't need to repeat the full where-clause everywhere.
+/// Once cheatcodes are fully generic over network/environment types this alias will be removed.
+pub trait EthCheatCtx:
+    FoundryContextExt<
+        Block = BlockEnv,
+        Tx = TxEnv,
+        Cfg = CfgEnv,
+        Db: DatabaseExt<Self::Block, Self::Tx, <Self::Cfg as FoundryCfg>::Spec>,
+    >
+{
+}
+impl<CTX> EthCheatCtx for CTX where
+    CTX: FoundryContextExt<
+            Block = BlockEnv,
+            Tx = TxEnv,
+            Cfg = CfgEnv,
+            Db: DatabaseExt<Self::Block, Self::Tx, <Self::Cfg as FoundryCfg>::Spec>,
+        >
+{
+}
+
+/// Abstraction trait for converting a transaction envelope into a [`TxEnv`].
+///
+/// This trait bridges the gap between different network envelope types and the EVM's `TxEnv`:
+/// - For [`TxEnvelope`] (Ethereum): delegates directly to [`FromRecoveredTx`].
+/// - For [`AnyTxEnvelope`]: extracts the inner [`TxEnvelope`] via
+///   [`as_envelope()`](AnyTxEnvelope::as_envelope) then delegates to [`FromRecoveredTx`].
+pub trait TryAnyIntoTxEnv {
+    /// Tries to convert this transaction envelope into a [`TxEnv`] given the recovered sender
+    /// address.
+    fn try_into_tx_env(&self, sender: Address) -> eyre::Result<TxEnv>;
+}
+
+impl TryAnyIntoTxEnv for TxEnvelope {
+    fn try_into_tx_env(&self, sender: Address) -> eyre::Result<TxEnv> {
+        Ok(TxEnv::from_recovered_tx(self, sender))
+    }
+}
+
+impl TryAnyIntoTxEnv for AnyTxEnvelope {
+    fn try_into_tx_env(&self, sender: Address) -> eyre::Result<TxEnv> {
+        match self {
+            Self::Ethereum(envelope) => envelope.try_into_tx_env(sender),
+            Self::Unknown(tx) => {
+                eyre::bail!("cannot convert unknown transaction type (0x{:02x}) to TxEnv", tx.ty())
+            }
+        }
     }
 }

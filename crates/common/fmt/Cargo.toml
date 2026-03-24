@@ -23,6 +23,7 @@ alloy-consensus.workspace = true
 op-alloy-consensus.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth"] }
+op-alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true

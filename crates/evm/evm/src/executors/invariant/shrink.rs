@@ -61,10 +61,10 @@ fn apply_warp_roll(call: &BasicTxDetails, warp: U256, roll: U256) -> BasicTxDeta
 /// Applies warp/roll adjustments directly to the executor's environment.
 fn apply_warp_roll_to_env(executor: &mut Executor, warp: U256, roll: U256) {
     if warp > U256::ZERO || roll > U256::ZERO {
-        executor.env_mut().evm_env.block_env.timestamp += warp;
-        executor.env_mut().evm_env.block_env.number += roll;
+        executor.evm_env_mut().block_env.timestamp += warp;
+        executor.evm_env_mut().block_env.number += roll;
 
-        let block_env = executor.env().evm_env.block_env.clone();
+        let block_env = executor.evm_env().block_env.clone();
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             if let Some(block) = cheatcodes.block.as_mut() {
                 block.timestamp += warp;

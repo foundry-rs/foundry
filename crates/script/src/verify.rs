@@ -1,9 +1,10 @@
 use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
+    receipts::FoundryReceiptResponse,
     sequence::{ScriptSequenceKind, get_commit_hash},
 };
-use alloy_network::ReceiptResponse;
+use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{Address, hex};
 use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
@@ -13,18 +14,28 @@ use foundry_common::ContractsByArtifact;
 use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use semver::Version;
+use serde::{Deserialize, Serialize};
 
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
 /// broadcasted transactions.
-pub struct BroadcastedState {
+pub struct BroadcastedState<N: Network>
+where
+    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
+    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
+{
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub build_data: LinkedBuildData,
-    pub sequence: ScriptSequenceKind,
+    pub sequence: ScriptSequenceKind<N>,
 }
 
-impl BroadcastedState {
+impl<N: Network> BroadcastedState<N>
+where
+    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
+    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
+    N::ReceiptResponse: FoundryReceiptResponse,
+{
     pub async fn verify(self) -> Result<()> {
         let Self { args, script_config, build_data, mut sequence, .. } = self;
 
@@ -179,8 +190,8 @@ impl VerifyBundle {
 
 /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
 /// created contract on etherscan.
-async fn verify_contracts(
-    sequence: &mut ScriptSequence,
+async fn verify_contracts<N: Network<ReceiptResponse: FoundryReceiptResponse>>(
+    sequence: &mut ScriptSequence<N>,
     config: &Config,
     mut verify: VerifyBundle,
 ) -> Result<()> {
@@ -202,8 +213,10 @@ async fn verify_contracts(
             // create2 hash offset
             let mut offset = 0;
 
-            if tx.is_create2() {
-                receipt.contract_address = tx.contract_address;
+            if tx.is_create2()
+                && let Some(contract_address) = tx.contract_address
+            {
+                receipt.set_contract_address(contract_address);
                 offset = 32;
             }
 
@@ -266,8 +279,8 @@ async fn verify_contracts(
     Ok(())
 }
 
-fn check_unverified(
-    sequence: &ScriptSequence,
+fn check_unverified<N: Network>(
+    sequence: &ScriptSequence<N>,
     unverifiable_contracts: Vec<Address>,
     verify: VerifyBundle,
 ) {

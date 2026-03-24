@@ -1,9 +1,9 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
-use alloy_network::ReceiptResponse;
-use alloy_rpc_types_eth::TransactionReceipt;
+use alloy_network::{Network, ReceiptResponse};
 use eyre::{Result, bail};
 use foundry_common::fs;
 use revm_inspectors::tracing::types::CallKind;
+use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 
 /// This type reads broadcast files in the
@@ -44,7 +44,7 @@ impl BroadcastReader {
         self
     }
 
-    fn matches_filters(&self, tx: &TransactionWithMetadata) -> bool {
+    fn matches_filters<N: Network>(&self, tx: &TransactionWithMetadata<N>) -> bool {
         let name_filter = tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
         let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
         name_filter && type_filter
@@ -56,7 +56,10 @@ impl BroadcastReader {
     ///
     /// project-root/broadcast/{script_name}.s.sol/{chain_id}/*.json
     /// project-root/broadcast/multi/{multichain_script_name}.s.sol-{timestamp}/deploy.json
-    pub fn read(&self) -> eyre::Result<Vec<ScriptSequence>> {
+    pub fn read<N: Network>(&self) -> eyre::Result<Vec<ScriptSequence<N>>>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
         // 1. Recursively read all .json files in the broadcast directory
         let mut broadcasts = vec![];
         for entry in walkdir::WalkDir::new(&self.broadcast_path).into_iter() {
@@ -77,7 +80,8 @@ impl BroadcastReader {
                     let multichain_deployments = broadcast
                         .get("deployments")
                         .and_then(|deployments| {
-                            serde_json::from_value::<Vec<ScriptSequence>>(deployments.clone()).ok()
+                            serde_json::from_value::<Vec<ScriptSequence<N>>>(deployments.clone())
+                                .ok()
                         })
                         .unwrap_or_default();
 
@@ -85,7 +89,7 @@ impl BroadcastReader {
                     continue;
                 }
 
-                let broadcast = fs::read_json_file::<ScriptSequence>(path)?;
+                let broadcast = fs::read_json_file::<ScriptSequence<N>>(path)?;
                 broadcasts.push(broadcast);
             }
         }
@@ -98,7 +102,10 @@ impl BroadcastReader {
     /// Attempts read the latest broadcast file in the broadcast directory.
     ///
     /// This may be the `run-latest.json` file or the broadcast file with the latest timestamp.
-    pub fn read_latest(&self) -> eyre::Result<ScriptSequence> {
+    pub fn read_latest<N: Network>(&self) -> eyre::Result<ScriptSequence<N>>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
         let broadcasts = self.read()?;
 
         // Find the broadcast with the latest timestamp
@@ -111,7 +118,10 @@ impl BroadcastReader {
     }
 
     /// Applies the filters and sorts the broadcasts by descending timestamp.
-    pub fn filter_and_sort(&self, broadcasts: Vec<ScriptSequence>) -> Vec<ScriptSequence> {
+    pub fn filter_and_sort<N: Network>(
+        &self,
+        broadcasts: Vec<ScriptSequence<N>>,
+    ) -> Vec<ScriptSequence<N>> {
         // Apply the filters
         let mut seqs = broadcasts
             .into_iter()
@@ -139,22 +149,22 @@ impl BroadcastReader {
     /// Transactions that don't have a corresponding receipt are ignored.
     ///
     /// Sorts the transactions by descending block number.
-    pub fn into_tx_receipts(
+    pub fn into_tx_receipts<N: Network>(
         &self,
-        broadcast: ScriptSequence,
-    ) -> Vec<(TransactionWithMetadata, TransactionReceipt)> {
+        broadcast: ScriptSequence<N>,
+    ) -> Vec<(TransactionWithMetadata<N>, N::ReceiptResponse)> {
         let ScriptSequence { transactions, receipts, .. } = broadcast;
 
-        let mut targets = Vec::new();
-        for tx in transactions.into_iter().filter(|tx| self.matches_filters(tx)) {
-            let maybe_receipt = receipts
-                .iter()
-                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash()));
-
-            if let Some(receipt) = maybe_receipt {
-                targets.push((tx, receipt.clone()));
-            }
-        }
+        let mut targets: Vec<_> = transactions
+            .into_iter()
+            .filter(|tx| self.matches_filters(tx))
+            .filter_map(|tx| {
+                let receipt = receipts
+                    .iter()
+                    .find(|r| tx.hash.is_some_and(|hash| hash == r.transaction_hash()))?;
+                Some((tx, receipt.clone()))
+            })
+            .collect();
 
         // Sort by descending block number
         targets.sort_by_key(|t| std::cmp::Reverse(t.1.block_number()));

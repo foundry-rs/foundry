@@ -6,6 +6,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
+use alloy_network::{AnyNetwork, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -16,11 +17,11 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{LoadConfig, TraceResult, get_provider, parse_ether_value},
+    utils::{LoadConfig, TraceResult, parse_ether_value},
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    provider::curl_transport::generate_curl_command,
+    provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
@@ -36,11 +37,13 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::WalletOpts;
 use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
+use tempo_alloy::TempoNetwork;
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -217,7 +220,17 @@ impl CallArgs {
         if self.rpc.curl {
             return self.run_curl().await;
         }
+        if self.tx.tempo.is_tempo() {
+            self.run_with_network::<TempoNetwork>().await
+        } else {
+            self.run_with_network::<AnyNetwork>().await
+        }
+    }
 
+    pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
@@ -247,7 +260,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = get_provider(&config)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -274,7 +287,8 @@ impl CallArgs {
             .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
-            .build_raw(sender)
+            .raw()
+            .build(sender)
             .await?;
 
         if trace {
@@ -284,21 +298,21 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let (mut env, fork, chain, networks) =
+            let (mut evm_env, tx_env, fork, chain, networks) =
                 TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
-            env.evm_env.cfg_env.disable_block_gas_limit = true;
-            env.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-            env.evm_env.block_env.gas_limit = u64::MAX;
+            evm_env.cfg_env.disable_block_gas_limit = true;
+            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+            evm_env.block_env.gas_limit = u64::MAX;
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    env.evm_env.block_env.number = number.to();
+                    evm_env.block_env.number = number.to();
                 }
                 if let Some(time) = block_overrides.time {
-                    env.evm_env.block_env.timestamp = U256::from(time);
+                    evm_env.block_env.timestamp = U256::from(time);
                 }
             }
 
@@ -311,7 +325,7 @@ impl CallArgs {
                 })
                 .with_state_changes(shell::verbosity() > 4);
             let mut executor = TracingExecutor::new(
-                env,
+                (evm_env, tx_env),
                 fork,
                 evm_version,
                 trace_mode,
@@ -320,41 +334,39 @@ impl CallArgs {
                 state_overrides,
             )?;
 
-            let value = tx.value.unwrap_or_default();
-            let input = tx.inner.input.into_input().unwrap_or_default();
-            let tx_kind = tx.inner.to.expect("set by builder");
-            let env_tx = &mut executor.env_mut().tx;
+            let value = tx.value().unwrap_or_default();
+            let input = tx.input().cloned().unwrap_or_default();
+            let tx_kind = tx.kind().expect("set by builder");
+            let env_tx = executor.tx_env_mut();
 
             // Set transaction options with --trace
-            if let Some(gas_limit) = tx.inner.gas {
+            if let Some(gas_limit) = tx.gas_limit() {
                 env_tx.gas_limit = gas_limit;
             }
 
-            if let Some(gas_price) = tx.inner.gas_price {
+            if let Some(gas_price) = tx.gas_price() {
                 env_tx.gas_price = gas_price;
             }
 
-            if let Some(max_fee_per_gas) = tx.inner.max_fee_per_gas {
+            if let Some(max_fee_per_gas) = tx.max_fee_per_gas() {
                 env_tx.gas_price = max_fee_per_gas;
             }
 
-            if let Some(max_priority_fee_per_gas) = tx.inner.max_priority_fee_per_gas {
+            if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
                 env_tx.gas_priority_fee = Some(max_priority_fee_per_gas);
             }
 
-            if let Some(max_fee_per_blob_gas) = tx.inner.max_fee_per_blob_gas {
+            if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
                 env_tx.max_fee_per_blob_gas = max_fee_per_blob_gas;
             }
 
-            if let Some(nonce) = tx.inner.nonce {
+            if let Some(nonce) = tx.nonce() {
                 env_tx.nonce = nonce;
             }
 
-            if let Some(tx_type) = tx.inner.transaction_type {
-                env_tx.tx_type = tx_type;
-            }
+            env_tx.tx_type = tx.output_tx_type().into();
 
-            if let Some(access_list) = tx.inner.access_list {
+            if let Some(access_list) = tx.access_list().cloned() {
                 env_tx.access_list = access_list;
 
                 if env_tx.tx_type == TransactionType::Legacy as u8 {
@@ -362,7 +374,7 @@ impl CallArgs {
                 }
             }
 
-            if let Some(auth) = tx.inner.authorization_list {
+            if let Some(auth) = tx.authorization_list().cloned() {
                 env_tx.authorization_list = auth.into_iter().map(Either::Left).collect();
 
                 env_tx.tx_type = TransactionType::Eip7702 as u8;
@@ -402,7 +414,7 @@ impl CallArgs {
             .await?;
 
         if response == "0x"
-            && let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to())
+            && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;
             if code.is_empty() {

@@ -843,6 +843,36 @@ Ran 1 test for test/Issue12803.t.sol:Issue12803Test
     ]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/13766
+// vm.expectRevert(bytes("")) should not panic when actual revert has data
+forgetest_init!(issue_13766, |prj, cmd| {
+    prj.add_test(
+        "Issue13766.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Reverter {
+    error CustomError();
+    function revertWithData() public pure { revert CustomError(); }
+}
+
+contract Issue13766Test is Test {
+    function test_expectRevertEmptyBytes() public {
+        Reverter r = new Reverter();
+        vm.expectRevert(bytes(""));
+        r.revertWithData();
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: Error != expected error: CustomError() != EvmError: Revert] test_expectRevertEmptyBytes() ([GAS])
+...
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test multiple storage deletions (higher refund) don't cause underflow
 forgetest_init!(issue_12803_multiple_deletes, |prj, cmd| {

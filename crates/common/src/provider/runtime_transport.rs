@@ -177,7 +177,6 @@ impl RuntimeTransport {
     pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .tls_built_in_root_certs(self.url.scheme() == "https")
             .danger_accept_invalid_certs(self.accept_invalid_certs);
 
         // Disable automatic proxy detection if requested. This helps in sandboxed environments

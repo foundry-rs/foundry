@@ -130,7 +130,7 @@ impl Precompile for CheatEcrecover {
         &PRECOMPILE_ID_CHEAT_ECRECOVER
     }
 
-    fn is_pure(&self) -> bool {
+    fn supports_caching(&self) -> bool {
         false
     }
 }

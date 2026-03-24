@@ -10,7 +10,7 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
+use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_network::Network;
 use alloy_primitives::{
@@ -32,7 +32,7 @@ use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_primitives::FoundryNetwork;
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -277,7 +277,7 @@ pub struct BlockchainStorage<N: Network> {
     pub total_difficulty: U256,
 }
 
-impl BlockchainStorage<FoundryNetwork> {
+impl<N: Network> BlockchainStorage<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
         env: &Env,
@@ -305,7 +305,8 @@ impl BlockchainStorage<FoundryNetwork> {
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
-        let block = create_block(header, Vec::<MaybeImpersonatedTransaction>::new());
+        let block =
+            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number = genesis_number;
@@ -393,9 +394,30 @@ impl BlockchainStorage<FoundryNetwork> {
             block.body.transactions.clear();
         }
     }
-}
 
-impl<N: Network> BlockchainStorage<N> {
+    /// Serialize all blocks in storage
+    pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
+        self.blocks.values().map(|block| block.clone().into()).collect()
+    }
+
+    /// Deserialize and add all blocks data to the backend storage
+    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
+        for serializable_block in &serializable_blocks {
+            let block: Block = serializable_block.clone().into();
+            let block_hash = block.header.hash_slow();
+            let block_number = block.header.number();
+            self.blocks.insert(block_hash, block);
+            self.hashes.insert(block_number, block_hash);
+
+            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
+            // block tag lookups return the correct hash.
+            // See: https://github.com/foundry-rs/foundry/issues/12645
+            if block_number == 0 {
+                self.genesis_hash = block_hash;
+            }
+        }
+    }
+
     /// Returns the hash for [BlockNumberOrTag]
     pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
         let slots_in_an_epoch = 32;
@@ -423,10 +445,6 @@ impl<N: Network> BlockchainStorage<N> {
 }
 
 impl BlockchainStorage<FoundryNetwork> {
-    pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
-        self.blocks.values().map(|block| block.clone().into()).collect()
-    }
-
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
         self.transactions
             .values()
@@ -434,25 +452,7 @@ impl BlockchainStorage<FoundryNetwork> {
             .collect()
     }
 
-    /// Deserialize and add all blocks data to the backend storage
-    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in &serializable_blocks {
-            let block: Block = serializable_block.clone().into();
-            let block_hash = block.header.hash_slow();
-            let block_number = block.header.number;
-            self.blocks.insert(block_hash, block);
-            self.hashes.insert(block_number, block_hash);
-
-            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
-            // block tag lookups return the correct hash.
-            // See: https://github.com/foundry-rs/foundry/issues/12645
-            if block_number == 0 {
-                self.genesis_hash = block_hash;
-            }
-        }
-    }
-
-    /// Deserialize and add all blocks data to the backend storage
+    /// Deserialize and add all transactions data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
         for serializable_transaction in &serializable_transactions {
             let transaction: MinedTransaction<FoundryNetwork> =
@@ -469,7 +469,7 @@ pub struct Blockchain<N: Network> {
     pub storage: Arc<RwLock<BlockchainStorage<N>>>,
 }
 
-impl Blockchain<FoundryNetwork> {
+impl<N: Network> Blockchain<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
         env: &Env,
@@ -498,9 +498,7 @@ impl Blockchain<FoundryNetwork> {
             ))),
         }
     }
-}
 
-impl<N: Network> Blockchain<N> {
     /// returns the header hash of given block
     pub fn hash(&self, id: BlockId) -> Option<B256> {
         match id {
@@ -524,15 +522,34 @@ impl<N: Network> Blockchain<N> {
 }
 
 /// Represents the outcome of mining a new block
-#[derive(Clone, Debug)]
-pub struct MinedBlockOutcome {
+pub struct MinedBlockOutcome<T> {
     /// The block that was mined
     pub block_number: u64,
     /// All transactions included in the block
-    pub included: Vec<Arc<PoolTransaction>>,
+    pub included: Vec<Arc<PoolTransaction<T>>>,
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
-    pub invalid: Vec<Arc<PoolTransaction>>,
+    pub invalid: Vec<Arc<PoolTransaction<T>>>,
+}
+
+impl<T> Clone for MinedBlockOutcome<T> {
+    fn clone(&self) -> Self {
+        Self {
+            block_number: self.block_number,
+            included: self.included.clone(),
+            invalid: self.invalid.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for MinedBlockOutcome<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MinedBlockOutcome")
+            .field("block_number", &self.block_number)
+            .field("included", &self.included.len())
+            .field("invalid", &self.invalid.len())
+            .finish()
+    }
 }
 
 /// Container type for a mined transaction
@@ -558,6 +575,7 @@ impl<N: Network> MinedTransaction<N> {
             block_hash: Some(self.block_hash),
             block_number: Some(self.block_number),
             base_fee: None,
+            block_timestamp: None,
         })
     }
 
@@ -602,7 +620,6 @@ mod tests {
     use crate::eth::backend::db::Db;
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
-    use foundry_primitives::FoundryTxEnvelope;
     use revm::{database::DatabaseRef, state::AccountInfo};
 
     #[test]
@@ -708,7 +725,7 @@ mod tests {
 
         let header = Header { gas_limit: 123456, ..Default::default() };
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
-        let tx: MaybeImpersonatedTransaction =
+        let tx: MaybeImpersonatedTransaction<FoundryTxEnvelope> =
             FoundryTxEnvelope::decode(&mut &bytes_first[..]).unwrap().into();
         let block = create_block(header.clone(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
@@ -723,7 +740,7 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, { header.gas_limit });
+        assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }
