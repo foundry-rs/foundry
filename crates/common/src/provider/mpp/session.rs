@@ -149,11 +149,9 @@ impl SessionProvider {
             }
         }
 
-        let approve_data = ITIP20::approveCall::new((
-            options.escrow_contract,
-            U256::from(options.deposit),
-        ))
-        .abi_encode();
+        let approve_data =
+            ITIP20::approveCall::new((options.escrow_contract, U256::from(options.deposit)))
+                .abi_encode();
 
         let open_data = IEscrow::openCall::new((
             options.payee,
