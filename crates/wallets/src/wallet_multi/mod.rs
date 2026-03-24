@@ -5,7 +5,7 @@ use crate::{
     wallet_browser::signer::BrowserSigner,
 };
 use alloy_network::Network;
-use alloy_primitives::map::AddressHashMap;
+use alloy_primitives::{Address, map::AddressHashMap};
 use alloy_signer::Signer;
 use clap::Parser;
 use derive_builder::Builder;

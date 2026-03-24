@@ -22,6 +22,7 @@ use foundry_common::{
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
 use foundry_primitives::FoundryTransactionBuilder;
+use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
 sol! {
@@ -67,21 +68,26 @@ pub struct Erc20TxOpts {
 }
 
 /// Creates a provider with wallet for signing transactions locally.
+///
+/// Also returns a [`TempoAccessKeyConfig`] if the signer was resolved from a Tempo keychain entry.
 pub(crate) async fn get_provider_with_wallet<N: Network + RecommendedFillers>(
     tx_opts: &SendTxOpts,
-) -> eyre::Result<RetryProviderWithSigner<N>>
+) -> eyre::Result<(RetryProviderWithSigner<N>, Option<TempoAccessKeyConfig>)>
 where
     N::TxEnvelope: From<Signed<N::UnsignedTx>>,
     N::UnsignedTx: SignableTransaction<Signature>,
 {
     let config = tx_opts.eth.load_config()?;
-    let signer = tx_opts.eth.wallet.signer().await?;
+    let (signer, tempo_access_key) = match tx_opts.eth.wallet.maybe_signer().await? {
+        (Some(s), ak) => (s, ak),
+        (None, _) => (tx_opts.eth.wallet.signer().await?, None),
+    };
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::<N>::from_config(&config)?.build_with_wallet(wallet)?;
     if let Some(interval) = tx_opts.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }
-    Ok(provider)
+    Ok((provider, tempo_access_key))
 }
 
 impl Erc20TxOpts {
@@ -328,16 +334,38 @@ impl Erc20Subcommand {
     }
 
     pub async fn run(self) -> eyre::Result<()> {
-        if let Some(erc20) = self.erc20_opts()
-            && erc20.tempo.is_tempo()
-        {
-            self.run_generic::<TempoNetwork>().await
+        // Check for Tempo access key (keychain mode) early.
+        let tempo_access_key = self.resolve_tempo_access_key().await;
+
+        let is_tempo = self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
+            || tempo_access_key.is_some();
+
+        if is_tempo {
+            self.run_generic::<TempoNetwork>(tempo_access_key).await
         } else {
-            self.run_generic::<AnyNetwork>().await
+            self.run_generic::<AnyNetwork>(None).await
         }
     }
 
-    pub async fn run_generic<N: Network + RecommendedFillers>(self) -> eyre::Result<()>
+    /// Resolves a Tempo access key config if the wallet is a keychain signer.
+    async fn resolve_tempo_access_key(&self) -> Option<(WalletSigner, TempoAccessKeyConfig)> {
+        let wallet = match self {
+            Self::Transfer { send_tx, .. }
+            | Self::Approve { send_tx, .. }
+            | Self::Mint { send_tx, .. }
+            | Self::Burn { send_tx, .. } => &send_tx.eth.wallet,
+            _ => return None,
+        };
+        match wallet.maybe_signer().await {
+            Ok((Some(signer), Some(config))) => Some((signer, config)),
+            _ => None,
+        }
+    }
+
+    pub async fn run_generic<N: Network + RecommendedFillers>(
+        self,
+        tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
+    ) -> eyre::Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
@@ -448,78 +476,221 @@ impl Erc20Subcommand {
             }
             // State-changing
             Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                if let Some((signer, access_key)) = tempo_keychain {
+                    let provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts.apply::<TempoNetwork>(
+                        &mut tx,
+                        get_chain(config.chain, &provider).await?.is_legacy(),
+                    );
+                    apply_tempo_access_key::<TempoNetwork>(&mut tx, Some(&access_key));
+                    send_tempo_keychain(
+                        &provider,
+                        tx,
+                        &signer,
+                        &access_key,
+                        send_tx.cast_async,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                } else {
+                    let (provider, _) = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
             Self::Approve { token, spender, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                if let Some((signer, access_key)) = tempo_keychain {
+                    let provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts.apply::<TempoNetwork>(
+                        &mut tx,
+                        get_chain(config.chain, &provider).await?.is_legacy(),
+                    );
+                    apply_tempo_access_key::<TempoNetwork>(&mut tx, Some(&access_key));
+                    send_tempo_keychain(
+                        &provider,
+                        tx,
+                        &signer,
+                        &access_key,
+                        send_tx.cast_async,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                } else {
+                    let (provider, _) = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
             Self::Mint { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                if let Some((signer, access_key)) = tempo_keychain {
+                    let provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts.apply::<TempoNetwork>(
+                        &mut tx,
+                        get_chain(config.chain, &provider).await?.is_legacy(),
+                    );
+                    apply_tempo_access_key::<TempoNetwork>(&mut tx, Some(&access_key));
+                    send_tempo_keychain(
+                        &provider,
+                        tx,
+                        &signer,
+                        &access_key,
+                        send_tx.cast_async,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                } else {
+                    let (provider, _) = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
             Self::Burn { token, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet::<N>(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .burn(U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                tx_opts.apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
-
-                cast_send(
-                    provider,
-                    tx,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+                if let Some((signer, access_key)) = tempo_keychain {
+                    let provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .burn(U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts.apply::<TempoNetwork>(
+                        &mut tx,
+                        get_chain(config.chain, &provider).await?.is_legacy(),
+                    );
+                    apply_tempo_access_key::<TempoNetwork>(&mut tx, Some(&access_key));
+                    send_tempo_keychain(
+                        &provider,
+                        tx,
+                        &signer,
+                        &access_key,
+                        send_tx.cast_async,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                } else {
+                    let (provider, _) = get_provider_with_wallet::<N>(&send_tx).await?;
+                    let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
+                        .burn(U256::from_str(&amount)?)
+                        .into_transaction_request();
+                    tx_opts
+                        .apply::<N>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+                    cast_send(
+                        provider,
+                        tx,
+                        send_tx.cast_async,
+                        send_tx.sync,
+                        send_tx.confirmations,
+                        timeout,
+                    )
+                    .await?
+                }
             }
         };
         Ok(())
     }
+}
+
+/// Applies Tempo access key fields (from, key_id) to a transaction request.
+///
+/// Note: `key_authorization` is intentionally not set here. It is only included
+/// if the key is not yet provisioned on-chain (checked in [`send_tempo_keychain`]).
+fn apply_tempo_access_key<N: Network>(
+    tx: &mut N::TransactionRequest,
+    config: Option<&TempoAccessKeyConfig>,
+) where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if let Some(config) = config {
+        tx.set_from(config.wallet_address);
+        tx.set_key_id(config.key_address);
+    }
+}
+
+/// Sends a Tempo transaction using access key (keychain V2 mode).
+///
+/// Signs the transaction with the access key and sends it via `send_raw_transaction`,
+/// bypassing `EthereumWallet`. Only includes `key_authorization` if the key is not yet
+/// provisioned on-chain.
+async fn send_tempo_keychain<P: Provider<TempoNetwork>>(
+    provider: &P,
+    mut tx: <TempoNetwork as Network>::TransactionRequest,
+    signer: &WalletSigner,
+    access_key: &TempoAccessKeyConfig,
+    cast_async: bool,
+    confirmations: u64,
+    timeout: u64,
+) -> eyre::Result<()> {
+    // Only include key_authorization if the key is not yet provisioned on-chain.
+    if let Some(ref auth) = access_key.key_authorization
+        && !crate::tempo::is_key_provisioned(
+            provider,
+            access_key.wallet_address,
+            access_key.key_address,
+        )
+        .await
+    {
+        tx.set_key_authorization(auth.clone());
+    }
+
+    let raw_tx =
+        foundry_wallets::tempo::sign_with_access_key(tx, signer, access_key.wallet_address).await?;
+
+    let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
+
+    let cast = crate::tx::CastTxSender::new(provider);
+    cast.print_tx_result(tx_hash, cast_async, confirmations, timeout).await
 }
