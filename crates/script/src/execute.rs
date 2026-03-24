@@ -12,7 +12,6 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionInput;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
@@ -295,18 +294,9 @@ impl ExecutedState {
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
-        let mut txs: BroadcastableTransactions<Ethereum> =
-            self.execution_result.transactions.clone().unwrap_or_default();
-
-        // Ensure that unsigned transactions have both `data` and `input` populated to avoid
-        // issues with eth_estimateGas and eth_sendTransaction requests.
-        for tx in &mut txs {
-            if let Some(req) = tx.transaction.as_unsigned_mut() {
-                req.input =
-                    TransactionInput::maybe_both(std::mem::take(&mut req.input).into_input());
-            }
-        }
-        let rpc_data = RpcData::from_transactions(&txs);
+        let empty_txs = BroadcastableTransactions::<Ethereum>::default();
+        let txs = self.execution_result.transactions.as_ref().unwrap_or(&empty_txs);
+        let rpc_data = RpcData::from_transactions(txs);
 
         if rpc_data.is_multi_chain() {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
