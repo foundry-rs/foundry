@@ -519,8 +519,8 @@ validAfter           {}",
             self.nonce_key.pretty(),
             self.nonce.pretty(),
             self.fee_payer_signature.pretty(),
-            self.valid_after.pretty(),
             self.valid_before.pretty(),
+            self.valid_after.pretty(),
         )
     }
 }
