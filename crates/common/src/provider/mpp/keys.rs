@@ -1,57 +1,12 @@
 //! Auto-discovery of MPP signing keys from the Tempo wallet.
 //!
-//! Key discovery chain (matches `tempoxyz/wallet` `tempo-common` behavior):
-//! 1. `TEMPO_PRIVATE_KEY` env var → use directly (ephemeral, never touches disk)
-//! 2. `$TEMPO_HOME/wallet/keys.toml` (default: `~/.tempo/wallet/keys.toml`) → read from disk
-//!
-//! Primary key selection (deterministic, mirrors `Keystore::primary_key()`):
-//! - passkey entry > first entry with inline `key` > first entry Only entries with a non-empty
-//!   inline `key` field are usable for signing.
+//! Uses the shared Tempo keystore types from [`crate::tempo`] and adds
+//! MPP-specific primary key selection logic (passkey > first entry with
+//! inline key > first entry, mirroring `Keystore::primary_key()` in
+//! `tempo-common`).
 
-use serde::Deserialize;
-use std::path::PathBuf;
+use crate::tempo::{TEMPO_PRIVATE_KEY_ENV, WalletType, read_tempo_keys_file};
 use tracing::debug;
-
-/// Environment variable for an ephemeral Tempo private key.
-const TEMPO_PRIVATE_KEY_ENV: &str = "TEMPO_PRIVATE_KEY";
-
-/// Environment variable to override the Tempo home directory.
-const TEMPO_HOME_ENV: &str = "TEMPO_HOME";
-
-/// Default Tempo home directory relative to the user's home.
-const DEFAULT_TEMPO_HOME: &str = ".tempo";
-
-/// Relative path from Tempo home to the wallet keys file.
-const WALLET_KEYS_PATH: &str = "wallet/keys.toml";
-
-/// Wallet type matching `tempo-common`'s `WalletType` enum.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum WalletType {
-    #[default]
-    Local,
-    Passkey,
-}
-
-/// A single key entry in `keys.toml`.
-///
-/// Mirrors the fields from `tempo-common::keys::model::KeyEntry` that are
-/// relevant for key discovery. Unknown fields are ignored via `#[serde(default)]`.
-#[derive(Debug, Default, Deserialize)]
-struct KeyEntry {
-    /// Wallet type: "local" or "passkey".
-    #[serde(default)]
-    wallet_type: WalletType,
-    /// Key private key, stored inline in keys.toml.
-    #[serde(default)]
-    key: Option<String>,
-    /// Smart wallet address (the on-chain account).
-    #[serde(default)]
-    wallet_address: Option<String>,
-    /// Key address (the EOA derived from the private key).
-    #[serde(default)]
-    key_address: Option<String>,
-}
 
 /// Discovered MPP key configuration.
 ///
@@ -65,20 +20,6 @@ pub struct MppKeyConfig {
     pub wallet_address: Option<String>,
     /// Key address / signer address (for keychain authorized signer).
     pub key_address: Option<String>,
-}
-
-impl KeyEntry {
-    /// Whether this entry has a non-empty inline private key.
-    fn has_inline_key(&self) -> bool {
-        self.key.as_ref().is_some_and(|k| !k.trim().is_empty())
-    }
-}
-
-/// The top-level structure of `keys.toml`.
-#[derive(Debug, Default, Deserialize)]
-struct KeysFile {
-    #[serde(default)]
-    keys: Vec<KeyEntry>,
 }
 
 /// Attempt to auto-discover an MPP signing key from the Tempo wallet.
@@ -104,27 +45,7 @@ pub fn discover_mpp_config() -> Option<MppKeyConfig> {
     }
 
     // 2. Read $TEMPO_HOME/wallet/keys.toml (default: ~/.tempo/wallet/keys.toml)
-    let keys_path = tempo_keys_path()?;
-    if !keys_path.exists() {
-        debug!(?keys_path, "tempo keys file not found");
-        return None;
-    }
-
-    let contents = match std::fs::read_to_string(&keys_path) {
-        Ok(c) => c,
-        Err(e) => {
-            debug!(?keys_path, %e, "failed to read tempo keys file");
-            return None;
-        }
-    };
-
-    let keys_file: KeysFile = match toml::from_str(&contents) {
-        Ok(f) => f,
-        Err(e) => {
-            debug!(?keys_path, %e, "failed to parse tempo keys file");
-            return None;
-        }
-    };
+    let keys_file = read_tempo_keys_file()?;
 
     // Pick primary key using the same deterministic order as
     // `Keystore::primary_key()` in tempo-common:
@@ -142,7 +63,7 @@ pub fn discover_mpp_config() -> Option<MppKeyConfig> {
     {
         let key = key.trim().to_string();
         if !key.is_empty() {
-            debug!(?keys_path, "using MPP key from tempo wallet keys file");
+            debug!("using MPP key from tempo wallet keys file");
             return Some(MppKeyConfig {
                 key,
                 wallet_address: entry.wallet_address.clone(),
@@ -151,33 +72,17 @@ pub fn discover_mpp_config() -> Option<MppKeyConfig> {
         }
     }
 
-    debug!(?keys_path, "no usable key found in tempo keys file");
+    debug!("no usable key found in tempo keys file");
     None
-}
-
-/// Resolve the Tempo home directory.
-///
-/// Uses `TEMPO_HOME` env var if set, otherwise `~/.tempo`.
-fn tempo_home() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var(TEMPO_HOME_ENV) {
-        return Some(PathBuf::from(home));
-    }
-    dirs::home_dir().map(|h| h.join(DEFAULT_TEMPO_HOME))
-}
-
-/// Returns the path to the Tempo wallet keys file.
-fn tempo_keys_path() -> Option<PathBuf> {
-    tempo_home().map(|home| home.join(WALLET_KEYS_PATH))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use crate::tempo::KeysFile;
+    use std::{io::Write, path::PathBuf};
 
     /// Write a keys.toml to a temp dir and set TEMPO_HOME to point at it.
-    /// Returns the tempdir (must be kept alive for the duration of the test)
-    /// and the private key that was written.
     fn setup_keys_toml(toml_content: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
         let wallet_dir = dir.path().join("wallet");
@@ -202,9 +107,6 @@ chain_id = 4217
         );
         let (dir, _) = setup_keys_toml(&toml_content);
 
-        // Point TEMPO_HOME at the temp dir so discover_mpp_key reads our file.
-        // Clear TEMPO_PRIVATE_KEY so it doesn't short-circuit.
-        // SAFETY: test-only env manipulation.
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
             std::env::remove_var("TEMPO_PRIVATE_KEY");
@@ -213,7 +115,6 @@ chain_id = 4217
         let discovered = discover_mpp_key();
         assert_eq!(discovered.as_deref(), Some(key));
 
-        // Cleanup
         unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 
@@ -230,7 +131,6 @@ key = "{file_key}"
         );
         let (dir, _) = setup_keys_toml(&toml_content);
 
-        // SAFETY: test-only env manipulation.
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
             std::env::set_var("TEMPO_PRIVATE_KEY", env_key);
@@ -239,7 +139,6 @@ key = "{file_key}"
         let discovered = discover_mpp_key();
         assert_eq!(discovered.as_deref(), Some(env_key));
 
-        // Cleanup
         unsafe {
             std::env::remove_var("TEMPO_HOME");
             std::env::remove_var("TEMPO_PRIVATE_KEY");
@@ -248,9 +147,8 @@ key = "{file_key}"
 
     #[test]
     fn discover_returns_none_when_no_keys() {
-        let (dir, _) = setup_keys_toml(""); // empty file, no [[keys]]
+        let (dir, _) = setup_keys_toml("");
 
-        // SAFETY: test-only env manipulation.
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
             std::env::remove_var("TEMPO_PRIVATE_KEY");
@@ -279,7 +177,6 @@ chain_id = 4217
         );
         let (dir, _) = setup_keys_toml(&toml_content);
 
-        // SAFETY: test-only env manipulation.
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
             std::env::remove_var("TEMPO_PRIVATE_KEY");
@@ -376,7 +273,6 @@ wallet_address = "0xPasskey"
 key = "0xpasskey_key"
 "#;
         let keys_file: KeysFile = toml::from_str(toml_str).unwrap();
-        // Passkey should be selected as primary
         let primary = keys_file
             .keys
             .iter()

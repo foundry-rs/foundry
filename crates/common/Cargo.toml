@@ -82,9 +82,6 @@ ciborium.workspace = true
 
 flate2.workspace = true
 
-dirs.workspace = true
-toml.workspace = true
-
 [build-dependencies]
 chrono.workspace = true
 vergen = { workspace = true, features = ["build", "emit_and_set"] }
