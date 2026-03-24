@@ -175,7 +175,7 @@ impl WalletOpts {
                         return Ok((Some(signer), None));
                     }
                     crate::tempo::TempoLookup::Keychain(signer, config) => {
-                        return Ok((Some(signer), Some(config)));
+                        return Ok((Some(signer), Some(*config)));
                     }
                     crate::tempo::TempoLookup::NotFound => {}
                 }

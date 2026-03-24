@@ -93,7 +93,7 @@ pub enum TempoLookup {
     /// A direct (EOA) signer was found — `wallet_address == key_address`.
     Direct(WalletSigner),
     /// A keychain (access key) signer was found — `wallet_address != key_address`.
-    Keychain(WalletSigner, TempoAccessKeyConfig),
+    Keychain(WalletSigner, Box<TempoAccessKeyConfig>),
     /// No matching entry was found.
     NotFound,
 }
@@ -158,7 +158,7 @@ pub fn lookup_signer(from: Address) -> Result<TempoLookup> {
             key_address: entry.key_address.unwrap(),
             key_authorization,
         };
-        return Ok(TempoLookup::Keychain(signer, config));
+        return Ok(TempoLookup::Keychain(signer, Box::new(config)));
     }
 
     Ok(TempoLookup::NotFound)
