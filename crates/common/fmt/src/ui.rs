@@ -815,11 +815,16 @@ blobGasUsed          {}",
 
 pub trait UIfmtHeaderExt {
     fn size_pretty(&self) -> String;
+    fn total_difficulty_pretty(&self) -> String;
 }
 
 impl UIfmtHeaderExt for Header {
     fn size_pretty(&self) -> String {
         self.size.pretty()
+    }
+
+    fn total_difficulty_pretty(&self) -> String {
+        self.total_difficulty.unwrap_or_else(|| self.difficulty()).pretty()
     }
 }
 
@@ -827,11 +832,19 @@ impl UIfmtHeaderExt for AnyRpcHeader {
     fn size_pretty(&self) -> String {
         self.size.pretty()
     }
+
+    fn total_difficulty_pretty(&self) -> String {
+        self.total_difficulty.unwrap_or_else(|| self.difficulty()).pretty()
+    }
 }
 
 impl UIfmtHeaderExt for TempoHeaderResponse {
     fn size_pretty(&self) -> String {
         self.inner.size.pretty()
+    }
+
+    fn total_difficulty_pretty(&self) -> String {
+        self.inner.total_difficulty.unwrap_or_else(|| self.inner.difficulty()).pretty()
     }
 }
 
@@ -1054,7 +1067,7 @@ where
         "size" => Some(block.header().size_pretty()),
         "stateRoot" | "state_root" => Some(block.header().state_root().pretty()),
         "timestamp" => Some(block.header().timestamp().pretty()),
-        "totalDifficulty" | "total_difficulty" => Some(block.header().difficulty().pretty()),
+        "totalDifficulty" | "total_difficulty" => Some(block.header().total_difficulty_pretty()),
         "blobGasUsed" | "blob_gas_used" => Some(block.header().blob_gas_used().pretty()),
         "excessBlobGas" | "excess_blob_gas" => Some(block.header().excess_blob_gas().pretty()),
         "requestsHash" | "requests_hash" => Some(block.header().requests_hash().pretty()),
@@ -1143,7 +1156,7 @@ requestsHash         {}",
         header.timestamp().pretty(),
         fmt_timestamp(header.timestamp()),
         header.withdrawals_root().pretty(),
-        header.difficulty().pretty(),
+        header.total_difficulty_pretty(),
         header.blob_gas_used().pretty(),
         header.excess_blob_gas().pretty(),
         header.requests_hash().pretty(),
@@ -1638,7 +1651,7 @@ yParity              0"
             "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
             "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
             "stateRoot": "0xd5855eb08b3387c0af375e9cdb6acfc05eb8f519e419b874b6ff2ffda7ed1dff",
-            "difficulty": "0x27f07",
+            "difficulty": "0x1",
             "totalDifficulty": "0x27f07",
             "extraData": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "size": "0x27f07",
@@ -1660,7 +1673,7 @@ yParity              0"
             get_pretty_block_attr::<FoundryNetwork>(&block, "baseFeePerGas")
         );
         assert_eq!(
-            Some("163591".to_string()),
+            Some("1".to_string()),
             get_pretty_block_attr::<FoundryNetwork>(&block, "difficulty")
         );
         assert_eq!(
@@ -1728,6 +1741,10 @@ yParity              0"
             Some("163591".to_string()),
             get_pretty_block_attr::<FoundryNetwork>(&block, "totalDifficulty")
         );
+
+        let pretty = pretty_generic_header_response(block.header());
+        assert!(pretty.contains("difficulty           1"), "{pretty}");
+        assert!(pretty.contains("totalDifficulty      163591"), "{pretty}");
     }
 
     #[test]
