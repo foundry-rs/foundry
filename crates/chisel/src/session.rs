@@ -110,13 +110,7 @@ impl ChiselSession {
     pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
         let entries = std::fs::read_dir(&cache_dir)?;
-
-        // Count existing sessions to determine the next session number
-        let mut session_num = 0;
-        for entry in entries {
-            let _ = entry?;
-            session_num += 1;
-        }
+        let session_num = entries.filter(Result::is_ok).count();
 
         Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
     }
