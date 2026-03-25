@@ -109,24 +109,12 @@ impl ChiselSession {
     /// Optionally, returns a tuple containing the next cached session's id and file name.
     pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
-        let mut entries = std::fs::read_dir(&cache_dir)?;
+        let entries = std::fs::read_dir(&cache_dir)?;
 
-        // If there are no existing cached sessions, just create the first one: "chisel-0.json"
-        let mut latest = if let Some(e) = entries.next() {
-            e?
-        } else {
-            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")));
-        };
-
-        let mut session_num = 1;
-        // Get the latest cached session
+        // Count existing sessions to determine the next session number
+        let mut session_num = 0;
         for entry in entries {
-            let entry = entry?;
-            if entry.metadata()?.modified()? >= latest.metadata()?.modified()? {
-                latest = entry;
-            }
-
-            // Increase session_num counter rather than cloning the iterator and using `.count`
+            let _ = entry?;
             session_num += 1;
         }
 
