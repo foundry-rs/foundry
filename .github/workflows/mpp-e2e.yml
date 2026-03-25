@@ -51,6 +51,7 @@ jobs:
       - name: Run MPP e2e test
         env:
           TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
+          MPP_DEPOSIT: "1000000"
         run: |
           if [ -z "$TEMPO_KEYS_TOML_B64" ]; then
             echo "Skipped — no wallet configured"

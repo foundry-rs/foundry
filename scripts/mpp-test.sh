@@ -17,6 +17,7 @@ set -euo pipefail
 
 BIN_DIR="${1:-}"
 if [ -n "$BIN_DIR" ]; then
+  BIN_DIR="$(cd "$BIN_DIR" && pwd)"
   CAST="$BIN_DIR/cast"
   FORGE="$BIN_DIR/forge"
   ANVIL="$BIN_DIR/anvil"
