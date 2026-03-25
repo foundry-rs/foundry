@@ -59,6 +59,7 @@ pub use utils::*;
 mod endpoints;
 pub use endpoints::{
     ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, RpcEndpoints,
+    builtin_rpc_url,
 };
 
 mod etherscan;
@@ -1504,6 +1505,10 @@ impl Config {
 
         if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
             return Some(Ok(Cow::Owned(mesc_url)));
+        }
+
+        if let Some(builtin_url) = endpoints::builtin_rpc_url(maybe_alias) {
+            return Some(Ok(Cow::Borrowed(builtin_url)));
         }
 
         None
@@ -3456,6 +3461,57 @@ mod tests {
 
             config.eth_rpc_url = Some("optimism".to_string());
             assert_eq!("https://example.com/", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_builtin_rpc_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+            "#,
+            )?;
+
+            let mut config = Config::load().unwrap();
+
+            // builtin alias resolves when no user-defined endpoint exists
+            config.eth_rpc_url = Some("tempo".to_string());
+            assert_eq!("https://rpc.mpp.tempo.xyz", config.get_rpc_url().unwrap().unwrap());
+
+            config.eth_rpc_url = Some("moderato".to_string());
+            assert_eq!(
+                "https://rpc.mpp.moderato.tempo.xyz",
+                config.get_rpc_url().unwrap().unwrap()
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_builtin_rpc_alias_user_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                tempo = "https://my-custom-rpc.example.com/"
+            "#,
+            )?;
+
+            let mut config = Config::load().unwrap();
+
+            // user-defined endpoint takes precedence over builtin
+            config.eth_rpc_url = Some("tempo".to_string());
+            assert_eq!(
+                "https://my-custom-rpc.example.com/",
+                config.get_rpc_url().unwrap().unwrap()
+            );
 
             Ok(())
         })
