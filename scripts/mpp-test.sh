@@ -4,24 +4,48 @@
 # Prerequisites:
 #   - Tempo wallet configured: `tempo wallet login`
 #   - Wallet funded with TEMPO on moderato testnet
-#   - cast binary built: `cargo build --bin cast`
+#   - Foundry binaries built: `cargo build --bin cast --bin forge --bin anvil --bin chisel`
 #
 # Usage:
-#   ./scripts/mpp-test.sh [cast-binary]
+#   ./scripts/mpp-test.sh [binary-dir]
 #
 # Examples:
-#   ./scripts/mpp-test.sh                           # uses ./target/debug/cast
-#   ./scripts/mpp-test.sh ./target/release/cast      # use release build
+#   ./scripts/mpp-test.sh                         # uses cast/forge from PATH
+#   ./scripts/mpp-test.sh ./target/debug          # use debug builds
 
 set -euo pipefail
 
-CAST="${1:-cast}"
+BIN_DIR="${1:-}"
+if [ -n "$BIN_DIR" ]; then
+  CAST="$BIN_DIR/cast"
+  FORGE="$BIN_DIR/forge"
+  ANVIL="$BIN_DIR/anvil"
+  CHISEL="$BIN_DIR/chisel"
+else
+  CAST="cast"
+  FORGE="forge"
+  ANVIL="anvil"
+  CHISEL="chisel"
+fi
+export MPP_DEPOSIT=1000000
 RPC_MPP="https://rpc.mpp.moderato.tempo.xyz"
 RPC="https://rpc.moderato.tempo.xyz"
 TOKEN="0x20c0000000000000000000000000000000000000"  # TEMPO TIP-20
 
 if ! command -v "$CAST" &>/dev/null; then
   echo "ERROR: cast binary not found at '$CAST'. Install with: foundryup"
+  exit 1
+fi
+if ! command -v "$FORGE" &>/dev/null; then
+  echo "ERROR: forge binary not found at '$FORGE'. Install with: foundryup"
+  exit 1
+fi
+if ! command -v "$ANVIL" &>/dev/null; then
+  echo "ERROR: anvil binary not found at '$ANVIL'. Install with: foundryup"
+  exit 1
+fi
+if ! command -v "$CHISEL" &>/dev/null; then
+  echo "ERROR: chisel binary not found at '$CHISEL'. Install with: foundryup"
   exit 1
 fi
 
@@ -64,7 +88,7 @@ echo ""
 echo "=== 4. Escrow transaction ==="
 TX=$("$CAST" logs --from-block "$FROM_BLOCK" --to-block latest \
   --address 0xe1c4d3dce17bc111181ddf716f75bae49e61a336 \
-  --rpc-url "$RPC" | grep transactionHash | tail -1 | awk '{print $2}')
+  --rpc-url "$RPC" | grep transactionHash | tail -1 | awk '{print $2}' || true)
 
 if [ -n "$TX" ]; then
   echo "Tx: $TX"
@@ -82,6 +106,72 @@ AFTER2=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC" | awk '{print
 SPENT2=$((BEFORE2 - AFTER2))
 echo "Block: $BLOCK2"
 echo "Spent: $SPENT2 units (should be 0 — channel reused from ~/.tempo/foundry/channels.json)"
+
+# 6. forge script via MPP
+echo ""
+echo "=== 6. forge script (via MPP) ==="
+TMPDIR=$(mktemp -d)
+trap 'rm -rf $TMPDIR' EXIT
+(cd "$TMPDIR" && "$FORGE" init --no-git --quiet)
+cat > "$TMPDIR/script/Mpp.s.sol" <<'SOL'
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import "forge-std/Script.sol";
+contract MppCheck is Script {
+    function run() public view {
+        console.log("block", block.number);
+        console.log("chain", block.chainid);
+    }
+}
+SOL
+VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+"$FORGE" script "$TMPDIR/script/Mpp.s.sol" --rpc-url "$RPC_MPP" --root "$TMPDIR"
+VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
+
+# 7. forge test with vm.createSelectFork via MPP
+echo ""
+echo "=== 7. forge test with createSelectFork (via MPP) ==="
+cat > "$TMPDIR/test/Mpp.t.sol" <<SOL
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import "forge-std/Test.sol";
+contract MppForkTest is Test {
+    function test_fork_via_mpp() public {
+        vm.createSelectFork("$RPC_MPP");
+        assertGt(block.number, 0);
+        assertEq(block.chainid, 42431);
+    }
+}
+SOL
+VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+"$FORGE" test --match-test test_fork_via_mpp --root "$TMPDIR" -vvv
+VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
+
+# 8. anvil fork via MPP
+echo ""
+echo "=== 8. anvil --fork-url (via MPP) ==="
+VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+"$ANVIL" --fork-url "$RPC_MPP" --port 8555 --silent &
+ANVIL_PID=$!
+for _ in $(seq 1 30); do
+  if "$CAST" block-number --rpc-url http://localhost:8555 2>/dev/null; then break; fi
+  sleep 1
+done
+echo "chain-id: $("$CAST" chain-id --rpc-url http://localhost:8555)"
+kill $ANVIL_PID 2>/dev/null
+wait $ANVIL_PID 2>/dev/null
+VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
+
+# 9. chisel fork via MPP
+echo ""
+echo "=== 9. chisel --fork-url (via MPP) ==="
+VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+echo 'block.number' | "$CHISEL" --fork-url "$RPC_MPP" 2>&1 | grep -E "Decimal|Type"
+VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 echo ""
 echo "=== Done ==="

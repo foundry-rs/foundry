@@ -1,0 +1,59 @@
+name: MPP E2E
+
+permissions: {}
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: mpp-e2e-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  mpp-e2e:
+    name: MPP e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    # Only run if the secret is available (not on forks)
+    if: github.event_name == 'push' || !github.event.pull_request.head.repo.fork
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build binaries
+        run: cargo build --bin cast --bin forge --bin anvil --bin chisel
+
+      - name: Setup Tempo wallet
+        env:
+          TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
+        run: |
+          if [ -z "$TEMPO_KEYS_TOML_B64" ]; then
+            echo "::warning::TEMPO_KEYS_TOML_B64 secret not set, skipping MPP e2e"
+            exit 0
+          fi
+          mkdir -p ~/.tempo/wallet
+          echo "$TEMPO_KEYS_TOML_B64" | tr -d '[:space:]' | base64 -d > ~/.tempo/wallet/keys.toml
+
+      - name: Run MPP e2e test
+        env:
+          TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
+        run: |
+          if [ -z "$TEMPO_KEYS_TOML_B64" ]; then
+            echo "Skipped — no wallet configured"
+            exit 0
+          fi
+          ./scripts/mpp-test.sh ./target/debug

@@ -25,6 +25,14 @@ use url::Url;
 
 use super::{keys::discover_mpp_config, session::SessionProvider};
 
+/// Default deposit amount for new channels (in base units).
+const DEFAULT_DEPOSIT: u128 = 100_000;
+
+/// Resolve the deposit amount from `MPP_DEPOSIT` env var or the default.
+fn default_deposit() -> u128 {
+    std::env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_DEPOSIT)
+}
+
 /// Production transport: lazily discovers MPP keys from the Tempo wallet on
 /// first 402 response. Used by [`super::super::runtime_transport::InnerTransport`].
 pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
@@ -47,6 +55,13 @@ impl LazySessionProvider {
     fn mark_key_not_provisioned(&self) {
         if let Some(p) = self.inner.lock().unwrap().as_ref() {
             p.set_key_provisioned(false);
+        }
+    }
+
+    /// Clear all channels (in-memory and persisted).
+    fn clear_channels(&self) {
+        if let Some(p) = self.inner.lock().unwrap().as_ref() {
+            p.clear_channels();
         }
     }
 
@@ -109,7 +124,7 @@ impl LazySessionProvider {
 
         let mut provider = SessionProvider::new(signer, self.origin.clone())
             .with_signing_mode(signing_mode)
-            .with_default_deposit(100_000);
+            .with_default_deposit(default_deposit());
 
         if let Some(ref key_addr) = config.key_address
             && let Ok(addr) = key_addr.parse()
@@ -237,6 +252,50 @@ where
             .await
             .map_err(TransportErrorKind::custom)?;
 
+        // If the retry returned 204 No Content, the credential was a channel
+        // management action (topUp). Re-pay with a voucher and retry the RPC.
+        if retry_resp.status() == StatusCode::NO_CONTENT {
+            debug!("MPP topUp accepted (204), retrying with voucher");
+
+            let resolved = self.provider.resolve()?;
+            let credential = resolved.pay(&challenge).await.map_err(|e| {
+                TransportErrorKind::custom(std::io::Error::other(format!(
+                    "MPP payment failed: {e}"
+                )))
+            })?;
+            let auth_header = format_authorization(&credential).map_err(|e| {
+                TransportErrorKind::custom(std::io::Error::other(format!(
+                    "failed to format MPP credential: {e}"
+                )))
+            })?;
+
+            let voucher_resp = self
+                .client
+                .post(self.url.clone())
+                .headers(headers.clone())
+                .header("content-type", "application/json")
+                .header(AUTHORIZATION_HEADER, auth_header)
+                .body(body.clone())
+                .send()
+                .await
+                .map_err(TransportErrorKind::custom)?;
+
+            return Self::handle_response(voucher_resp).await;
+        }
+
+        // If the server returned 410 Gone, the channel is stale (server lost
+        // track of it). Clear local state so the next invocation opens a fresh channel.
+        if retry_resp.status() == StatusCode::GONE {
+            debug!("MPP channel not found (410), clearing stale local state");
+            self.provider.clear_channels();
+
+            return Err(TransportErrorKind::custom(std::io::Error::other(
+                "MPP channel not found on server (410 Gone). \
+                 The server may have restarted or the channel was closed externally.\n\
+                 Local channel state has been cleared. Re-run to open a new channel.",
+            )));
+        }
+
         // If the retry still returns 402 and we haven't tried with
         // key_authorization yet, include it and retry once more. This handles
         // the case where the access key hasn't been provisioned on-chain yet.
@@ -313,6 +372,10 @@ pub(crate) trait ResolveProvider {
     /// Called when the MPP gateway reports that the access key does not exist
     /// on-chain, so that the next `pay()` call includes `key_authorization`.
     fn mark_key_not_provisioned(&self) {}
+
+    /// Called when the MPP gateway reports that the channel is not found (410).
+    /// Clears persisted channel state so the next `pay()` opens a new channel.
+    fn clear_channels(&self) {}
 }
 
 /// Any direct `PaymentProvider` resolves to itself.
@@ -330,6 +393,9 @@ impl ResolveProvider for LazySessionProvider {
     }
     fn mark_key_not_provisioned(&self) {
         Self::mark_key_not_provisioned(self)
+    }
+    fn clear_channels(&self) {
+        Self::clear_channels(self)
     }
 }
 

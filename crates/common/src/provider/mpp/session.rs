@@ -121,6 +121,14 @@ impl SessionProvider {
         self
     }
 
+    /// Clear all in-memory and persisted channels (e.g. after server 410).
+    pub fn clear_channels(&self) {
+        self.channels.lock().unwrap().clear();
+        let mut persisted = self.persisted.lock().unwrap();
+        persisted.clear();
+        persist::save_channels(&persisted);
+    }
+
     /// Mark whether the access key has been provisioned on-chain.
     ///
     /// When `true` (the default), `key_authorization` is omitted from channel
@@ -266,6 +274,81 @@ impl SessionProvider {
 
         Ok((entry, payload))
     }
+
+    /// Build a topUp transaction to add more funds to an existing channel.
+    async fn create_topup_tx(
+        &self,
+        entry: &ChannelEntry,
+        additional_deposit: u128,
+        currency: Address,
+        fee_payer: bool,
+    ) -> Result<SessionCredentialPayload, MppError> {
+        use alloy_sol_types::SolCall as _;
+
+        alloy_sol_types::sol! {
+            interface ITIP20 {
+                function approve(address spender, uint256 amount) external returns (bool);
+            }
+            interface IEscrow {
+                function topUp(bytes32 channelId, uint256 additionalDeposit) external;
+            }
+        }
+
+        let approve_data =
+            ITIP20::approveCall::new((entry.escrow_contract, U256::from(additional_deposit)))
+                .abi_encode();
+
+        let topup_data =
+            IEscrow::topUpCall::new((entry.channel_id, U256::from(additional_deposit)))
+                .abi_encode();
+
+        let calls = vec![
+            Call {
+                to: TxKind::Call(currency),
+                value: U256::ZERO,
+                input: Bytes::from(approve_data),
+            },
+            Call {
+                to: TxKind::Call(entry.escrow_contract),
+                value: U256::ZERO,
+                input: Bytes::from(topup_data),
+            },
+        ];
+
+        let valid_before = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            Some(now + VALID_BEFORE_SECS)
+        };
+
+        let tx = mpp::client::tempo::charge::tx_builder::build_tempo_tx(
+            mpp::client::tempo::charge::tx_builder::TempoTxOptions {
+                calls,
+                chain_id: entry.chain_id,
+                fee_token: currency,
+                nonce: 0,
+                nonce_key: EXPIRING_NONCE_KEY,
+                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                max_fee_per_gas: MAX_FEE_PER_GAS,
+                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                fee_payer,
+                valid_before,
+                key_authorization: None, // key already provisioned
+            },
+        );
+
+        let tx_bytes = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx_hex = format!("0x{}", alloy_primitives::hex::encode(&tx_bytes));
+
+        Ok(SessionCredentialPayload::TopUp {
+            payload_type: "transaction".to_string(),
+            channel_id: format!("{}", entry.channel_id),
+            transaction: signed_tx_hex,
+            additional_deposit: additional_deposit.to_string(),
+        })
+    }
 }
 
 impl PaymentProvider for SessionProvider {
@@ -304,26 +387,57 @@ impl PaymentProvider for SessionProvider {
         if let Some(mut entry) = existing
             && entry.opened
         {
-            entry.cumulative_amount += amount;
+            // Check if channel has enough remaining deposit
+            let deposit = self
+                .persisted
+                .lock()
+                .unwrap()
+                .get(&key)
+                .and_then(|p| p.deposit.parse::<u128>().ok())
+                .unwrap_or(u128::MAX);
 
-            let payload = create_voucher_payload(
-                &self.signer,
-                entry.channel_id,
-                entry.cumulative_amount,
-                escrow_contract,
-                chain_id,
-            )
-            .await?;
+            if entry.cumulative_amount + amount > deposit {
+                // Channel exhausted — top up with another deposit
+                let additional = self.resolve_deposit(session_req.suggested_deposit.as_deref())?;
+                debug!(
+                    cumulative = entry.cumulative_amount,
+                    amount, deposit, additional, "channel deposit exhausted, topping up"
+                );
 
-            self.channels.lock().unwrap().insert(key.clone(), entry.clone());
-            persist::upsert_channel(
-                &mut self.persisted.lock().unwrap(),
-                &key,
-                &entry,
-                0, // deposit already tracked from initial open
-                &self.origin,
-            );
-            return Ok(build_credential(challenge, payload, chain_id, payer));
+                let payload = self
+                    .create_topup_tx(&entry, additional, currency, session_req.fee_payer())
+                    .await?;
+
+                // Update deposit in persisted store
+                if let Some(p) = self.persisted.lock().unwrap().get_mut(&key) {
+                    let old_deposit: u128 = p.deposit.parse().unwrap_or(0);
+                    p.deposit = (old_deposit + additional).to_string();
+                }
+                persist::save_channels(&self.persisted.lock().unwrap());
+
+                return Ok(build_credential(challenge, payload, chain_id, payer));
+            } else {
+                entry.cumulative_amount += amount;
+
+                let payload = create_voucher_payload(
+                    &self.signer,
+                    entry.channel_id,
+                    entry.cumulative_amount,
+                    escrow_contract,
+                    chain_id,
+                )
+                .await?;
+
+                self.channels.lock().unwrap().insert(key.clone(), entry.clone());
+                persist::upsert_channel(
+                    &mut self.persisted.lock().unwrap(),
+                    &key,
+                    &entry,
+                    0, // deposit already tracked from initial open
+                    &self.origin,
+                );
+                return Ok(build_credential(challenge, payload, chain_id, payer));
+            }
         }
 
         // No existing channel — open with expiring nonces
