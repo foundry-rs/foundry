@@ -4677,6 +4677,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-pubsub",
+ "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-sol-types",
