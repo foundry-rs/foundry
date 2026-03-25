@@ -2,7 +2,10 @@
 
 use foundry_common::fmt::{StructDefinitions, TypeDefMap};
 use solar::sema::{self, Compiler, Gcx, hir};
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::HashSet,
+    sync::{Arc, OnceLock},
+};
 use thiserror::Error;
 
 /// Represents a failure in one of the lazy analysis steps.
@@ -76,12 +79,13 @@ impl CheatcodeAnalysis {
 struct StructDefinitionResolver<'gcx> {
     gcx: Gcx<'gcx>,
     struct_defs: TypeDefMap,
+    in_progress: HashSet<hir::StructId>,
 }
 
 impl<'gcx> StructDefinitionResolver<'gcx> {
     /// Constructs a new generator.
     pub fn new(gcx: Gcx<'gcx>) -> Self {
-        Self { gcx, struct_defs: TypeDefMap::new() }
+        Self { gcx, struct_defs: TypeDefMap::new(), in_progress: HashSet::new() }
     }
 
     /// Processes the HIR to generate all the struct definitions.
@@ -103,26 +107,35 @@ impl<'gcx> StructDefinitionResolver<'gcx> {
         if self.struct_defs.contains_key(&qualified_name) {
             return Ok(());
         }
+        if !self.in_progress.insert(id) {
+            // Already resolving this struct higher in the stack.
+            return Ok(());
+        }
 
-        let hir = self.hir();
-        let strukt = hir.strukt(id);
-        let mut fields = Vec::with_capacity(strukt.fields.len());
+        let result = (|| {
+            let hir = self.hir();
+            let strukt = hir.strukt(id);
+            let mut fields = Vec::with_capacity(strukt.fields.len());
 
-        for &field_id in strukt.fields {
-            let var = hir.variable(field_id);
-            let name =
-                var.name.ok_or(AnalysisError::StructDefinitionsResolutionFailed)?.to_string();
-            if let Some(ty_str) = self.ty_to_string(self.gcx.type_of_hir_ty(&var.ty)) {
-                fields.push((name, ty_str));
+            for &field_id in strukt.fields {
+                let var = hir.variable(field_id);
+                let name =
+                    var.name.ok_or(AnalysisError::StructDefinitionsResolutionFailed)?.to_string();
+                if let Some(ty_str) = self.ty_to_string(self.gcx.type_of_hir_ty(&var.ty)) {
+                    fields.push((name, ty_str));
+                }
             }
-        }
 
-        // Only insert if there are fields, to avoid adding empty entries
-        if !fields.is_empty() {
-            self.struct_defs.insert(qualified_name, fields);
-        }
+            // Only insert if there are fields, to avoid adding empty entries
+            if !fields.is_empty() {
+                self.struct_defs.insert(qualified_name, fields);
+            }
 
-        Ok(())
+            Ok(())
+        })();
+
+        self.in_progress.remove(&id);
+        result
     }
 
     /// Converts a resolved `Ty` into its canonical string representation.
