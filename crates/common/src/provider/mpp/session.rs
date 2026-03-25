@@ -36,7 +36,9 @@ const EXPIRING_NONCE_KEY: U256 = U256::MAX;
 const VALID_BEFORE_SECS: u64 = 25;
 
 /// Default gas limit for session open transactions.
-const SESSION_OPEN_GAS_LIMIT: u64 = 2_000_000;
+/// Needs to be high enough to cover key authorization provisioning (WebAuthn
+/// signature verification is expensive on-chain).
+const SESSION_OPEN_GAS_LIMIT: u64 = 10_000_000;
 
 /// Max fee per gas (20 gwei — Tempo's fixed base fee).
 const MAX_FEE_PER_GAS: u128 = 20_000_000_000;
@@ -56,6 +58,8 @@ pub struct SessionProvider {
     authorized_signer: Option<Address>,
     default_deposit: Option<u128>,
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
+    /// Whether the key has been provisioned on-chain (key_authorization already sent).
+    key_provisioned: Arc<Mutex<bool>>,
 }
 
 impl std::fmt::Debug for SessionProvider {
@@ -77,6 +81,7 @@ impl SessionProvider {
             authorized_signer: None,
             default_deposit: None,
             channels: Arc::new(Mutex::new(HashMap::new())),
+            key_provisioned: Arc::new(Mutex::new(true)),
         }
     }
 
@@ -96,6 +101,14 @@ impl SessionProvider {
     pub fn with_default_deposit(mut self, deposit: u128) -> Self {
         self.default_deposit = Some(deposit);
         self
+    }
+
+    /// Mark whether the access key has been provisioned on-chain.
+    ///
+    /// When `true` (the default), `key_authorization` is omitted from channel
+    /// open transactions. Set to `false` to include it on the next open.
+    pub fn set_key_provisioned(&self, provisioned: bool) {
+        *self.key_provisioned.lock().unwrap() = provisioned;
     }
 
     /// Channel registry key: `payee:currency:escrow` (lowercase).
@@ -196,7 +209,9 @@ impl SessionProvider {
                 max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
                 fee_payer: options.fee_payer,
                 valid_before,
-                key_authorization: self.signing_mode.key_authorization().cloned(),
+                key_authorization: (!*self.key_provisioned.lock().unwrap())
+                    .then(|| self.signing_mode.key_authorization().cloned())
+                    .flatten(),
             },
         );
 

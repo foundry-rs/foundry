@@ -20,6 +20,8 @@ pub struct MppKeyConfig {
     pub wallet_address: Option<String>,
     /// Key address / signer address (for keychain authorized signer).
     pub key_address: Option<String>,
+    /// RLP-encoded signed key authorization (hex string).
+    pub key_authorization: Option<String>,
 }
 
 /// Attempt to auto-discover an MPP signing key from the Tempo wallet.
@@ -40,7 +42,12 @@ pub fn discover_mpp_config() -> Option<MppKeyConfig> {
         let key = key.trim().to_string();
         if !key.is_empty() {
             debug!("using MPP key from {TEMPO_PRIVATE_KEY_ENV} env var");
-            return Some(MppKeyConfig { key, wallet_address: None, key_address: None });
+            return Some(MppKeyConfig {
+                key,
+                wallet_address: None,
+                key_address: None,
+                key_authorization: None,
+            });
         }
     }
 
@@ -68,6 +75,7 @@ pub fn discover_mpp_config() -> Option<MppKeyConfig> {
                 key,
                 wallet_address: entry.wallet_address.clone(),
                 key_address: entry.key_address.clone(),
+                key_authorization: entry.key_authorization.clone(),
             });
         }
     }

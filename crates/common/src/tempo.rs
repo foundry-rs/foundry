@@ -36,8 +36,8 @@ pub enum WalletType {
 /// A single key entry in `keys.toml`.
 ///
 /// Mirrors the fields from `tempo-common::keys::model::KeyEntry` that are
-/// relevant for key discovery. Unknown fields (e.g. `chain_id`,
-/// `key_authorization`, `expiry`) are ignored by serde.
+/// relevant for key discovery. Unknown fields (e.g. `chain_id`, `expiry`)
+/// are ignored by serde.
 #[derive(Debug, Default, Deserialize)]
 pub struct KeyEntry {
     /// Wallet type: "local" or "passkey".
@@ -52,6 +52,10 @@ pub struct KeyEntry {
     /// Key private key, stored inline in keys.toml.
     #[serde(default)]
     pub key: Option<String>,
+    /// RLP-encoded signed key authorization (hex string).
+    /// Used in keychain mode to atomically provision the access key on-chain.
+    #[serde(default)]
+    pub key_authorization: Option<String>,
 }
 
 impl KeyEntry {

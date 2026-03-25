@@ -41,6 +41,14 @@ impl LazySessionProvider {
         Self { inner: std::sync::Arc::new(Mutex::new(None)) }
     }
 
+    /// Mark the access key as not yet provisioned on-chain, so the next
+    /// channel open will include `key_authorization`.
+    fn mark_key_not_provisioned(&self) {
+        if let Some(p) = self.inner.lock().unwrap().as_ref() {
+            p.set_key_provisioned(false);
+        }
+    }
+
     /// Get or lazily initialize the session provider from Tempo wallet config.
     fn get_or_init(&self) -> TransportResult<SessionProvider> {
         let mut guard = self.inner.lock().unwrap();
@@ -69,9 +77,29 @@ impl LazySessionProvider {
                     "invalid MPP wallet address: {e}"
                 )))
             })?;
+
+            let key_authorization = config
+                .key_authorization
+                .as_ref()
+                .map(|hex_str| {
+                    let bytes = alloy_primitives::hex::decode(hex_str).map_err(|e| {
+                        TransportErrorKind::custom(std::io::Error::other(format!(
+                            "invalid MPP key_authorization hex: {e}"
+                        )))
+                    })?;
+                    let auth =
+                        alloy_rlp::Decodable::decode(&mut bytes.as_slice()).map_err(|e| {
+                            TransportErrorKind::custom(std::io::Error::other(format!(
+                                "invalid MPP key_authorization RLP: {e}"
+                            )))
+                        })?;
+                    Ok::<_, TransportError>(Box::new(auth))
+                })
+                .transpose()?;
+
             mpp::client::tempo::signing::TempoSigningMode::Keychain {
                 wallet,
-                key_authorization: None,
+                key_authorization,
                 version: mpp::client::tempo::signing::KeychainVersion::V2,
             }
         } else {
@@ -199,13 +227,50 @@ where
         let retry_resp = self
             .client
             .post(self.url.clone())
-            .headers(headers)
+            .headers(headers.clone())
             .header("content-type", "application/json")
-            .header(AUTHORIZATION_HEADER, auth_header)
-            .body(body)
+            .header(AUTHORIZATION_HEADER, &auth_header)
+            .body(body.clone())
             .send()
             .await
             .map_err(TransportErrorKind::custom)?;
+
+        // If the retry still returns 402 and we haven't tried with
+        // key_authorization yet, include it and retry once more. This handles
+        // the case where the access key hasn't been provisioned on-chain yet.
+        if retry_resp.status() == StatusCode::PAYMENT_REQUIRED {
+            self.provider.mark_key_not_provisioned();
+            let resolved = self.provider.resolve()?;
+
+            // Only retry if the provider actually has a key_authorization to add
+            if resolved.supports(challenge.method.as_str(), challenge.intent.as_str()) {
+                debug!("first MPP attempt returned 402, retrying with key_authorization");
+
+                let credential = resolved.pay(&challenge).await.map_err(|e| {
+                    TransportErrorKind::custom(std::io::Error::other(format!(
+                        "MPP payment failed: {e}"
+                    )))
+                })?;
+                let auth_header = format_authorization(&credential).map_err(|e| {
+                    TransportErrorKind::custom(std::io::Error::other(format!(
+                        "failed to format MPP credential: {e}"
+                    )))
+                })?;
+
+                let final_resp = self
+                    .client
+                    .post(self.url.clone())
+                    .headers(headers)
+                    .header("content-type", "application/json")
+                    .header(AUTHORIZATION_HEADER, auth_header)
+                    .body(body)
+                    .send()
+                    .await
+                    .map_err(TransportErrorKind::custom)?;
+
+                return Self::handle_response(final_resp).await;
+            }
+        }
 
         Self::handle_response(retry_resp).await
     }
@@ -242,6 +307,10 @@ where
 pub(crate) trait ResolveProvider {
     type Provider: PaymentProvider;
     fn resolve(&self) -> TransportResult<Self::Provider>;
+
+    /// Called when the MPP gateway reports that the access key does not exist
+    /// on-chain, so that the next `pay()` call includes `key_authorization`.
+    fn mark_key_not_provisioned(&self) {}
 }
 
 /// Any direct `PaymentProvider` resolves to itself.
@@ -256,6 +325,9 @@ impl ResolveProvider for LazySessionProvider {
     type Provider = SessionProvider;
     fn resolve(&self) -> TransportResult<SessionProvider> {
         self.get_or_init()
+    }
+    fn mark_key_not_provisioned(&self) {
+        Self::mark_key_not_provisioned(self)
     }
 }
 
