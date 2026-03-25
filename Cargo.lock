@@ -340,8 +340,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-monad-evm"
-version = "0.2.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm?branch=main#895d820baaaa8ef4a0889a8f6ebc01d85634c55b"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc2e303907b5e4484d51083eddb910846bbe8c27244ef7281a45db8ac17ef8eb"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -6767,8 +6768,9 @@ dependencies = [
 
 [[package]]
 name = "monad-revm"
-version = "0.2.0"
-source = "git+https://github.com/category-labs/monad-revm?branch=main#bed432dd9492c957a532d1416cc6049682d404b6"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72ab33a7b7398c85676a8ae9a7867471936a5f4e51ad54f95f510691865ddb02"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
@@ -7910,7 +7912,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -7923,7 +7925,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -9586,7 +9588,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9598,7 +9600,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9621,7 +9623,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.10.0",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9930,7 +9932,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "url",
  "zip",
 ]
