@@ -29,6 +29,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use super::persist::{self, PersistedChannel};
+
 /// Expiring nonce key (U256::MAX) — matches the charge flow.
 const EXPIRING_NONCE_KEY: U256 = U256::MAX;
 
@@ -60,6 +62,10 @@ pub struct SessionProvider {
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
     /// Whether the key has been provisioned on-chain (key_authorization already sent).
     key_provisioned: Arc<Mutex<bool>>,
+    /// Persistent channel store (loaded from disk, saved on updates).
+    persisted: Arc<Mutex<HashMap<String, PersistedChannel>>>,
+    /// RPC origin URL for channel persistence lookups.
+    origin: String,
 }
 
 impl std::fmt::Debug for SessionProvider {
@@ -73,15 +79,27 @@ impl std::fmt::Debug for SessionProvider {
 }
 
 impl SessionProvider {
-    /// Create a new session provider with the given signer.
-    pub fn new(signer: mpp::PrivateKeySigner) -> Self {
+    /// Create a new session provider with the given signer and RPC origin URL.
+    pub fn new(signer: mpp::PrivateKeySigner, origin: String) -> Self {
+        let persisted = persist::load_channels();
+
+        // Pre-populate in-memory channels from persisted store
+        let mut channels = HashMap::new();
+        for (key, ch) in &persisted {
+            if let Some(entry) = ch.to_channel_entry() {
+                channels.insert(key.clone(), entry);
+            }
+        }
+
         Self {
             signer,
             signing_mode: TempoSigningMode::Direct,
             authorized_signer: None,
             default_deposit: None,
-            channels: Arc::new(Mutex::new(HashMap::new())),
+            channels: Arc::new(Mutex::new(channels)),
             key_provisioned: Arc::new(Mutex::new(true)),
+            persisted: Arc::new(Mutex::new(persisted)),
+            origin,
         }
     }
 
@@ -297,7 +315,14 @@ impl PaymentProvider for SessionProvider {
             )
             .await?;
 
-            self.channels.lock().unwrap().insert(key, entry);
+            self.channels.lock().unwrap().insert(key.clone(), entry.clone());
+            persist::upsert_channel(
+                &mut self.persisted.lock().unwrap(),
+                &key,
+                &entry,
+                0, // deposit already tracked from initial open
+                &self.origin,
+            );
             return Ok(build_credential(challenge, payload, chain_id, payer));
         }
 
@@ -320,7 +345,14 @@ impl PaymentProvider for SessionProvider {
             )
             .await?;
 
-        self.channels.lock().unwrap().insert(key, entry);
+        self.channels.lock().unwrap().insert(key.clone(), entry.clone());
+        persist::upsert_channel(
+            &mut self.persisted.lock().unwrap(),
+            &key,
+            &entry,
+            deposit,
+            &self.origin,
+        );
         Ok(build_credential(challenge, payload, chain_id, payer))
     }
 }

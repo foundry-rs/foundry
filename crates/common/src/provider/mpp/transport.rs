@@ -34,11 +34,12 @@ pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
 #[derive(Clone, Debug)]
 pub struct LazySessionProvider {
     inner: std::sync::Arc<Mutex<Option<SessionProvider>>>,
+    origin: String,
 }
 
 impl LazySessionProvider {
-    fn new() -> Self {
-        Self { inner: std::sync::Arc::new(Mutex::new(None)) }
+    fn new(origin: String) -> Self {
+        Self { inner: std::sync::Arc::new(Mutex::new(None)), origin }
     }
 
     /// Mark the access key as not yet provisioned on-chain, so the next
@@ -106,7 +107,7 @@ impl LazySessionProvider {
             mpp::client::tempo::signing::TempoSigningMode::Direct
         };
 
-        let mut provider = SessionProvider::new(signer)
+        let mut provider = SessionProvider::new(signer, self.origin.clone())
             .with_signing_mode(signing_mode)
             .with_default_deposit(100_000);
 
@@ -138,7 +139,8 @@ pub struct MppHttpTransport<P> {
 impl MppHttpTransport<LazySessionProvider> {
     /// Create a new lazy MPP transport that discovers keys on first 402.
     pub fn lazy(client: reqwest::Client, url: Url) -> Self {
-        Self { client, url, provider: LazySessionProvider::new() }
+        let origin = url.to_string();
+        Self { client, url, provider: LazySessionProvider::new(origin) }
     }
 }
 
@@ -757,7 +759,7 @@ mod tests {
         };
 
         let service_url = "https://rpc.mpp.tempo.xyz";
-        let provider = super::super::session::SessionProvider::new(signer)
+        let provider = super::super::session::SessionProvider::new(signer, service_url.to_string())
             .with_signing_mode(signing_mode)
             .with_authorized_signer(signer_address)
             .with_default_deposit(100_000);

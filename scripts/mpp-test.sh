@@ -81,7 +81,7 @@ BLOCK2=$("$CAST" block-number --rpc-url "$RPC_MPP")
 AFTER2=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC" | awk '{print $1}')
 SPENT2=$((BEFORE2 - AFTER2))
 echo "Block: $BLOCK2"
-echo "Spent: $SPENT2 units (new channel per invocation until persistent storage is added)"
+echo "Spent: $SPENT2 units (should be 0 — channel reused from ~/.tempo/foundry/channels.json)"
 
 echo ""
 echo "=== Done ==="
