@@ -45,6 +45,8 @@ fn sablier_v2_core() {
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
             .args(["--gas-limit", &u64::MAX.to_string()])
+            // These oversized count tests hit Monad memory limits before Sablier's custom errors.
+            .args(["--nmt", "SegmentCountExceedsMaxValue|TrancheCountExceedsMaxValue|SegmentCountTooHigh|TrancheCountTooHigh"])
             // Run tests without optimizations.
             .env("FOUNDRY_PROFILE", "lite")
             .install_command(&["bun", "install", "--prefer-offline"])

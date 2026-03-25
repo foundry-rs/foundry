@@ -667,7 +667,7 @@ Traces:
   [..] USDTCallingTest::test()
     ├─ [0] VM::createSelectFork("[..]")
     │   └─ ← [Return] 0
-    ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
+    ├─ [3090] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
     │   └─ ← [Return] "Tether USD"
     └─ ← [Stop]
 
@@ -707,7 +707,7 @@ Compiler run successful!
 Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 [FAIL: PoolNotInitialized()] testErr() ([GAS])
 Traces:
-  [247] CustomTypesTest::testErr()
+  [234] CustomTypesTest::testErr()
     └─ ← [Revert] PoolNotInitialized()
 
 Backtrace:
@@ -715,7 +715,7 @@ Backtrace:
 
 [PASS] testEvent() ([GAS])
 Traces:
-  [1524] CustomTypesTest::testEvent()
+  [1511] CustomTypesTest::testEvent()
     ├─ emit MyEvent(a: 100)
     └─ ← [Stop]
 
@@ -1337,13 +1337,13 @@ Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [165340] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
-    ├─ [28630] SimpleContract::increment()
+    ├─ [28622] SimpleContract::increment()
     │   ├─ [20147] SimpleContract::_setNum(1)
     │   │   └─ ← 0
     │   └─ ← [Stop]
-    ├─ [29204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
+    ├─ [29196] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [247] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [28336] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
@@ -1393,10 +1393,10 @@ contract SimpleContractTest is Test {
 ...
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [376554] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [376411] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 1737 bytes of code
-    ├─ [2511] SimpleContract::setStr("new value")
-    │   ├─ [1588] SimpleContract::_setStr("new value")
+    ├─ [2491] SimpleContract::setStr("new value")
+    │   ├─ [1586] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
     │   └─ ← [Stop]
     └─ ← [Stop]
@@ -1520,10 +1520,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 10648)
-[PASS] testWeirdGas1() (gas: 10486)
-[PASS] testWeirdGas2() (gas: 10713)
-[PASS] testWithAssembly() (gas: 10529)
+[PASS] testNormalGas() (gas: 10635)
+[PASS] testWeirdGas1() (gas: 10473)
+[PASS] testWeirdGas2() (gas: 10700)
+[PASS] testWithAssembly() (gas: 10516)
 ...
 "#]]);
 });
@@ -1602,17 +1602,17 @@ contract ATest is Test {
     cmd.args(["test", "-vvvv"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Logs:
-  Gas cost: 50068
+  Gas cost: 49323
 
 Traces:
-  [2911184] ATest::test_GasLeft()
-    ├─ [0] console::log("Gas cost:", 50068 [5.006e4]) [staticcall]
+  [2909823] ATest::test_GasLeft()
+    ├─ [0] console::log("Gas cost:", 49323 [4.932e4]) [staticcall]
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-[PASS] test_GasMeter() (gas: 60597)
+[PASS] test_GasMeter() (gas: 59851)
 Traces:
-  [60597] ATest::test_GasMeter()
+  [59851] ATest::test_GasMeter()
     ├─ [0] VM::pauseGasMetering()
     │   └─ ← [Return]
     ├─ [0] VM::resumeGasMetering()
@@ -1642,7 +1642,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 4374)
+[PASS] test_negativeGas() (gas: 4364)
 ...
 "#]]);
 });
@@ -1697,33 +1697,33 @@ contract PauseTracingTest is DSTest {
     cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
-  [21257] PauseTracingTest::setUp()
+  [21244] PauseTracingTest::setUp()
     ├─ emit DummyEvent(i: 1)
     ├─ [0] VM::pauseTracing() [staticcall]
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [469149] PauseTracingTest::test()
+  [468682] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
-    ├─ [22896] TraceGenerator::generate()
-    │   ├─ [1589] TraceGenerator::call(0)
+    ├─ [22751] TraceGenerator::generate()
+    │   ├─ [1576] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
     │   │   └─ ← [Stop]
-    │   ├─ [1589] TraceGenerator::call(1)
+    │   ├─ [1576] TraceGenerator::call(1)
     │   │   ├─ emit DummyEvent(i: 1)
     │   │   └─ ← [Stop]
-    │   ├─ [1589] TraceGenerator::call(2)
+    │   ├─ [1576] TraceGenerator::call(2)
     │   │   ├─ emit DummyEvent(i: 2)
     │   │   └─ ← [Stop]
     │   ├─ [0] VM::pauseTracing() [staticcall]
     │   │   └─ ← [Return]
     │   ├─ [0] VM::resumeTracing() [staticcall]
     │   │   └─ ← [Return]
-    │   ├─ [1589] TraceGenerator::call(8)
+    │   ├─ [1576] TraceGenerator::call(8)
     │   │   ├─ emit DummyEvent(i: 8)
     │   │   └─ ← [Stop]
-    │   ├─ [1589] TraceGenerator::call(9)
+    │   ├─ [1576] TraceGenerator::call(9)
     │   │   ├─ emit DummyEvent(i: 9)
     │   │   └─ ← [Stop]
     │   └─ ← [Stop]
@@ -2948,19 +2948,19 @@ forgetest_init!(should_show_state_changes, |prj, cmd| {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [149242] CounterTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [149144] CounterTest::setUp()
+    ├─ [96305] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [8592] Counter::setNumber(0)
+    ├─ [8584] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [48283] CounterTest::test_Increment()
-    ├─ [28418] Counter::increment()
+  [48249] CounterTest::test_Increment()
+    ├─ [28410] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [411] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
@@ -3093,21 +3093,21 @@ Logs:
   test increment failure
 
 Traces:
-  [149242] SuppressTracesTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [149144] SuppressTracesTest::setUp()
+    ├─ [96305] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [8592] Counter::setNumber(0)
+    ├─ [8584] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [69700] SuppressTracesTest::test_increment_failure()
+  [69644] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [28418] Counter::increment()
+    ├─ [28410] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [411] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
@@ -3146,19 +3146,19 @@ Logs:
   test increment failure
 
 Traces:
-  [149242] SuppressTracesTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [149144] SuppressTracesTest::setUp()
+    ├─ [96305] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [8592] Counter::setNumber(0)
+    ├─ [8584] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [69700] SuppressTracesTest::test_increment_failure()
+  [69644] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [28418] Counter::increment()
+    ├─ [28410] Counter::increment()
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [411] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
@@ -3173,12 +3173,12 @@ Logs:
   test increment success
 
 Traces:
-  [59164] SuppressTracesTest::test_increment_success()
+  [59113] SuppressTracesTest::test_increment_success()
     ├─ [0] console::log("test increment success") [staticcall]
     │   └─ ← [Stop]
-    ├─ [28418] Counter::increment()
+    ├─ [28410] Counter::increment()
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [411] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
@@ -3938,14 +3938,14 @@ Logs:
   test non contract call failure
 
 Traces:
-  [169143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [169045] NonContractCallRevertTest::setUp()
+    ├─ [96305] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [28492] Counter::setNumber(1)
+    ├─ [28484] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [21350] NonContractCallRevertTest::test_non_contract_call_failure()
+  [21320] NonContractCallRevertTest::test_non_contract_call_failure()
     ├─ [0] console::log("test non contract call failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
@@ -3960,14 +3960,14 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [169143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [169045] NonContractCallRevertTest::setUp()
+    ├─ [96305] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [28492] Counter::setNumber(1)
+    ├─ [28484] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [21215] NonContractCallRevertTest::test_non_contract_void_call_failure()
+  [21180] NonContractCallRevertTest::test_non_contract_void_call_failure()
     ├─ [0] console::log("test non contract (void) call failure") [staticcall]
     │   └─ ← [Stop]
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
@@ -3980,17 +3980,17 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [169143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [169045] NonContractCallRevertTest::setUp()
+    ├─ [96305] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [28492] Counter::setNumber(1)
+    ├─ [28484] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [29620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
+  [29577] NonContractCallRevertTest::test_non_supported_selector_call_failure()
     ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [145] Counter::random()
+    ├─ [137] Counter::random()
     │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
     └─ ← [Revert] EvmError: Revert
 
@@ -4069,14 +4069,14 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [276303] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [276069] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [220746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [220670] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
-    ├─ [11396] LibraryCaller::foobar(10)
+    ├─ [11373] LibraryCaller::foobar(10)
     │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
     │   │   └─ ← [Stop]
     │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)

@@ -555,7 +555,7 @@ impl NodeConfig {
             return hardfork;
         }
         if self.networks.is_monad() {
-            return MonadSpecId::default().into();
+            return MonadSpecId::MonadNine.into();
         }
         if self.networks.is_optimism() {
             return OpHardfork::default().into();
@@ -1692,8 +1692,8 @@ mod tests {
     }
 
     #[test]
-    fn test_monad_defaults_to_monad_eight_hardfork() {
+    fn test_monad_defaults_to_monad_nine_hardfork() {
         let config = NodeConfig::default().with_networks(NetworkConfigs::with_monad());
-        assert_eq!(config.get_hardfork(), MonadSpecId::MonadEight.into());
+        assert_eq!(config.get_hardfork(), MonadSpecId::MonadNine.into());
     }
 }

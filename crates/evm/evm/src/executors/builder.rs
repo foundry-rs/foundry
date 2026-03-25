@@ -27,7 +27,7 @@ impl Default for ExecutorBuilder {
         Self {
             stack: InspectorStackBuilder::new(),
             gas_limit: None,
-            spec_id: MonadSpecId::default(),
+            spec_id: MonadSpecId::MonadNine,
             legacy_assertions: false,
         }
     }

@@ -1416,7 +1416,7 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 Traces:
   [..] CounterTest::test_Increment()
     ├─ [0] VM::deployCode("src/Counter.sol:Counter")
-    │   ├─ [96345] → new Counter@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   ├─ [96305] → new Counter@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
     ├─ [..] Counter::setNumber(0)

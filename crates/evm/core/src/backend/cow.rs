@@ -60,7 +60,7 @@ impl<'a> CowBackend<'a> {
         Self {
             backend: Cow::Borrowed(backend),
             is_initialized: false,
-            spec_id: MonadSpecId::default(),
+            spec_id: MonadSpecId::MonadNine,
         }
     }
 

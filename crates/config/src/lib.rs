@@ -239,7 +239,7 @@ pub struct Config {
     /// The Monad hardfork to use for EVM execution.
     ///
     /// Possible values: `"MonadEight"`, `"MonadNine"`, `"MonadNext"`.
-    /// Defaults to `MonadEight` (Monad mainnet launch spec) when not set.
+    /// Defaults to `MonadNine` (latest Monad spec) when not set.
     #[serde(default, with = "from_opt_monad_spec_id")]
     pub monad_hardfork: Option<MonadSpecId>,
     /// List of contracts to generate gas reports for.
@@ -1292,9 +1292,9 @@ impl Config {
     /// Returns the [`MonadSpecId`] for Monad EVM execution.
     ///
     /// If `monad_hardfork` is set in the config, returns it. Otherwise returns
-    /// [`MonadSpecId::default()`] (MonadEight).
+    /// [`MonadSpecId::MonadNine`].
     pub fn monad_spec_id(&self) -> MonadSpecId {
-        self.monad_hardfork.unwrap_or_default()
+        self.monad_hardfork.unwrap_or(MonadSpecId::MonadNine)
     }
 
     /// Returns whether the compiler version should be auto-detected
