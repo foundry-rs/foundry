@@ -5,8 +5,8 @@
 //! inline key > first entry, mirroring `Keystore::primary_key()` in
 //! `tempo-common`).
 
-use alloy_primitives::Address;
 use crate::tempo::{TEMPO_PRIVATE_KEY_ENV, WalletType, read_tempo_keys_file};
+use alloy_primitives::Address;
 use tracing::debug;
 
 /// Discovered MPP key configuration.

@@ -39,7 +39,6 @@ pub enum TempoLookup {
     NotFound,
 }
 
-
 /// Looks up a signer for the given address in Tempo's `keys.toml`.
 ///
 /// Returns [`TempoLookup::Direct`] if a direct-mode (EOA) key is found,

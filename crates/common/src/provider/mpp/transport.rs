@@ -92,13 +92,11 @@ impl LazySessionProvider {
                 .key_authorization
                 .as_ref()
                 .map(|hex_str| {
-                    crate::tempo::decode_key_authorization(hex_str)
-                        .map(Box::new)
-                        .map_err(|e| {
-                            TransportErrorKind::custom(std::io::Error::other(format!(
-                                "invalid MPP key_authorization: {e}"
-                            )))
-                        })
+                    crate::tempo::decode_key_authorization(hex_str).map(Box::new).map_err(|e| {
+                        TransportErrorKind::custom(std::io::Error::other(format!(
+                            "invalid MPP key_authorization: {e}"
+                        )))
+                    })
                 })
                 .transpose()?;
 
@@ -419,8 +417,7 @@ where
 mod tests {
     use super::*;
     use crate::provider::{
-        mpp::keys::{discover_mpp_config, discover_mpp_key},
-        runtime_transport::RuntimeTransportBuilder,
+        mpp::keys::discover_mpp_key, runtime_transport::RuntimeTransportBuilder,
     };
     use alloy_json_rpc::{Id, Request, RequestMeta};
     use axum::{
@@ -783,9 +780,8 @@ mod tests {
             mpp_key.parse().expect("failed to parse MPP key as PrivateKeySigner");
 
         // Read keys.toml to get wallet_address for keychain signing.
-        let config = discover_mpp_config().expect(
-            "no MPP config found; configure ~/.tempo/wallet/keys.toml",
-        );
+        let config = discover_mpp_config()
+            .expect("no MPP config found; configure ~/.tempo/wallet/keys.toml");
 
         let wallet_address = config.wallet_address.expect("missing wallet_address");
         let signer_address = config.key_address.expect("missing key_address");
