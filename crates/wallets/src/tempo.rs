@@ -3,63 +3,13 @@ use alloy_primitives::Address;
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_common::tempo;
-use foundry_common::tempo::WalletType;
+
 use tempo_alloy::rpc::TempoTransactionRequest;
 use tempo_primitives::transaction::{
     KeychainSignature, PrimitiveSignature, SignedKeyAuthorization, TempoSignature,
 };
 
 use crate::{WalletSigner, utils};
-
-/// Cryptographic key type.
-#[derive(Clone, Copy, Default, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum KeyType {
-    #[default]
-    Secp256k1,
-    P256,
-    WebAuthn,
-}
-
-/// A single entry from Tempo's `keys.toml`.
-#[derive(serde::Deserialize)]
-#[allow(dead_code)]
-struct KeyEntry {
-    #[serde(default)]
-    wallet_type: WalletType,
-    #[serde(default)]
-    wallet_address: Address,
-    #[serde(default)]
-    chain_id: u64,
-    #[serde(default)]
-    key_type: KeyType,
-    #[serde(default)]
-    key_address: Option<Address>,
-    #[serde(default)]
-    key: Option<String>,
-    #[serde(default)]
-    key_authorization: Option<String>,
-    #[serde(default)]
-    expiry: Option<u64>,
-    #[serde(default)]
-    limits: Vec<StoredTokenLimit>,
-}
-
-/// Per-token spending limit stored in `keys.toml`.
-#[derive(serde::Deserialize)]
-struct StoredTokenLimit {
-    #[allow(dead_code)]
-    currency: Address,
-    #[allow(dead_code)]
-    limit: String,
-}
-
-/// The top-level structure of `~/.tempo/wallet/keys.toml`.
-#[derive(serde::Deserialize)]
-struct KeysFile {
-    #[serde(default)]
-    keys: Vec<KeyEntry>,
-}
 
 /// Configuration for a Tempo access key (keychain mode).
 ///
@@ -96,13 +46,9 @@ pub enum TempoLookup {
 /// [`TempoLookup::Keychain`] if a keychain-mode access key is found,
 /// or [`TempoLookup::NotFound`] if no entry matches.
 pub fn lookup_signer(from: Address) -> Result<TempoLookup> {
-    let path = match tempo::tempo_keys_path() {
-        Some(p) if p.is_file() => p,
-        _ => return Ok(TempoLookup::NotFound),
+    let Some(file) = tempo::read_tempo_keys_file() else {
+        return Ok(TempoLookup::NotFound);
     };
-
-    let contents = std::fs::read_to_string(&path)?;
-    let file: KeysFile = toml::from_str(&contents)?;
 
     for entry in &file.keys {
         if entry.wallet_address != from {

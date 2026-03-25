@@ -5,6 +5,7 @@
 //! inline key > first entry, mirroring `Keystore::primary_key()` in
 //! `tempo-common`).
 
+use alloy_primitives::Address;
 use crate::tempo::{TEMPO_PRIVATE_KEY_ENV, WalletType, read_tempo_keys_file};
 use tracing::debug;
 
@@ -17,9 +18,9 @@ pub struct MppKeyConfig {
     /// The hex-encoded private key.
     pub key: String,
     /// Smart wallet address (for keychain signing mode).
-    pub wallet_address: Option<String>,
+    pub wallet_address: Option<Address>,
     /// Key address / signer address (for keychain authorized signer).
-    pub key_address: Option<String>,
+    pub key_address: Option<Address>,
     /// RLP-encoded signed key authorization (hex string).
     pub key_authorization: Option<String>,
 }
@@ -73,8 +74,8 @@ pub fn discover_mpp_config() -> Option<MppKeyConfig> {
             debug!("using MPP key from tempo wallet keys file");
             return Some(MppKeyConfig {
                 key,
-                wallet_address: entry.wallet_address.clone(),
-                key_address: entry.key_address.clone(),
+                wallet_address: Some(entry.wallet_address),
+                key_address: entry.key_address,
                 key_authorization: entry.key_authorization.clone(),
             });
         }
@@ -133,7 +134,7 @@ chain_id = 4217
         let toml_content = format!(
             r#"
 [[keys]]
-wallet_address = "0xAAAA"
+wallet_address = "0x0000000000000000000000000000000000000001"
 key = "{file_key}"
 "#
         );
@@ -174,11 +175,11 @@ key = "{file_key}"
         let toml_content = format!(
             r#"
 [[keys]]
-wallet_address = "0xNoKey"
+wallet_address = "0x0000000000000000000000000000000000000001"
 chain_id = 4217
 
 [[keys]]
-wallet_address = "0xHasKey"
+wallet_address = "0x0000000000000000000000000000000000000002"
 key = "{key}"
 chain_id = 4217
 "#
@@ -230,13 +231,13 @@ chain_id = 4217
     fn parse_keys_toml_multiple_entries() {
         let toml_str = r#"
 [[keys]]
-wallet_address = "0xAAAA"
-key_address = "0xBBBB"
+wallet_address = "0x0000000000000000000000000000000000000001"
+key_address = "0x0000000000000000000000000000000000000002"
 chain_id = 4217
 
 [[keys]]
-wallet_address = "0xCCCC"
-key_address = "0xDDDD"
+wallet_address = "0x0000000000000000000000000000000000000003"
+key_address = "0x0000000000000000000000000000000000000004"
 key = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 chain_id = 4217
 "#;
@@ -251,13 +252,13 @@ chain_id = 4217
         let toml_str = r#"
 [[keys]]
 wallet_type = "passkey"
-wallet_address = "0xAAAA"
+wallet_address = "0x0000000000000000000000000000000000000001"
 key = "0xpasskey_secret"
 chain_id = 4217
 
 [[keys]]
 wallet_type = "local"
-wallet_address = "0xBBBB"
+wallet_address = "0x0000000000000000000000000000000000000002"
 key = "0xlocal_secret"
 chain_id = 4217
 "#;
@@ -272,12 +273,12 @@ chain_id = 4217
         let toml_str = r#"
 [[keys]]
 wallet_type = "local"
-wallet_address = "0xLocal"
+wallet_address = "0x0000000000000000000000000000000000000001"
 key = "0xlocal_key"
 
 [[keys]]
 wallet_type = "passkey"
-wallet_address = "0xPasskey"
+wallet_address = "0x0000000000000000000000000000000000000002"
 key = "0xpasskey_key"
 "#;
         let keys_file: KeysFile = toml::from_str(toml_str).unwrap();
@@ -294,10 +295,10 @@ key = "0xpasskey_key"
     fn primary_key_inline_key_over_no_key() {
         let toml_str = r#"
 [[keys]]
-wallet_address = "0xNoKey"
+wallet_address = "0x0000000000000000000000000000000000000001"
 
 [[keys]]
-wallet_address = "0xHasKey"
+wallet_address = "0x0000000000000000000000000000000000000002"
 key = "0xthe_key"
 "#;
         let keys_file: KeysFile = toml::from_str(toml_str).unwrap();
@@ -314,7 +315,7 @@ key = "0xthe_key"
     fn parse_keys_toml_unknown_fields_ignored() {
         let toml_str = r#"
 [[keys]]
-wallet_address = "0xAAAA"
+wallet_address = "0x0000000000000000000000000000000000000001"
 key = "0xsecret"
 chain_id = 4217
 key_authorization = "0xauth_data"

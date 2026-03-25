@@ -3,7 +3,7 @@
 //! Shared types for reading keys from the Tempo CLI wallet keystore
 //! (`$TEMPO_HOME/wallet/keys.toml`, defaulting to `~/.tempo/wallet/keys.toml`).
 
-use alloy_primitives::hex;
+use alloy_primitives::{Address, hex};
 use alloy_rlp::Decodable;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -29,22 +29,47 @@ pub enum WalletType {
     Passkey,
 }
 
+/// Cryptographic key type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyType {
+    #[default]
+    Secp256k1,
+    P256,
+    WebAuthn,
+}
+
+/// Per-token spending limit stored in `keys.toml`.
+#[derive(Debug, Default, Deserialize)]
+pub struct StoredTokenLimit {
+    #[allow(dead_code)]
+    pub currency: Address,
+    #[allow(dead_code)]
+    pub limit: String,
+}
+
 /// A single key entry in `keys.toml`.
 ///
-/// Mirrors the fields from `tempo-common::keys::model::KeyEntry` that are
-/// relevant for key discovery. Unknown fields (e.g. `chain_id`, `expiry`)
-/// are ignored by serde.
+/// Mirrors the fields from `tempo-common::keys::model::KeyEntry`.
+/// Unknown fields are ignored by serde.
 #[derive(Debug, Default, Deserialize)]
+#[allow(dead_code)]
 pub struct KeyEntry {
     /// Wallet type: "local" or "passkey".
     #[serde(default)]
     pub wallet_type: WalletType,
     /// Smart wallet address (the on-chain account).
     #[serde(default)]
-    pub wallet_address: Option<String>,
+    pub wallet_address: Address,
+    /// Chain ID.
+    #[serde(default)]
+    pub chain_id: u64,
+    /// Cryptographic key type.
+    #[serde(default)]
+    pub key_type: KeyType,
     /// Key address (the EOA derived from the private key).
     #[serde(default)]
-    pub key_address: Option<String>,
+    pub key_address: Option<Address>,
     /// Key private key, stored inline in keys.toml.
     #[serde(default)]
     pub key: Option<String>,
@@ -52,6 +77,12 @@ pub struct KeyEntry {
     /// Used in keychain mode to atomically provision the access key on-chain.
     #[serde(default)]
     pub key_authorization: Option<String>,
+    /// Expiry timestamp.
+    #[serde(default)]
+    pub expiry: Option<u64>,
+    /// Per-token spending limits.
+    #[serde(default)]
+    pub limits: Vec<StoredTokenLimit>,
 }
 
 impl KeyEntry {

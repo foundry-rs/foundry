@@ -87,13 +87,7 @@ impl LazySessionProvider {
             TransportErrorKind::custom(std::io::Error::other(format!("invalid MPP key: {e}")))
         })?;
 
-        let signing_mode = if let Some(ref wallet_addr) = config.wallet_address {
-            let wallet: alloy_primitives::Address = wallet_addr.parse().map_err(|e| {
-                TransportErrorKind::custom(std::io::Error::other(format!(
-                    "invalid MPP wallet address: {e}"
-                )))
-            })?;
-
+        let signing_mode = if let Some(wallet) = config.wallet_address {
             let key_authorization = config
                 .key_authorization
                 .as_ref()
@@ -121,9 +115,7 @@ impl LazySessionProvider {
             .with_signing_mode(signing_mode)
             .with_default_deposit(default_deposit());
 
-        if let Some(ref key_addr) = config.key_address
-            && let Ok(addr) = key_addr.parse()
-        {
+        if let Some(addr) = config.key_address {
             provider = provider.with_authorized_signer(addr);
         }
 
@@ -795,19 +787,8 @@ mod tests {
             "no MPP config found; configure ~/.tempo/wallet/keys.toml",
         );
 
-        let wallet_address: alloy_primitives::Address = config
-            .wallet_address
-            .as_ref()
-            .expect("missing wallet_address")
-            .parse()
-            .expect("invalid wallet_address");
-
-        let signer_address: alloy_primitives::Address = config
-            .key_address
-            .as_ref()
-            .expect("missing key_address")
-            .parse()
-            .expect("invalid key_address");
+        let wallet_address = config.wallet_address.expect("missing wallet_address");
+        let signer_address = config.key_address.expect("missing key_address");
 
         let signing_mode = TempoSigningMode::Keychain {
             wallet: wallet_address,
