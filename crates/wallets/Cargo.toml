@@ -46,12 +46,10 @@ alloy-signer-turnkey = { workspace = true, features = ["eip712"], optional = tru
 tempo-primitives.workspace = true
 tempo-alloy.workspace = true
 alloy-eips.workspace = true
-alloy-rlp.workspace = true
 
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20"
-dirs.workspace = true
 eyre.workspace = true
 rpassword = "7"
 serde.workspace = true

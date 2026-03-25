@@ -98,18 +98,13 @@ impl LazySessionProvider {
                 .key_authorization
                 .as_ref()
                 .map(|hex_str| {
-                    let bytes = alloy_primitives::hex::decode(hex_str).map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
-                            "invalid MPP key_authorization hex: {e}"
-                        )))
-                    })?;
-                    let auth =
-                        alloy_rlp::Decodable::decode(&mut bytes.as_slice()).map_err(|e| {
+                    crate::tempo::decode_key_authorization(hex_str)
+                        .map(Box::new)
+                        .map_err(|e| {
                             TransportErrorKind::custom(std::io::Error::other(format!(
-                                "invalid MPP key_authorization RLP: {e}"
+                                "invalid MPP key_authorization: {e}"
                             )))
-                        })?;
-                    Ok::<_, TransportError>(Box::new(auth))
+                        })
                 })
                 .transpose()?;
 
@@ -432,7 +427,8 @@ where
 mod tests {
     use super::*;
     use crate::provider::{
-        mpp::keys::discover_mpp_key, runtime_transport::RuntimeTransportBuilder,
+        mpp::keys::{discover_mpp_config, discover_mpp_key},
+        runtime_transport::RuntimeTransportBuilder,
     };
     use alloy_json_rpc::{Id, Request, RequestMeta};
     use axum::{
@@ -795,25 +791,20 @@ mod tests {
             mpp_key.parse().expect("failed to parse MPP key as PrivateKeySigner");
 
         // Read keys.toml to get wallet_address for keychain signing.
-        // The key is already provisioned on-chain by `tempo wallet`, so we don't
-        // need to pass key_authorization (it's only needed for first-time provisioning).
-        let keys_path = dirs::home_dir().unwrap().join(".tempo/wallet/keys.toml");
-        let keys_toml: toml::Value =
-            toml::from_str(&std::fs::read_to_string(&keys_path).unwrap()).unwrap();
+        let config = discover_mpp_config().expect(
+            "no MPP config found; configure ~/.tempo/wallet/keys.toml",
+        );
 
-        let key_entry = keys_toml["keys"]
-            .as_array()
-            .and_then(|keys| keys.first())
-            .expect("no key entries in keys.toml");
-
-        let wallet_address: alloy_primitives::Address = key_entry["wallet_address"]
-            .as_str()
+        let wallet_address: alloy_primitives::Address = config
+            .wallet_address
+            .as_ref()
             .expect("missing wallet_address")
             .parse()
             .expect("invalid wallet_address");
 
-        let signer_address: alloy_primitives::Address = key_entry["key_address"]
-            .as_str()
+        let signer_address: alloy_primitives::Address = config
+            .key_address
+            .as_ref()
             .expect("missing key_address")
             .parse()
             .expect("invalid key_address");

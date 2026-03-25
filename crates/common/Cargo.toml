@@ -75,6 +75,9 @@ url.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
 
+dirs.workspace = true
+toml.workspace = true
+
 anstream.workspace = true
 anstyle.workspace = true
 ciborium.workspace = true
