@@ -114,7 +114,7 @@ use revm::{
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{ExecutionResult, Output, ResultAndState},
+        result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -1173,7 +1173,7 @@ impl<N: Network> Backend<N> {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
             ExecutionResult::Halt { reason, gas_used } => {
-                (op_haltreason_to_instruction_result(reason), gas_used, None)
+                (reason.into_instruction_result(), gas_used, None)
             }
         };
         drop(evm);
@@ -1207,7 +1207,7 @@ impl<N: Network> Backend<N> {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
             ExecutionResult::Halt { reason, gas_used } => {
-                (op_haltreason_to_instruction_result(reason), gas_used, None)
+                (reason.into_instruction_result(), gas_used, None)
             }
         };
         drop(evm);
@@ -1988,7 +1988,7 @@ impl<N: Network> Backend<N> {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
             ExecutionResult::Halt { reason, gas_used } => {
-                let eth_reason = op_haltreason_to_instruction_result(reason);
+                let eth_reason = reason.into_instruction_result();
                 (eth_reason, gas_used, None, None)
             }
         };
@@ -2368,7 +2368,7 @@ where
                                     Vec::new(),
                                 ),
                                 ExecutionResult::Halt { reason, gas_used: _ } => {
-                                    (op_haltreason_to_instruction_result(reason), None, Vec::new())
+                                    (reason.into_instruction_result(), None, Vec::new())
                                 }
                             };
 
@@ -2760,7 +2760,7 @@ where
                             (InstructionResult::Revert, Some(Output::Call(output)), Vec::new())
                         }
                         ExecutionResult::Halt { reason, gas_used: _ } => {
-                            (op_haltreason_to_instruction_result(reason), None, Vec::new())
+                            (reason.into_instruction_result(), None, Vec::new())
                         }
                     };
 
@@ -3014,7 +3014,7 @@ where
                     (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
                 }
                 ExecutionResult::Halt { reason, gas_used } => {
-                    (op_haltreason_to_instruction_result(reason), gas_used, None)
+                    (reason.into_instruction_result(), gas_used, None)
                 }
             };
 
@@ -4522,10 +4522,26 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
     false
 }
 
-pub fn op_haltreason_to_instruction_result(op_reason: OpHaltReason) -> InstructionResult {
-    match op_reason {
-        OpHaltReason::Base(eth_h) => eth_h.into(),
-        OpHaltReason::FailedDeposit => InstructionResult::Stop,
+/// Converts a halt reason into an [`InstructionResult`].
+///
+/// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
+/// so that anvil code doesn't need to match on each variant directly.
+pub trait IntoInstructionResult {
+    fn into_instruction_result(self) -> InstructionResult;
+}
+
+impl IntoInstructionResult for HaltReason {
+    fn into_instruction_result(self) -> InstructionResult {
+        self.into()
+    }
+}
+
+impl IntoInstructionResult for OpHaltReason {
+    fn into_instruction_result(self) -> InstructionResult {
+        match self {
+            Self::Base(eth_h) => eth_h.into(),
+            Self::FailedDeposit => InstructionResult::Stop,
+        }
     }
 }
 
