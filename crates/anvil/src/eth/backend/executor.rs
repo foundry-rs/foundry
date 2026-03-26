@@ -1,4 +1,4 @@
-use crate::{eth::backend::cheats::CheatsManager, mem::inspector::AnvilInspector};
+use crate::eth::backend::cheats::CheatsManager;
 use alloy_consensus::{Eip658Value, Transaction, TransactionEnvelope, transaction::Either};
 use alloy_eips::{
     Encodable2718, eip2935, eip4788,
@@ -281,21 +281,6 @@ where
 
     fn receipts(&self) -> &[FoundryReceiptEnvelope] {
         &self.receipts
-    }
-}
-
-pub struct AnvilBlockExecutorFactory;
-
-impl AnvilBlockExecutorFactory {
-    pub fn create_executor<DB>(
-        evm: EitherEvm<DB, AnvilInspector, PrecompilesMap>,
-        parent_hash: B256,
-        spec_id: SpecId,
-    ) -> AnvilBlockExecutor<EitherEvm<DB, AnvilInspector, PrecompilesMap>>
-    where
-        DB: StateDB,
-    {
-        AnvilBlockExecutor::new(evm, parent_hash, spec_id)
     }
 }
 

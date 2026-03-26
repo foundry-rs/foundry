@@ -8,7 +8,7 @@ use crate::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
             db::{AnvilCacheDB, Db, MaybeFullDatabase, SerializableState, StateDb},
-            executor::{AnvilBlockExecutorFactory, build_tx_env_for_pending},
+            executor::{AnvilBlockExecutor, build_tx_env_for_pending},
             fork::ClientFork,
             genesis::GenesisConfig,
             mem::{
@@ -2249,9 +2249,8 @@ where
                     });
                 }
 
-                // 4. Create executor via AnvilBlockExecutorFactory
-                let mut executor =
-                    AnvilBlockExecutorFactory::create_executor(evm, best_hash, spec_id);
+                // 4. Create executor
+                let mut executor = AnvilBlockExecutor::new(evm, best_hash, spec_id);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
 
                 // 5. Per-tx loop
@@ -2671,7 +2670,7 @@ where
             });
         }
 
-        let mut executor = AnvilBlockExecutorFactory::create_executor(evm, parent_hash, spec_id);
+        let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
         executor.apply_pre_execution_changes().expect("pre-execution changes failed");
 
         let mut transaction_infos: Vec<TransactionInfo> = Vec::new();
@@ -3263,11 +3262,8 @@ where
                 });
             }
 
-            let mut replay_executor = AnvilBlockExecutorFactory::create_executor(
-                evm_replay,
-                block.header.parent_hash,
-                spec_id,
-            );
+            let mut replay_executor =
+                AnvilBlockExecutor::new(evm_replay, block.header.parent_hash, spec_id);
             replay_executor.apply_pre_execution_changes().expect("pre-execution changes failed");
 
             let blob_params = self.blob_params();
