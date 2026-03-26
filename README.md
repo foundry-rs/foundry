@@ -36,6 +36,8 @@ Monad is a Layer-1 blockchain delivering high performance, true decentralization
 
 ### Forge
 - `forge test` and `forge script` execute with Monad EVM by default.
+- The default Monad hardfork is `MonadNine`.
+- Set `monad_hardfork = "MonadEight" | "MonadNine" | "MonadNext"` in `foundry.toml` to choose a different default Monad hardfork for your project.
 - `forge verify-contract` uses Monad-specific compilation settings.
 
 ### Anvil
