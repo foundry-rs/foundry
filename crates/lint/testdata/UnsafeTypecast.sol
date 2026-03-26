@@ -456,5 +456,19 @@ contract Repros {
         //~^WARN: typecasts that can truncate values should be checked
         //~|WARN: typecasts that can truncate values should be checked
     }
+
+    function getUint256() internal pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    function functionReturnCastIsUnsafe() internal pure {
+        uint128 a = uint128(getUint256());
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function ternaryBranchesAreChecked(bool cond, uint256 x, uint256 y) internal pure {
+        uint128 a = uint128(cond ? x : y);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
 }
 // forge-lint: disable-end(mixed-case-variable)

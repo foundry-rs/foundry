@@ -80,7 +80,7 @@ fn infer_source_types(
     };
 
     match &expr.kind {
-        // A type cast call: `Type(val)`
+        // A type cast call: `Type(val)`, or a regular function call.
         ExprKind::Call(call_expr, args, ..) => {
             // Check if the called expression is a type, which indicates a cast.
             if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(..), .. }) =
@@ -89,6 +89,11 @@ fn infer_source_types(
             {
                 // Recurse to find the original (inner-most) source type.
                 return infer_source_types(output, hir, inner);
+            }
+
+            // For non-cast function calls, infer the return type from the function signature.
+            if let Some(elem_ty) = resolve_call_return_type(hir, call_expr) {
+                return track(elem_ty);
             }
             None
         }
@@ -128,9 +133,50 @@ fn infer_source_types(
             None
         }
 
-        // Complex expressions are not evaluated
+        // Ternary: check both branches.
+        ExprKind::Ternary(_, true_expr, false_expr) => {
+            if let Some(mut output) = output {
+                infer_source_types(Some(&mut output), hir, true_expr);
+                infer_source_types(Some(&mut output), hir, false_expr);
+            }
+            None
+        }
+
+        // Complex expressions are not evaluated.
         _ => None,
     }
+}
+
+/// Resolves the return type of a function call expression.
+///
+/// For calls where the callee is a resolved function identifier, looks up the function
+/// in the HIR and returns its return type if it has exactly one elementary return value.
+fn resolve_call_return_type(
+    hir: &hir::Hir<'_>,
+    call_expr: &hir::Expr<'_>,
+) -> Option<ElementaryType> {
+    // Direct function call: `foo()`
+    if let ExprKind::Ident(resolutions) = &call_expr.kind {
+        return resolve_function_return(hir, resolutions);
+    }
+    None
+}
+
+/// Resolves the elementary return type from a set of function resolutions.
+fn resolve_function_return(hir: &hir::Hir<'_>, resolutions: &[Res]) -> Option<ElementaryType> {
+    for res in resolutions {
+        if let Res::Item(ItemId::Function(func_id)) = res {
+            let func = hir.function(*func_id);
+            // Only handle single-return functions.
+            if func.returns.len() == 1 {
+                let ret_var = hir.variable(func.returns[0]);
+                if let TypeKind::Elementary(elem_ty) = &ret_var.ty.kind {
+                    return Some(*elem_ty);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Checks if a type cast from source_type to target_type is unsafe.
