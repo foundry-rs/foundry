@@ -1149,7 +1149,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_clone_contract_with_relative_import() {
+    async fn flaky_test_clone_contract_with_relative_import() {
         let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
         one_test_case(address, false).await
     }
