@@ -72,4 +72,8 @@ impl WalletSignerError {
     pub fn browser_unsupported() -> Self {
         Self::UnsupportedSigner("Browser Wallet")
     }
+
+    pub fn ows_unsupported() -> Self {
+        Self::UnsupportedSigner("OWS")
+    }
 }

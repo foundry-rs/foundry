@@ -102,6 +102,15 @@ pub struct WalletOpts {
     /// See: <https://docs.turnkey.com/getting-started/quickstart>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
     pub turnkey: bool,
+
+    /// Use an OWS (Open Wallet Standard) encrypted vault.
+    ///
+    /// Provide the wallet name or UUID. The key is decrypted from the vault
+    /// only during signing, then wiped from memory.
+    ///
+    /// See: <https://openwallet.sh>
+    #[arg(long, help_heading = "Wallet options - keystore", value_name = "WALLET", hide = !cfg!(feature = "ows"))]
+    pub ows: Option<String>,
 }
 
 impl WalletOpts {
@@ -148,6 +157,8 @@ impl WalletOpts {
                 eyre::eyre!("TURNKEY_ADDRESS could not be parsed as an Ethereum address")
             })?;
             WalletSigner::from_turnkey(api_private_key, organization_id, address)?
+        } else if let Some(ref wallet_name) = self.ows {
+            WalletSigner::from_ows(wallet_name)?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -273,6 +284,7 @@ mod tests {
             aws: false,
             gcp: false,
             turnkey: false,
+            ows: None,
         };
         match wallet.signer().await {
             Ok(_) => {

@@ -150,6 +150,33 @@ impl WalletSigner {
         }
     }
 
+    pub fn from_ows(wallet_name: &str) -> Result<Self> {
+        #[cfg(feature = "ows")]
+        {
+            let key_bytes = ows_lib::decrypt_signing_key(
+                wallet_name,
+                ows_core::ChainType::Evm,
+                "",
+                None,
+                None,
+            )
+            .map_err(|e| {
+                WalletSignerError::Io(std::io::Error::other(format!("OWS decrypt: {e}")))
+            })?;
+            let signer = PrivateKeySigner::from_slice(key_bytes.expose())
+                .map_err(|e| {
+                    WalletSignerError::Io(std::io::Error::other(format!("invalid OWS key: {e}")))
+                })?;
+            Ok(Self::Local(signer))
+        }
+
+        #[cfg(not(feature = "ows"))]
+        {
+            let _ = wallet_name;
+            Err(WalletSignerError::ows_unsupported())
+        }
+    }
+
     pub fn from_private_key(private_key: &B256) -> Result<Self> {
         Ok(Self::Local(PrivateKeySigner::from_bytes(private_key)?))
     }
