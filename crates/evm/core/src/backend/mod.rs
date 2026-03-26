@@ -918,7 +918,7 @@ where
             let mut evm = alloy_evm::EthEvmFactory::default().create_evm(replay_db, evm_env);
 
             for tx in &txs_to_replay {
-                let tx_env: TxEnv = tx.as_ref().try_into_tx_env(tx.from())?;
+                let tx_env: TxEnv = tx.try_any_to_tx_env()?;
                 trace!(tx=?tx.tx_hash(), "committing transaction");
                 evm.transact_commit(tx_env).wrap_err("backend: failed committing transaction")?;
             }
