@@ -8,7 +8,7 @@ use crate::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
             db::{AnvilCacheDB, Db, MaybeFullDatabase, SerializableState, StateDb},
-            executor::{AnvilBlockExecutorFactory, AnvilExecutionCtx, build_tx_env_for_pending},
+            executor::{AnvilBlockExecutorFactory, build_tx_env_for_pending},
             fork::ClientFork,
             genesis::GenesisConfig,
             mem::{
@@ -2250,8 +2250,8 @@ where
                 }
 
                 // 4. Create executor via AnvilBlockExecutorFactory
-                let exec_ctx = AnvilExecutionCtx { parent_hash: best_hash, is_prague, is_cancun };
-                let mut executor = AnvilBlockExecutorFactory::create_executor(evm, exec_ctx);
+                let mut executor =
+                    AnvilBlockExecutorFactory::create_executor(evm, best_hash, spec_id);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
 
                 // 5. Per-tx loop
@@ -2671,8 +2671,7 @@ where
             });
         }
 
-        let exec_ctx = AnvilExecutionCtx { parent_hash, is_prague, is_cancun };
-        let mut executor = AnvilBlockExecutorFactory::create_executor(evm, exec_ctx);
+        let mut executor = AnvilBlockExecutorFactory::create_executor(evm, parent_hash, spec_id);
         executor.apply_pre_execution_changes().expect("pre-execution changes failed");
 
         let mut transaction_infos: Vec<TransactionInfo> = Vec::new();
@@ -3228,7 +3227,6 @@ where
 
             let spec_id = *evm_env.spec_id();
             let is_cancun = spec_id >= SpecId::CANCUN;
-            let is_prague = spec_id >= SpecId::PRAGUE;
             let gas_limit = evm_env.block_env.gas_limit;
 
             let mut inspector_replay = AnvilInspector::default().with_tracing();
@@ -3265,10 +3263,11 @@ where
                 });
             }
 
-            let exec_ctx =
-                AnvilExecutionCtx { parent_hash: block.header.parent_hash, is_prague, is_cancun };
-            let mut replay_executor =
-                AnvilBlockExecutorFactory::create_executor(evm_replay, exec_ctx);
+            let mut replay_executor = AnvilBlockExecutorFactory::create_executor(
+                evm_replay,
+                block.header.parent_hash,
+                spec_id,
+            );
             replay_executor.apply_pre_execution_changes().expect("pre-execution changes failed");
 
             let blob_params = self.blob_params();

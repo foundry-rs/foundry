@@ -26,6 +26,7 @@ use revm::{
     Database, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, TxEnv},
     context_interface::result::ResultAndState,
+    primitives::hardfork::SpecId,
 };
 use std::{fmt, fmt::Debug};
 
@@ -80,18 +81,6 @@ impl<H> TxResult for AnvilTxResult<H> {
     }
 }
 
-/// Execution context for [`AnvilBlockExecutor`], providing block-level data
-/// needed for pre/post execution system calls.
-#[derive(Debug, Clone)]
-pub struct AnvilExecutionCtx {
-    /// Parent block hash — needed for EIP-2935 system call.
-    pub parent_hash: B256,
-    /// Whether Prague hardfork is active.
-    pub is_prague: bool,
-    /// Whether Cancun hardfork is active.
-    pub is_cancun: bool,
-}
-
 /// Block executor for Anvil that implements [`BlockExecutor`].
 ///
 /// Wraps an EVM instance and produces [`FoundryReceiptEnvelope`] receipts.
@@ -100,8 +89,10 @@ pub struct AnvilExecutionCtx {
 pub struct AnvilBlockExecutor<E> {
     /// The EVM instance used for execution.
     evm: E,
-    /// Execution context.
-    ctx: AnvilExecutionCtx,
+    /// Parent block hash — needed for EIP-2935 system call.
+    parent_hash: B256,
+    /// The active spec id, used to gate hardfork-specific behavior.
+    spec_id: SpecId,
     /// Receipt builder.
     receipt_builder: FoundryReceiptBuilder,
     /// Receipts of executed transactions.
@@ -118,7 +109,8 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AnvilBlockExecutor")
             .field("evm", &self.evm)
-            .field("ctx", &self.ctx)
+            .field("parent_hash", &self.parent_hash)
+            .field("spec_id", &self.spec_id)
             .field("gas_used", &self.gas_used)
             .field("blob_gas_used", &self.blob_gas_used)
             .field("receipts", &self.receipts.len())
@@ -128,10 +120,11 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
 
 impl<E> AnvilBlockExecutor<E> {
     /// Creates a new [`AnvilBlockExecutor`].
-    pub fn new(evm: E, ctx: AnvilExecutionCtx) -> Self {
+    pub fn new(evm: E, parent_hash: B256, spec_id: SpecId) -> Self {
         Self {
             evm,
-            ctx,
+            parent_hash,
+            spec_id,
             receipt_builder: FoundryReceiptBuilder,
             receipts: Vec::new(),
             gas_used: 0,
@@ -155,13 +148,13 @@ where
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         // EIP-2935: store parent block hash in history storage contract.
-        if self.ctx.is_prague {
+        if self.spec_id >= SpecId::PRAGUE {
             let result = self
                 .evm
                 .transact_system_call(
                     eip4788::SYSTEM_ADDRESS,
                     eip2935::HISTORY_STORAGE_ADDRESS,
-                    Bytes::copy_from_slice(self.ctx.parent_hash.as_slice()),
+                    Bytes::copy_from_slice(self.parent_hash.as_slice()),
                 )
                 .map_err(BlockExecutionError::other)?;
 
@@ -223,7 +216,7 @@ where
         let gas_used = result.gas_used();
         self.gas_used += gas_used;
 
-        if self.ctx.is_cancun {
+        if self.spec_id >= SpecId::CANCUN {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
@@ -296,12 +289,13 @@ pub struct AnvilBlockExecutorFactory;
 impl AnvilBlockExecutorFactory {
     pub fn create_executor<DB>(
         evm: EitherEvm<DB, AnvilInspector, PrecompilesMap>,
-        ctx: AnvilExecutionCtx,
+        parent_hash: B256,
+        spec_id: SpecId,
     ) -> AnvilBlockExecutor<EitherEvm<DB, AnvilInspector, PrecompilesMap>>
     where
         DB: StateDB,
     {
-        AnvilBlockExecutor::new(evm, ctx)
+        AnvilBlockExecutor::new(evm, parent_hash, spec_id)
     }
 }
 
