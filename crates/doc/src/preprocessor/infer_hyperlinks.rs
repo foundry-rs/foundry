@@ -46,7 +46,7 @@ impl Preprocessor for InferInlineHyperlinks {
                     let children = item.children.len();
                     (comments, children)
                 };
-                Self::inline_doc_links(&documents, &target_path, &mut comments, &document);
+                Self::inline_doc_links(&docs, &documents, &target_path, &mut comments, &document);
                 document.content.get_mut(idx).unwrap().comments = comments;
 
                 // we also need to iterate over all child items
@@ -57,7 +57,13 @@ impl Preprocessor for InferInlineHyperlinks {
 
                         std::mem::take(&mut item.children[child_idx].comments)
                     };
-                    Self::inline_doc_links(&documents, &target_path, &mut comments, &document);
+                    Self::inline_doc_links(
+                        &docs,
+                        &documents,
+                        &target_path,
+                        &mut comments,
+                        &document,
+                    );
                     document.content.get_mut(idx).unwrap().children[child_idx].comments = comments;
                 }
             }
@@ -153,7 +159,8 @@ impl InferInlineHyperlinks {
 
     /// Attempts to convert inline links to markdown links.
     fn inline_doc_links(
-        documents: &[Document],
+        processed_docs: &[Document],
+        remaining_docs: &[Document],
         target_path: &Path,
         comments: &mut Comments,
         parent: &Document,
@@ -164,16 +171,21 @@ impl InferInlineHyperlinks {
             // replace all links with inline markdown links
             for link in InlineLink::captures(val.as_str()) {
                 let target = if link.is_external() {
-                    // find in all documents
-                    documents.iter().find_map(|doc| {
-                        Self::find_match(
-                            &link,
-                            doc.relative_output_path(),
-                            doc.content.iter_items().flat_map(|item| {
-                                Some(item).into_iter().chain(item.children.iter())
-                            }),
-                        )
-                    })
+                    // find in all documents in their original traversal order:
+                    // already processed -> current -> remaining.
+                    processed_docs
+                        .iter()
+                        .chain(std::iter::once(parent))
+                        .chain(remaining_docs.iter())
+                        .find_map(|doc| {
+                            Self::find_match(
+                                &link,
+                                doc.relative_output_path(),
+                                doc.content.iter_items().flat_map(|item| {
+                                    Some(item).into_iter().chain(item.children.iter())
+                                }),
+                            )
+                        })
                 } else {
                     // find matches in the document
                     Self::find_match(
@@ -283,6 +295,25 @@ impl<'a> InlineLink<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CommentTag, Parser, document::DocumentContent, solang_ext::Visitable};
+    use solang_parser::parse;
+
+    fn parse_source(src: &str) -> Vec<ParseItem> {
+        let (mut source, comments) = parse(src, 0).expect("failed to parse source");
+        let mut parser = Parser::new(comments, src.to_owned(), 4);
+        source.visit(&mut parser).expect("failed to visit source");
+        parser.items()
+    }
+
+    fn make_document(src_path: &str, contract_name: &str, source: &str) -> Document {
+        let mut items = parse_source(source);
+        let output_dir = PathBuf::from("/tmp/out");
+        let target_path =
+            output_dir.join("src").join(src_path).join(format!("contract.{contract_name}.md"));
+        let item_path = PathBuf::from("src").join(src_path);
+        Document::new(item_path, target_path, false, output_dir)
+            .with_content(DocumentContent::Single(items.remove(0)), contract_name.to_string())
+    }
 
     #[test]
     fn parse_inline_links() {
@@ -318,5 +349,42 @@ mod tests {
         let link = InlineLink::capture(s).unwrap();
         assert_eq!(link.link, Some("`Named link`"));
         assert_eq!(link.markdown_link_display_value(), "`Named link`");
+    }
+
+    #[test]
+    fn resolve_external_links_across_already_processed_documents() {
+        let docs = vec![
+            make_document(
+                "A.sol",
+                "A",
+                r#"
+                    contract A {
+                        function foo() public {}
+                    }
+                "#,
+            ),
+            make_document(
+                "B.sol",
+                "B",
+                r#"
+                    contract B {
+                        /// @dev See {A-foo}
+                        function bar() public {}
+                    }
+                "#,
+            ),
+        ];
+
+        let docs = InferInlineHyperlinks.preprocess(docs).expect("preprocess should succeed");
+        let b_contract = docs[1].content.iter_items().next().expect("missing contract B");
+        let bar = b_contract.children.first().expect("missing function bar");
+        let dev_comment = bar
+            .comments
+            .iter()
+            .find(|comment| comment.tag == CommentTag::Dev)
+            .expect("missing @dev comment");
+
+        assert!(dev_comment.value.contains("[A-foo]("));
+        assert!(dev_comment.value.contains("#foo)"));
     }
 }
