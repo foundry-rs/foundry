@@ -17,30 +17,24 @@ use alloy_eips::{
     eip7702::{RecoveredAuthority, RecoveredAuthorization},
 };
 use alloy_evm::{
-    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
+    Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, OnStateHook, StateChangeSource, StateDB, TxResult,
+        ExecutableTx, OnStateHook, StateChangePreBlockSource, StateChangeSource, StateDB, TxResult,
     },
     eth::{
-        EthEvmContext, EthTxResult,
+        EthTxResult,
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
     },
-    precompiles::PrecompilesMap,
 };
-use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, B256, Bytes};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
-use foundry_evm::{
-    backend::DatabaseError,
-    core::{either_evm::EitherEvm, env::FoundryTransaction},
-};
+use foundry_evm::core::env::FoundryTransaction;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
-use op_revm::OpContext;
 use revm::{
-    Database, DatabaseCommit, Inspector,
+    Database, DatabaseCommit,
     context::Block as RevmBlock,
     context_interface::result::{ExecutionResult, Output, ResultAndState},
     interpreter::InstructionResult,
@@ -179,9 +173,7 @@ where
 
             if let Some(hook) = &mut self.state_hook {
                 hook.on_state(
-                    StateChangeSource::PreBlock(
-                        alloy_evm::block::StateChangePreBlockSource::BlockHashesContract,
-                    ),
+                    StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
                     &result.state,
                 );
             }
@@ -517,30 +509,4 @@ where
     }
 
     tx_env
-}
-
-/// Creates a database with given database and inspector.
-pub fn new_eth_evm_with_inspector<DB, I>(
-    db: DB,
-    evm_env: &EvmEnv,
-    inspector: I,
-    is_optimism: bool,
-) -> EitherEvm<DB, I, PrecompilesMap>
-where
-    DB: Database<Error = DatabaseError> + Debug,
-    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
-{
-    if is_optimism {
-        let evm_env = EvmEnv::new(
-            evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS),
-            evm_env.block_env.clone(),
-        );
-        EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
-    } else {
-        EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
-            db,
-            evm_env.clone(),
-            inspector,
-        ))
-    }
 }
