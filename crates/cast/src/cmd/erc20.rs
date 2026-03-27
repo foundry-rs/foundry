@@ -90,7 +90,6 @@ where
     Ok(provider)
 }
 
-
 impl Erc20TxOpts {
     /// Applies gas, fee, nonce, and Tempo options to a transaction request.
     fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
@@ -440,7 +439,12 @@ impl Erc20Subcommand {
                     }
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&$provider)
-                        .print_tx_result(tx_hash, $send_tx.cast_async, $send_tx.confirmations, timeout)
+                        .print_tx_result(
+                            tx_hash,
+                            $send_tx.cast_async,
+                            $send_tx.confirmations,
+                            timeout,
+                        )
                         .await?
                 } else {
                     let signer = pre_resolved_signer.unwrap_or($send_tx.eth.wallet.signer().await?);
