@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
+use crate::gas_currency_symbol;
 use alloy_chains::Chain;
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
@@ -629,7 +630,7 @@ where
                 .and_then(|avg| format_units(avg, 9).ok())
                 .unwrap_or_else(|| "N/A".to_string());
 
-            let token_symbol = crate::gas_currency_symbol(sequence.chain);
+            let token_symbol = gas_currency_symbol(sequence.chain);
             seq_progress.inner.write().set_status(&format!(
                 "Total Paid: {} {} ({} gas * avg {} gwei)\n",
                 paid.trim_end_matches('0'),
