@@ -1,7 +1,4 @@
-use crate::{
-    eth::backend::{cheats::CheatsManager, env::Env},
-    mem::inspector::AnvilInspector,
-};
+use crate::eth::backend::cheats::CheatsManager;
 use alloy_consensus::{Eip658Value, Transaction, TransactionEnvelope, transaction::Either};
 use alloy_eips::{
     Encodable2718, eip2935, eip4788,
@@ -23,13 +20,13 @@ use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, B256, Bytes};
 use anvil_core::eth::transaction::PendingTransaction;
 use foundry_evm::{backend::DatabaseError, core::either_evm::EitherEvm};
-use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, TxEnv},
     context_interface::result::ResultAndState,
+    primitives::hardfork::SpecId,
 };
 use std::{fmt, fmt::Debug};
 
@@ -84,18 +81,6 @@ impl<H> TxResult for AnvilTxResult<H> {
     }
 }
 
-/// Execution context for [`AnvilBlockExecutor`], providing block-level data
-/// needed for pre/post execution system calls.
-#[derive(Debug, Clone)]
-pub struct AnvilExecutionCtx {
-    /// Parent block hash — needed for EIP-2935 system call.
-    pub parent_hash: B256,
-    /// Whether Prague hardfork is active.
-    pub is_prague: bool,
-    /// Whether Cancun hardfork is active.
-    pub is_cancun: bool,
-}
-
 /// Block executor for Anvil that implements [`BlockExecutor`].
 ///
 /// Wraps an EVM instance and produces [`FoundryReceiptEnvelope`] receipts.
@@ -104,8 +89,10 @@ pub struct AnvilExecutionCtx {
 pub struct AnvilBlockExecutor<E> {
     /// The EVM instance used for execution.
     evm: E,
-    /// Execution context.
-    ctx: AnvilExecutionCtx,
+    /// Parent block hash — needed for EIP-2935 system call.
+    parent_hash: B256,
+    /// The active spec id, used to gate hardfork-specific behavior.
+    spec_id: SpecId,
     /// Receipt builder.
     receipt_builder: FoundryReceiptBuilder,
     /// Receipts of executed transactions.
@@ -122,7 +109,8 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AnvilBlockExecutor")
             .field("evm", &self.evm)
-            .field("ctx", &self.ctx)
+            .field("parent_hash", &self.parent_hash)
+            .field("spec_id", &self.spec_id)
             .field("gas_used", &self.gas_used)
             .field("blob_gas_used", &self.blob_gas_used)
             .field("receipts", &self.receipts.len())
@@ -132,10 +120,11 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
 
 impl<E> AnvilBlockExecutor<E> {
     /// Creates a new [`AnvilBlockExecutor`].
-    pub fn new(evm: E, ctx: AnvilExecutionCtx) -> Self {
+    pub fn new(evm: E, parent_hash: B256, spec_id: SpecId) -> Self {
         Self {
             evm,
-            ctx,
+            parent_hash,
+            spec_id,
             receipt_builder: FoundryReceiptBuilder,
             receipts: Vec::new(),
             gas_used: 0,
@@ -159,13 +148,13 @@ where
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         // EIP-2935: store parent block hash in history storage contract.
-        if self.ctx.is_prague {
+        if self.spec_id >= SpecId::PRAGUE {
             let result = self
                 .evm
                 .transact_system_call(
                     eip4788::SYSTEM_ADDRESS,
                     eip2935::HISTORY_STORAGE_ADDRESS,
-                    Bytes::copy_from_slice(self.ctx.parent_hash.as_slice()),
+                    Bytes::copy_from_slice(self.parent_hash.as_slice()),
                 )
                 .map_err(BlockExecutionError::other)?;
 
@@ -227,7 +216,7 @@ where
         let gas_used = result.gas_used();
         self.gas_used += gas_used;
 
-        if self.ctx.is_cancun {
+        if self.spec_id >= SpecId::CANCUN {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
@@ -295,27 +284,12 @@ where
     }
 }
 
-pub struct AnvilBlockExecutorFactory;
-
-impl AnvilBlockExecutorFactory {
-    pub fn create_executor<DB>(
-        evm: EitherEvm<DB, AnvilInspector, PrecompilesMap>,
-        ctx: AnvilExecutionCtx,
-    ) -> AnvilBlockExecutor<EitherEvm<DB, AnvilInspector, PrecompilesMap>>
-    where
-        DB: StateDB,
-    {
-        AnvilBlockExecutor::new(evm, ctx)
-    }
-}
-
 /// Builds the per-tx `OpTransaction<TxEnv>` from a pending transaction, replicating the logic
 /// from `TransactionExecutor::env_for`.
 pub fn build_tx_env_for_pending(
     tx: &PendingTransaction<FoundryTxEnvelope>,
     cheats: &CheatsManager,
-    networks: NetworkConfigs,
-    _evm_env: &EvmEnv,
+    is_optimism: bool,
 ) -> OpTransaction<TxEnv> {
     let mut tx_env: OpTransaction<TxEnv> =
         FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
@@ -348,7 +322,7 @@ pub fn build_tx_env_for_pending(
         tx_env.base.authorization_list = cheated_auths;
     }
 
-    if networks.is_optimism() {
+    if is_optimism {
         tx_env.enveloped_tx = Some(tx.transaction.encoded_2718().into());
     }
 
@@ -358,26 +332,24 @@ pub fn build_tx_env_for_pending(
 /// Creates a database with given database and inspector.
 pub fn new_eth_evm_with_inspector<DB, I>(
     db: DB,
-    env: &Env,
+    evm_env: &EvmEnv,
     inspector: I,
+    is_optimism: bool,
 ) -> EitherEvm<DB, I, PrecompilesMap>
 where
     DB: Database<Error = DatabaseError> + Debug,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    if env.networks.is_optimism() {
+    if is_optimism {
         let evm_env = EvmEnv::new(
-            env.evm_env
-                .cfg_env
-                .clone()
-                .with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS),
-            env.evm_env.block_env.clone(),
+            evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS),
+            evm_env.block_env.clone(),
         );
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
     } else {
         EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
             db,
-            env.evm_env.clone(),
+            evm_env.clone(),
             inspector,
         ))
     }

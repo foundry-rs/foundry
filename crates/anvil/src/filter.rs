@@ -100,7 +100,7 @@ impl<N: Network> Filters<N> {
 
 impl<N: Network> Filters<N>
 where
-    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     pub async fn get_filter_changes(&self, id: &str) -> ResponseResult {
         {
@@ -156,7 +156,7 @@ impl<N: Network> std::fmt::Debug for EthFilter<N> {
 
 impl<N: Network> Stream for EthFilter<N>
 where
-    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     type Item = ResponseResult;
 
@@ -204,7 +204,7 @@ impl<N: Network> std::fmt::Debug for LogsFilter<N> {
 
 impl<N: Network> LogsFilter<N>
 where
-    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     /// Returns all the logs since the last time this filter was polled
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<Log> {

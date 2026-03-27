@@ -13,7 +13,7 @@ pub mod inspectors;
 
 pub use foundry_evm_core as core;
 pub use foundry_evm_core::{
-    EthInspectorExt, EvmEnv, FoundryInspectorExt, backend, constants, decode, fork, hardfork, opts,
+    EvmEnv, FoundryInspectorExt, InspectorExt, backend, constants, decode, fork, hardfork, opts,
     utils,
 };
 pub use foundry_evm_coverage as coverage;

@@ -6,7 +6,7 @@ use crate::celo::transfer::{
     CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
 };
 use alloy_chains::{
-    NamedChain,
+    Chain, NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
 use alloy_eips::eip1559::BaseFeeParams;
@@ -22,14 +22,18 @@ pub mod celo;
 #[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize, PartialEq)]
 pub struct NetworkConfigs {
     /// Enable Optimism network features.
-    #[arg(help_heading = "Networks", long, conflicts_with = "celo")]
+    #[arg(help_heading = "Networks", long, conflicts_with_all = ["celo", "tempo"])]
     // Skipped from configs (forge) as there is no feature to be added yet.
     #[serde(skip)]
     optimism: bool,
     /// Enable Celo network features.
-    #[arg(help_heading = "Networks", long, conflicts_with = "optimism")]
+    #[arg(help_heading = "Networks", long, conflicts_with_all = ["optimism", "tempo"])]
     #[serde(default)]
     celo: bool,
+    /// Enable Tempo network features.
+    #[arg(help_heading = "Networks", long, conflicts_with_all = ["optimism", "celo"])]
+    #[serde(default)]
+    tempo: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
     #[serde(default)]
@@ -45,8 +49,16 @@ impl NetworkConfigs {
         Self { celo: true, ..Default::default() }
     }
 
+    pub fn with_tempo() -> Self {
+        Self { tempo: true, ..Default::default() }
+    }
+
     pub fn is_optimism(&self) -> bool {
         self.optimism
+    }
+
+    pub fn is_tempo(&self) -> bool {
+        self.tempo
     }
 
     /// Returns the base fee parameters for the configured network.
@@ -81,8 +93,16 @@ impl NetworkConfigs {
     }
 
     pub fn with_chain_id(mut self, chain_id: u64) -> Self {
-        if let Ok(NamedChain::Celo | NamedChain::CeloSepolia) = NamedChain::try_from(chain_id) {
-            self.celo = true;
+        // Only infer network if no explicit network is already set
+        if !self.celo && !self.tempo && !self.optimism {
+            let chain = Chain::from_id(chain_id);
+            if let Ok(NamedChain::Celo | NamedChain::CeloSepolia) = NamedChain::try_from(chain_id) {
+                self.celo = true;
+            } else if chain.is_tempo() {
+                self.tempo = true;
+            } else if chain.is_optimism() {
+                self.optimism = true;
+            }
         }
         self
     }

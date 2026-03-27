@@ -41,7 +41,7 @@ impl<N: Network> StorageInfo<N> {
 
 impl<N: Network> StorageInfo<N>
 where
-    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     /// Returns the receipts of the current block
     pub fn current_receipts(&self) -> Option<Vec<N::ReceiptEnvelope>> {

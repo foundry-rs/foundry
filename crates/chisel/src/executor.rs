@@ -955,7 +955,7 @@ impl Type {
                     Ok(None)
                 }
             }
-            ty => Ok(Self::ethabi(ty, intermediate)),
+            other_expr => Ok(Self::ethabi(other_expr, intermediate)),
         };
         // re-run everything with the resolved variable in case we're accessing a builtin member
         // for example array or bytes length etc

@@ -11,7 +11,7 @@ use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{FoundryContextExt, backend::JournaledState, fork::CreateFork};
-use revm::context::{Cfg, ContextTr};
+use revm::context::ContextTr;
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
@@ -73,8 +73,8 @@ impl Cheatcode for rollFork_0Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { blockNumber } = self;
         persist_caller(ccx);
-        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
-            db.roll_fork(None, (*blockNumber).to(), evm_env, tx_env, inner)
+        fork_env_op(ccx, |db, evm_env, _, inner| {
+            db.roll_fork(None, (*blockNumber).to(), evm_env, inner)
         })
     }
 }
@@ -83,8 +83,8 @@ impl Cheatcode for rollFork_1Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { txHash } = self;
         persist_caller(ccx);
-        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
-            db.roll_fork_to_transaction(None, *txHash, evm_env, tx_env, inner)
+        fork_env_op(ccx, |db, evm_env, _, inner| {
+            db.roll_fork_to_transaction(None, *txHash, evm_env, inner)
         })
     }
 }
@@ -93,8 +93,8 @@ impl Cheatcode for rollFork_2Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { forkId, blockNumber } = self;
         persist_caller(ccx);
-        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
-            db.roll_fork(Some(*forkId), (*blockNumber).to(), evm_env, tx_env, inner)
+        fork_env_op(ccx, |db, evm_env, _, inner| {
+            db.roll_fork(Some(*forkId), (*blockNumber).to(), evm_env, inner)
         })
     }
 }
@@ -103,8 +103,8 @@ impl Cheatcode for rollFork_3Call {
     fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { forkId, txHash } = self;
         persist_caller(ccx);
-        fork_env_op(ccx, |db, evm_env, tx_env, inner| {
-            db.roll_fork_to_transaction(Some(*forkId), *txHash, evm_env, tx_env, inner)
+        fork_env_op(ccx, |db, evm_env, _, inner| {
+            db.roll_fork_to_transaction(Some(*forkId), *txHash, evm_env, inner)
         })
     }
 }
@@ -397,10 +397,7 @@ fn create_fork_request<CTX: EthCheatCtx>(
         enable_caching: !ccx.state.config.no_storage_caching
             && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
-        evm_env: EvmEnv {
-            cfg_env: ccx.ecx.cfg_mut().clone(),
-            block_env: ccx.ecx.block_mut().clone(),
-        },
+        evm_env: ccx.ecx.evm_clone(),
         evm_opts,
     };
     Ok(fork)
@@ -412,8 +409,8 @@ fn create_fork_request<CTX: EthCheatCtx>(
 fn fork_env_op<CTX: EthCheatCtx, T: SolValue>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     f: impl FnOnce(
-        &mut dyn DatabaseExt<CTX::Block, CTX::Tx, <CTX::Cfg as Cfg>::Spec>,
-        &mut EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
+        &mut CTX::Db,
+        &mut EvmEnv<CTX::Spec, CTX::Block>,
         &mut CTX::Tx,
         &mut JournaledState,
     ) -> eyre::Result<T>,

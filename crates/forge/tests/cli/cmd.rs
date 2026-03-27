@@ -1227,6 +1227,99 @@ contract Foo {
     ]]);
 });
 
+forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
+    prj.add_source("A.sol", "contract A {}");
+    prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);
+    prj.add_source("C.sol", r#"import {B} from "./B.sol"; contract C is B {}"#);
+
+    cmd.forge_fuse().args(["inspect", "C", "linearization", "--md"]).assert_success().stdout_eq(
+        str![[r#"
+
+| Order | Source    | Contract |
+|-------|-----------|----------|
+| 0     | src/C.sol | C        |
+| 1     | src/B.sol | B        |
+| 2     | src/A.sol | A        |
+
+
+"#]],
+    );
+});
+
+forgetest!(can_inspect_linearization_json, |prj, cmd| {
+    prj.add_source("A.sol", "contract A {}");
+    prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);
+    prj.add_source("C.sol", r#"import {B} from "./B.sol"; contract C is B {}"#);
+
+    cmd.forge_fuse().args(["inspect", "C", "linearization", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "order": 0,
+    "source": "src/C.sol",
+    "contract": "C"
+  },
+  {
+    "order": 1,
+    "source": "src/B.sol",
+    "contract": "B"
+  },
+  {
+    "order": 2,
+    "source": "src/A.sol",
+    "contract": "A"
+  }
+]
+
+"#]],
+    );
+});
+
+forgetest!(can_inspect_linearization_path_qualified_contract, |prj, cmd| {
+    prj.add_source("one/Base.sol", "contract Base {}");
+    prj.add_source(
+        "one/Target.sol",
+        r#"import {Base} from "./Base.sol"; contract Target is Base {}"#,
+    );
+
+    prj.add_source("two/Base.sol", "contract Base {}");
+    prj.add_source(
+        "two/Target.sol",
+        r#"import {Base} from "./Base.sol"; contract Target is Base {}"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "src/two/Target.sol:Target", "linearization", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[
+  {
+    "order": 0,
+    "source": "src/two/Target.sol",
+    "contract": "Target"
+  },
+  {
+    "order": 1,
+    "source": "src/two/Base.sol",
+    "contract": "Base"
+  }
+]
+
+"#]]);
+});
+
+forgetest!(cannot_inspect_linearization_non_solidity_target, |prj, cmd| {
+    prj.create_file("src/NotSol.vy", "x: uint256");
+
+    cmd.forge_fuse()
+        .args(["inspect", "src/NotSol.vy", "linearization"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: linearization inspection is only supported for Solidity contracts (.sol targets)
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();

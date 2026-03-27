@@ -904,7 +904,7 @@ fn parse_broadcast_results<N: Network>(
         .map(|(tx, receipt)| BroadcastTxSummary {
             txHash: receipt.transaction_hash(),
             blockNumber: receipt.block_number().unwrap_or_default(),
-            txType: match tx.opcode {
+            txType: match tx.call_kind {
                 CallKind::Call => BroadcastTxType::Call,
                 CallKind::Create => BroadcastTxType::Create,
                 CallKind::Create2 => BroadcastTxType::Create2,

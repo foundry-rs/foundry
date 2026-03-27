@@ -207,7 +207,7 @@ impl AsRef<TransactionRequest> for FoundryTransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
             Self::Op(tx) => tx,
-            Self::Tempo(tx) => tx,
+            Self::Tempo(tx) => tx.as_ref(),
         }
     }
 }
@@ -217,7 +217,7 @@ impl AsMut<TransactionRequest> for FoundryTransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
             Self::Op(tx) => tx,
-            Self::Tempo(tx) => tx,
+            Self::Tempo(tx) => tx.as_mut(),
         }
     }
 }
