@@ -832,7 +832,12 @@ impl ExplorerClient for SourcifyClient {
     ) -> std::result::Result<ContractMetadata, EtherscanError> {
         // Request all fields including creation data to cache them
         let url = self.get_contract_url(address, "sources,abi,compilation,deployment");
-        let response = self.client.get(&url).send().await?;
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| EtherscanError::Unknown(e.to_string()))?;
 
         let status = response.status();
         trace!("Sourcify API response: status={:?}, url={}", status, url);
@@ -844,7 +849,8 @@ impl ExplorerClient for SourcifyClient {
         }
 
         // Read response body once
-        let response_text = response.text().await?;
+        let response_text =
+            response.text().await.map_err(|e| EtherscanError::Unknown(e.to_string()))?;
         trace!("Sourcify API response body: {}", response_text);
 
         if !status.is_success() {
@@ -1143,7 +1149,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_clone_contract_with_relative_import() {
+    async fn flaky_test_clone_contract_with_relative_import() {
         let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
         one_test_case(address, false).await
     }

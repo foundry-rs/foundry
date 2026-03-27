@@ -22,7 +22,7 @@ foundry-evm-networks.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-evm.workspace = true
+alloy-evm = { workspace = true, features = ["rpc"] }
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
 alloy-op-hardforks.workspace = true
@@ -39,6 +39,7 @@ alloy-consensus.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 foundry-fork-db.workspace = true
+op-alloy-rpc-types.workspace = true
 
 revm = { workspace = true, features = [
     "std",
@@ -68,4 +69,6 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+alloy-serde.workspace = true
+op-alloy-consensus.workspace = true
 foundry-test-utils.workspace = true

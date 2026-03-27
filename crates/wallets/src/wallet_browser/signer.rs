@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, ChainId};
 use alloy_signer::Result;
 use tokio::sync::Mutex;
@@ -15,7 +15,7 @@ use crate::wallet_browser::{
 };
 
 #[derive(Clone, Debug)]
-pub struct BrowserSigner<N: Network = Ethereum> {
+pub struct BrowserSigner<N: Network> {
     server: Arc<Mutex<BrowserWalletServer<N>>>,
     address: Address,
     chain_id: ChainId,

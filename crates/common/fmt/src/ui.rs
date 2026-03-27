@@ -17,7 +17,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxReceipt};
-use op_alloy_consensus::TxDeposit;
+use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 use tempo_alloy::{
@@ -519,8 +519,8 @@ validAfter           {}",
             self.nonce_key.pretty(),
             self.nonce.pretty(),
             self.fee_payer_signature.pretty(),
-            self.valid_after.pretty(),
             self.valid_before.pretty(),
+            self.valid_after.pretty(),
         )
     }
 }
@@ -602,6 +602,18 @@ type               {:#x}
     }
 }
 
+impl UIfmt for OpTxEnvelope {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Legacy(tx) => tx.pretty(),
+            Self::Eip2930(tx) => tx.pretty(),
+            Self::Eip1559(tx) => tx.pretty(),
+            Self::Eip7702(tx) => tx.pretty(),
+            Self::Deposit(tx) => tx.pretty(),
+        }
+    }
+}
+
 impl UIfmt for TempoTxEnvelope {
     fn pretty(&self) -> String {
         match self {
@@ -630,6 +642,20 @@ effectiveGasPrice    {}
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
             self.inner.inner().pretty().trim_start(),
+        )
+    }
+}
+
+impl<T: UIfmt> UIfmt for op_alloy_rpc_types::Transaction<T> {
+    fn pretty(&self) -> String {
+        format!(
+            "
+depositNonce         {}
+depositReceiptVersion {}
+{}",
+            self.deposit_nonce.pretty(),
+            self.deposit_receipt_version.pretty(),
+            self.inner.pretty().trim_start(),
         )
     }
 }
@@ -789,11 +815,16 @@ blobGasUsed          {}",
 
 pub trait UIfmtHeaderExt {
     fn size_pretty(&self) -> String;
+    fn total_difficulty_pretty(&self) -> String;
 }
 
 impl UIfmtHeaderExt for Header {
     fn size_pretty(&self) -> String {
         self.size.pretty()
+    }
+
+    fn total_difficulty_pretty(&self) -> String {
+        self.total_difficulty.unwrap_or_else(|| self.difficulty()).pretty()
     }
 }
 
@@ -801,11 +832,19 @@ impl UIfmtHeaderExt for AnyRpcHeader {
     fn size_pretty(&self) -> String {
         self.size.pretty()
     }
+
+    fn total_difficulty_pretty(&self) -> String {
+        self.total_difficulty.unwrap_or_else(|| self.difficulty()).pretty()
+    }
 }
 
 impl UIfmtHeaderExt for TempoHeaderResponse {
     fn size_pretty(&self) -> String {
         self.inner.size.pretty()
+    }
+
+    fn total_difficulty_pretty(&self) -> String {
+        self.inner.total_difficulty.unwrap_or_else(|| self.inner.difficulty()).pretty()
     }
 }
 
@@ -827,6 +866,18 @@ impl UIfmtSignatureExt for TxEnvelope {
 impl UIfmtSignatureExt for AnyTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
         self.as_envelope().and_then(|envelope| envelope.signature_pretty())
+    }
+}
+
+impl UIfmtSignatureExt for OpTxEnvelope {
+    fn signature_pretty(&self) -> Option<(String, String, String)> {
+        self.signature().map(|sig| {
+            (
+                FixedBytes::from(sig.r()).pretty(),
+                FixedBytes::from(sig.s()).pretty(),
+                U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
+            )
+        })
     }
 }
 
@@ -1016,7 +1067,7 @@ where
         "size" => Some(block.header().size_pretty()),
         "stateRoot" | "state_root" => Some(block.header().state_root().pretty()),
         "timestamp" => Some(block.header().timestamp().pretty()),
-        "totalDifficulty" | "total_difficulty" => Some(block.header().difficulty().pretty()),
+        "totalDifficulty" | "total_difficulty" => Some(block.header().total_difficulty_pretty()),
         "blobGasUsed" | "blob_gas_used" => Some(block.header().blob_gas_used().pretty()),
         "excessBlobGas" | "excess_blob_gas" => Some(block.header().excess_blob_gas().pretty()),
         "requestsHash" | "requests_hash" => Some(block.header().requests_hash().pretty()),
@@ -1105,7 +1156,7 @@ requestsHash         {}",
         header.timestamp().pretty(),
         fmt_timestamp(header.timestamp()),
         header.withdrawals_root().pretty(),
-        header.difficulty().pretty(),
+        header.total_difficulty_pretty(),
         header.blob_gas_used().pretty(),
         header.excess_blob_gas().pretty(),
         header.requests_hash().pretty(),
@@ -1167,6 +1218,57 @@ mod tests {
 
     #[test]
     fn can_pretty_print_optimism_tx() {
+        let s = r#"
+        {
+        "blockHash": "0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae",
+        "blockNumber": "0x1b4",
+        "from": "0x3b179DcfC5fAa677044c27dCe958e4BC0ad696A6",
+        "gas": "0x11cbbdc",
+        "gasPrice": "0x0",
+        "hash": "0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f",
+        "input": "0xd294f093",
+        "nonce": "0xa2",
+        "to": "0x4a16A42407AA491564643E1dfc1fd50af29794eF",
+        "transactionIndex": "0x0",
+        "value": "0x0",
+        "v": "0x38",
+        "r": "0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2bee",
+        "s": "0xe804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583",
+        "depositNonce": "",
+        "depositReceiptVersion": "0x1"
+    }
+        "#;
+
+        let tx: op_alloy_rpc_types::Transaction<OpTxEnvelope> = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            tx.pretty().trim(),
+            r"
+depositNonce         
+depositReceiptVersion 1
+blockHash            0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae
+blockNumber          436
+from                 0x3b179DcfC5fAa677044c27dCe958e4BC0ad696A6
+transactionIndex     0
+effectiveGasPrice    0
+hash                 0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f
+type                 0
+chainId              10
+nonce                162
+gasPrice             0
+gasLimit             18660316
+to                   0x4a16A42407AA491564643E1dfc1fd50af29794eF
+value                0
+input                0xd294f093
+r                    0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2bee
+s                    0x0e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
+yParity              1
+"
+            .trim()
+        );
+    }
+
+    #[test]
+    fn can_pretty_print_optimism_tx_through_any() {
         let s = r#"
         {
         "blockHash": "0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae",
@@ -1549,7 +1651,7 @@ yParity              0"
             "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
             "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
             "stateRoot": "0xd5855eb08b3387c0af375e9cdb6acfc05eb8f519e419b874b6ff2ffda7ed1dff",
-            "difficulty": "0x27f07",
+            "difficulty": "0x1",
             "totalDifficulty": "0x27f07",
             "extraData": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "size": "0x27f07",
@@ -1571,7 +1673,7 @@ yParity              0"
             get_pretty_block_attr::<FoundryNetwork>(&block, "baseFeePerGas")
         );
         assert_eq!(
-            Some("163591".to_string()),
+            Some("1".to_string()),
             get_pretty_block_attr::<FoundryNetwork>(&block, "difficulty")
         );
         assert_eq!(
@@ -1639,6 +1741,10 @@ yParity              0"
             Some("163591".to_string()),
             get_pretty_block_attr::<FoundryNetwork>(&block, "totalDifficulty")
         );
+
+        let pretty = pretty_generic_header_response(block.header());
+        assert!(pretty.contains("difficulty           1"), "{pretty}");
+        assert!(pretty.contains("totalDifficulty      163591"), "{pretty}");
     }
 
     #[test]

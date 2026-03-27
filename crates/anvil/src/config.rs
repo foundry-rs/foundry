@@ -3,7 +3,6 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
-            env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -42,14 +41,17 @@ use foundry_evm::{
         FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
         spec_id_from_ethereum_hardfork,
     },
-    utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
+    utils::{
+        apply_chain_and_block_specific_env_changes, block_env_from_header,
+        get_blob_base_fee_update_fraction,
+    },
 };
+use foundry_primitives::FoundryTxEnvelope;
 use itertools::Itertools;
-use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use revm::{
-    context::{BlockEnv, CfgEnv, TxEnv},
+    context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
 };
@@ -1052,7 +1054,13 @@ impl NodeConfig {
     /// [Backend](mem::Backend)
     ///
     /// *Note*: only memory based backend for now
-    pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
+    pub(crate) async fn setup<N>(&mut self) -> Result<mem::Backend<N>>
+    where
+        N: alloy_network::Network<
+                TxEnvelope = foundry_primitives::FoundryTxEnvelope,
+                ReceiptEnvelope = foundry_primitives::FoundryReceiptEnvelope,
+            >,
+    {
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();
@@ -1075,20 +1083,13 @@ impl NodeConfig {
         }
 
         let spec_id = cfg.spec;
-        let mut env = Env::new(
-            EvmEnv::new(
-                cfg,
-                BlockEnv {
-                    gas_limit: self.gas_limit(),
-                    basefee: self.get_base_fee(),
-                    ..Default::default()
-                },
-            ),
-            OpTransaction {
-                base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+        let mut evm_env = EvmEnv::new(
+            cfg,
+            BlockEnv {
+                gas_limit: self.gas_limit(),
+                basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            self.networks,
         );
 
         let base_fee_params: BaseFeeParams =
@@ -1106,7 +1107,7 @@ impl NodeConfig {
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
-                self.setup_fork_db(eth_rpc_url, &mut env, &fees).await?
+                self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
                 (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
             };
@@ -1116,16 +1117,16 @@ impl NodeConfig {
             // --chain-id flag gets precedence over the genesis.json chain id
             // <https://github.com/foundry-rs/foundry/issues/10059>
             if self.chain_id.is_none() {
-                env.evm_env.cfg_env.chain_id = genesis.config.chain_id;
+                evm_env.cfg_env.chain_id = genesis.config.chain_id;
             }
-            env.evm_env.block_env.timestamp = U256::from(genesis.timestamp);
+            evm_env.block_env.timestamp = U256::from(genesis.timestamp);
             if let Some(base_fee) = genesis.base_fee_per_gas {
-                env.evm_env.block_env.basefee = base_fee.try_into()?;
+                evm_env.block_env.basefee = base_fee.try_into()?;
             }
             if let Some(number) = genesis.number {
-                env.evm_env.block_env.number = U256::from(number);
+                evm_env.block_env.number = U256::from(number);
             }
-            env.evm_env.block_env.beneficiary = genesis.coinbase;
+            evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
         let genesis = GenesisConfig {
@@ -1148,7 +1149,8 @@ impl NodeConfig {
         // only memory based backend for now
         let backend = mem::Backend::with_genesis(
             db,
-            Arc::new(RwLock::new(env)),
+            Arc::new(RwLock::new(evm_env)),
+            self.networks,
             genesis,
             fees,
             Arc::new(RwLock::new(fork)),
@@ -1174,10 +1176,6 @@ impl NodeConfig {
                 .wrap_err("failed to create default create2 deployer")?;
         }
 
-        if let Some(state) = self.init_state.clone() {
-            backend.load_state(state).await.wrap_err("failed to load init state")?;
-        }
-
         Ok(backend)
     }
 
@@ -1190,10 +1188,10 @@ impl NodeConfig {
     pub async fn setup_fork_db(
         &mut self,
         eth_rpc_url: String,
-        env: &mut Env,
+        evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
-        let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await?;
+        let (db, config) = self.setup_fork_db_config(eth_rpc_url, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork)))
@@ -1207,7 +1205,7 @@ impl NodeConfig {
     pub async fn setup_fork_db_config(
         &mut self,
         eth_rpc_url: String,
-        env: &mut Env,
+        evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
@@ -1239,7 +1237,7 @@ impl NodeConfig {
                     let hardfork: EthereumHardfork =
                         ethereum_hardfork_from_block_tag(fork_block_number);
 
-                    env.evm_env.cfg_env.spec = spec_id_from_ethereum_hardfork(hardfork);
+                    evm_env.cfg_env.spec = spec_id_from_ethereum_hardfork(hardfork);
                     self.hardfork = Some(FoundryHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
@@ -1283,17 +1281,12 @@ latest block number: {latest_block}"
         let gas_limit = self.fork_gas_limit(&block);
         self.gas_limit = Some(gas_limit);
 
-        env.evm_env.block_env = BlockEnv {
-            number: U256::from(fork_block_number),
-            timestamp: U256::from(block.header.timestamp),
-            difficulty: block.header.difficulty,
-            // ensures prevrandao is set
-            prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
+        evm_env.block_env = BlockEnv {
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
-            beneficiary: env.evm_env.block_env.beneficiary,
-            basefee: env.evm_env.block_env.basefee,
-            ..Default::default()
+            beneficiary: evm_env.block_env.beneficiary,
+            basefee: evm_env.block_env.basefee,
+            ..block_env_from_header(&block.header)
         };
 
         // Determine chain_id early so we can use it consistently
@@ -1308,47 +1301,47 @@ latest block number: {latest_block}"
 
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
-            env.evm_env.cfg_env.chain_id = chain_id;
-            env.tx.base.chain_id = chain_id.into();
+            evm_env.cfg_env.chain_id = chain_id;
             chain_id
         };
 
         // if not set explicitly we use the base fee of the latest block
-        if self.base_fee.is_none() {
-            if let Some(base_fee) = block.header.base_fee_per_gas {
-                self.base_fee = Some(base_fee);
-                env.evm_env.block_env.basefee = base_fee;
-                // this is the base fee of the current block, but we need the base fee of
-                // the next block
-                let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used,
-                    gas_limit,
-                    block.header.base_fee_per_gas.unwrap_or_default(),
-                );
+        if self.base_fee.is_none()
+            && let Some(base_fee) = block.header.base_fee_per_gas()
+        {
+            self.base_fee = Some(base_fee);
+            evm_env.block_env.basefee = base_fee;
+            // this is the base fee of the current block, but we need the base fee of
+            // the next block
+            let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
+                block.header.gas_used(),
+                gas_limit,
+                block.header.base_fee_per_gas().unwrap_or_default(),
+            );
 
-                // update next base fee
-                fees.set_base_fee(next_block_base_fee);
-            }
-            if let (Some(blob_excess_gas), Some(blob_gas_used)) =
-                (block.header.excess_blob_gas, block.header.blob_gas_used)
-            {
-                // derive the blobparams that are active at this timestamp
-                let blob_params = get_blob_params(chain_id, block.header.timestamp);
+            // update next base fee
+            fees.set_base_fee(next_block_base_fee);
+        }
 
-                env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
-                    blob_excess_gas,
-                    blob_params.update_fraction as u64,
-                ));
+        if let (Some(blob_excess_gas), Some(blob_gas_used)) =
+            (block.header.excess_blob_gas(), block.header.blob_gas_used())
+        {
+            // Derive blob params using the fork block timestamp regardless of explicit base fee.
+            let blob_params = get_blob_params(chain_id, block.header.timestamp());
 
-                fees.set_blob_params(blob_params);
+            evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+                blob_excess_gas,
+                blob_params.update_fraction as u64,
+            ));
 
-                let next_block_blob_excess_gas =
-                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
-                fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
-                    next_block_blob_excess_gas,
-                    blob_params.update_fraction as u64,
-                ));
-            }
+            fees.set_blob_params(blob_params);
+
+            let next_block_blob_excess_gas =
+                fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
+            fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                next_block_blob_excess_gas,
+                blob_params.update_fraction as u64,
+            ));
         }
 
         // use remote gas price
@@ -1363,13 +1356,9 @@ latest block number: {latest_block}"
 
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork>(
-            &mut env.evm_env,
-            &block,
-            self.networks,
-        );
+        apply_chain_and_block_specific_env_changes::<AnyNetwork>(evm_env, &block, self.networks);
 
-        let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
@@ -1393,15 +1382,15 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            timestamp: block.header.timestamp,
-            base_fee: block.header.base_fee_per_gas.map(|g| g as u128),
+            timestamp: block.header.timestamp(),
+            base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
-            blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
-            blob_excess_gas_and_price: env.evm_env.block_env.blob_excess_gas_and_price,
+            blob_gas_used: block.header.blob_gas_used().map(|g| g as u128),
+            blob_excess_gas_and_price: evm_env.block_env.blob_excess_gas_and_price,
             force_transactions,
         };
 
@@ -1449,7 +1438,7 @@ latest block number: {latest_block}"
 async fn derive_block_and_transactions(
     fork_choice: &ForkChoice,
     provider: &Arc<RetryProvider>,
-) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
+) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction<FoundryTxEnvelope>>>)> {
     match fork_choice {
         ForkChoice::Block(block_number) => {
             let block_number = *block_number;

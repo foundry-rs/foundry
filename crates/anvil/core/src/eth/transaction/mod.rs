@@ -20,7 +20,7 @@ use std::ops::Deref;
 /// This is a helper that carries the `impersonated` sender so that the right hash
 /// can be created.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MaybeImpersonatedTransaction<T = FoundryTxEnvelope> {
+pub struct MaybeImpersonatedTransaction<T> {
     transaction: T,
     impersonated_sender: Option<Address>,
 }
@@ -93,13 +93,13 @@ impl<T: Encodable> Encodable for MaybeImpersonatedTransaction<T> {
     }
 }
 
-impl From<MaybeImpersonatedTransaction> for FoundryTxEnvelope {
-    fn from(value: MaybeImpersonatedTransaction) -> Self {
+impl From<MaybeImpersonatedTransaction<Self>> for FoundryTxEnvelope {
+    fn from(value: MaybeImpersonatedTransaction<Self>) -> Self {
         value.transaction
     }
 }
 
-impl From<FoundryTxEnvelope> for MaybeImpersonatedTransaction {
+impl From<FoundryTxEnvelope> for MaybeImpersonatedTransaction<FoundryTxEnvelope> {
     fn from(value: FoundryTxEnvelope) -> Self {
         Self::new(value)
     }
@@ -127,7 +127,7 @@ impl<T> Deref for MaybeImpersonatedTransaction<T> {
 
 /// Queued transaction
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingTransaction<T = FoundryTxEnvelope> {
+pub struct PendingTransaction<T> {
     /// The actual transaction
     pub transaction: MaybeImpersonatedTransaction<T>,
     /// the recovered sender of this transaction

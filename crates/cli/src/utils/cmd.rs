@@ -120,7 +120,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::AcalaMandalaTestnet
                     | NamedChain::AcalaTestnet
                     | NamedChain::Etherlink
-                    | NamedChain::EtherlinkTestnet
+                    | NamedChain::EtherlinkShadownet
                     | NamedChain::Karura
                     | NamedChain::KaruraTestnet
                     | NamedChain::Mantle

@@ -2,14 +2,13 @@
 
 use super::string::parse;
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxExt, CheatsCtxt, Result, Vm::*,
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, EthCheatCtx, Result, Vm::*,
     inspector::exec_create,
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_network::ReceiptResponse;
+use alloy_network::{Ethereum, Network, ReceiptResponse};
 use alloy_primitives::{Bytes, U256, hex, map::Entry};
-use alloy_rpc_types::TransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
@@ -85,6 +84,19 @@ impl Cheatcode for projectRootCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state.config.root.display().to_string().abi_encode())
+    }
+}
+
+impl Cheatcode for currentFilePathCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let artifact = state
+            .config
+            .running_artifact
+            .as_ref()
+            .ok_or_else(|| fmt_err!("no running contract found"))?;
+        let relative = artifact.source.strip_prefix(&state.config.root).unwrap_or(&artifact.source);
+        Ok(relative.display().to_string().abi_encode())
     }
 }
 
@@ -299,7 +311,7 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 impl Cheatcode for deployCode_0Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -310,7 +322,7 @@ impl Cheatcode for deployCode_0Call {
 }
 
 impl Cheatcode for deployCode_1Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -321,7 +333,7 @@ impl Cheatcode for deployCode_1Call {
 }
 
 impl Cheatcode for deployCode_2Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -332,7 +344,7 @@ impl Cheatcode for deployCode_2Call {
 }
 
 impl Cheatcode for deployCode_3Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -343,7 +355,7 @@ impl Cheatcode for deployCode_3Call {
 }
 
 impl Cheatcode for deployCode_4Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -354,7 +366,7 @@ impl Cheatcode for deployCode_4Call {
 }
 
 impl Cheatcode for deployCode_5Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -365,7 +377,7 @@ impl Cheatcode for deployCode_5Call {
 }
 
 impl Cheatcode for deployCode_6Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -376,7 +388,7 @@ impl Cheatcode for deployCode_6Call {
 }
 
 impl Cheatcode for deployCode_7Call {
-    fn apply_full<CTX: CheatsCtxExt>(
+    fn apply_full<CTX: EthCheatCtx>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
@@ -388,7 +400,7 @@ impl Cheatcode for deployCode_7Call {
 
 /// Helper function to deploy contract from artifact code.
 /// Uses CREATE2 scheme if salt specified.
-fn deploy_code<CTX: CheatsCtxExt>(
+fn deploy_code<CTX: EthCheatCtx>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     path: &str,
@@ -785,7 +797,7 @@ impl Cheatcode for getBroadcasts_0Call {
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<Ethereum>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -805,7 +817,7 @@ impl Cheatcode for getBroadcasts_1Call {
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<Ethereum>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -820,7 +832,7 @@ impl Cheatcode for getBroadcasts_1Call {
 }
 
 impl Cheatcode for getDeployment_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { contractName } = self;
         let chain_id = ccx.ecx.cfg().chain_id();
 
@@ -858,7 +870,7 @@ impl Cheatcode for getDeploymentsCall {
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
 
-        let broadcasts = reader.read()?;
+        let broadcasts = reader.read::<Ethereum>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -884,15 +896,15 @@ fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
     }
 }
 
-fn parse_broadcast_results(
-    results: Vec<(TransactionWithMetadata, TransactionReceipt)>,
+fn parse_broadcast_results<N: Network>(
+    results: Vec<(TransactionWithMetadata<N>, N::ReceiptResponse)>,
 ) -> Vec<BroadcastTxSummary> {
     results
         .into_iter()
         .map(|(tx, receipt)| BroadcastTxSummary {
             txHash: receipt.transaction_hash(),
             blockNumber: receipt.block_number().unwrap_or_default(),
-            txType: match tx.opcode {
+            txType: match tx.call_kind {
                 CallKind::Call => BroadcastTxType::Call,
                 CallKind::Create => BroadcastTxType::Create,
                 CallKind::Create2 => BroadcastTxType::Create2,
@@ -916,7 +928,7 @@ fn latest_broadcast(
         reader = reader.with_tx_type(filter);
     }
 
-    let broadcast = reader.read_latest()?;
+    let broadcast = reader.read_latest::<Ethereum>()?;
 
     let results = reader.into_tx_receipts(broadcast);
 

@@ -10,8 +10,8 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::NamedChain;
-use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
+use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
@@ -19,6 +19,8 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{ContractData, shell};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
+use foundry_primitives::FoundryTransactionBuilder;
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
@@ -36,6 +38,7 @@ pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,
@@ -65,7 +68,7 @@ impl PreSimulationState {
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
-                if let Some(TxKind::Call(_)) = to {
+                if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
                         &self.execution_artifacts.decoder,
@@ -89,6 +92,7 @@ impl PreSimulationState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
@@ -99,10 +103,13 @@ impl PreSimulationState {
     /// transactions in those environments.
     ///
     /// Collects gas usage and metadata for each transaction.
-    pub async fn simulate_and_fill(
+    pub async fn simulate_and_fill<N: Network>(
         &self,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<VecDeque<TransactionWithMetadata>> {
+        transactions: VecDeque<TransactionWithMetadata<N>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<N>>>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         trace!(target: "script", "executing onchain simulation");
 
         let runners = Arc::new(
@@ -122,7 +129,7 @@ impl PreSimulationState {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
                 let tx = transaction.tx_mut();
 
-                let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
+                let to = tx.to();
                 let result = runner
                     .simulate(
                         tx.from()
@@ -140,7 +147,7 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env_mut().evm_env.block_env.number += U256::from(1);
+                    runner.executor.evm_env_mut().block_env.number += U256::from(1);
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -253,9 +260,10 @@ pub struct FilledTransactionsState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
-    pub transactions: VecDeque<TransactionWithMetadata>,
+    pub transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
 }
 
 impl FilledTransactionsState {
@@ -264,7 +272,7 @@ impl FilledTransactionsState {
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
-    pub async fn bundle(mut self) -> Result<BundledState> {
+    pub async fn bundle(mut self) -> Result<BundledState<Ethereum>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
@@ -414,6 +422,7 @@ impl FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
         })
@@ -424,14 +433,14 @@ impl FilledTransactionsState {
         &self,
         multi: bool,
         chain: u64,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<ScriptSequence> {
+        transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
+    ) -> Result<ScriptSequence<Ethereum>> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
         let paths = if multi {
             None
         } else {
-            Some(ScriptSequence::get_paths(
+            Some(ScriptSequence::<Ethereum>::get_paths(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.build_data.target,

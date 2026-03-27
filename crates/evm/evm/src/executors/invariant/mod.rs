@@ -1105,13 +1105,13 @@ pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result
 
     if warp > 0 || roll > 0 {
         // Apply pre-call block adjustments to the executor's env.
-        executor.env_mut().evm_env.block_env.timestamp += warp;
-        executor.env_mut().evm_env.block_env.number += roll;
+        executor.evm_env_mut().block_env.timestamp += warp;
+        executor.evm_env_mut().block_env.number += roll;
 
         // Also update the inspector's cheatcodes.block if set.
         // The inspector's block may override the env during interpreter initialization,
         // so we need to add our warp/roll on top of any existing cheatcode-set values.
-        let block_env = executor.env().evm_env.block_env.clone();
+        let block_env = executor.evm_env().block_env.clone();
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             if let Some(block) = cheatcodes.block.as_mut() {
                 block.timestamp += warp;

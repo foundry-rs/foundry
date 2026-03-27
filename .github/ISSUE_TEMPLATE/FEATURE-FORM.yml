@@ -10,6 +10,7 @@ body:
 
         Thanks for helping us improve Foundry!
   - type: dropdown
+    id: component
     attributes:
       label: Component
       description: What component is the feature for?
@@ -24,6 +25,7 @@ body:
     validations:
       required: true
   - type: textarea
+    id: description
     attributes:
       label: Describe the feature you would like
       description: Please also describe what the feature is aiming to solve, if relevant.

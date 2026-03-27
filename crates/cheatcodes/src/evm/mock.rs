@@ -1,7 +1,8 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxExt, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
-use foundry_evm_core::backend::DatabaseExt;
+use foundry_evm_core::backend::DatabaseError;
 use revm::{
+    Database,
     bytecode::Bytecode,
     context::{ContextTr, JournalTr},
     interpreter::InstructionResult,
@@ -52,7 +53,10 @@ impl Cheatcode for clearMockedCallsCall {
 }
 
 impl Cheatcode for mockCall_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -62,7 +66,10 @@ impl Cheatcode for mockCall_0Call {
 }
 
 impl Cheatcode for mockCall_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -72,7 +79,10 @@ impl Cheatcode for mockCall_1Call {
 }
 
 impl Cheatcode for mockCall_2Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -89,7 +99,10 @@ impl Cheatcode for mockCall_2Call {
 }
 
 impl Cheatcode for mockCall_3Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -106,7 +119,10 @@ impl Cheatcode for mockCall_3Call {
 }
 
 impl Cheatcode for mockCalls_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -116,7 +132,10 @@ impl Cheatcode for mockCalls_0Call {
 }
 
 impl Cheatcode for mockCalls_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -126,7 +145,10 @@ impl Cheatcode for mockCalls_1Call {
 }
 
 impl Cheatcode for mockCallRevert_0Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -136,7 +158,10 @@ impl Cheatcode for mockCallRevert_0Call {
 }
 
 impl Cheatcode for mockCallRevert_1Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -146,7 +171,10 @@ impl Cheatcode for mockCallRevert_1Call {
 }
 
 impl Cheatcode for mockCallRevert_2Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -163,7 +191,10 @@ impl Cheatcode for mockCallRevert_2Call {
 }
 
 impl Cheatcode for mockCallRevert_3Call {
-    fn apply_stateful<CTX: CheatsCtxExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX>,
+    ) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx)?;
 
@@ -218,7 +249,7 @@ fn mock_calls(
 
 // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
 // check Solidity might perform.
-fn make_acc_non_empty<CTX: ContextTr<Db: DatabaseExt>>(
+fn make_acc_non_empty<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
     callee: &Address,
     ccx: &mut CheatsCtxt<'_, CTX>,
 ) -> Result {
