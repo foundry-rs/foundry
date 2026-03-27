@@ -752,9 +752,8 @@ impl TestArgs {
                 //
                 // Exiting early with code 1 if differences are found.
                 if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
-                    let differences_found = gas_snapshots.clone().into_iter().fold(
-                        false,
-                        |mut found, (group, snapshots)| {
+                    let differences_found =
+                        gas_snapshots.iter().fold(false, |mut found, (group, snapshots)| {
                             // If the snapshot file doesn't exist, we can't compare so we skip.
                             if !&config.snapshots.join(format!("{group}.json")).exists() {
                                 return found;
@@ -797,8 +796,7 @@ impl TestArgs {
                             }
 
                             found
-                        },
-                    );
+                        });
 
                     if differences_found {
                         sh_eprintln!()?;
@@ -820,7 +818,7 @@ impl TestArgs {
                     fs::create_dir_all(&config.snapshots)?;
 
                     // Write gas snapshots to disk per group.
-                    gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                    gas_snapshots.iter().for_each(|(group, snapshots)| {
                         fs::write_pretty_json_file(
                             &config.snapshots.join(format!("{group}.json")),
                             &snapshots,
