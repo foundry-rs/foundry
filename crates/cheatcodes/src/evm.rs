@@ -1708,7 +1708,8 @@ fn get_recorded_state_diffs<CTX: ContextTr>(
     // For contracts not found locally, try fetching from Etherscan if configured.
     // Resolve the etherscan config lazily using the runtime chain ID so it works
     // with forks selected via vm.createSelectFork().
-    if let Some(etherscan_config) = ccx.state.config.get_etherscan_config(ccx.ecx.cfg().chain_id()) {
+    if let Some(etherscan_config) = ccx.state.config.get_etherscan_config(ccx.ecx.cfg().chain_id())
+    {
         for address in unknown_contracts {
             // Check in-memory cache first
             if let Some(cached) = ccx.state.external_storage_layouts.get(&address) {
