@@ -381,7 +381,6 @@ impl BundledState {
                             fees.max_priority_fee_per_gas = priority_gas_price.to();
                         }
 
-
                         (None, Some(fees))
                     }
                 };
