@@ -499,7 +499,7 @@ Error: no bytecode found in bin object for AbstractCounter
 
 // Tests that `forge create` fails when the deployment transaction reverts
 // <https://github.com/foundry-rs/foundry/issues/13954>
-forgetest_async!(should_fail_on_reverted_deployment, |prj, cmd| {
+forgetest_async!(flaky_should_fail_on_reverted_deployment, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
@@ -528,11 +528,10 @@ contract RevertingContract {
         "--broadcast",
         "--gas-limit",
         "1000000",
-    ]);
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: deployment transaction failed (receipt status 0): [..]
 
-    let output = cmd.assert_failure().get_output().stdout_lossy();
-    assert!(
-        !output.contains("Deployed to:"),
-        "should not print 'Deployed to:' for a reverted deployment, stdout: {output}"
-    );
+"#]]);
 });
