@@ -154,7 +154,7 @@ assembly {
 });
 
 // Issue #5051, #8978: Test EVM version normalization.
-repl_test!(evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
+repl_test!(flaky_evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
     repl.sendln("uint x;\nx");
     repl.expect("Decimal: 0");
 });

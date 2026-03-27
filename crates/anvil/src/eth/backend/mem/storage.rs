@@ -5,13 +5,13 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        env::Env,
         mem::cache::DiskStateCache,
     },
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_evm::EvmEnv;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -280,25 +280,24 @@ pub struct BlockchainStorage<N: Network> {
 impl<N: Network> BlockchainStorage<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
-        env: &Env,
-        spec_id: SpecId,
+        evm_env: &EvmEnv,
         base_fee: Option<u64>,
         timestamp: u64,
         genesis_number: u64,
     ) -> Self {
-        let is_shanghai = spec_id >= SpecId::SHANGHAI;
-        let is_cancun = spec_id >= SpecId::CANCUN;
-        let is_prague = spec_id >= SpecId::PRAGUE;
+        let is_shanghai = *evm_env.spec_id() >= SpecId::SHANGHAI;
+        let is_cancun = *evm_env.spec_id() >= SpecId::CANCUN;
+        let is_prague = *evm_env.spec_id() >= SpecId::PRAGUE;
 
         // create a dummy genesis block
         let header = Header {
             timestamp,
             base_fee_per_gas: base_fee,
-            gas_limit: env.evm_env.block_env.gas_limit,
-            beneficiary: env.evm_env.block_env.beneficiary,
-            difficulty: env.evm_env.block_env.difficulty,
-            blob_gas_used: env.evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: env.evm_env.block_env.blob_excess_gas(),
+            gas_limit: evm_env.block_env.gas_limit,
+            beneficiary: evm_env.block_env.beneficiary,
+            difficulty: evm_env.block_env.difficulty,
+            blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+            excess_blob_gas: evm_env.block_env.blob_excess_gas(),
             number: genesis_number,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
@@ -472,16 +471,14 @@ pub struct Blockchain<N: Network> {
 impl<N: Network> Blockchain<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
-        env: &Env,
-        spec_id: SpecId,
+        evm_env: &EvmEnv,
         base_fee: Option<u64>,
         timestamp: u64,
         genesis_number: u64,
     ) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                env,
-                spec_id,
+                evm_env,
                 base_fee,
                 timestamp,
                 genesis_number,

@@ -186,7 +186,7 @@ impl PreExecutionState {
     /// them instead.
     fn maybe_new_sender(
         &self,
-        transactions: Option<&BroadcastableTransactions>,
+        transactions: Option<&BroadcastableTransactions<Ethereum>>,
     ) -> Result<Option<Address>> {
         let mut new_sender = None;
 
@@ -226,7 +226,7 @@ pub struct RpcData {
 
 impl RpcData {
     /// Iterates over script transactions and collects RPC urls.
-    fn from_transactions(txs: &BroadcastableTransactions) -> Self {
+    fn from_transactions(txs: &BroadcastableTransactions<Ethereum>) -> Self {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
         let total_rpcs =
             txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
@@ -295,7 +295,8 @@ impl ExecutedState {
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
-        let mut txs = self.execution_result.transactions.clone().unwrap_or_default();
+        let mut txs: BroadcastableTransactions<Ethereum> =
+            self.execution_result.transactions.clone().unwrap_or_default();
 
         // Ensure that unsigned transactions have both `data` and `input` populated to avoid
         // issues with eth_estimateGas and eth_sendTransaction requests.

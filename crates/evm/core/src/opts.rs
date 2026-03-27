@@ -260,7 +260,7 @@ impl EvmOpts {
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
         cfg.memory_limit = self.memory_limit;
-        cfg.limit_contract_code_size = Some(usize::MAX);
+        cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
         // EIP-3607 rejects transactions from senders with deployed code.
         // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
         // is a contract. So we disable the check by default.

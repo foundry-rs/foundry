@@ -568,6 +568,10 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
             .get_receipt()
             .await?;
 
+        if !receipt.status() {
+            return Err(ContractDeploymentError::DeploymentFailed(receipt.transaction_hash()));
+        }
+
         let address =
             receipt.contract_address().ok_or(ContractDeploymentError::ContractNotDeployed)?;
 
@@ -632,6 +636,8 @@ pub enum ContractDeploymentError {
     DetokenizationError(#[from] alloy_dyn_abi::Error),
     #[error("contract was not deployed")]
     ContractNotDeployed,
+    #[error("deployment transaction failed (receipt status 0): {0}")]
+    DeploymentFailed(alloy_primitives::TxHash),
     #[error(transparent)]
     RpcError(#[from] TransportError),
 }

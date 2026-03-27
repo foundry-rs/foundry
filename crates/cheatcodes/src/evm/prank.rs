@@ -1,7 +1,8 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use foundry_evm_core::backend::DatabaseExt;
+use foundry_evm_core::backend::DatabaseError;
 use revm::{
+    Database,
     context::{ContextTr, JournalTr, Transaction},
     inspector::JournalExt,
 };
@@ -58,7 +59,7 @@ impl Prank {
 }
 
 impl Cheatcode for prank_0Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -68,7 +69,7 @@ impl Cheatcode for prank_0Call {
 }
 
 impl Cheatcode for startPrank_0Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -78,7 +79,7 @@ impl Cheatcode for startPrank_0Call {
 }
 
 impl Cheatcode for prank_1Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -88,7 +89,7 @@ impl Cheatcode for prank_1Call {
 }
 
 impl Cheatcode for startPrank_1Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -98,7 +99,7 @@ impl Cheatcode for startPrank_1Call {
 }
 
 impl Cheatcode for prank_2Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -108,7 +109,7 @@ impl Cheatcode for prank_2Call {
 }
 
 impl Cheatcode for startPrank_2Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -118,7 +119,7 @@ impl Cheatcode for startPrank_2Call {
 }
 
 impl Cheatcode for prank_3Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -128,7 +129,7 @@ impl Cheatcode for prank_3Call {
 }
 
 impl Cheatcode for startPrank_3Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -138,7 +139,7 @@ impl Cheatcode for startPrank_3Call {
 }
 
 impl Cheatcode for stopPrankCall {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
     ) -> Result {
@@ -148,7 +149,7 @@ impl Cheatcode for stopPrankCall {
     }
 }
 
-fn prank<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+fn prank<CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     new_caller: &Address,
     new_origin: Option<&Address>,

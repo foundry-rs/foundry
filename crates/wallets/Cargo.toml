@@ -43,13 +43,20 @@ alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
 # turnkey
 alloy-signer-turnkey = { workspace = true, features = ["eip712"], optional = true }
 
+tempo-primitives.workspace = true
+tempo-alloy.workspace = true
+alloy-eips.workspace = true
+alloy-rlp.workspace = true
+
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20"
+dirs.workspace = true
 eyre.workspace = true
 rpassword = "7"
 serde.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 tower.workspace = true
 tower-http = { workspace = true, features = ["cors", "set-header"] }
 tracing.workspace = true

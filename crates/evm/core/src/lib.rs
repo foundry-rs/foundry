@@ -8,14 +8,7 @@
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
-use backend::DatabaseExt;
-use revm::{
-    Context, Inspector,
-    context::{BlockEnv, CfgEnv, TxEnv},
-    inspector::NoOpInspector,
-    interpreter::CreateInputs,
-    primitives::hardfork::SpecId,
-};
+use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
@@ -54,7 +47,7 @@ pub mod utils;
 /// network config, deployer address). It has no `Inspector<CTX>` supertrait so it can
 /// be used in generic code with `I: FoundryInspectorExt + Inspector<CTX>`.
 #[auto_impl(&mut, Box)]
-pub trait FoundryInspectorExt {
+pub trait InspectorExt {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
@@ -79,20 +72,14 @@ pub trait FoundryInspectorExt {
     }
 }
 
-/// Combined trait: `Inspector<Context<...>>` + [`FoundryInspectorExt`].
-///
-/// For generic multi-network code, use `I: FoundryInspectorExt + Inspector<CTX>` instead.
-pub trait EthInspectorExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
-    for<'a> Inspector<Context<BLOCK, TX, CfgEnv<SPEC>, &'a mut dyn DatabaseExt>> + FoundryInspectorExt
-{
-}
+/// A combined inspector trait that integrates revm's [`Inspector`] with Foundry-specific
+/// extensions. Automatically implemented for any type that implements both [`Inspector<CTX>`]
+/// and [`InspectorExt`].
+pub trait FoundryInspectorExt<CTX: FoundryContextExt>: Inspector<CTX> + InspectorExt {}
 
-impl<BLOCK, TX, SPEC, T> EthInspectorExt<BLOCK, TX, SPEC> for T where
-    T: for<'a> Inspector<Context<BLOCK, TX, CfgEnv<SPEC>, &'a mut dyn DatabaseExt>>
-        + FoundryInspectorExt
-{
-}
+impl<CTX: FoundryContextExt, T> FoundryInspectorExt<CTX> for T where T: Inspector<CTX> + InspectorExt
+{}
 
-impl FoundryInspectorExt for NoOpInspector {}
+impl InspectorExt for NoOpInspector {}
 
-impl FoundryInspectorExt for AccessListInspector {}
+impl InspectorExt for AccessListInspector {}

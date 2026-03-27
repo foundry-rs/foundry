@@ -39,6 +39,7 @@ alloy-consensus.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 foundry-fork-db.workspace = true
+op-alloy-rpc-types.workspace = true
 
 revm = { workspace = true, features = [
     "std",
@@ -68,4 +69,6 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+alloy-serde.workspace = true
+op-alloy-consensus.workspace = true
 foundry-test-utils.workspace = true

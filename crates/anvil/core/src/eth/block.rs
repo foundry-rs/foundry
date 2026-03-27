@@ -47,24 +47,6 @@ where
     Block::new(header, body)
 }
 
-/// Generic helper function to create a block with any transaction type that supports encoding.
-pub fn create_typed_block<T>(
-    mut header: Header,
-    transactions: impl IntoIterator<Item = T>,
-) -> alloy_consensus::Block<T>
-where
-    T: Encodable2718,
-{
-    let transactions: Vec<_> = transactions.into_iter().collect();
-    let transactions_root = calculate_transaction_root(&transactions);
-
-    header.transactions_root = transactions_root;
-    header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
-
-    let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
-    alloy_consensus::Block::new(header, body)
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{

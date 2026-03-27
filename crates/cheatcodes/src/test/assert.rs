@@ -2,11 +2,14 @@ use crate::{CheatcodesExecutor, CheatsCtxt, EthCheatCtx, Result, Vm::*};
 use alloy_primitives::{I256, U256, U512};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
-    backend::{DatabaseExt, GLOBAL_FAIL_SLOT},
+    backend::{DatabaseError, GLOBAL_FAIL_SLOT},
     constants::CHEATCODE_ADDRESS,
 };
 use itertools::Itertools;
-use revm::context::{ContextTr, JournalTr};
+use revm::{
+    Database,
+    context::{ContextTr, JournalTr},
+};
 use std::{borrow::Cow, fmt};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = U256::from_limbs([18, 0, 0, 0]);
@@ -187,7 +190,7 @@ impl EqRelAssertionError<I256> {
 type ComparisonResult<'a, T> = Result<(), ComparisonAssertionError<'a, T>>;
 
 #[cold]
-fn handle_assertion_result<CTX: ContextTr<Db: DatabaseExt>, E>(
+fn handle_assertion_result<CTX: ContextTr<Db: Database<Error = DatabaseError>>, E>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     err: E,
@@ -203,7 +206,7 @@ fn handle_assertion_result<CTX: ContextTr<Db: DatabaseExt>, E>(
     handle_assertion_result_mono(ccx, executor, msg)
 }
 
-fn handle_assertion_result_mono<CTX: ContextTr<Db: DatabaseExt>>(
+fn handle_assertion_result_mono<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     executor: &mut dyn CheatcodesExecutor<CTX>,
     msg: Cow<'_, str>,
@@ -211,7 +214,7 @@ fn handle_assertion_result_mono<CTX: ContextTr<Db: DatabaseExt>>(
     if ccx.state.config.assertions_revert {
         Err(msg.into_owned().into())
     } else {
-        executor.console_log(ccx.state, &msg);
+        executor.console_log(&msg);
         ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
         Ok(Default::default())
     }

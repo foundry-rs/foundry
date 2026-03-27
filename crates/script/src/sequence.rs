@@ -27,7 +27,7 @@ where
     writeln!(output, "{}", tx.tx().pretty())?;
 
     // Show contract name and address if available
-    if !tx.opcode.is_any_create()
+    if !tx.call_kind.is_any_create()
         && let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address)
     {
         writeln!(output, "contract: {name}({addr})")?;
