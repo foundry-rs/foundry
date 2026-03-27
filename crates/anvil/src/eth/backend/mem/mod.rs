@@ -651,6 +651,21 @@ impl<N: Network> Backend<N> {
         inspector
     }
 
+    /// Builds an inspector configured for block mining (tracing always enabled).
+    fn build_mining_inspector(&self) -> AnvilInspector {
+        let mut inspector = AnvilInspector::default().with_tracing();
+        if self.enable_steps_tracing {
+            inspector = inspector.with_steps_tracing();
+        }
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
+        if self.print_traces {
+            inspector = inspector.with_trace_printer();
+        }
+        inspector
+    }
+
     /// Returns a new block event stream that yields Notifications when a new block was added
     pub fn new_block_notifications(&self) -> NewBlockNotifications {
         let (tx, rx) = unbounded();
@@ -2213,16 +2228,7 @@ where
                     if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
                 // 1. Build inspector (per-block, NOT per-tx)
-                let mut inspector = AnvilInspector::default().with_tracing();
-                if self.enable_steps_tracing {
-                    inspector = inspector.with_steps_tracing();
-                }
-                if self.print_logs {
-                    inspector = inspector.with_log_collector();
-                }
-                if self.print_traces {
-                    inspector = inspector.with_trace_printer();
-                }
+                let inspector = self.build_mining_inspector();
 
                 // 2. Create EVM
                 let mut evm = new_eth_evm_with_inspector(
@@ -2640,16 +2646,7 @@ where
             if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
         let excess_blob_gas = if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
-        let mut inspector = AnvilInspector::default().with_tracing();
-        if self.enable_steps_tracing {
-            inspector = inspector.with_steps_tracing();
-        }
-        if self.print_logs {
-            inspector = inspector.with_log_collector();
-        }
-        if self.print_traces {
-            inspector = inspector.with_trace_printer();
-        }
+        let inspector = self.build_mining_inspector();
 
         let mut evm =
             new_eth_evm_with_inspector(&mut cache_db, &evm_env, inspector, self.is_optimism());
@@ -3228,16 +3225,7 @@ where
             let is_cancun = spec_id >= SpecId::CANCUN;
             let gas_limit = evm_env.block_env.gas_limit;
 
-            let mut inspector_replay = AnvilInspector::default().with_tracing();
-            if self.enable_steps_tracing {
-                inspector_replay = inspector_replay.with_steps_tracing();
-            }
-            if self.print_logs {
-                inspector_replay = inspector_replay.with_log_collector();
-            }
-            if self.print_traces {
-                inspector_replay = inspector_replay.with_trace_printer();
-            }
+            let inspector_replay = self.build_mining_inspector();
 
             let mut evm_replay = new_eth_evm_with_inspector(
                 &mut cache_db,
