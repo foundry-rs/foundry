@@ -569,9 +569,7 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
             .await?;
 
         if !receipt.status() {
-            return Err(ContractDeploymentError::DeploymentFailed(
-                receipt.transaction_hash(),
-            ));
+            return Err(ContractDeploymentError::DeploymentFailed(receipt.transaction_hash()));
         }
 
         let address =
