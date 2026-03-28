@@ -512,7 +512,15 @@ impl CallTraceDecoder {
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
-            "expectRevert" => Some(vec![self.revert_decoder.decode(data, None)]),
+            "expectRevert" => {
+                let decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+                let expected_revert = match decoded.first()? {
+                    DynSolValue::Bytes(bytes) => bytes.as_slice(),
+                    DynSolValue::FixedBytes(word, size) => &word[..*size],
+                    _ => return None,
+                };
+                Some(vec![self.revert_decoder.decode(expected_revert, None)])
+            }
             "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
@@ -919,8 +927,43 @@ mod tests {
     fn test_should_redact() {
         let decoder = CallTraceDecoder::new();
 
+        let expected_revert_bytes4 = vec![0xde, 0xad, 0xbe, 0xef];
+        let expect_revert_bytes4_data = Function::parse("expectRevert(bytes4)")
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::FixedBytes(
+                B256::right_padding_from(expected_revert_bytes4.as_slice()),
+                4,
+            )])
+            .unwrap();
+
+        let expected_revert_bytes = hex!(
+            "08c379a000000000000000000000000000000000000000000000000000000000\
+             0000002000000000000000000000000000000000000000000000000000000000\
+             00000004626f6f6d000000000000000000000000000000000000000000000000"
+        )
+        .to_vec();
+        let expect_revert_bytes_data = Function::parse("expectRevert(bytes)")
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::Bytes(expected_revert_bytes.clone())])
+            .unwrap();
+
+        let expect_revert_empty_data =
+            Function::parse("expectRevert()").unwrap().abi_encode_input(&[]).unwrap();
+
         // [function_signature, data, expected]
         let cheatcode_input_test_cases = vec![
+            // Should decode the expected revert payload, not full cheatcode calldata:
+            (
+                "expectRevert(bytes4)",
+                expect_revert_bytes4_data,
+                Some(vec![decoder.revert_decoder.decode(expected_revert_bytes4.as_slice(), None)]),
+            ),
+            (
+                "expectRevert(bytes)",
+                expect_revert_bytes_data,
+                Some(vec![decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None)]),
+            ),
+            ("expectRevert()", expect_revert_empty_data, None),
             // Should redact private key from traces in all cases:
             ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),
