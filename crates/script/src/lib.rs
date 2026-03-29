@@ -52,6 +52,7 @@ use foundry_evm::{
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
     opts::EvmOpts,
+    revm::interpreter::InstructionResult,
     traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
@@ -545,6 +546,8 @@ pub struct ScriptResult {
     #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions<Ethereum>>,
     pub returned: Bytes,
+    #[serde(skip)]
+    pub exit_reason: Option<InstructionResult>,
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
