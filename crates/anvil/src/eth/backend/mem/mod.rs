@@ -46,7 +46,7 @@ use alloy_eips::{
     eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams, eip7910::SystemContract,
 };
 use alloy_evm::{
-    Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx,
+    Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, StateDB},
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
@@ -1562,13 +1562,11 @@ impl<N: Network> Backend<N> {
             // Prepare transaction environment
             let pending_tx =
                 PendingTransaction::from_maybe_impersonated(tx_envelope.clone()).ok()?;
-            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+            let tx_env: OpTransaction<TxEnv> = FromTxWithEncoded::from_encoded_tx(
                 pending_tx.transaction.as_ref(),
                 *pending_tx.sender(),
+                pending_tx.transaction.encoded_2718().into(),
             );
-            if self.is_optimism() {
-                tx_env.enveloped_tx = Some(pending_tx.transaction.encoded_2718().into());
-            }
 
             // Execute the transaction with the inspector
             let result = self
@@ -2079,14 +2077,11 @@ impl<N: Network> Backend<N> {
         BlockchainError,
     > {
         let evm_env = self.next_evm_env();
-        let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+        let tx_env: OpTransaction<TxEnv> = FromTxWithEncoded::from_encoded_tx(
             tx.pending_transaction.transaction.as_ref(),
             *tx.pending_transaction.sender(),
+            tx.pending_transaction.transaction.encoded_2718().into(),
         );
-
-        if self.is_optimism() {
-            tx_env.enveloped_tx = Some(tx.pending_transaction.transaction.encoded_2718().into());
-        }
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
@@ -3084,13 +3079,11 @@ where
 
             let target_tx = block.body.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-            let mut tx_env: OpTransaction<TxEnv> = FromRecoveredTx::from_recovered_tx(
+            let tx_env: OpTransaction<TxEnv> = FromTxWithEncoded::from_encoded_tx(
                 target_tx.transaction.as_ref(),
                 *target_tx.sender(),
+                target_tx.transaction.encoded_2718().into(),
             );
-            if self.is_optimism() {
-                tx_env.enveloped_tx = Some(target_tx.transaction.encoded_2718().into());
-            }
 
             let result = self.transact_with_inspector_ref(
                 &cache_db,
