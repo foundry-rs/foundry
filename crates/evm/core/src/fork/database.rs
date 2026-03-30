@@ -99,20 +99,8 @@ impl<N: Network> ForkedDatabase<N> {
         let db = self.db.db();
         let state_snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
-            storage: db
-                .storage
-                .read()
-                .iter()
-                .map(|(address, storage)| {
-                    (*address, storage.iter().map(|(slot, value)| (*slot, *value)).collect())
-                })
-                .collect(),
-            block_hashes: db
-                .block_hashes
-                .read()
-                .iter()
-                .map(|(number, hash)| (*number, *hash))
-                .collect(),
+            storage: db.storage.read().clone(),
+            block_hashes: db.block_hashes.read().clone(),
         };
         ForkDbStateSnapshot { local: self.cache_db.clone(), state_snapshot }
     }
@@ -145,11 +133,7 @@ impl<N: Network> ForkedDatabase<N> {
             {
                 let mut storage_lock = db.storage.write();
                 storage_lock.clear();
-                storage_lock.extend(
-                    storage
-                        .into_iter()
-                        .map(|(address, storage)| (address, storage.into_iter().collect())),
-                );
+                storage_lock.extend(storage);
             }
             {
                 let mut block_hashes_lock = db.block_hashes.write();

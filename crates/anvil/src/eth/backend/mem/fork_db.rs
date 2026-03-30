@@ -95,27 +95,16 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
-        let storage = std::mem::take(&mut *db.storage.write())
-            .into_iter()
-            .map(|(address, storage)| (address, storage.into_iter().collect()))
-            .collect();
-        let block_hashes = std::mem::take(&mut *db.block_hashes.write()).into_iter().collect();
+        let storage = std::mem::take(&mut *db.storage.write());
+        let block_hashes = std::mem::take(&mut *db.block_hashes.write());
         StateSnapshot { accounts, storage, block_hashes }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = db.accounts.read().clone();
-        let storage = db
-            .storage
-            .read()
-            .iter()
-            .map(|(address, storage)| {
-                (*address, storage.iter().map(|(slot, value)| (*slot, *value)).collect())
-            })
-            .collect();
-        let block_hashes =
-            db.block_hashes.read().iter().map(|(number, hash)| (*number, *hash)).collect();
+        let storage = db.storage.read().clone();
+        let block_hashes = db.block_hashes.read().clone();
         StateSnapshot { accounts, storage, block_hashes }
     }
 
@@ -128,11 +117,8 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         let db = self.inner().db();
         let StateSnapshot { accounts, storage, block_hashes } = state_snapshot;
         *db.accounts.write() = accounts;
-        *db.storage.write() = storage
-            .into_iter()
-            .map(|(address, storage)| (address, storage.into_iter().collect()))
-            .collect();
-        *db.block_hashes.write() = block_hashes.into_iter().collect();
+        *db.storage.write() = storage;
+        *db.block_hashes.write() = block_hashes;
     }
 }
 

@@ -5050,7 +5050,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.23.0"
-source = "git+https://github.com/foundry-rs/foundry-fork-db?branch=alloy-2.0#52c5b6cc8cad98a9a2c84f92a091ec9995e1216d"
+source = "git+https://github.com/foundry-rs/foundry-fork-db?branch=alloy-2.0#2b1077a45f70e2d70c544124ed0a06596cdc36c6"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
