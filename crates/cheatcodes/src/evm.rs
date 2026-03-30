@@ -36,7 +36,7 @@ use rand::Rng;
 use revm::{
     Database,
     bytecode::Bytecode,
-    context::{Block, Cfg, ContextTr, JournalTr, Transaction, result::ExecutionResult},
+    context::{Block, Cfg, ContextTr, JournalTr, Transaction, TxEnv, result::ExecutionResult},
     inspector::JournalExt,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountStatus},
