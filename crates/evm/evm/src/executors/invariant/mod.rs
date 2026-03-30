@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256,
-    map::{AddressMap, HashMap},
+    map::AddressMap,
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -1038,7 +1038,7 @@ impl<'a> InvariantExecutor<'a> {
 /// randomly generated addresses.
 fn collect_data(
     invariant_test: &InvariantTest,
-    state_changeset: &mut HashMap<Address, Account>,
+    state_changeset: &mut AddressMap<Account>,
     tx: &BasicTxDetails,
     call_result: &RawCallResult,
     run_depth: u32,

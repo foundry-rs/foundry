@@ -342,13 +342,13 @@ op-alloy-rpc-types = "0.24.0"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.28.1"
+alloy-evm = "0.29.2"
 alloy-op-evm = "0.26.3"
 
 # revm
-revm = { version = "34.0.0", default-features = false }
+revm = { version = "36.0.0", default-features = false }
 revm-inspectors = { version = "0.36.0", features = ["serde"] }
-op-revm = { version = "15.0.0", default-features = false }
+op-revm = { version = "17.0.0", default-features = false }
 
 ## cli
 anstream = "0.6"
@@ -441,7 +441,9 @@ ethereum_ssz = "0.10"
 
 # Tempo
 tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", branch = "alloy-2.0", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", branch = "alloy-2.0", default-features = false, features = ["serde"] }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", branch = "alloy-2.0", default-features = false, features = [
+    "serde",
+] }
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", branch = "alloy-2.0", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.

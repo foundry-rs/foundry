@@ -1279,14 +1279,14 @@ impl<N: Network> Backend<N> {
         let ResultAndState { result, state } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
         let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas_used, output, .. } => {
-                (reason.into(), gas_used, Some(output))
+            ExecutionResult::Success { reason, gas, output, .. } => {
+                (reason.into(), gas.used(), Some(output))
             }
-            ExecutionResult::Revert { gas_used, output } => {
-                (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
+            ExecutionResult::Revert { gas, output, .. } => {
+                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (reason.into_instruction_result(), gas_used, None)
+            ExecutionResult::Halt { reason, gas, .. } => {
+                (reason.into_instruction_result(), gas.used(), None)
             }
         };
         inspector.print_logs();
@@ -1312,14 +1312,14 @@ impl<N: Network> Backend<N> {
         let ResultAndState { result, state: _ } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
         let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas_used, output, .. } => {
-                (reason.into(), gas_used, Some(output))
+            ExecutionResult::Success { reason, gas, output, .. } => {
+                (reason.into(), gas.used(), Some(output))
             }
-            ExecutionResult::Revert { gas_used, output } => {
-                (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
+            ExecutionResult::Revert { gas, output, .. } => {
+                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (reason.into_instruction_result(), gas_used, None)
+            ExecutionResult::Halt { reason, gas, .. } => {
+                (reason.into_instruction_result(), gas.used(), None)
             }
         };
         let access_list = inspector.access_list();
@@ -2093,14 +2093,14 @@ impl<N: Network> Backend<N> {
         let ResultAndState { result, state } =
             self.transact_with_inspector_ref(&**db, &evm_env, &mut inspector, tx_env)?;
         let (exit_reason, gas_used, out, logs) = match result {
-            ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
-                (reason.into(), gas_used, Some(output), Some(logs))
+            ExecutionResult::Success { reason, gas, logs, output, .. } => {
+                (reason.into(), gas.used(), Some(output), logs)
             }
-            ExecutionResult::Revert { gas_used, output } => {
-                (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
+            ExecutionResult::Revert { gas, output, logs, .. } => {
+                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
             }
-            ExecutionResult::Halt { reason, gas_used } => {
-                (reason.into_instruction_result(), gas_used, None, None)
+            ExecutionResult::Halt { reason, gas, logs, .. } => {
+                (reason.into_instruction_result(), gas.used(), None, logs)
             }
         };
 
@@ -2110,7 +2110,7 @@ impl<N: Network> Backend<N> {
             inspector.print_traces(self.call_trace_decoder.clone());
         }
 
-        Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
+        Ok((exit_reason, out, gas_used, state, logs))
     }
 }
 
@@ -2810,14 +2810,14 @@ where
                 self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
 
             let (exit_reason, gas_used, out) = match result {
-                ExecutionResult::Success { reason, gas_used, output, .. } => {
-                    (reason.into(), gas_used, Some(output))
+                ExecutionResult::Success { reason, gas, output, .. } => {
+                    (reason.into(), gas.used(), Some(output))
                 }
-                ExecutionResult::Revert { gas_used, output } => {
-                    (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
+                ExecutionResult::Revert { gas, output, .. } => {
+                    (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
                 }
-                ExecutionResult::Halt { reason, gas_used } => {
-                    (reason.into_instruction_result(), gas_used, None)
+                ExecutionResult::Halt { reason, gas, .. } => {
+                    (reason.into_instruction_result(), gas.used(), None)
                 }
             };
 
@@ -4216,7 +4216,7 @@ pub fn transaction_build(
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)
-pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> (B256, Vec<Vec<Bytes>>) {
+pub fn prove_storage(storage: &alloy_primitives::map::U256Map<U256>, keys: &[B256]) -> (B256, Vec<Vec<Bytes>>) {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
     let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));

@@ -5,7 +5,7 @@ use crate::{
     state_snapshot::StateSnapshots,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
@@ -13,6 +13,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     database::{CacheDB, DatabaseRef},
+    primitives::AddressMap,
     state::{Account, AccountInfo},
 };
 use std::sync::Arc;
@@ -98,8 +99,20 @@ impl<N: Network> ForkedDatabase<N> {
         let db = self.db.db();
         let state_snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
-            storage: db.storage.read().clone(),
-            block_hashes: db.block_hashes.read().clone(),
+            storage: db
+                .storage
+                .read()
+                .iter()
+                .map(|(address, storage)| {
+                    (*address, storage.iter().map(|(slot, value)| (*slot, *value)).collect())
+                })
+                .collect(),
+            block_hashes: db
+                .block_hashes
+                .read()
+                .iter()
+                .map(|(number, hash)| (*number, *hash))
+                .collect(),
         };
         ForkDbStateSnapshot { local: self.cache_db.clone(), state_snapshot }
     }
@@ -132,7 +145,9 @@ impl<N: Network> ForkedDatabase<N> {
             {
                 let mut storage_lock = db.storage.write();
                 storage_lock.clear();
-                storage_lock.extend(storage);
+                storage_lock.extend(
+                    storage.into_iter().map(|(address, storage)| (address, storage.into_iter().collect())),
+                );
             }
             {
                 let mut block_hashes_lock = db.block_hashes.write();
@@ -195,7 +210,7 @@ impl<N: Network> DatabaseRef for ForkedDatabase<N> {
 }
 
 impl<N: Network> DatabaseCommit for ForkedDatabase<N> {
-    fn commit(&mut self, changes: HashMap<Address, Account>) {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         self.database_mut().commit(changes)
     }
 }

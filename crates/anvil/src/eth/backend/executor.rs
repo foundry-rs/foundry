@@ -417,13 +417,13 @@ where
                 }
 
                 let (exit_reason, out, _logs) = match exec_result {
-                    ExecutionResult::Success { reason, gas_used: _, logs, output, .. } => {
+                    ExecutionResult::Success { reason, logs, output, .. } => {
                         (reason.into(), Some(output), logs)
                     }
-                    ExecutionResult::Revert { gas_used: _, output } => {
+                    ExecutionResult::Revert { output, .. } => {
                         (InstructionResult::Revert, Some(Output::Call(output)), Vec::new())
                     }
-                    ExecutionResult::Halt { reason, gas_used: _ } => {
+                    ExecutionResult::Halt { reason, .. } => {
                         (reason.into_instruction_result(), None, Vec::new())
                     }
                 };

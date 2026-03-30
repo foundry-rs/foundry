@@ -20,7 +20,7 @@ use revm::{
     context::TxEnv,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{HashMap as Map, hardfork::SpecId},
+    primitives::{AddressMap, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState},
 };
 use std::{borrow::Cow, collections::BTreeMap};
@@ -312,7 +312,7 @@ impl Database for CowBackend<'_> {
 }
 
 impl DatabaseCommit for CowBackend<'_> {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         self.backend.to_mut().commit(changes)
     }
 }
