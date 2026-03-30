@@ -442,7 +442,7 @@ struct _ObjectSafe(dyn DatabaseExt);
 #[must_use]
 pub struct Backend<N: Network = AnyNetwork> {
     /// The access point for managing forks
-    forks: MultiFork<N>,
+    forks: MultiFork<N, SpecId>,
     // The default in memory db
     mem_db: FoundryEvmInMemoryDB,
     /// The journaled_state to use to initialize new forks with
@@ -479,7 +479,7 @@ where
     /// If `fork` is `Some` this will use a `fork` database, otherwise with an in-memory
     /// database.
     pub fn spawn(fork: Option<CreateFork>) -> eyre::Result<Self> {
-        Self::new(MultiFork::spawn(), fork)
+        Self::new(MultiFork::<N, SpecId>::spawn(), fork)
     }
 
     /// Creates a new instance of `Backend`
@@ -488,7 +488,7 @@ where
     /// database.
     ///
     /// Prefer using [`spawn`](Self::spawn) instead.
-    pub fn new(forks: MultiFork<N>, fork: Option<CreateFork>) -> eyre::Result<Self> {
+    pub fn new(forks: MultiFork<N, SpecId>, fork: Option<CreateFork>) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
         let inner = BackendInner {
