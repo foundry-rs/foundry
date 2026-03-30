@@ -4216,7 +4216,10 @@ pub fn transaction_build(
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)
-pub fn prove_storage(storage: &alloy_primitives::map::U256Map<U256>, keys: &[B256]) -> (B256, Vec<Vec<Bytes>>) {
+pub fn prove_storage(
+    storage: &alloy_primitives::map::U256Map<U256>,
+    keys: &[B256],
+) -> (B256, Vec<Vec<Bytes>>) {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
     let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));

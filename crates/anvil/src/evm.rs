@@ -97,7 +97,9 @@ mod tests {
             RevmEvm::new_with_inspector(
                 eth_evm_context,
                 NoOpInspector,
-                EthInstructions::<EthInterpreter, EthEvmContext<EmptyDB>>::default(),
+                EthInstructions::<EthInterpreter, EthEvmContext<EmptyDB>>::new_mainnet_with_spec(
+                    spec,
+                ),
                 PrecompilesMap::from_static(eth_precompiles),
             ),
             true,
@@ -149,7 +151,7 @@ mod tests {
             op_revm::OpEvm(RevmEvm::new_with_inspector(
                 op_evm_context,
                 NoOpInspector,
-                EthInstructions::<EthInterpreter, OpContext<EmptyDB>>::default(),
+                EthInstructions::<EthInterpreter, OpContext<EmptyDB>>::new_mainnet_with_spec(spec),
                 PrecompilesMap::from_static(op_precompiles),
             )),
             true,

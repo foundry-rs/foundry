@@ -5,10 +5,7 @@ use crate::{
     },
     inspectors::Fuzzer,
 };
-use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, Selector, U256,
-    map::AddressMap,
-};
+use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{

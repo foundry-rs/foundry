@@ -146,7 +146,9 @@ impl<N: Network> ForkedDatabase<N> {
                 let mut storage_lock = db.storage.write();
                 storage_lock.clear();
                 storage_lock.extend(
-                    storage.into_iter().map(|(address, storage)| (address, storage.into_iter().collect())),
+                    storage
+                        .into_iter()
+                        .map(|(address, storage)| (address, storage.into_iter().collect())),
                 );
             }
             {

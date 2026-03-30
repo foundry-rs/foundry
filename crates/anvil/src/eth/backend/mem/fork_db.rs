@@ -99,9 +99,7 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
             .into_iter()
             .map(|(address, storage)| (address, storage.into_iter().collect()))
             .collect();
-        let block_hashes = std::mem::take(&mut *db.block_hashes.write())
-            .into_iter()
-            .collect();
+        let block_hashes = std::mem::take(&mut *db.block_hashes.write()).into_iter().collect();
         StateSnapshot { accounts, storage, block_hashes }
     }
 
@@ -116,12 +114,8 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
                 (*address, storage.iter().map(|(slot, value)| (*slot, *value)).collect())
             })
             .collect();
-        let block_hashes = db
-            .block_hashes
-            .read()
-            .iter()
-            .map(|(number, hash)| (*number, *hash))
-            .collect();
+        let block_hashes =
+            db.block_hashes.read().iter().map(|(number, hash)| (*number, *hash)).collect();
         StateSnapshot { accounts, storage, block_hashes }
     }
 
@@ -134,8 +128,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         let db = self.inner().db();
         let StateSnapshot { accounts, storage, block_hashes } = state_snapshot;
         *db.accounts.write() = accounts;
-        *db.storage.write() =
-            storage.into_iter().map(|(address, storage)| (address, storage.into_iter().collect())).collect();
+        *db.storage.write() = storage
+            .into_iter()
+            .map(|(address, storage)| (address, storage.into_iter().collect()))
+            .collect();
         *db.block_hashes.write() = block_hashes.into_iter().collect();
     }
 }
