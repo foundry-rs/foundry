@@ -9,6 +9,7 @@ extend-exclude = [
     "*.js",
     "*.css",
     "*.html",
+    "crates/wallets/src/wallet_browser/app/assets/main.js.map",
     "**/tests/**",
     "**/test/**",
     "**/*_test.*",
