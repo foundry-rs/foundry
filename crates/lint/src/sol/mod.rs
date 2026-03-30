@@ -275,7 +275,8 @@ impl<'a> Linter for SolidityLinter<'a> {
                     return;
                 };
                 let Some(ast) = &ast_source.ast else {
-                    panic!("AST missing for {}", path.display());
+                    _ = sh_warn!("AST missing for {}", path.display());
+                    return;
                 };
 
                 // Parse inline config.
@@ -288,7 +289,8 @@ impl<'a> Linter for SolidityLinter<'a> {
 
                 // Late lints.
                 let Some((hir_source_id, _)) = gcx.get_hir_source(path) else {
-                    panic!("HIR source not found for {}", path.display());
+                    _ = sh_warn!("HIR source not found for {}", path.display());
+                    return;
                 };
                 let _ = self.process_source_hir(gcx, hir_source_id, path, &inline_config);
             });
