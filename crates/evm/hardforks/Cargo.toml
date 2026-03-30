@@ -21,3 +21,4 @@ op-revm.workspace = true
 revm.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tempo-chainspec.workspace = true
+foundry-compilers.workspace = true

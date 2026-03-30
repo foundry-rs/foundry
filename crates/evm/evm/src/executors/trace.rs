@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{Chain, Config, utils::evm_spec_id};
+use foundry_config::{Chain, Config, evm_spec_id};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceMode;

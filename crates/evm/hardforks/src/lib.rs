@@ -6,6 +6,7 @@
 use std::str::FromStr;
 
 use alloy_rpc_types::BlockNumberOrTag;
+use foundry_compilers::artifacts::EvmVersion;
 use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
@@ -190,6 +191,64 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
         OpHardfork::Jovian => OpSpecId::JOVIAN,
         f => unreachable!("unimplemented {}", f),
     }
+}
+
+/// Trait for converting an [`EvmVersion`] into a network-specific spec type.
+pub trait FromEvmVersion {
+    fn from_evm_version(version: EvmVersion) -> Self;
+}
+
+impl FromEvmVersion for SpecId {
+    fn from_evm_version(version: EvmVersion) -> Self {
+        match version {
+            EvmVersion::Homestead => Self::HOMESTEAD,
+            EvmVersion::TangerineWhistle => Self::TANGERINE,
+            EvmVersion::SpuriousDragon => Self::SPURIOUS_DRAGON,
+            EvmVersion::Byzantium => Self::BYZANTIUM,
+            EvmVersion::Constantinople => Self::CONSTANTINOPLE,
+            EvmVersion::Petersburg => Self::PETERSBURG,
+            EvmVersion::Istanbul => Self::ISTANBUL,
+            EvmVersion::Berlin => Self::BERLIN,
+            EvmVersion::London => Self::LONDON,
+            EvmVersion::Paris => Self::MERGE,
+            EvmVersion::Shanghai => Self::SHANGHAI,
+            EvmVersion::Cancun => Self::CANCUN,
+            EvmVersion::Prague => Self::PRAGUE,
+            EvmVersion::Osaka => Self::OSAKA,
+        }
+    }
+}
+
+impl FromEvmVersion for OpSpecId {
+    fn from_evm_version(version: EvmVersion) -> Self {
+        match version {
+            EvmVersion::Homestead
+            | EvmVersion::TangerineWhistle
+            | EvmVersion::SpuriousDragon
+            | EvmVersion::Byzantium
+            | EvmVersion::Constantinople
+            | EvmVersion::Petersburg
+            | EvmVersion::Istanbul
+            | EvmVersion::Berlin
+            | EvmVersion::London
+            | EvmVersion::Paris => Self::BEDROCK,
+            EvmVersion::Shanghai => Self::CANYON,
+            EvmVersion::Cancun => Self::ECOTONE,
+            EvmVersion::Prague => Self::ISTHMUS,
+            EvmVersion::Osaka => Self::JOVIAN,
+        }
+    }
+}
+
+impl FromEvmVersion for TempoHardfork {
+    fn from_evm_version(_: EvmVersion) -> Self {
+        Self::default()
+    }
+}
+
+/// Returns the spec id derived from [`EvmVersion`] for a given spec type.
+pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
+    SPEC::from_evm_version(evm_version)
 }
 
 /// Convert a `BlockNumberOrTag` into an `EthereumHardfork`.
