@@ -19,10 +19,11 @@ use alloy_primitives::{
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
     EvmEnv,
-    backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
+    backend::{Backend, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
@@ -236,25 +237,34 @@ impl Executor {
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
-        let create2_deployer_account = self
-            .backend()
-            .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+        let create2_deployer = self.create2_deployer();
+        let create2_deployer_account =
+            self.backend().basic_ref(create2_deployer)?.unwrap_or_default();
 
         // If the deployer is not currently deployed, deploy the default one.
         if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {
-            let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
+            if create2_deployer == DEFAULT_CREATE2_DEPLOYER {
+                let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
-            // Probably 0, but just in case.
-            let initial_balance = self.get_balance(creator)?;
-            self.set_balance(creator, U256::MAX)?;
+                // Probably 0, but just in case.
+                let initial_balance = self.get_balance(creator)?;
+                self.set_balance(creator, U256::MAX)?;
 
-            let res =
-                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
-            trace!(create2=?res.address, "deployed local create2 deployer");
+                let res =
+                    self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
+                trace!(create2=?res.address, "deployed local create2 deployer");
 
-            self.set_balance(creator, initial_balance)?;
+                self.set_balance(creator, initial_balance)?;
+            } else {
+                self.set_code(
+                    create2_deployer,
+                    Bytecode::new_raw(Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)),
+                )?;
+                trace!(?create2_deployer, "installed local create2 deployer runtime code");
+            }
         }
+
+        self.backend_mut().add_persistent_account(create2_deployer);
         Ok(())
     }
 

@@ -895,6 +895,19 @@ forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
         .await;
 });
 
+forgetest_async!(can_deploy_with_custom_create2_without_endpoint, |prj, cmd| {
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    let create2 = address!("0x0000000000000000000000000000000000b4956c");
+
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2(address)")
+        .arg(&create2.to_string())
+        .simulate(ScriptOutcome::OkNoEndpoint);
+});
+
 forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
