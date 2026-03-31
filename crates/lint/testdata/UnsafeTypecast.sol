@@ -470,5 +470,21 @@ contract Repros {
         uint128 a = uint128(cond ? x : y);
         //~^WARN: typecasts that can truncate values should be checked
     }
+
+    function mixedTernaryIsUnsafe(bool cond, uint128 safe, uint256 unsafe_) internal pure {
+        uint128 a = uint128(cond ? safe : unsafe_);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+}
+
+interface IReturnsUint256 {
+    function getUint256() external view returns (uint256);
+}
+
+contract MemberCallRepros {
+    function memberCallCastIsUnsafe(IReturnsUint256 foo) internal view {
+        uint128 a = uint128(foo.getUint256());
+        //~^WARN: typecasts that can truncate values should be checked
+    }
 }
 // forge-lint: disable-end(mixed-case-variable)

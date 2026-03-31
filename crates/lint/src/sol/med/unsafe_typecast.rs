@@ -48,7 +48,7 @@ fn is_unsafe_typecast_hir(
     target_type: &hir::ElementaryType,
 ) -> bool {
     let mut source_types = Vec::<ElementaryType>::new();
-    infer_source_types(Some(&mut source_types), hir, source_expr);
+    infer_source_types(&mut source_types, hir, source_expr);
 
     if source_types.is_empty() {
         return false;
@@ -59,26 +59,10 @@ fn is_unsafe_typecast_hir(
 
 /// Infers the elementary source type(s) of an expression.
 ///
-/// This function traverses an expression tree to find the original "source" types.
-/// For cast chains, it returns the ultimate source type, not intermediate cast results.
-/// For binary operations, it collects types from both sides into the `output` vector.
-///
-/// # Returns
-/// An `Option<ElementaryType>` containing the inferred type of the expression if it can be
-/// resolved to a single source (like variables, literals, or unary expressions).
-/// Returns `None` for expressions complex expressions (like binary operations).
-fn infer_source_types(
-    mut output: Option<&mut Vec<ElementaryType>>,
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-) -> Option<ElementaryType> {
-    let mut track = |ty: ElementaryType| -> Option<ElementaryType> {
-        if let Some(output) = output.as_mut() {
-            output.push(ty);
-        }
-        Some(ty)
-    };
-
+/// Traverses an expression tree to find the original "source" types and pushes them
+/// into `output`. For cast chains, finds the ultimate source type, not intermediate
+/// cast results. For binary and ternary operations, collects types from all branches.
+fn infer_source_types(output: &mut Vec<ElementaryType>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) {
     match &expr.kind {
         // A type cast call: `Type(val)`, or a regular function call.
         ExprKind::Call(call_expr, args, ..) => {
@@ -88,14 +72,12 @@ fn infer_source_types(
                 && let Some(inner) = args.exprs().next()
             {
                 // Recurse to find the original (inner-most) source type.
-                return infer_source_types(output, hir, inner);
+                infer_source_types(output, hir, inner);
+                return;
             }
 
             // For non-cast function calls, infer the return type from the function signature.
-            if let Some(elem_ty) = resolve_call_return_type(hir, call_expr) {
-                return track(elem_ty);
-            }
-            None
+            resolve_call_return_types(output, hir, call_expr);
         }
 
         // Identifiers (variables)
@@ -103,67 +85,106 @@ fn infer_source_types(
             if let Some(Res::Item(ItemId::Variable(var_id))) = resolutions.first() {
                 let variable = hir.variable(*var_id);
                 if let TypeKind::Elementary(elem_type) = &variable.ty.kind {
-                    return track(*elem_type);
+                    output.push(*elem_type);
                 }
             }
-            None
         }
 
         // Handle literal values
         ExprKind::Lit(hir::Lit { kind, .. }) => match kind {
-            LitKind::Str(StrKind::Hex, ..) => track(ElementaryType::Bytes),
-            LitKind::Str(..) => track(ElementaryType::String),
-            LitKind::Address(_) => track(ElementaryType::Address(false)),
-            LitKind::Bool(_) => track(ElementaryType::Bool),
+            LitKind::Str(StrKind::Hex, ..) => output.push(ElementaryType::Bytes),
+            LitKind::Str(..) => output.push(ElementaryType::String),
+            LitKind::Address(_) => output.push(ElementaryType::Address(false)),
+            LitKind::Bool(_) => output.push(ElementaryType::Bool),
             // Unnecessary to check numbers as assigning literal values that cannot fit into a type
             // throws a compiler error. Reference: <https://solang.readthedocs.io/en/latest/language/types.html>
-            _ => None,
+            _ => {}
         },
 
         // Unary operations: Recurse to find the source type of the inner expression.
         ExprKind::Unary(_, inner_expr) => infer_source_types(output, hir, inner_expr),
 
-        // Binary operations
+        // Binary operations: recurse on both sides.
         ExprKind::Binary(lhs, _, rhs) => {
-            if let Some(mut output) = output {
-                // Recurse on both sides to find and collect all source types.
-                infer_source_types(Some(&mut output), hir, lhs);
-                infer_source_types(Some(&mut output), hir, rhs);
-            }
-            None
+            infer_source_types(output, hir, lhs);
+            infer_source_types(output, hir, rhs);
         }
 
         // Ternary: check both branches.
         ExprKind::Ternary(_, true_expr, false_expr) => {
-            if let Some(mut output) = output {
-                infer_source_types(Some(&mut output), hir, true_expr);
-                infer_source_types(Some(&mut output), hir, false_expr);
-            }
-            None
+            infer_source_types(output, hir, true_expr);
+            infer_source_types(output, hir, false_expr);
         }
 
         // Complex expressions are not evaluated.
-        _ => None,
+        _ => {}
     }
 }
 
-/// Resolves the return type of a function call expression.
+/// Resolves the return type(s) of a function call expression and pushes them to `output`.
 ///
-/// For calls where the callee is a resolved function identifier, looks up the function
-/// in the HIR and returns its return type if it has exactly one elementary return value.
-fn resolve_call_return_type(
+/// Handles both direct function calls (`foo()`) and member function calls
+/// (`contract.foo()`). For overloaded functions, collects return types from all
+/// matching overloads to avoid false negatives.
+fn resolve_call_return_types(
+    output: &mut Vec<ElementaryType>,
     hir: &hir::Hir<'_>,
     call_expr: &hir::Expr<'_>,
-) -> Option<ElementaryType> {
-    // Direct function call: `foo()`
-    if let ExprKind::Ident(resolutions) = &call_expr.kind {
-        return resolve_function_return(hir, resolutions);
+) {
+    match &call_expr.kind {
+        // Direct function call: `foo()`
+        ExprKind::Ident(resolutions) => {
+            resolve_function_returns(output, hir, resolutions);
+        }
+        // Member function call: `contract.foo()`
+        ExprKind::Member(contract_expr, func_ident) => {
+            // Resolve the contract from the base expression.
+            let contract_id = match &contract_expr.kind {
+                // Variable with contract type: `myContract.foo()`
+                ExprKind::Ident([Res::Item(ItemId::Variable(var_id)), ..]) => {
+                    if let TypeKind::Custom(ItemId::Contract(cid)) = hir.variable(*var_id).ty.kind {
+                        Some(cid)
+                    } else {
+                        None
+                    }
+                }
+                // Contract type cast: `IFoo(addr).foo()`
+                ExprKind::Call(
+                    hir::Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
+                    ..,
+                ) => Some(*cid),
+                _ => None,
+            };
+
+            if let Some(cid) = contract_id {
+                // Find matching functions in the contract by name.
+                for item in hir.contract_item_ids(cid) {
+                    let Some(fid) = item.as_function() else { continue };
+                    let func = hir.function(fid);
+                    if func.name.is_some_and(|name| name.as_str() == func_ident.as_str())
+                        && func.returns.len() == 1
+                    {
+                        let ret_var = hir.variable(func.returns[0]);
+                        if let TypeKind::Elementary(elem_ty) = &ret_var.ty.kind {
+                            output.push(*elem_ty);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     }
-    None
 }
 
-/// Resolves the elementary return type from a set of function resolutions.
-fn resolve_function_return(hir: &hir::Hir<'_>, resolutions: &[Res]) -> Option<ElementaryType> {
+/// Resolves elementary return types from function resolutions.
+///
+/// For overloaded functions with multiple resolutions, collects return types from all
+/// matching overloads to avoid false negatives.
+fn resolve_function_returns(
+    output: &mut Vec<ElementaryType>,
+    hir: &hir::Hir<'_>,
+    resolutions: &[Res],
+) {
     for res in resolutions {
         if let Res::Item(ItemId::Function(func_id)) = res {
             let func = hir.function(*func_id);
@@ -171,12 +192,11 @@ fn resolve_function_return(hir: &hir::Hir<'_>, resolutions: &[Res]) -> Option<El
             if func.returns.len() == 1 {
                 let ret_var = hir.variable(func.returns[0]);
                 if let TypeKind::Elementary(elem_ty) = &ret_var.ty.kind {
-                    return Some(*elem_ty);
+                    output.push(*elem_ty);
                 }
             }
         }
     }
-    None
 }
 
 /// Checks if a type cast from source_type to target_type is unsafe.
