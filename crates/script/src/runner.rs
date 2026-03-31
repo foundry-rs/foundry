@@ -369,39 +369,44 @@ impl ScriptRunner {
         if matches!(res.exit_reason, Some(return_ok!())) {
             // Store the current gas limit and reset it later.
             let init_gas_limit = self.executor.tx_env().gas_limit;
-
-            let mut highest_gas_limit = gas_used * 3;
-            let mut lowest_gas_limit = gas_used;
-            let mut last_highest_gas_limit = highest_gas_limit;
-            while (highest_gas_limit - lowest_gas_limit) > 1 {
-                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-                self.executor.tx_env_mut().gas_limit = mid_gas_limit;
-                let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
-                match res.exit_reason {
-                    Some(InstructionResult::Revert)
-                    | Some(InstructionResult::OutOfGas)
-                    | Some(InstructionResult::OutOfFunds) => {
-                        lowest_gas_limit = mid_gas_limit;
-                    }
-                    _ => {
-                        highest_gas_limit = mid_gas_limit;
-                        // if last two successful estimations only vary by 10%, we consider this to
-                        // sufficiently accurate
-                        const ACCURACY: u64 = 10;
-                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
-                            / last_highest_gas_limit
-                            < 1
-                        {
-                            // update the gas
-                            gas_used = highest_gas_limit;
-                            break;
+            let searched_gas_limit = (|| -> Result<u64> {
+                let mut estimated_gas = gas_used;
+                let mut highest_gas_limit = gas_used * 3;
+                let mut lowest_gas_limit = gas_used;
+                let mut last_highest_gas_limit = highest_gas_limit;
+                while (highest_gas_limit - lowest_gas_limit) > 1 {
+                    let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+                    self.executor.tx_env_mut().gas_limit = mid_gas_limit;
+                    let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
+                    match res.exit_reason {
+                        Some(InstructionResult::Revert)
+                        | Some(InstructionResult::OutOfGas)
+                        | Some(InstructionResult::OutOfFunds) => {
+                            lowest_gas_limit = mid_gas_limit;
                         }
-                        last_highest_gas_limit = highest_gas_limit;
+                        _ => {
+                            highest_gas_limit = mid_gas_limit;
+                            // if last two successful estimations only vary by 10%, we consider
+                            // this to sufficiently accurate
+                            const ACCURACY: u64 = 10;
+                            if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
+                                / last_highest_gas_limit
+                                < 1
+                            {
+                                // update the gas
+                                estimated_gas = highest_gas_limit;
+                                break;
+                            }
+                            last_highest_gas_limit = highest_gas_limit;
+                        }
                     }
                 }
-            }
-            // Reset gas limit in the executor.
+                Ok(estimated_gas)
+            })();
+
+            // Reset gas limit in the executor on both success and error paths.
             self.executor.tx_env_mut().gas_limit = init_gas_limit;
+            gas_used = searched_gas_limit?;
         }
         Ok(gas_used)
     }
