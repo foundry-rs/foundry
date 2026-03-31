@@ -58,6 +58,7 @@ op-revm.workspace = true
 tempo-revm.workspace = true
 tempo-chainspec.workspace = true
 tempo-contracts.workspace = true
+tempo-evm.workspace = true
 tempo-precompiles.workspace = true
 
 auto_impl.workspace = true
@@ -77,4 +78,3 @@ alloy-op-evm.workspace = true
 alloy-serde.workspace = true
 op-alloy-consensus.workspace = true
 foundry-test-utils.workspace = true
-tempo-evm.workspace = true
