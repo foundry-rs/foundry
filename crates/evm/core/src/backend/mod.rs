@@ -1,9 +1,9 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    FoundryBlock, FoundryInspectorExt, FoundryTransaction, TryAnyToTxEnv,
+    FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction, TryAnyToTxEnv,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, new_eth_evm_with_inspector},
+    evm::{FoundryEvmFactory, new_eth_evm_with_inspector, transact_with_factory},
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::get_blob_base_fee_update_fraction,
@@ -21,7 +21,7 @@ use itertools::Itertools;
 use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
-    context::{BlockEnv, CfgEnv, JournalInner, TxEnv},
+    context::{BlockEnv, CfgEnv, JournalInner, Transaction, TxEnv},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{CacheDB, DatabaseRef, EmptyDB},
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
@@ -781,15 +781,23 @@ where
         tx_env: &mut TxEnv,
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
-        self.initialize(evm_env.cfg_env.spec, tx_env.caller, tx_env.kind);
-        let mut evm = crate::evm::new_eth_evm_with_inspector(self, evm_env.to_owned(), inspector);
+        self.inspect_with_factory(evm_env, tx_env, inspector, &EthEvmFactory::default())
+    }
 
-        let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
-
-        *tx_env = evm.tx.clone();
-        *evm_env = evm.finish().1;
-
-        Ok(res)
+    /// Like [`inspect`](Self::inspect), but uses the given factory to construct the EVM.
+    pub fn inspect_with_factory<F: FoundryEvmFactory, I>(
+        &mut self,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &mut F::Tx,
+        inspector: I,
+        factory: &F,
+    ) -> eyre::Result<ResultAndState>
+    where
+        I: for<'db> FoundryInspectorExt<F::Context<&'db mut dyn DatabaseExt>>,
+        for<'db> F::Context<&'db mut dyn DatabaseExt>: FoundryContextExt,
+    {
+        self.initialize(evm_env.cfg_env.spec.into(), tx_env.caller(), tx_env.kind());
+        transact_with_factory(self, evm_env, tx_env, inspector, factory)
     }
 
     /// Returns true if the address is a precompile

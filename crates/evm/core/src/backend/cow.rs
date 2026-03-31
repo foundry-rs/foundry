@@ -2,22 +2,22 @@
 
 use super::BackendError;
 use crate::{
-    FoundryInspectorExt,
+    FoundryContextExt, FoundryInspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
+    evm::{FoundryEvmFactory, transact_with_factory},
     fork::{CreateFork, ForkId},
 };
-use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext};
+use alloy_evm::{EthEvmFactory, EvmEnv, eth::EthEvmContext};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
-use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
-    context::TxEnv,
+    context::{Transaction, TxEnv},
     context_interface::result::ResultAndState,
     database::DatabaseRef,
     primitives::{AddressMap, hardfork::SpecId},
@@ -69,18 +69,26 @@ impl<'a> CowBackend<'a> {
         tx_env: &mut TxEnv,
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
+        self.inspect_with_factory(evm_env, tx_env, inspector, &EthEvmFactory::default())
+    }
+
+    /// Like [`inspect`](Self::inspect), but uses the given factory to construct the EVM.
+    pub fn inspect_with_factory<F: FoundryEvmFactory, I>(
+        &mut self,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &mut F::Tx,
+        inspector: I,
+        factory: &F,
+    ) -> eyre::Result<ResultAndState>
+    where
+        I: for<'db> FoundryInspectorExt<F::Context<&'db mut dyn DatabaseExt>>,
+        for<'db> F::Context<&'db mut dyn DatabaseExt>: FoundryContextExt,
+    {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
-        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller, tx_env.kind));
+        self.pending_init = Some((evm_env.cfg_env.spec.into(), tx_env.caller(), tx_env.kind()));
 
-        let mut evm = crate::evm::new_eth_evm_with_inspector(self, evm_env.clone(), inspector);
-
-        let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
-
-        *tx_env = evm.tx.clone();
-        *evm_env = evm.finish().1;
-
-        Ok(res)
+        transact_with_factory(self, evm_env, tx_env, inspector, factory)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
