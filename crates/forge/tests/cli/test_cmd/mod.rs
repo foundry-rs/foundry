@@ -2921,6 +2921,123 @@ forgetest_async!(flaky_can_get_broadcast_txs, |prj, cmd| {
     cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
 });
 
+forgetest_init!(can_test_with_custom_create2_deployer, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_ds_test();
+
+    let create2_deployer = "0x0000000000000000000000000000000000B4956C";
+    prj.add_test(
+        "CustomCreate2DeployerTest.t.sol",
+        &format!(
+            r#"
+import "../src/Vm.sol";
+import "../src/test.sol";
+
+contract Create2Target {{}}
+
+contract CustomCreate2DeployerTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testCustomCreate2Deployer() public {{
+        address deployer = {create2_deployer};
+        bytes32 salt = bytes32(uint256(1337));
+
+        Create2Target target = new Create2Target{{salt: salt}}();
+
+        address expectedAddress = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(
+                            bytes1(0xff),
+                            deployer,
+                            salt,
+                            keccak256(abi.encodePacked(type(Create2Target).creationCode, abi.encode()))
+                        )
+                    )
+                )
+            )
+        );
+
+        assertEq(address(target), expectedAddress);
+    }}
+}}
+            "#
+        ),
+    );
+
+    cmd.args([
+        "test",
+        "--match-contract",
+        "CustomCreate2DeployerTest",
+        "--always-use-create-2-factory",
+        "--create2-deployer",
+        create2_deployer,
+    ])
+    .assert_success();
+});
+
+forgetest_async!(can_test_with_custom_create2_deployer_fork, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_ds_test();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true).silent()).await;
+    let create2_deployer = "0x0000000000000000000000000000000000B4956C";
+
+    prj.add_test(
+        "CustomCreate2DeployerForkTest.t.sol",
+        &format!(
+            r#"
+import "../src/Vm.sol";
+import "../src/test.sol";
+
+contract Create2ForkTarget {{}}
+
+contract CustomCreate2DeployerForkTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testForkCustomCreate2Deployer() public {{
+        address deployer = {create2_deployer};
+        bytes32 salt = bytes32(uint256(1338));
+
+        Create2ForkTarget target = new Create2ForkTarget{{salt: salt}}();
+
+        address expectedAddress = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(
+                            bytes1(0xff),
+                            deployer,
+                            salt,
+                            keccak256(abi.encodePacked(type(Create2ForkTarget).creationCode, abi.encode()))
+                        )
+                    )
+                )
+            )
+        );
+
+        assertEq(address(target), expectedAddress);
+    }}
+}}
+            "#
+        ),
+    );
+
+    cmd.args([
+        "test",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--match-contract",
+        "CustomCreate2DeployerForkTest",
+        "--always-use-create-2-factory",
+        "--create2-deployer",
+        create2_deployer,
+    ])
+    .assert_success();
+});
+
 // See <https://github.com/foundry-rs/foundry/issues/9297>
 forgetest_init!(
     #[ignore = "RPC Service Unavailable"]

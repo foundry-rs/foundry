@@ -187,6 +187,8 @@ impl<'a> ContractRunner<'a> {
         self.executor.set_balance(CALLER, self.initial_balance())?;
         self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance())?;
 
+        let create2_deployer = self.config.create2_deployer;
+        self.executor.inspector_mut().set_create2_deployer(create2_deployer);
         self.executor.deploy_create2_deployer()?;
 
         // Optionally call the `setUp` function

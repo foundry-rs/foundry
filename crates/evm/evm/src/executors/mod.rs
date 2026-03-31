@@ -237,7 +237,13 @@ impl Executor {
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
-        let create2_deployer = self.create2_deployer();
+        // Use the same deployer source as CREATE2 frame handling to avoid setup/runtime mismatch.
+        let create2_deployer = self
+            .inspector()
+            .cheatcodes
+            .as_ref()
+            .map(|cheats| cheats.config.evm_opts.create2_deployer)
+            .unwrap_or_else(|| self.create2_deployer());
         let create2_deployer_account =
             self.backend().basic_ref(create2_deployer)?.unwrap_or_default();
 

@@ -353,7 +353,7 @@ impl TestRunnerConfig {
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.networks(self.networks);
-        // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
+        inspector.set_create2_deployer(self.config.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
         executor.set_spec_id(self.spec_id);
@@ -384,7 +384,7 @@ impl TestRunnerConfig {
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .networks(self.networks)
-                    .create2_deployer(self.evm_opts.create2_deployer)
+                    .create2_deployer(self.config.create2_deployer)
                     .set_analysis(analysis)
             })
             .spec_id(self.spec_id)
