@@ -6,7 +6,7 @@ use figment::{
 use heck::ToSnakeCase;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Allowed keys for CompilationRestrictions.
+/// Allowed keys for `CompilationRestrictions`.
 const COMPILATION_RESTRICTIONS_KEYS: &[&str] = &[
     "paths",
     "version",
@@ -20,17 +20,17 @@ const COMPILATION_RESTRICTIONS_KEYS: &[&str] = &[
     "max_evm_version",
 ];
 
-/// Allowed keys for SettingsOverrides.
+/// Allowed keys for `SettingsOverrides`.
 const SETTINGS_OVERRIDES_KEYS: &[&str] =
     &["name", "via_ir", "evm_version", "optimizer", "optimizer_runs", "bytecode_hash"];
 
-/// Allowed keys for VyperConfig.
-/// Required because VyperConfig uses `skip_serializing_if = "Option::is_none"` on all fields,
+/// Allowed keys for `VyperConfig`.
+/// Required because `VyperConfig` uses `skip_serializing_if = "Option::is_none"` on all fields,
 /// causing the default serialization to produce an empty dict.
 const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
 
-/// Allowed keys for DocConfig.
-/// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
+/// Allowed keys for `DocConfig`.
+/// Required because `DocConfig` uses `skip_serializing_if = "Option::is_none"` on some fields
 /// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
 const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "path", "ignore"];
 
@@ -89,14 +89,10 @@ impl<P: Provider> WarningsProvider<P> {
         // Add warning for deprecated keys.
         let deprecated_key_warning = |key| {
             DEPRECATIONS.iter().find_map(|(deprecated_key, new_value)| {
-                if key == *deprecated_key {
-                    Some(Warning::DeprecatedKey {
-                        old: deprecated_key.to_string(),
-                        new: new_value.to_string(),
-                    })
-                } else {
-                    None
-                }
+                (key == *deprecated_key).then(|| Warning::DeprecatedKey {
+                    old: deprecated_key.to_string(),
+                    new: new_value.to_string(),
+                })
             })
         };
         let profiles = data
@@ -130,7 +126,7 @@ impl<P: Provider> WarningsProvider<P> {
                         .metadata()
                         .source
                         .map(|s| s.to_string())
-                        .unwrap_or(Config::FILE_NAME.to_string());
+                        .unwrap_or_else(|| Config::FILE_NAME.to_string());
                     for key in profile_dict.keys() {
                         let is_not_deprecated =
                             !DEPRECATIONS.iter().any(|(deprecated_key, _)| *deprecated_key == key);
@@ -183,7 +179,7 @@ impl<P: Provider> WarningsProvider<P> {
             .metadata()
             .source
             .map(|s| s.to_string())
-            .unwrap_or(Config::FILE_NAME.to_string());
+            .unwrap_or_else(|| Config::FILE_NAME.to_string());
 
         for section_name in Config::STANDALONE_SECTIONS {
             // Get the section from the parsed data

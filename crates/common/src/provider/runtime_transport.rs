@@ -20,7 +20,7 @@ use tower::Service;
 use url::Url;
 
 /// An enum representing the different transports that can be used to connect to a runtime.
-/// Only meant to be used internally by [RuntimeTransport].
+/// Only meant to be used internally by [`RuntimeTransport`].
 #[derive(Clone, Debug)]
 pub enum InnerTransport {
     /// HTTP transport
@@ -84,7 +84,7 @@ pub struct RuntimeTransport {
     no_proxy: bool,
 }
 
-/// A builder for [RuntimeTransport].
+/// A builder for [`RuntimeTransport`].
 #[derive(Debug)]
 pub struct RuntimeTransportBuilder {
     url: Url,
@@ -97,7 +97,7 @@ pub struct RuntimeTransportBuilder {
 
 impl RuntimeTransportBuilder {
     /// Create a new builder with the given URL.
-    pub fn new(url: Url) -> Self {
+    pub const fn new(url: Url) -> Self {
         Self {
             url,
             headers: vec![],
@@ -121,13 +121,13 @@ impl RuntimeTransportBuilder {
     }
 
     /// Set the timeout for the transport.
-    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+    pub const fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Set whether to accept invalid certificates.
-    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+    pub const fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
         self
     }
@@ -135,13 +135,13 @@ impl RuntimeTransportBuilder {
     /// Set whether to disable automatic proxy detection.
     ///
     /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
-    /// where system proxy detection via SCDynamicStore causes crashes.
-    pub fn no_proxy(mut self, no_proxy: bool) -> Self {
+    /// where system proxy detection via `SCDynamicStore` causes crashes.
+    pub const fn no_proxy(mut self, no_proxy: bool) -> Self {
         self.no_proxy = no_proxy;
         self
     }
 
-    /// Builds the [RuntimeTransport] and returns it in a disconnected state.
+    /// Builds the [`RuntimeTransport`] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
         RuntimeTransport {
@@ -202,7 +202,7 @@ impl RuntimeTransport {
 
         // Add any custom headers.
         for header in &self.headers {
-            let make_err = || RuntimeTransportError::BadHeader(header.to_string());
+            let make_err = || RuntimeTransportError::BadHeader(header.clone());
 
             let (key, val) = header.split_once(':').ok_or_else(make_err)?;
 
@@ -225,7 +225,7 @@ impl RuntimeTransport {
         Ok(client_builder.build()?)
     }
 
-    /// Connects to an HTTP [alloy_transport_http::Http] transport.
+    /// Connects to an HTTP [`alloy_transport_http::Http`] transport.
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
@@ -261,7 +261,7 @@ impl RuntimeTransport {
     /// URL scheme. Retries are performed by an external client layer (e.g., `RetryBackoffLayer`),
     /// if such a layer is configured by the caller.
     /// For sending the actual request, this action is delegated down to the
-    /// underlying transport through Tower's [tower::Service::call]. See tower's [tower::Service]
+    /// underlying transport through Tower's [`tower::Service::call`]. See tower's [`tower::Service`]
     /// trait for more information.
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
         let this = self.clone();

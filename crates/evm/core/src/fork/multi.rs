@@ -234,7 +234,7 @@ type GetEvmEnvSender<SPEC, BLOCK> = OneshotSender<Option<EvmEnv<SPEC, BLOCK>>>;
 /// Request that's send to the handler.
 #[derive(Debug)]
 enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
-    /// Creates a new ForkBackend.
+    /// Creates a new `ForkBackend`.
     CreateFork(Box<CreateFork>, CreateSender<N, SPEC, BLOCK>),
     /// Returns the Fork backend for the `ForkId` if it exists.
     GetFork(ForkId, OneshotSender<Option<SharedBackend<N, BLOCK>>>),
@@ -278,7 +278,7 @@ pub struct MultiForkHandler<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 
     /// All _unique_ forkids mapped to their corresponding backend.
     ///
-    /// Note: The backend can be shared by multiple ForkIds if the target the same provider and
+    /// Note: The backend can be shared by multiple `ForkIds` if the target the same provider and
     /// block number.
     forks: HashMap<ForkId, CreatedFork<N, SPEC, BLOCK>>,
 
@@ -499,8 +499,7 @@ impl<
         if this
             .flush_cache_interval
             .as_mut()
-            .map(|interval| interval.poll_tick(cx).is_ready())
-            .unwrap_or_default()
+            .is_some_and(|interval| interval.poll_tick(cx).is_ready())
             && !this.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
@@ -509,7 +508,9 @@ impl<
             std::thread::Builder::new()
                 .name("flusher".into())
                 .spawn(move || {
-                    forks.into_iter().for_each(|fork| fork.flush_cache());
+                    for fork in forks {
+                        fork.flush_cache();
+                    }
                 })
                 .expect("failed to spawn thread");
         }
@@ -533,7 +534,7 @@ struct CreatedFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 }
 
 impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
-    pub fn new(
+    pub(crate) fn new(
         opts: CreateFork,
         evm_env: EvmEnv<SPEC, BLOCK>,
         backend: SharedBackend<N, BLOCK>,

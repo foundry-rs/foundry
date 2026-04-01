@@ -27,7 +27,7 @@ pub struct GasReport {
     /// Whether to include gas reports for tests.
     include_tests: bool,
     /// All contracts that were analyzed grouped by their identifier
-    /// ``test/Counter.t.sol:CounterTest
+    /// `test/Counter.t.sol:CounterTest`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
 
@@ -87,7 +87,7 @@ impl GasReport {
         if !self.should_report(contract_name) {
             return;
         }
-        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        let contract_info = self.contracts.entry(name.clone()).or_default();
         let is_create_call = trace.kind.is_any_create();
 
         // Record contract deployment size.
@@ -231,11 +231,11 @@ impl GasReport {
             Cell::new("# Calls").fg(Color::Cyan),
         ]);
 
-        contract.functions.iter().for_each(|(fname, sigs)| {
-            sigs.iter().for_each(|(sig, gas_info)| {
+        for (fname, sigs) in &contract.functions {
+            for (sig, gas_info) in sigs {
                 // Show function signature if overloaded else display function name.
                 let display_name =
-                    if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
+                    if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
 
                 table.add_row(vec![
                     Cell::new(display_name),
@@ -253,8 +253,8 @@ impl GasReport {
                         .set_alignment(CellAlignment::Right),
                     Cell::new(gas_info.calls.to_string()).set_alignment(CellAlignment::Right),
                 ]);
-            })
-        });
+            }
+        }
 
         table
     }
@@ -264,7 +264,7 @@ impl GasReport {
 pub struct ContractInfo {
     pub gas: u64,
     pub size: usize,
-    /// Function name -> Function signature -> GasInfo
+    /// Function name -> Function signature -> `GasInfo`
     pub functions: BTreeMap<String, BTreeMap<String, GasInfo>>,
 }
 

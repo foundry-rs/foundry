@@ -24,7 +24,7 @@ pub(crate) struct PreprocessorDependencies {
 }
 
 impl PreprocessorDependencies {
-    pub fn new(
+    pub(super) fn new(
         gcx: Gcx<'_>,
         paths: &[PathBuf],
         src_dir: &Path,

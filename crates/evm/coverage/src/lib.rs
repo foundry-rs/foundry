@@ -225,7 +225,7 @@ impl HitMap {
 
     /// Returns the bytecode.
     #[inline]
-    pub fn bytecode(&self) -> &Bytes {
+    pub const fn bytecode(&self) -> &Bytes {
         &self.bytecode
     }
 
@@ -298,7 +298,7 @@ impl fmt::Display for ContractId {
     }
 }
 
-/// An item anchor describes what instruction marks a [CoverageItem] as covered.
+/// An item anchor describes what instruction marks a [`CoverageItem`] as covered.
 #[derive(Clone, Debug)]
 pub struct ItemAnchor {
     /// The program counter for the opcode of this anchor.
@@ -480,7 +480,7 @@ impl fmt::Display for SourceLocation {
 
 impl SourceLocation {
     /// Returns the byte range as usize.
-    pub fn bytes(&self) -> Range<usize> {
+    pub const fn bytes(&self) -> Range<usize> {
         self.bytes.start as usize..self.bytes.end as usize
     }
 
@@ -530,7 +530,7 @@ impl CoverageSummary {
     }
 
     /// Adds another coverage summary to this one.
-    pub fn merge(&mut self, other: &Self) {
+    pub const fn merge(&mut self, other: &Self) {
         let Self {
             line_count,
             line_hits,
@@ -552,7 +552,7 @@ impl CoverageSummary {
     }
 
     /// Adds a coverage item to this summary.
-    pub fn add_item(&mut self, item: &CoverageItem) {
+    pub const fn add_item(&mut self, item: &CoverageItem) {
         match item.kind {
             CoverageItemKind::Line => {
                 self.line_count += 1;

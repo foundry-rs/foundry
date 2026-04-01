@@ -13,7 +13,7 @@ pub struct ExtractConfigError {
 
 impl ExtractConfigError {
     /// Wraps the figment error.
-    pub fn new(error: figment::Error) -> Self {
+    pub const fn new(error: figment::Error) -> Self {
         Self { error }
     }
 }
@@ -22,13 +22,8 @@ impl fmt::Display for ExtractConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut unique_errors = Vec::with_capacity(self.error.count());
         let mut unique = HashSet::with_capacity(self.error.count());
-        for err in self.error.clone().into_iter() {
-            let err = if err
-                .metadata
-                .as_ref()
-                .map(|meta| meta.name.contains(Toml::NAME))
-                .unwrap_or_default()
-            {
+        for err in self.error.clone() {
+            let err = if err.metadata.as_ref().is_some_and(|meta| meta.name.contains(Toml::NAME)) {
                 FoundryConfigError::Toml(err)
             } else {
                 FoundryConfigError::Other(err)
@@ -152,7 +147,7 @@ impl SolidityErrorCode {
     /// The textual identifier for this error
     ///
     /// Returns `Err(code)` if unknown error
-    pub fn as_str(&self) -> Result<&'static str, u64> {
+    pub const fn as_str(&self) -> Result<&'static str, u64> {
         let s = match self {
             Self::SpdxLicenseNotProvided => "license",
             Self::VisibilityForConstructorIsIgnored => "constructor-visibility",

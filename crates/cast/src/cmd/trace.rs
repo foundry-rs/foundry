@@ -13,11 +13,11 @@ use foundry_common::stdin;
 /// CLI arguments for `cast trace`.
 #[derive(Debug, Parser)]
 pub struct TraceArgs {
-    /// Transaction hash (for trace_transaction) or raw tx hex/JSON (for trace_rawTransaction
+    /// Transaction hash (for `trace_transaction`) or raw tx hex/JSON (for `trace_rawTransaction`
     /// with --raw)
     tx: Option<String>,
 
-    /// Use trace_rawTransaction instead of trace_transaction.
+    /// Use `trace_rawTransaction` instead of `trace_transaction`.
     /// Required when passing raw transaction hex or JSON instead of a tx hash.
     #[arg(long)]
     raw: bool,
@@ -54,7 +54,7 @@ impl TraceArgs {
                 hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))?
             } else if is_json {
                 let tx: AnyRpcTransaction = serde_json::from_str(trimmed)?;
-                tx.as_ref().encoded_2718().to_vec()
+                tx.as_ref().encoded_2718().clone()
             } else {
                 hex::decode(trimmed)?
             };

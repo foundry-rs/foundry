@@ -155,7 +155,7 @@ impl From<revm::context_interface::CreateScheme> for CreateScheme {
 }
 
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: Self) -> bool {
+    pub const fn eq(&self, create_scheme: Self) -> bool {
         matches!(
             (self, create_scheme),
             (Self::Create, Self::Create) | (Self::Create2, Self::Create2 { .. })
@@ -1036,7 +1036,7 @@ pub(crate) fn handle_expect_emit<SPEC, BLOCK, N: Network>(
 ///
 /// The second element of the tuple counts the number of times the log has been emitted by a
 /// particular address
-pub type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<LogCountMap>)>;
+pub(crate) type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<LogCountMap>)>;
 
 #[derive(Clone, Debug, Default)]
 pub struct LogCountMap {
@@ -1307,10 +1307,7 @@ pub(crate) fn get_emit_mismatch_message(
         // Build the error message with event names if available
         let event_prefix = match (expected_decoded, actual_decoded) {
             (Some(expected_dec), Some(actual_dec)) if expected_dec.name == actual_dec.name => {
-                format!(
-                    "{} param mismatch",
-                    expected_dec.name.as_ref().unwrap_or(&"log".to_string())
-                )
+                format!("{} param mismatch", expected_dec.name.as_deref().unwrap_or("log"))
             }
             _ => {
                 if is_anonymous {
@@ -1340,10 +1337,10 @@ pub(crate) fn get_emit_mismatch_message(
                     {
                         let (expected_name, expected_value) = &expected_params[param_idx];
                         let (_actual_name, actual_value) = &actual_params[param_idx];
-                        let param_name = if !expected_name.is_empty() {
-                            expected_name
-                        } else {
+                        let param_name = if expected_name.is_empty() {
                             &format!("param{param_idx}")
+                        } else {
+                            expected_name
                         };
                         return format!(
                             "{param_name}: expected={expected_value}, got={actual_value}",

@@ -163,7 +163,7 @@ pub use semver;
 ///     the "default" meta-profile.
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
@@ -290,7 +290,7 @@ pub struct Config {
     /// Whether to disable automatic proxy detection for the rpc server.
     ///
     /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
-    /// where system proxy detection via SCDynamicStore causes crashes.
+    /// where system proxy detection via `SCDynamicStore` causes crashes.
     pub eth_rpc_no_proxy: bool,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
@@ -300,9 +300,9 @@ pub struct Config {
     ///
     /// # Example
     ///
-    /// rpc_headers = ["x-custom-header:value", "x-another-header:another-value"]
+    /// `rpc_headers` = ["x-custom-header:value", "x-another-header:another-value"]
     ///
-    /// You can also the ETH_RPC_HEADERS env variable like so:
+    /// You can also the `ETH_RPC_HEADERS` env variable like so:
     /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
     pub eth_rpc_headers: Option<Vec<String>>,
     /// Print the equivalent curl command instead of making the RPC request.
@@ -464,7 +464,7 @@ pub struct Config {
     pub use_literal_content: bool,
     /// Whether to include the metadata hash.
     ///
-    /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
+    /// The metadata hash is machine dependent. By default, this is set to [`BytecodeHash::None`] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
     /// Whether to append the metadata hash to the bytecode.
@@ -649,7 +649,7 @@ impl From<bool> for DenyLevel {
 
 impl DenyLevel {
     /// Returns `true` if the deny level includes warnings.
-    pub fn warnings(&self) -> bool {
+    pub const fn warnings(&self) -> bool {
         match self {
             Self::Never => false,
             Self::Warnings | Self::Notes => true,
@@ -657,7 +657,7 @@ impl DenyLevel {
     }
 
     /// Returns `true` if the deny level includes notes.
-    pub fn notes(&self) -> bool {
+    pub const fn notes(&self) -> bool {
         match self {
             Self::Never | Self::Warnings => false,
             Self::Notes => true,
@@ -665,7 +665,7 @@ impl DenyLevel {
     }
 
     /// Returns `true` if the deny level is set to never (only errors).
-    pub fn never(&self) -> bool {
+    pub const fn never(&self) -> bool {
         match self {
             Self::Never => true,
             Self::Warnings | Self::Notes => false,
@@ -678,7 +678,7 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 
 /// Deprecated keys and their replacements.
 ///
-/// See [Warning::DeprecatedKey]
+/// See [`Warning::DeprecatedKey`]
 pub const DEPRECATIONS: &[(&str, &str)] =
     &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny = warnings")];
 
@@ -845,7 +845,7 @@ impl Config {
         Ok(config)
     }
 
-    /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
+    /// Returns the populated [Figment] using the requested [`FigmentProviders`] preset.
     ///
     /// This will merge various providers, such as env,toml,remappings into the figment if
     /// requested.
@@ -1002,7 +1002,7 @@ impl Config {
         self
     }
 
-    /// Normalizes the evm version if a [SolcReq] is set
+    /// Normalizes the evm version if a [`SolcReq`] is set
     pub fn normalized_evm_version(mut self) -> Self {
         self.normalize_evm_version();
         self
@@ -1010,12 +1010,12 @@ impl Config {
 
     /// Normalizes optimizer settings.
     /// See <https://github.com/foundry-rs/foundry/issues/9665>
-    pub fn normalized_optimizer_settings(mut self) -> Self {
+    pub const fn normalized_optimizer_settings(mut self) -> Self {
         self.normalize_optimizer_settings();
         self
     }
 
-    /// Normalizes the evm version if a [SolcReq] is set to a valid version.
+    /// Normalizes the evm version if a [`SolcReq`] is set to a valid version.
     pub fn normalize_evm_version(&mut self) {
         self.evm_version = self.get_normalized_evm_version();
     }
@@ -1024,7 +1024,7 @@ impl Config {
     /// - with default settings, optimizer is set to false and optimizer runs to 200
     /// - if optimizer is set and optimizer runs not specified, then optimizer runs is set to 200
     /// - enable optimizer if not explicitly set and optimizer runs set to a value greater than 0
-    pub fn normalize_optimizer_settings(&mut self) {
+    pub const fn normalize_optimizer_settings(&mut self) {
         match (self.optimizer, self.optimizer_runs) {
             // Default: set the optimizer to false and optimizer runs to 200.
             (None, None) => {
@@ -1039,7 +1039,7 @@ impl Config {
         }
     }
 
-    /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
+    /// Returns the normalized [`EvmVersion`] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
         if let Some(version) = self.solc_version()
             && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
@@ -1068,7 +1068,7 @@ impl Config {
     /// Cleans up any duplicate `Remapping` and sorts them
     ///
     /// On windows this will convert any `\` in the remapping path into a `/`
-    pub fn sanitize_remappings(&mut self) {
+    pub const fn sanitize_remappings(&mut self) {
         #[cfg(target_os = "windows")]
         {
             // force `/` in remappings on windows
@@ -1151,7 +1151,8 @@ impl Config {
         paths: &ProjectPathsConfig,
     ) -> Result<BTreeMap<PathBuf, RestrictionsWithVersion<MultiCompilerRestrictions>>, SolcError>
     {
-        let mut map = BTreeMap::new();
+        let mut map: BTreeMap<PathBuf, RestrictionsWithVersion<MultiCompilerRestrictions>> =
+            BTreeMap::new();
         if self.compilation_restrictions.is_empty() {
             return Ok(BTreeMap::new());
         }
@@ -1171,10 +1172,7 @@ impl Config {
             }) {
                 let res: RestrictionsWithVersion<_> =
                     res.clone().try_into().map_err(SolcError::msg)?;
-                if !map.contains_key(source) {
-                    map.insert(source.clone(), res);
-                } else {
-                    let value = map.remove(source.as_path()).unwrap();
+                if let Some(value) = map.remove(source) {
                     if let Some(merged) = value.clone().merge(res) {
                         map.insert(source.clone(), merged);
                     } else {
@@ -1188,6 +1186,8 @@ impl Config {
                         );
                         map.insert(source.clone(), value);
                     }
+                } else {
+                    map.insert(source.clone(), res);
                 }
             }
         }
@@ -1327,7 +1327,7 @@ impl Config {
         Ok(None)
     }
 
-    /// Returns the [SpecId] derived from the configured [EvmVersion]
+    /// Returns the [`SpecId`] derived from the configured [`EvmVersion`]
     pub fn evm_spec_id(&self) -> SpecId {
         evm_spec_id(self.evm_version)
     }
@@ -1336,7 +1336,7 @@ impl Config {
     ///
     /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
     /// `auto_detect_solc`
-    pub fn is_auto_detect(&self) -> bool {
+    pub const fn is_auto_detect(&self) -> bool {
         if self.solc.is_some() {
             return false;
         }
@@ -1418,7 +1418,7 @@ impl Config {
         Ok(MultiCompiler { solc: Some(self.solc_compiler()?), vyper: self.vyper_compiler()? })
     }
 
-    /// Returns configured [MultiCompilerSettings].
+    /// Returns configured [`MultiCompilerSettings`].
     pub fn compiler_settings(&self) -> Result<MultiCompilerSettings, SolcError> {
         Ok(MultiCompilerSettings { solc: self.solc_settings()?, vyper: self.vyper_settings()? })
     }
@@ -1602,7 +1602,7 @@ impl Config {
     /// `chain`, and `etherscan_api_key`
     ///
     /// If not matching alias was found, then this will try to find the first entry in the table
-    /// with a matching chain id. If an etherscan_api_key is already set it will take precedence
+    /// with a matching chain id. If an `etherscan_api_key` is already set it will take precedence
     /// over the chain's entry in the table.
     pub fn get_etherscan_config_with_chain(
         &self,
@@ -1648,7 +1648,7 @@ impl Config {
     ///
     /// Optionally updates the config with the given `chain`.
     ///
-    /// See also [Self::get_etherscan_config_with_chain]
+    /// See also [`Self::get_etherscan_config_with_chain`]
     #[expect(clippy::disallowed_macros)]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain)
@@ -1779,7 +1779,7 @@ impl Config {
         Ok(SolcSettings { settings, cli_settings })
     }
 
-    /// Returns the configured [VyperSettings] that includes:
+    /// Returns the configured [`VyperSettings`] that includes:
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
@@ -1904,7 +1904,7 @@ impl Config {
     /// Updates the `foundry.toml` file for the given `root` based on the provided closure.
     ///
     /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
-    /// [Self::get_config_path()] and if the closure returns `true`.
+    /// [`Self::get_config_path()`] and if the closure returns `true`.
     pub fn update_at<F>(root: &Path, f: F) -> eyre::Result<()>
     where
         F: FnOnce(&Self, &mut toml_edit::DocumentMut) -> bool,
@@ -1916,7 +1916,7 @@ impl Config {
     /// Updates the `foundry.toml` file this `Config` ias based on with the provided closure.
     ///
     /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
-    /// [Self::get_config_path()] and if the closure returns `true`
+    /// [`Self::get_config_path()`] and if the closure returns `true`
     pub fn update<F>(&self, f: F) -> eyre::Result<()>
     where
         F: FnOnce(&mut toml_edit::DocumentMut) -> bool,
@@ -1982,11 +1982,10 @@ impl Config {
             })
             .collect::<Vec<_>>();
         // wrap inner table in [profile.<profile>]
-        let mut wrapping_table = [(
+        let mut wrapping_table = std::iter::once((
             Self::PROFILE_SECTION.into(),
-            toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
-        )]
-        .into_iter()
+            toml::Value::Table(std::iter::once((self.profile.to_string(), value)).collect()),
+        ))
         .collect::<toml::map::Map<_, _>>();
         // insert standalone sections
         for (section, value) in standalone_sections {
@@ -2183,9 +2182,8 @@ impl Config {
             }
             if let Ok(entries) = cache_dir.as_path().read_dir() {
                 for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    match Chain::from_str(&entry.file_name().to_string_lossy()) {
-                        Ok(chain) => cache.chains.push(Self::list_foundry_chain_cache(chain)?),
-                        Err(_) => continue,
+                    if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
+                        cache.chains.push(Self::list_foundry_chain_cache(chain)?);
                     }
                 }
                 Ok(cache)
@@ -2330,7 +2328,7 @@ impl Config {
 
         // Normalize `deny` based on the provided `deny_warnings` value.
         if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
-            && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
+            && figment.extract_inner("deny") == Ok(DenyLevel::Never)
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
         }
@@ -2450,7 +2448,10 @@ mod serde_regex {
 pub(crate) mod from_opt_glob {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S>(value: &Option<globset::Glob>, serializer: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<S>(
+        value: &Option<globset::Glob>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -2460,7 +2461,7 @@ pub(crate) mod from_opt_glob {
         }
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<globset::Glob>, D::Error>
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Option<globset::Glob>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -2766,7 +2767,7 @@ pub(crate) mod from_str_lowercase {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::str::FromStr;
 
-    pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
         T: std::fmt::Display,
         S: Serializer,
@@ -2774,7 +2775,7 @@ pub(crate) mod from_str_lowercase {
         serializer.collect_str(&value.to_string().to_lowercase())
     }
 
-    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+    pub(crate) fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
     where
         D: Deserializer<'de>,
         T: FromStr,

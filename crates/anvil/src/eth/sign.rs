@@ -142,7 +142,7 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     }
 }
 
-/// Builds a TxEnvelope from UnsignedTx with a zeroed signature.
+/// Builds a `TxEnvelope` from `UnsignedTx` with a zeroed signature.
 ///
 /// Used for impersonated accounts, where transactions are accepted without a valid signature.
 pub fn build_impersonated(typed_tx: FoundryTypedTx) -> FoundryTxEnvelope {

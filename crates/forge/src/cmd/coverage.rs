@@ -114,8 +114,9 @@ impl CoverageArgs {
                     Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
                 }
                 CoverageReportKind::Lcov => {
-                    let path =
-                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    let path = root.join(
+                        self.report_file.as_deref().unwrap_or_else(|| Path::new("lcov.info")),
+                    );
                     Box::new(LcovReporter::new(path, self.lcov_version.clone()))
                 }
                 CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
@@ -316,11 +317,11 @@ impl CoverageArgs {
         Ok(())
     }
 
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
-    pub fn watch(&self) -> &WatchArgs {
+    pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
 }

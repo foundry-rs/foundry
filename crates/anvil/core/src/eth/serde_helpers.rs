@@ -50,13 +50,13 @@ pub mod empty_params {
     }
 }
 
-/// A module that deserializes either a BlockNumberOrTag, or a simple number.
+/// A module that deserializes either a `BlockNumberOrTag`, or a simple number.
 pub mod lenient_block_number {
     pub use alloy_eips::eip1898::LenientBlockNumberOrTag;
     use alloy_rpc_types::BlockNumberOrTag;
     use serde::{Deserialize, Deserializer};
 
-    /// deserializes either a BlockNumberOrTag, or a simple number.
+    /// deserializes either a `BlockNumberOrTag`, or a simple number.
     pub use alloy_eips::eip1898::lenient_block_number_or_tag::deserialize as lenient_block_number;
 
     /// Same as `lenient_block_number` but requires to be `[num; 1]`

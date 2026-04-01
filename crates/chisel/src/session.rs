@@ -1,4 +1,4 @@
-//! ChiselSession
+//! `ChiselSession`
 //!
 //! This module contains the `ChiselSession` struct, which is the top-level
 //! wrapper for a serializable REPL session.
@@ -24,11 +24,11 @@ impl ChiselSession {
     ///
     /// ### Takes
     ///
-    /// An instance of [SessionSourceConfig]
+    /// An instance of [`SessionSourceConfig`]
     ///
     /// ### Returns
     ///
-    /// A new instance of [ChiselSession]
+    /// A new instance of [`ChiselSession`]
     pub fn new(config: SessionSourceConfig) -> Result<Self> {
         // Return initialized ChiselSession with set solc version
         Ok(Self { source: SessionSource::new(config)?, id: None })
@@ -43,7 +43,7 @@ impl ChiselSession {
     /// ### Notes
     ///
     /// This function will not panic, but will return a blank string if the
-    /// session's [SessionSource] is None.
+    /// session's [`SessionSource`] is None.
     pub fn contract_source(&self) -> String {
         self.source.to_repl_source()
     }
@@ -68,7 +68,7 @@ impl ChiselSession {
         Ok(())
     }
 
-    /// Writes the ChiselSession to a file by serializing it to a JSON string
+    /// Writes the `ChiselSession` to a file by serializing it to a JSON string
     ///
     /// ### Returns
     ///
@@ -184,7 +184,7 @@ impl ChiselSession {
         Ok(sessions)
     }
 
-    /// Loads a specific ChiselSession from the specified cache file
+    /// Loads a specific `ChiselSession` from the specified cache file
     ///
     /// ### Takes
     ///
@@ -222,7 +222,7 @@ impl ChiselSession {
             .to_string())
     }
 
-    /// Loads the latest ChiselSession from the cache file
+    /// Loads the latest `ChiselSession` from the cache file
     ///
     /// ### Returns
     ///

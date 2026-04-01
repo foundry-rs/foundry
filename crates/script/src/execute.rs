@@ -91,7 +91,7 @@ impl LinkedState {
     }
 }
 
-/// Same as [LinkedState], but also contains [ExecutionData].
+/// Same as [`LinkedState`], but also contains [`ExecutionData`].
 #[derive(Debug)]
 pub struct PreExecutionState {
     pub args: ScriptArgs,
@@ -145,7 +145,7 @@ impl PreExecutionState {
         })
     }
 
-    /// Executes the script using the provided runner and returns the [ScriptResult].
+    /// Executes the script using the provided runner and returns the [`ScriptResult`].
     pub async fn execute_with_runner(&self, runner: &mut ScriptRunner) -> Result<ScriptResult> {
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
@@ -228,8 +228,7 @@ impl RpcData {
     /// Iterates over script transactions and collects RPC urls.
     fn from_transactions(txs: &BroadcastableTransactions<Ethereum>) -> Self {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
-        let total_rpcs =
-            txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
+        let total_rpcs = txs.iter().filter_map(|tx| tx.rpc.clone()).collect::<HashSet<_>>();
 
         Self { total_rpcs, missing_rpc }
     }
@@ -330,7 +329,7 @@ impl ExecutedState {
         })
     }
 
-    /// Builds [CallTraceDecoder] from the execution result and known contracts.
+    /// Builds [`CallTraceDecoder`] from the execution result and known contracts.
     async fn build_trace_decoder(
         &self,
         known_contracts: &ContractsByArtifact,
@@ -366,16 +365,14 @@ impl ExecutedState {
         match func.abi_decode_output(returned) {
             Ok(decoded) => {
                 for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type =
-                        output.internal_type.clone().unwrap_or(InternalType::Other {
-                            contract: None,
-                            ty: "unknown".to_string(),
-                        });
+                    let internal_type = output.internal_type.clone().unwrap_or_else(|| {
+                        InternalType::Other { contract: None, ty: "unknown".to_string() }
+                    });
 
-                    let label = if !output.name.is_empty() {
-                        output.name.to_string()
-                    } else {
+                    let label = if output.name.is_empty() {
                         index.to_string()
+                    } else {
+                        output.name.clone()
                     };
 
                     returns.insert(
@@ -464,16 +461,14 @@ impl PreSimulationState {
             match func.abi_decode_output(&result.returned) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                        let internal_type =
-                            output.internal_type.clone().unwrap_or(InternalType::Other {
-                                contract: None,
-                                ty: "unknown".to_string(),
-                            });
+                        let internal_type = output.internal_type.clone().unwrap_or_else(|| {
+                            InternalType::Other { contract: None, ty: "unknown".to_string() }
+                        });
 
-                        let label = if !output.name.is_empty() {
-                            output.name.to_string()
-                        } else {
+                        let label = if output.name.is_empty() {
                             index.to_string()
+                        } else {
+                            output.name.clone()
                         };
                         sh_println!(
                             "{label}: {internal_type} {value}",

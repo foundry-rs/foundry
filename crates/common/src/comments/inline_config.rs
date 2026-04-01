@@ -46,7 +46,7 @@ impl InlineConfigItem<Vec<String>> {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
-                Some((id_str, _)) => id_str.split(",").map(|s| s.trim().to_string()).collect(),
+                Some((id_str, _)) => id_str.split(',').map(|s| s.trim().to_string()).collect(),
                 None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };
@@ -248,12 +248,17 @@ impl<I: ItemIdIterator> InlineConfig<I> {
 
             InlineConfigItem::DisableStart(ids) => {
                 for id in ids.into_iter() {
-                    disabled_blocks.entry(id).and_modify(|(depth, _, _)| *depth += 1).or_insert((
-                        1,
-                        span.lo(),
-                        // Use file end as fallback for unclosed blocks
-                        file.absolute_position(RelativeBytePos::from_usize(src.len())),
-                    ));
+                    disabled_blocks
+                        .entry(id)
+                        .and_modify(|(depth, _, _)| *depth += 1)
+                        .or_insert_with(|| {
+                            (
+                                1,
+                                span.lo(),
+                                // Use file end as fallback for unclosed blocks
+                                file.absolute_position(RelativeBytePos::from_usize(src.len())),
+                            )
+                        });
                 }
             }
             InlineConfigItem::DisableEnd(ids) => {
@@ -331,7 +336,7 @@ struct NextItemFinder {
 }
 
 impl NextItemFinder {
-    fn new(offset: BytePos) -> Self {
+    const fn new(offset: BytePos) -> Self {
         Self { offset }
     }
 

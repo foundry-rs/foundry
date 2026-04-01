@@ -62,7 +62,7 @@ pub struct SparsedTraceArena {
     /// Full trace arena.
     #[serde(flatten)]
     pub arena: CallTraceArena,
-    /// Ranges of trace steps to ignore in format (start_node, start_step) -> (end_node, end_step).
+    /// Ranges of trace steps to ignore in format (`start_node`, `start_step`) -> (`end_node`, `end_step`).
     /// See `foundry_cheatcodes::utils::IgnoredTraces` for more information.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub ignored: HashMap<(usize, usize), (usize, usize)>,
@@ -216,7 +216,7 @@ pub fn render_trace_arena_inner(
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }
 
-fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
     match choice {
         shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
         shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
@@ -237,7 +237,7 @@ impl TraceKind {
     ///
     /// [`Deployment`]: TraceKind::Deployment
     #[must_use]
-    pub fn is_deployment(self) -> bool {
+    pub const fn is_deployment(self) -> bool {
         matches!(self, Self::Deployment)
     }
 
@@ -245,7 +245,7 @@ impl TraceKind {
     ///
     /// [`Setup`]: TraceKind::Setup
     #[must_use]
-    pub fn is_setup(self) -> bool {
+    pub const fn is_setup(self) -> bool {
         matches!(self, Self::Setup)
     }
 
@@ -253,7 +253,7 @@ impl TraceKind {
     ///
     /// [`Execution`]: TraceKind::Execution
     #[must_use]
-    pub fn is_execution(self) -> bool {
+    pub const fn is_execution(self) -> bool {
         matches!(self, Self::Execution)
     }
 }

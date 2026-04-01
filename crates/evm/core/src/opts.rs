@@ -289,9 +289,9 @@ impl EvmOpts {
         cfg
     }
 
-    /// Helper function that returns the [CreateFork] to use, if any.
+    /// Helper function that returns the [`CreateFork`] to use, if any.
     ///
-    /// storage caching for the [CreateFork] will be enabled if
+    /// storage caching for the [`CreateFork`] will be enabled if
     ///   - `fork_url` is present
     ///   - `fork_block_number` is present
     ///   - `StorageCachingConfig` allows the `fork_url` + chain ID pair
@@ -330,10 +330,10 @@ impl EvmOpts {
     }
 
     /// Returns the available compute units per second, which will be
-    /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
+    /// - `u64::MAX`, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
     /// - the assigned compute units, if `compute_units_per_second` is set
-    /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
-    fn get_compute_units_per_second(&self) -> u64 {
+    /// - `ALCHEMY_FREE_TIER_CUPS` (330) otherwise
+    const fn get_compute_units_per_second(&self) -> u64 {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
@@ -408,7 +408,7 @@ pub struct Env {
     /// the block.difficulty value during EVM execution
     pub block_difficulty: u64,
 
-    /// Previous block beacon chain random value. Before merge this field is used for mix_hash
+    /// Previous block beacon chain random value. Before merge this field is used for `mix_hash`
     pub block_prevrandao: B256,
 
     /// the block.gaslimit value during EVM execution

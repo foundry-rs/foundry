@@ -90,7 +90,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -152,6 +152,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         }
 
         let res = call.await?;
+        #[allow(clippy::useless_let_if_seq)]
         let mut decoded = vec![];
 
         if let Some(func) = func {
@@ -1128,7 +1129,7 @@ where
             format!("0x{}", hex::encode(encoded))
         } else if let Some(ref field) = field {
             get_pretty_tx_attr::<N>(&tx, field.as_str())
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
+                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
@@ -2376,12 +2377,12 @@ fn explorer_client(
     let deduced = chain.etherscan_urls();
 
     let explorer_url = explorer_url
-        .or(deduced.map(|d| d.1.to_string()))
+        .or_else(|| deduced.map(|d| d.1.to_string()))
         .ok_or_eyre("Please provide the explorer browser URL using `--explorer-url`")?;
     builder = builder.with_url(explorer_url)?;
 
     let api_url = api_url
-        .or(deduced.map(|d| d.0.to_string()))
+        .or_else(|| deduced.map(|d| d.0.to_string()))
         .ok_or_eyre("Please provide the explorer API URL using `--explorer-api-url`")?;
     builder = builder.with_api_url(api_url)?;
 

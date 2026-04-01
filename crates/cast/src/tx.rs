@@ -146,7 +146,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
 #[derive(Debug)]
 pub struct InitState;
 
-/// State with known [TxKind].
+/// State with known [`TxKind`].
 #[derive(Debug)]
 pub struct ToState {
     to: Option<Address>,
@@ -171,7 +171,7 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     /// Creates a new Cast instance responsible for sending transactions.
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -291,13 +291,12 @@ where
                     // try to poll for it
                     if cast_async {
                         eyre::bail!("tx not found: {:?}", tx_hash)
-                    } else {
-                        PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                            .with_required_confirmations(confs)
-                            .with_timeout(timeout.map(Duration::from_secs))
-                            .get_receipt()
-                            .await?
                     }
+                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+                        .with_required_confirmations(confs)
+                        .with_timeout(timeout.map(Duration::from_secs))
+                        .get_receipt()
+                        .await?
                 }
             },
             revert_reason: None,
@@ -327,10 +326,10 @@ where
     }
 }
 
-/// Builder type constructing generic TransactionRequest from cast send/mktx inputs.
+/// Builder type constructing generic `TransactionRequest` from cast send/mktx inputs.
 ///
-/// It is implemented as a stateful builder with expected state transition of [InitState] ->
-/// [ToState] -> [InputState].
+/// It is implemented as a stateful builder with expected state transition of [`InitState`] ->
+/// [`ToState`] -> [`InputState`].
 #[derive(Debug)]
 pub struct CastTxBuilder<N: Network, P, S> {
     provider: P,
@@ -341,7 +340,7 @@ pub struct CastTxBuilder<N: Network, P, S> {
     /// Whether the blob transaction should use EIP-4844 (legacy) format instead of EIP-7594.
     eip4844: bool,
     /// Whether to fill gas, fees and nonce. Set to `false` for read-only calls
-    /// (eth_call, eth_estimateGas, eth_createAccessList).
+    /// (`eth_call`, `eth_estimateGas`, `eth_createAccessList`).
     fill: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
@@ -354,8 +353,8 @@ impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InitState>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
-    /// provided [TransactionOpts].
+    /// Creates a new instance of [`CastTxBuilder`] filling transaction with fields present in
+    /// provided [`TransactionOpts`].
     pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config) -> Result<Self> {
         let mut tx = N::TransactionRequest::default();
 
@@ -382,7 +381,7 @@ where
         })
     }
 
-    /// Sets [TxKind] for this builder and changes state to [ToState].
+    /// Sets [`TxKind`] for this builder and changes state to [`ToState`].
     pub async fn with_to(self, to: Option<NameOrAddress>) -> Result<CastTxBuilder<N, P, ToState>> {
         let to = if let Some(to) = to { Some(to.resolve(&self.provider).await?) } else { None };
         Ok(CastTxBuilder {
@@ -466,7 +465,7 @@ impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InputState>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    /// Builds the TransactionRequest. Fills gas, fees and nonce unless [`raw`](Self::raw) was
+    /// Builds the `TransactionRequest`. Fills gas, fees and nonce unless [`raw`](Self::raw) was
     /// called.
     pub async fn build(
         self,
@@ -663,8 +662,8 @@ where
     }
 
     /// Skips gas, fee and nonce filling. Use for read-only calls
-    /// (eth_call, eth_estimateGas, eth_createAccessList).
-    pub fn raw(mut self) -> Self {
+    /// (`eth_call`, `eth_estimateGas`, `eth_createAccessList`).
+    pub const fn raw(mut self) -> Self {
         self.fill = false;
         self
     }

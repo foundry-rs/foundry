@@ -245,7 +245,7 @@ impl fmt::Display for BaseCounterExample {
 pub struct FuzzTestResult {
     /// we keep this for the debugger
     pub first_case: FuzzCase,
-    /// Gas usage (gas_used, call_stipend) per cases
+    /// Gas usage (`gas_used`, `call_stipend`) per cases
     pub gas_by_case: Vec<(u64, u64)>,
     /// Whether the test case was successful. This means that the transaction executed
     /// properly, or that there was a revert and that the test was expected to fail
@@ -344,7 +344,7 @@ impl FuzzedCases {
         self.cases
     }
 
-    /// Get the last [FuzzCase]
+    /// Get the last [`FuzzCase`]
     pub fn last(&self) -> Option<&FuzzCase> {
         self.cases.last()
     }

@@ -44,7 +44,7 @@ pub struct LogsArgs {
     topics_or_args: Vec<String>,
 
     /// If the RPC type and endpoints supports `eth_subscribe` stream logs instead of printing and
-    /// exiting. Will continue until interrupted or TO_BLOCK is reached.
+    /// exiting. Will continue until interrupted or `TO_BLOCK` is reached.
     #[arg(long)]
     subscribe: bool,
 
@@ -181,7 +181,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyr
         .map(|(_, token)| {
             token
                 .map(|token| Topic::from(B256::from_slice(token.abi_encode().as_slice())))
-                .unwrap_or(Topic::default())
+                .unwrap_or_default()
         })
         .collect::<Vec<Topic>>();
 

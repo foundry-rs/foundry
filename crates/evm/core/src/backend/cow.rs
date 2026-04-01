@@ -54,7 +54,7 @@ pub struct CowBackend<'a> {
 
 impl<'a> CowBackend<'a> {
     /// Creates a new `CowBackend` with the given `Backend`.
-    pub fn new_borrowed(backend: &'a Backend) -> Self {
+    pub const fn new_borrowed(backend: &'a Backend) -> Self {
         Self { backend: Cow::Borrowed(backend), pending_init: None }
     }
 

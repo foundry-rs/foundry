@@ -1,4 +1,4 @@
-//! This module contains the `SolidityHelper`, a [rustyline::Helper] implementation for
+//! This module contains the `SolidityHelper`, a [`rustyline::Helper`] implementation for
 //! usage in Chisel. It was originally ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
 
 use crate::{
@@ -21,7 +21,7 @@ use solar::parse::{
 use std::{borrow::Cow, cell::RefCell, fmt, ops::Range, rc::Rc};
 use yansi::{Color, Style};
 
-/// The maximum length of an ANSI prefix + suffix characters using [SolidityHelper].
+/// The maximum length of an ANSI prefix + suffix characters using [`SolidityHelper`].
 ///
 /// * 5 - prefix:
 ///   * 2 - start: `\x1B[`
@@ -60,7 +60,7 @@ impl fmt::Debug for SolidityHelper {
 }
 
 impl SolidityHelper {
-    /// Create a new SolidityHelper.
+    /// Create a new `SolidityHelper`.
     pub fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(Inner {
@@ -147,8 +147,8 @@ impl SolidityHelper {
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
     fn validate_closed(&self, input: &str) -> ValidationResult {
-        use RawLiteralKind::*;
-        use RawTokenKind::*;
+        use RawLiteralKind::Str;
+        use RawTokenKind::{BlockComment, CloseDelim, Literal, OpenDelim};
         let mut stack = vec![];
         for token in Cursor::new(input) {
             match token.kind {
@@ -282,7 +282,10 @@ impl Helper for SolidityHelper {}
 fn token_style(token: &Token) -> Style {
     use solar::parse::{
         interface::kw::*,
-        token::{TokenKind::*, TokenLitKind::*},
+        token::{
+            TokenKind::{Arrow, Comment, FatArrow, Ident, Literal},
+            TokenLitKind::{HexStr, Str, UnicodeStr},
+        },
     };
 
     match token.kind {

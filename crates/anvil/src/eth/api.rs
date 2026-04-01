@@ -202,7 +202,7 @@ impl<N: Network> EthApi<N> {
 
     /// Returns the suggested fee cap.
     ///
-    /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
+    /// Returns at least [`MIN_SUGGESTED_PRIORITY_FEE`]
     fn lowest_suggestion_tip(&self) -> u128 {
         let block_number = self.backend.best_number();
         let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
@@ -624,6 +624,7 @@ impl<N: Network> EthApi<N> {
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`
+    #[allow(clippy::large_stack_frames)]
     pub fn anvil_get_blob_by_versioned_hash(
         &self,
         hash: B256,
@@ -846,7 +847,8 @@ impl EthApi<FoundryNetwork> {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
+        let mut highest_gas_limit =
+            request.gas.map_or_else(|| block_env.gas_limit.into(), |g| g as u128);
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
@@ -942,7 +944,8 @@ impl EthApi<FoundryNetwork> {
         self.backend.new_block_notifications()
     }
 
-    /// Executes the [EthRequest] and returns an RPC [ResponseResult].
+    /// Executes the [`EthRequest`] and returns an RPC [`ResponseResult`].
+    #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         let response = match request.clone() {
@@ -1059,7 +1062,8 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthFillTransaction(request) => {
                 self.fill_transaction(request).await.to_rpc_result()
             }
-            EthRequest::EthGetRawTransactionByHash(hash) => {
+            EthRequest::EthGetRawTransactionByHash(hash)
+            | EthRequest::DebugGetRawTransaction(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
             EthRequest::GetBlobByHash(hash) => {
@@ -1105,10 +1109,6 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
                 self.fee_history(count, newest, reward_percentiles).await.to_rpc_result()
-            }
-            // non eth-standard rpc calls
-            EthRequest::DebugGetRawTransaction(hash) => {
-                self.raw_transaction(hash).await.to_rpc_result()
             }
             // non eth-standard rpc calls
             EthRequest::DebugTraceTransaction(tx, opts) => {
@@ -2049,7 +2049,7 @@ impl EthApi<FoundryNetwork> {
     /// It returns list of addresses and storage keys used by the transaction, plus the gas
     /// consumed when the access list is added. That is, it gives you the list of addresses and
     /// storage keys that will be used by that transaction, plus the gas consumed if the access
-    /// list is included. Like eth_estimateGas, this is an estimation; the list could change
+    /// list is included. Like `eth_estimateGas`, this is an estimation; the list could change
     /// when the transaction is actually mined. Adding an accessList to your transaction does
     /// not necessary result in lower gas usage compared to a transaction without an access
     /// list.
@@ -2151,7 +2151,7 @@ impl EthApi<FoundryNetwork> {
         let typed_tx = self.build_tx_request(request, nonce).await?;
         let tx = build_impersonated(typed_tx);
 
-        let raw = tx.encoded_2718().to_vec().into();
+        let raw = tx.encoded_2718().into();
 
         let mut tx =
             transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
@@ -2749,7 +2749,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.to::<u64>());
-        let blocks = num_blocks.unwrap_or(U256::from(1));
+        let blocks = num_blocks.unwrap_or_else(|| U256::from(1));
         if blocks.is_zero() {
             return Ok(());
         }
@@ -3044,7 +3044,7 @@ impl EthApi<FoundryNetwork> {
     ///
     /// This will mine the blocks regardless of the configured mining mode.
     ///
-    /// **Note**: This behaves exactly as [Self::evm_mine] but returns different output, for
+    /// **Note**: This behaves exactly as [`Self::evm_mine`] but returns different output, for
     /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
     /// and `ganache` may change the `0x0` placeholder.
     pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
@@ -3083,7 +3083,7 @@ impl EthApi<FoundryNetwork> {
                         );
                     }
                 }
-                block.transactions = BlockTransactions::Full(block_txs.to_vec());
+                block.transactions = BlockTransactions::Full(block_txs.clone());
                 blocks.push(block);
             }
         }
@@ -3374,7 +3374,7 @@ impl EthApi<FoundryNetwork> {
                 )
                 .await
                 .map(|v| v as u64)
-                .unwrap_or(self.backend.gas_limit()),
+                .unwrap_or_else(|_| self.backend.gas_limit()),
             );
         }
 
@@ -3503,8 +3503,7 @@ fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> V
 fn convert_transact_out(out: &Option<Output>) -> Bytes {
     match out {
         None => Default::default(),
-        Some(Output::Call(out)) => out.to_vec().into(),
-        Some(Output::Create(out, _)) => out.to_vec().into(),
+        Some(Output::Call(out) | Output::Create(out, _)) => out.to_vec().into(),
     }
 }
 
@@ -3527,9 +3526,8 @@ fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> 
                     auths_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
                 })
         }
-        Some(TxKind::Create) => MIN_CREATE_GAS,
         // Tighten the gas limit upwards if we don't know the tx kind to avoid deployments failing.
-        None => MIN_CREATE_GAS,
+        Some(TxKind::Create) | None => MIN_CREATE_GAS,
     }
 }
 
@@ -3563,18 +3561,8 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::OutOfFunds
                 | InstructionResult::CreateInitCodeStartingEF00
                 | InstructionResult::InvalidEOFInitCode
-                | InstructionResult::InvalidExtDelegateCallTarget => Ok(Self::EvmError(exit)),
-
-                // Out of gas errors:
-                InstructionResult::OutOfGas
-                | InstructionResult::MemoryOOG
-                | InstructionResult::MemoryLimitOOG
-                | InstructionResult::PrecompileOOG
-                | InstructionResult::InvalidOperandOOG
-                | InstructionResult::ReentrancySentryOOG => Ok(Self::OutOfGas),
-
-                // Other errors:
-                InstructionResult::OpcodeNotFound
+                | InstructionResult::InvalidExtDelegateCallTarget
+                | InstructionResult::OpcodeNotFound
                 | InstructionResult::CallNotAllowedInsideStatic
                 | InstructionResult::StateChangeDuringStaticCall
                 | InstructionResult::InvalidFEOpcode
@@ -3592,6 +3580,14 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::CreateInitCodeSizeLimit
                 | InstructionResult::InvalidImmediateEncoding
                 | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
+
+                // Out of gas errors:
+                InstructionResult::OutOfGas
+                | InstructionResult::MemoryOOG
+                | InstructionResult::MemoryLimitOOG
+                | InstructionResult::PrecompileOOG
+                | InstructionResult::InvalidOperandOOG
+                | InstructionResult::ReentrancySentryOOG => Ok(Self::OutOfGas),
             },
         }
     }

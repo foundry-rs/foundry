@@ -4,14 +4,14 @@ use indicatif::{MultiProgress, ProgressBar};
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
 
-/// State of [ProgressBar]s displayed for the given test run.
+/// State of [`ProgressBar`]s displayed for the given test run.
 /// Shows progress of all test suites matching filter.
 /// For each test within the test suite an individual progress bar is displayed.
 /// When a test suite completes, their progress is removed from overall progress and result summary
 /// is displayed.
 #[derive(Debug)]
 pub struct TestsProgressState {
-    /// Main [MultiProgress] instance showing progress for all test suites.
+    /// Main [`MultiProgress`] instance showing progress for all test suites.
     multi: MultiProgress,
     /// Progress bar counting completed / remaining test suites.
     overall_progress: ProgressBar,
@@ -34,7 +34,7 @@ impl TestsProgressState {
     }
 
     /// Creates new test suite progress and add it to overall progress.
-    pub fn start_suite_progress(&mut self, suite_name: &String) {
+    pub fn start_suite_progress(&mut self, suite_name: &str) {
         let suite_progress = self.multi.add(ProgressBar::new_spinner());
         suite_progress.set_style(
             indicatif::ProgressStyle::with_template("{spinner} {wide_msg:.bold.dim}")
@@ -47,7 +47,7 @@ impl TestsProgressState {
     }
 
     /// Prints suite result summary and removes it from overall progress.
-    pub fn end_suite_progress(&mut self, suite_name: &String, result_summary: String) {
+    pub fn end_suite_progress(&mut self, suite_name: &str, result_summary: String) {
         if let Some(suite_progress) = self.suites_progress.remove(suite_name) {
             self.multi.suspend(|| {
                 let _ = sh_println!("{suite_name}\n  ↪ {result_summary}");
@@ -63,9 +63,9 @@ impl TestsProgressState {
     /// phase. Test progress is placed under test suite progress entry so all tests within suite
     /// are grouped.
     pub fn start_fuzz_progress(
-        &mut self,
+        &self,
         suite_name: &str,
-        test_name: &String,
+        test_name: &str,
         timeout: Option<u32>,
         runs: u32,
     ) -> Option<ProgressBar> {
@@ -83,7 +83,7 @@ impl TestsProgressState {
             fuzz_progress.set_style(
                 indicatif::ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
             );
-            fuzz_progress.set_prefix(test_name.to_string());
+            fuzz_progress.set_prefix(test_name.to_owned());
             Some(fuzz_progress)
         } else {
             None
@@ -91,12 +91,12 @@ impl TestsProgressState {
     }
 
     /// Removes overall test progress.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.multi.clear().unwrap();
     }
 }
 
-/// Cloneable wrapper around [TestsProgressState].
+/// Cloneable wrapper around [`TestsProgressState`].
 #[derive(Debug, Clone)]
 pub struct TestsProgress {
     pub inner: Arc<Mutex<TestsProgressState>>,
@@ -109,10 +109,10 @@ impl TestsProgress {
 }
 
 /// Helper function for creating fuzz test progress bar.
-pub fn start_fuzz_progress(
+pub(crate) fn start_fuzz_progress(
     tests_progress: Option<&TestsProgress>,
     suite_name: &str,
-    test_name: &String,
+    test_name: &str,
     timeout: Option<u32>,
     runs: u32,
 ) -> Option<ProgressBar> {

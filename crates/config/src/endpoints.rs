@@ -36,7 +36,7 @@ impl RpcEndpoints {
         self.endpoints.is_empty()
     }
 
-    /// Returns all (alias -> rpc_endpoint) pairs
+    /// Returns all (alias -> `rpc_endpoint`) pairs
     pub fn resolved(self) -> ResolvedRpcEndpoints {
         ResolvedRpcEndpoints {
             endpoints: self.endpoints.into_iter().map(|(name, e)| (name, e.resolve())).collect(),

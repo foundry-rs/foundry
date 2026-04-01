@@ -46,9 +46,9 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
     }
 }
 
-/// If the string `s` is not SCREAMING_SNAKE_CASE, returns a `Some(String)` with the suggested
+/// If the string `s` is not `SCREAMING_SNAKE_CASE`, returns a `Some(String)` with the suggested
 /// conversion. Otherwise, returns `None`.
-pub fn check_screaming_snake_case(s: &str) -> Option<String> {
+pub(super) fn check_screaming_snake_case(s: &str) -> Option<String> {
     if s.len() <= 1 {
         return None;
     }
@@ -56,9 +56,9 @@ pub fn check_screaming_snake_case(s: &str) -> Option<String> {
     // Handle leading/trailing underscores like `heck` does
     let expected = format!(
         "{prefix}{name}{suffix}",
-        prefix = if s.starts_with("_") { "_" } else { "" },
+        prefix = if s.starts_with('_') { "_" } else { "" },
         name = heck::AsShoutySnakeCase(s),
-        suffix = if s.ends_with("_") { "_" } else { "" }
+        suffix = if s.ends_with('_') { "_" } else { "" }
     );
     if s == expected { None } else { Some(expected) }
 }

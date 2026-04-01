@@ -84,7 +84,7 @@ pub struct TempoAccessKeyConfig {
     /// Decoded key authorization for on-chain provisioning.
     ///
     /// When present, callers should check whether the key is already provisioned on-chain
-    /// (via the AccountKeychain precompile) before including this in a transaction.
+    /// (via the `AccountKeychain` precompile) before including this in a transaction.
     pub key_authorization: Option<SignedKeyAuthorization>,
 }
 

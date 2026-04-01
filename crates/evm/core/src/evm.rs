@@ -386,7 +386,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>> Found
     /// Transforms CREATE2 factory call results back into CREATE outcomes.
     fn handle_create2_override(
         &mut self,
-        evm: &mut <Self as Handler>::Evm,
+        evm: &<Self as Handler>::Evm,
         result: FrameResult,
     ) -> FrameResult {
         if self.create2_overrides.last().is_some_and(|(depth, _)| *depth == evm.journal().depth()) {
@@ -840,7 +840,7 @@ fn handle_create2_frame<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn Da
 /// Transforms CREATE2 factory call results back into CREATE outcomes.
 fn handle_create2_result<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt>>>(
     create2_overrides: &mut Vec<(usize, CallInputs)>,
-    evm: &mut TempoRevmEvm<'db, I>,
+    evm: &TempoRevmEvm<'db, I>,
     result: FrameResult,
 ) -> FrameResult {
     if create2_overrides.last().is_some_and(|(depth, _)| *depth == evm.journal().depth()) {

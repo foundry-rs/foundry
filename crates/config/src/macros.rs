@@ -155,7 +155,7 @@ macro_rules! merge_impl_figment_convert {
 /// A macro to implement converters from a type to [`Config`](crate::Config) and
 /// [`figment::Figment`].
 ///
-/// Via [Config::to_figment](crate::Config::to_figment) and the
+/// Via [`Config::to_figment`](crate::Config::to_figment) and the
 /// [Cast](crate::FigmentProviders::Cast) profile.
 #[macro_export]
 macro_rules! impl_figment_convert_cast {

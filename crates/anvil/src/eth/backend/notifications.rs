@@ -14,5 +14,5 @@ pub struct NewBlockNotification {
     pub header: Arc<Header>,
 }
 
-/// Type alias for a receiver that receives [NewBlockNotification]
+/// Type alias for a receiver that receives [`NewBlockNotification`]
 pub type NewBlockNotifications = UnboundedReceiver<NewBlockNotification>;

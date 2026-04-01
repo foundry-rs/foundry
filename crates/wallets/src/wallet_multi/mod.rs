@@ -210,15 +210,15 @@ pub struct MultiWalletOpts {
 
     /// Use AWS Key Management Service.
     ///
-    /// Ensure either one of AWS_KMS_KEY_IDS (comma-separated) or AWS_KMS_KEY_ID environment
+    /// Ensure either one of `AWS_KMS_KEY_IDS` (comma-separated) or `AWS_KMS_KEY_ID` environment
     /// variables are set.
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
 
     /// Use Google Cloud Key Management Service.
     ///
-    /// Ensure the following environment variables are set: GCP_PROJECT_ID, GCP_LOCATION,
-    /// GCP_KEY_RING, GCP_KEY_NAME, GCP_KEY_VERSION.
+    /// Ensure the following environment variables are set: `GCP_PROJECT_ID`, `GCP_LOCATION`,
+    /// `GCP_KEY_RING`, `GCP_KEY_NAME`, `GCP_KEY_VERSION`.
     ///
     /// See: <https://cloud.google.com/kms/docs>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
@@ -226,8 +226,8 @@ pub struct MultiWalletOpts {
 
     /// Use Turnkey.
     ///
-    /// Ensure the following environment variables are set: TURNKEY_API_PRIVATE_KEY,
-    /// TURNKEY_ORGANIZATION_ID, TURNKEY_ADDRESS.
+    /// Ensure the following environment variables are set: `TURNKEY_API_PRIVATE_KEY`,
+    /// `TURNKEY_ORGANIZATION_ID`, `TURNKEY_ADDRESS`.
     ///
     /// See: <https://docs.turnkey.com/getting-started/quickstart>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]
@@ -239,7 +239,7 @@ pub struct MultiWalletOpts {
 }
 
 impl MultiWalletOpts {
-    /// Returns [MultiWallet] container configured with provided options.
+    /// Returns [`MultiWallet`] container configured with provided options.
     pub async fn get_multi_wallet(&self) -> Result<MultiWallet> {
         let mut pending = Vec::new();
         let mut signers: Vec<WalletSigner> = Vec::new();
@@ -292,14 +292,14 @@ impl MultiWalletOpts {
                 pks.push(pk);
             }
         }
-        if !pks.is_empty() {
+        if pks.is_empty() {
+            Ok(None)
+        } else {
             let wallets = pks
                 .into_iter()
                 .map(|pk| utils::create_private_key_signer(pk))
                 .collect::<Result<Vec<_>>>()?;
             Ok(Some(wallets))
-        } else {
-            Ok(None)
         }
     }
 
@@ -418,7 +418,7 @@ impl MultiWalletOpts {
         if self.aws {
             let mut wallets = vec![];
             let aws_keys = std::env::var("AWS_KMS_KEY_IDS")
-                .or(std::env::var("AWS_KMS_KEY_ID"))?
+                .or_else(|_| std::env::var("AWS_KMS_KEY_ID"))?
                 .split(',')
                 .map(|k| k.to_string())
                 .collect::<Vec<_>>();
@@ -437,11 +437,11 @@ impl MultiWalletOpts {
     /// Returns a list of GCP signers if the GCP flag is set.
     ///
     /// The GCP signers are created from the following environment variables:
-    /// - GCP_PROJECT_ID: The GCP project ID. e.g. `my-project-123456`.
-    /// - GCP_LOCATION: The GCP location. e.g. `us-central1`.
-    /// - GCP_KEY_RING: The GCP key ring name. e.g. `my-key-ring`.
-    /// - GCP_KEY_NAME: The GCP key name. e.g. `my-key`.
-    /// - GCP_KEY_VERSION: The GCP key version. e.g. `1`.
+    /// - `GCP_PROJECT_ID`: The GCP project ID. e.g. `my-project-123456`.
+    /// - `GCP_LOCATION`: The GCP location. e.g. `us-central1`.
+    /// - `GCP_KEY_RING`: The GCP key ring name. e.g. `my-key-ring`.
+    /// - `GCP_KEY_NAME`: The GCP key name. e.g. `my-key`.
+    /// - `GCP_KEY_VERSION`: The GCP key version. e.g. `1`.
     ///
     /// For more information on GCP KMS, see the [official documentation](https://cloud.google.com/kms/docs).
     pub async fn gcp_signers(&self) -> Result<Option<Vec<WalletSigner>>> {

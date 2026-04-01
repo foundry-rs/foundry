@@ -55,21 +55,21 @@ impl ExecutorBuilder {
 
     /// Sets the EVM spec to use.
     #[inline]
-    pub fn spec_id(mut self, spec: SpecId) -> Self {
+    pub const fn spec_id(mut self, spec: SpecId) -> Self {
         self.spec_id = spec;
         self
     }
 
     /// Sets the executor gas limit.
     #[inline]
-    pub fn gas_limit(mut self, gas_limit: u64) -> Self {
+    pub const fn gas_limit(mut self, gas_limit: u64) -> Self {
         self.gas_limit = Some(gas_limit);
         self
     }
 
     /// Sets the `legacy_assertions` flag.
     #[inline]
-    pub fn legacy_assertions(mut self, legacy_assertions: bool) -> Self {
+    pub const fn legacy_assertions(mut self, legacy_assertions: bool) -> Self {
         self.legacy_assertions = legacy_assertions;
         self
     }

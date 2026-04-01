@@ -169,42 +169,42 @@ impl Executor {
     }
 
     /// Returns a reference to the EVM environment (block and cfg).
-    pub fn evm_env(&self) -> &EvmEnv {
+    pub const fn evm_env(&self) -> &EvmEnv {
         &self.evm_env
     }
 
     /// Returns a mutable reference to the EVM environment (block and cfg).
-    pub fn evm_env_mut(&mut self) -> &mut EvmEnv {
+    pub const fn evm_env_mut(&mut self) -> &mut EvmEnv {
         &mut self.evm_env
     }
 
     /// Returns a reference to the transaction environment.
-    pub fn tx_env(&self) -> &TxEnv {
+    pub const fn tx_env(&self) -> &TxEnv {
         &self.tx_env
     }
 
     /// Returns a mutable reference to the transaction environment.
-    pub fn tx_env_mut(&mut self) -> &mut TxEnv {
+    pub const fn tx_env_mut(&mut self) -> &mut TxEnv {
         &mut self.tx_env
     }
 
     /// Returns a reference to the EVM inspector.
-    pub fn inspector(&self) -> &InspectorStack<SpecId, BlockEnv, Ethereum> {
+    pub const fn inspector(&self) -> &InspectorStack<SpecId, BlockEnv, Ethereum> {
         &self.inspector
     }
 
     /// Returns a mutable reference to the EVM inspector.
-    pub fn inspector_mut(&mut self) -> &mut InspectorStack<SpecId, BlockEnv, Ethereum> {
+    pub const fn inspector_mut(&mut self) -> &mut InspectorStack<SpecId, BlockEnv, Ethereum> {
         &mut self.inspector
     }
 
     /// Returns the EVM spec ID.
-    pub fn spec_id(&self) -> SpecId {
+    pub const fn spec_id(&self) -> SpecId {
         self.evm_env.cfg_env.spec
     }
 
     /// Sets the EVM spec ID.
-    pub fn set_spec_id(&mut self, spec_id: SpecId) {
+    pub const fn set_spec_id(&mut self, spec_id: SpecId) {
         self.evm_env.cfg_env.spec = spec_id;
     }
 
@@ -212,24 +212,24 @@ impl Executor {
     ///
     /// This is different from the gas limit imposed by the passed in environment, as those limits
     /// are used by the EVM for certain opcodes like `gaslimit`.
-    pub fn gas_limit(&self) -> u64 {
+    pub const fn gas_limit(&self) -> u64 {
         self.gas_limit
     }
 
     /// Sets the gas limit for calls and deployments.
-    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+    pub const fn set_gas_limit(&mut self, gas_limit: u64) {
         self.gas_limit = gas_limit;
     }
 
     /// Returns whether `failed()` should be called on the test contract to determine if the test
     /// failed.
-    pub fn legacy_assertions(&self) -> bool {
+    pub const fn legacy_assertions(&self) -> bool {
         self.legacy_assertions
     }
 
     /// Sets whether `failed()` should be called on the test contract to determine if the test
     /// failed.
-    pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
+    pub const fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
         self.legacy_assertions = legacy_assertions;
     }
 
@@ -653,8 +653,8 @@ impl Executor {
     /// expensive to set up an EVM call just for checking a single boolean flag.
     ///
     /// See:
-    /// - Newer DSTest: <https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63>
-    /// - Older DSTest: <https://github.com/dapphub/ds-test/blob/9ca4ecd48862b40d7b0197b600713f64d337af12/src/test.sol#L38-L49>
+    /// - Newer `DSTest`: <https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63>
+    /// - Older `DSTest`: <https://github.com/dapphub/ds-test/blob/9ca4ecd48862b40d7b0197b600713f64d337af12/src/test.sol#L38-L49>
     /// - forge-std: <https://github.com/foundry-rs/forge-std/blob/19891e6a0b5474b9ea6827ddb90bb9388f7acfc0/src/StdAssertions.sol#L38-L44>
     pub fn is_success(
         &self,
@@ -970,7 +970,7 @@ impl RawCallResult {
     }
 
     /// Converts the result of the call into an `ExecutionErr`.
-    pub fn into_execution_error(self, reason: String) -> ExecutionErr {
+    pub const fn into_execution_error(self, reason: String) -> ExecutionErr {
         ExecutionErr { raw: self, reason }
     }
 
@@ -1163,7 +1163,7 @@ impl FuzzTestTimer {
     }
 
     /// Whether the fuzz test timer is enabled.
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.inner.is_some()
     }
 

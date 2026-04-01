@@ -22,7 +22,7 @@ pub struct MappingSlots {
     /// Holds the last sha3 result `sha3_result => (data_low, data_high)`, this would only record
     /// when sha3 is called with `size == 0x40`, and the lower 256 bits would be stored in
     /// `data_low`, higher 256 bits in `data_high`.
-    /// This is needed for mapping_key detect if the slot is for some mapping and record that.
+    /// This is needed for `mapping_key` detect if the slot is for some mapping and record that.
     pub seen_sha3: B256HashMap<(B256, B256)>,
 }
 
@@ -44,7 +44,7 @@ impl MappingSlots {
     }
 }
 
-/// Function to be used in Inspector::step to record mapping slots and keys
+/// Function to be used in `Inspector::step` to record mapping slots and keys
 #[cold]
 pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
     #[allow(clippy::collapsible_match)]

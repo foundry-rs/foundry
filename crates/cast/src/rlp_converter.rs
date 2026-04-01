@@ -9,7 +9,7 @@ use std::fmt;
 /// - `Item::Array(vec![])` is equivalent to `[]`.
 /// - `Item::Array(vec![Item::Data(vec![])])` is equivalent to `[""]` or `[null]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Item {
+pub(crate) enum Item {
     Data(Vec<u8>),
     Array(Vec<Self>),
 }

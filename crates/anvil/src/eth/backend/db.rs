@@ -226,7 +226,7 @@ pub trait Db:
 
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
-        for (addr, account) in state.accounts.into_iter() {
+        for (addr, account) in state.accounts {
             let old_account_nonce = DatabaseRef::basic_ref(self, addr)
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
@@ -250,7 +250,7 @@ pub trait Db:
                 },
             );
 
-            for (k, v) in account.storage.into_iter() {
+            for (k, v) in account.storage {
                 self.set_storage_at(addr, k, v)?;
             }
         }
@@ -274,10 +274,10 @@ pub trait Db:
     fn current_state(&self) -> StateDb;
 }
 
-/// Convenience impl only used to use any `Db` on the fly as the db layer for revm's CacheDB
+/// Convenience impl only used to use any `Db` on the fly as the db layer for revm's `CacheDB`
 /// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
 /// the `CacheDB` see also
-/// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
+/// [`Backend::pending_block()`](crate::eth::backend::mem::Backend::pending_block())
 impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.insert_account_info(address, account)

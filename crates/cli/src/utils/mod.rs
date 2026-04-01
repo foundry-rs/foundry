@@ -63,11 +63,7 @@ pub trait FoundryPathExt {
 
 impl<T: AsRef<Path>> FoundryPathExt for T {
     fn is_sol_test(&self) -> bool {
-        self.as_ref()
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.ends_with(".t.sol"))
-            .unwrap_or_default()
+        self.as_ref().file_name().and_then(|s| s.to_str()).is_some_and(|s| s.ends_with(".t.sol"))
     }
 
     fn is_sol(&self) -> bool {
@@ -101,7 +97,7 @@ pub fn get_provider(config: &Config) -> Result<RootProvider<AnyNetwork>> {
     get_provider_builder(config)?.build()
 }
 
-/// Returns a [ProviderBuilder] instantiated using [Config] values.
+/// Returns a [`ProviderBuilder`] instantiated using [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
@@ -370,16 +366,16 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    pub fn root(self, root: &Path) -> Git<'_> {
+    pub const fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    pub fn quiet(self, quiet: bool) -> Self {
+    pub const fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    pub fn shallow(self, shallow: bool) -> Self {
+    pub const fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
 
@@ -555,7 +551,7 @@ ignore them in the `.gitignore` file."
     /// Returns a list of tuples of submodule paths and their respective branches.
     ///
     /// This function reads the `.gitmodules` file and returns the paths of all submodules that have
-    /// a branch. The paths are relative to the Git::root_of(git.root) and not lib/ directory.
+    /// a branch. The paths are relative to the `Git::root_of(git.root)` and not lib/ directory.
     ///
     /// `at` is the dir in which the `.gitmodules` file is located, this is the git root.
     /// `lib` is name of the directory where the submodules are located.
@@ -735,7 +731,7 @@ pub struct Submodule {
 }
 
 impl Submodule {
-    pub fn new(rev: String, path: PathBuf) -> Self {
+    pub const fn new(rev: String, path: PathBuf) -> Self {
         Self { rev, path }
     }
 
@@ -743,7 +739,7 @@ impl Submodule {
         &self.rev
     }
 
-    pub fn path(&self) -> &PathBuf {
+    pub const fn path(&self) -> &PathBuf {
         &self.path
     }
 }
@@ -768,11 +764,11 @@ impl FromStr for Submodule {
 pub struct Submodules(pub Vec<Submodule>);
 
 impl Submodules {
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
@@ -854,10 +850,10 @@ mod tests {
         let mut cwd_file = File::create(cwd_env).unwrap();
         let mut prj_file = File::create(nested.join(".env")).unwrap();
 
-        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.write_all(b"TESTCWDKEY=cwd_val").unwrap();
         cwd_file.sync_all().unwrap();
 
-        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.write_all(b"TESTPRJKEY=prj_val").unwrap();
         prj_file.sync_all().unwrap();
 
         let cwd = env::current_dir().unwrap();

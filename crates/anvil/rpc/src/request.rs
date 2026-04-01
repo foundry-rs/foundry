@@ -14,7 +14,7 @@ pub struct RpcMethodCall {
     pub params: RequestParams,
     /// The identifier for this request issued by the client,
     /// An [Id] must be a String, null or a number.
-    /// If missing it's considered a notification in [Version::V2]
+    /// If missing it's considered a notification in [`Version::V2`]
     pub id: Id,
 }
 
@@ -45,7 +45,7 @@ pub enum RpcCall {
     Notification(RpcNotification),
     /// Invalid call
     Invalid {
-        /// id or [Id::Null]
+        /// id or [`Id::Null`]
         #[serde(default = "null_id")]
         id: Id,
     },
@@ -56,7 +56,7 @@ pub enum RpcCall {
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum Request {
-    /// single json rpc request [RpcCall]
+    /// single json rpc request [`RpcCall`]
     Single(RpcCall),
     /// batch of several requests
     Batch(Vec<RpcCall>),
@@ -84,7 +84,7 @@ impl From<RequestParams> for serde_json::Value {
     }
 }
 
-fn no_params() -> RequestParams {
+const fn no_params() -> RequestParams {
     RequestParams::None
 }
 
@@ -113,7 +113,7 @@ impl fmt::Display for Id {
     }
 }
 
-fn null_id() -> Id {
+const fn null_id() -> Id {
     Id::Null
 }
 

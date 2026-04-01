@@ -3,38 +3,38 @@ use std::borrow::Cow;
 
 impl Printer {
     /// "raw box"
-    pub fn rbox(&mut self, indent: isize, breaks: Breaks) {
+    pub(crate) fn rbox(&mut self, indent: isize, breaks: Breaks) {
         self.scan_begin(BeginToken { indent: IndentStyle::Block { offset: indent }, breaks });
     }
 
     /// Inconsistent breaking box
-    pub fn ibox(&mut self, indent: isize) {
+    pub(crate) fn ibox(&mut self, indent: isize) {
         self.rbox(indent, Breaks::Inconsistent);
     }
 
     /// Consistent breaking box
-    pub fn cbox(&mut self, indent: isize) {
+    pub(crate) fn cbox(&mut self, indent: isize) {
         self.rbox(indent, Breaks::Consistent);
     }
 
-    pub fn visual_align(&mut self) {
+    pub(crate) fn visual_align(&mut self) {
         self.scan_begin(BeginToken { indent: IndentStyle::Visual, breaks: Breaks::Consistent });
     }
 
-    pub fn break_offset(&mut self, n: usize, off: isize) {
+    pub(crate) fn break_offset(&mut self, n: usize, off: isize) {
         self.scan_break(BreakToken { offset: off, blank_space: n, ..BreakToken::default() });
     }
 
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         self.scan_end();
     }
 
-    pub fn eof(mut self) -> String {
+    pub(crate) fn eof(mut self) -> String {
         self.scan_eof();
         self.out
     }
 
-    pub fn word(&mut self, w: impl Into<Cow<'static, str>>) {
+    pub(crate) fn word(&mut self, w: impl Into<Cow<'static, str>>) {
         self.scan_string(w.into());
     }
 
@@ -42,19 +42,19 @@ impl Printer {
         self.break_offset(n, 0);
     }
 
-    pub fn zerobreak(&mut self) {
+    pub(crate) fn zerobreak(&mut self) {
         self.spaces(0);
     }
 
-    pub fn space(&mut self) {
+    pub(crate) fn space(&mut self) {
         self.spaces(1);
     }
 
-    pub fn hardbreak(&mut self) {
+    pub(crate) fn hardbreak(&mut self) {
         self.spaces(SIZE_INFINITY as usize);
     }
 
-    pub fn last_token_is_neverbreak(&self) -> bool {
+    pub(crate) fn last_token_is_neverbreak(&self) -> bool {
         if let Some(token) = self.last_token() {
             return token.is_neverbreak();
         }
@@ -62,24 +62,24 @@ impl Printer {
         false
     }
 
-    pub fn last_token_is_break(&self) -> bool {
+    pub(crate) fn last_token_is_break(&self) -> bool {
         if let Some(token) = self.last_token() {
             return matches!(token, Token::Break(_));
         }
         false
     }
 
-    pub fn last_token_is_space(&self) -> bool {
+    pub(crate) fn last_token_is_space(&self) -> bool {
         if let Some(token) = self.last_token()
             && token.is_space()
         {
             return true;
         }
 
-        self.out.ends_with(" ")
+        self.out.ends_with(' ')
     }
 
-    pub fn is_beginning_of_line(&self) -> bool {
+    pub(crate) fn is_beginning_of_line(&self) -> bool {
         match self.last_token() {
             Some(last_token) => last_token.is_hardbreak(),
             None => self.out.is_empty() || self.out.ends_with('\n'),
@@ -91,7 +91,7 @@ impl Printer {
     ///   2. a line with only indentation (just whitespaces)
     ///
     /// NOTE: this is still an educated guess, based on a heuristic.
-    pub fn is_bol_or_only_ind(&self) -> bool {
+    pub(crate) fn is_bol_or_only_ind(&self) -> bool {
         for i in self.buf.index_range().rev() {
             let token = &self.buf[i].token;
             if token.is_hardbreak() {
@@ -124,7 +124,7 @@ impl Printer {
         })
     }
 
-    pub fn hardbreak_if_nonempty(&mut self) {
+    pub(crate) fn hardbreak_if_nonempty(&mut self) {
         self.scan_break(BreakToken {
             blank_space: SIZE_INFINITY as usize,
             if_nonempty: true,
@@ -132,20 +132,20 @@ impl Printer {
         });
     }
 
-    pub fn neverbreak(&mut self) {
+    pub(crate) fn neverbreak(&mut self) {
         self.scan_break(BreakToken { never_break: true, ..BreakToken::default() });
     }
 }
 
 impl Token {
-    pub(crate) fn is_neverbreak(&self) -> bool {
+    pub(crate) const fn is_neverbreak(&self) -> bool {
         if let Self::Break(BreakToken { never_break, .. }) = *self {
             return never_break;
         }
         false
     }
 
-    pub(crate) fn is_hardbreak(&self) -> bool {
+    pub(crate) const fn is_hardbreak(&self) -> bool {
         if let Self::Break(BreakToken { blank_space, never_break, .. }) = *self {
             return blank_space == SIZE_INFINITY as usize && !never_break;
         }

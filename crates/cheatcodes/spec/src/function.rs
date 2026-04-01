@@ -11,7 +11,7 @@ pub struct Function<'a> {
     /// index if it is overloaded.
     pub id: &'a str,
     /// The description of the function.
-    /// This is a markdown string derived from the NatSpec documentation.
+    /// This is a markdown string derived from the `NatSpec` documentation.
     pub description: &'a str,
     /// The Solidity function declaration, including full type and parameter names, visibility,
     /// etc.

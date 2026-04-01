@@ -52,7 +52,7 @@ interface Vm {
         Create,
         /// The account was selfdestructed.
         SelfDestruct,
-        /// Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess).
+        /// Synthetic access indicating the current context has resumed after a previous sub-context (`AccountAccess`).
         Resume,
         /// The account's balance was read.
         Balance,
@@ -247,9 +247,9 @@ interface Vm {
         /// The chain and fork the access occurred.
         ChainInfo chainInfo;
         /// The kind of account access that determines what the account is.
-        /// If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.
+        /// If kind is Call, `DelegateCall`, `StaticCall` or `CallCode`, then the account is the callee.
         /// If kind is Create, then the account is the newly created account.
-        /// If kind is SelfDestruct, then the account is the selfdestruct recipient.
+        /// If kind is `SelfDestruct`, then the account is the selfdestruct recipient.
         /// If kind is a Resume, then account represents a account context that has resumed.
         AccountAccessKind kind;
         /// The account that was accessed.
@@ -348,7 +348,7 @@ interface Vm {
     }
 
     /// Represents a "potential" revert reason from a single subsequent call when using `vm.assumeNoReverts`.
-    /// Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced
+    /// Reverts that match will result in a `FOUNDRY::ASSUME` rejection, whereas unmatched reverts will be surfaced
     /// as normal.
     struct PotentialRevert {
         /// The allowed origin of the revert opcode; address(0) allows reverts from any address
@@ -471,7 +471,7 @@ interface Vm {
     /// Gets the current `block.chainid` of the currently selected environment.
     /// You should use this instead of `block.chainid` if you use `vm.selectFork` or `vm.createSelectFork`, as `block.chainid` could be assumed
     /// to be constant across a transaction, and as a result will get optimized out by the compiler.
-    /// See https://github.com/foundry-rs/foundry/issues/6180
+    /// See <https://github.com/foundry-rs/foundry/issues/6180>
     #[cheatcode(group = Evm, safety = Safe)]
     function getChainId() external view returns (uint256 blockChainId);
 
@@ -523,7 +523,7 @@ interface Vm {
     /// Gets the current `block.number`.
     /// You should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,
     /// and as a result will get optimized out by the compiler.
-    /// See https://github.com/foundry-rs/foundry/issues/6180
+    /// See <https://github.com/foundry-rs/foundry/issues/6180>
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockNumber() external view returns (uint256 height);
 
@@ -538,7 +538,7 @@ interface Vm {
     /// Gets the current `block.timestamp`.
     /// You should use this instead of `block.timestamp` if you use `vm.warp`, as `block.timestamp` is assumed to be constant across a transaction,
     /// and as a result will get optimized out by the compiler.
-    /// See https://github.com/foundry-rs/foundry/issues/6180
+    /// See <https://github.com/foundry-rs/foundry/issues/6180>
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
 
@@ -554,7 +554,7 @@ interface Vm {
     /// Gets the current `block.blobbasefee`.
     /// You should use this instead of `block.blobbasefee` if you use `vm.blobBaseFee`, as `block.blobbasefee` is assumed to be constant across a transaction,
     /// and as a result will get optimized out by the compiler.
-    /// See https://github.com/foundry-rs/foundry/issues/6180
+    /// See <https://github.com/foundry-rs/foundry/issues/6180>
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
 
@@ -1013,7 +1013,7 @@ interface Vm {
     function breakpoint(string calldata char, bool value) external pure;
 
     /// Returns the Foundry version.
-    /// Format: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>
+    /// Format: <`cargo_version`>-<tag>+<`git_sha_short`>.<`unix_build_timestamp`>.<profile>
     /// Sample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug
     /// Note: Build timestamps may vary slightly across platforms due to separate CI jobs.
     /// For reliable version comparisons, use UNIX format (e.g., >= 1700000000)
@@ -1317,7 +1317,7 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
 
-    /// Asserts that two arrays of `uint256 values are equal.
+    /// Asserts that two arrays of `uint256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
     function assertEq(uint256[] calldata left, uint256[] calldata right) external pure;
 
@@ -2591,7 +2591,7 @@ interface Vm {
     #[cheatcode(group = Json)]
     function writeJson(string calldata json, string calldata path) external;
 
-    /// Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>
+    /// Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <`value_key`.>
     /// This is useful to replace a specific value of a JSON file, without having to parse the entire thing.
     /// This cheatcode will create new keys if they didn't previously exist.
     #[cheatcode(group = Json)]
@@ -2697,7 +2697,7 @@ interface Vm {
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path) external;
 
-    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <`value_key`.>
     /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
     /// This cheatcode will create new keys if they didn't previously exist.
     #[cheatcode(group = Toml)]
@@ -2995,7 +2995,7 @@ interface Vm {
     /// Causes the next contract creation (via new) to fail and return its initcode in the returndata buffer.
     /// This allows type-safe access to the initcode payload that would be used for contract creation.
     /// Example usage:
-    /// vm.interceptInitcode();
+    /// `vm.interceptInitcode()`;
     /// bytes memory initcode;
     /// try new MyContract(param1, param2) { assert(false); }
     /// catch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }
@@ -3042,7 +3042,7 @@ interface Vm {
     ///
     /// Params:
     ///  * `bindingsPath`: path where the output of `forge bind-json` is stored.
-    ///  * `typeName`: Name of the type (i.e. "PermitSingle").
+    ///  * `typeName`: Name of the type (i.e. "`PermitSingle`").
     ///  * `abiEncodedData`: ABI-encoded data for the struct that is being hashed.
     #[cheatcode(group = Utilities)]
     function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);

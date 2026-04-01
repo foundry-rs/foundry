@@ -16,7 +16,7 @@ pub use revm::state::EvmState as StateChangeset;
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
 #[inline(always)]
-pub fn cold_path() {
+pub const fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
 }
 
@@ -49,7 +49,7 @@ pub fn apply_chain_and_block_specific_env_changes<
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
-    use NamedChain::*;
+    use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
 
     if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
         let block_number = block.header().number();
@@ -117,13 +117,12 @@ pub fn get_blob_params(chain_id: ChainId, timestamp: u64) -> BlobParams {
         EthereumHardfork::Prague => BlobParams::prague(),
         EthereumHardfork::Osaka => BlobParams::osaka(),
         EthereumHardfork::Bpo1 => BlobParams::bpo1(),
-        EthereumHardfork::Bpo2 => BlobParams::bpo2(),
-
+        EthereumHardfork::Bpo2
         // future hardforks/unknown settings: update once decided
-        EthereumHardfork::Bpo3 => BlobParams::bpo2(),
-        EthereumHardfork::Bpo4 => BlobParams::bpo2(),
-        EthereumHardfork::Bpo5 => BlobParams::bpo2(),
-        EthereumHardfork::Amsterdam => BlobParams::bpo2(),
+        | EthereumHardfork::Bpo3
+        | EthereumHardfork::Bpo4
+        | EthereumHardfork::Bpo5
+        | EthereumHardfork::Amsterdam => BlobParams::bpo2(),
 
         // fallback
         _ => BlobParams::cancun(),

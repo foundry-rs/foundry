@@ -63,7 +63,7 @@ pub fn configure_pcx(
         .filter(|(v, _, _)| v >= &MIN_SOLIDITY_VERSION)
         // Always pick the latest version
         .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-        .map_or((MIN_SOLIDITY_VERSION, Sources::default()), |(v, s, _)| (v, s));
+        .map_or_else(|| (MIN_SOLIDITY_VERSION, Sources::default()), |(v, s, _)| (v, s));
 
     if sources.is_empty() {
         sh_warn!("no files found. Solar doesn't support Solidity versions prior to 0.8.0")?;

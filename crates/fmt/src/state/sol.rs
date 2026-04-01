@@ -93,7 +93,7 @@ impl<'ast> State<'_, 'ast> {
         let cmnts = self
             .comments
             .iter()
-            .filter_map(|c| if c.pos() < span.lo() { Some(c.style) } else { None })
+            .filter_map(|c| (c.pos() < span.lo()).then_some(c.style))
             .collect::<Vec<_>>();
 
         if let Some(first) = cmnts.first()
@@ -364,7 +364,16 @@ impl<'ast> State<'_, 'ast> {
 
         self.print_word("{");
         self.end();
-        if !body.is_empty() {
+        if body.is_empty() {
+            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                self.s.offset(-self.ind);
+            } else if self.config.bracket_spacing {
+                self.nbsp();
+            };
+            self.end();
+        } else {
             // update block depth
             self.block_depth += 1;
 
@@ -405,15 +414,6 @@ impl<'ast> State<'_, 'ast> {
 
             // restore block depth
             self.block_depth -= 1;
-        } else {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                // Adjust the offset of the trailing break from comment printing
-                // so the closing brace is not indented
-                self.s.offset(-self.ind);
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
-            self.end();
         }
         self.print_word("}");
 
@@ -699,16 +699,17 @@ impl<'ast> State<'_, 'ast> {
                 for cmnt in inner_cmnts.into_iter().rev() {
                     self.comments.push_front(cmnt);
                 }
-                let mut enabled = false;
-                if !self.handle_span(span, false) {
+                let enabled = if self.handle_span(span, false) {
+                    false
+                } else {
                     if !self.is_bol_or_only_ind() {
                         self.space();
                     }
                     self.ibox(0);
                     print_fn(self);
                     self.cursor.advance_to(span.hi(), true);
-                    enabled = true;
-                }
+                    true
+                };
                 // Print subsequent comments.
                 for cmnt in post_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
@@ -1566,14 +1567,15 @@ impl<'ast> State<'_, 'ast> {
                 }
 
                 // Trailing comment handling.
-                let mut is_trailing = false;
-                if let Some(style) = self.print_comments(
+                let is_trailing = if let Some(style) = self.print_comments(
                     span.hi(),
                     CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 ) {
                     skip_break = true;
-                    is_trailing = style.is_trailing();
-                }
+                    style.is_trailing()
+                } else {
+                    false
+                };
 
                 // Adjust indentation and line breaks.
                 match (skip_break, end.is_some()) {
@@ -1714,11 +1716,11 @@ impl<'ast> State<'_, 'ast> {
                 self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
             }
 
-            if !chain_has_indent {
+            if chain_has_indent {
+                self.s.ibox(self.ind);
+            } else {
                 self.skip_index_break = true;
                 self.cbox(0);
-            } else {
-                self.s.ibox(self.ind);
             }
         }
 
@@ -2190,7 +2192,9 @@ impl<'ast> State<'_, 'ast> {
                 self.nbsp();
             }
 
-            if !args.is_empty() {
+            if args.is_empty() {
+                self.end();
+            } else {
                 self.print_word("returns ");
                 self.print_word("(");
                 self.zerobreak();
@@ -2206,8 +2210,6 @@ impl<'ast> State<'_, 'ast> {
                 );
                 self.print_word(")");
                 self.nbsp();
-            } else {
-                self.end();
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
@@ -2559,7 +2561,7 @@ impl<'ast> State<'_, 'ast> {
 
     /// Performs a size estimation to see if the if/else can fit on one line.
     fn can_stmts_be_inlined(
-        &mut self,
+        &self,
         cond: &'ast ast::Expr<'ast>,
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
@@ -2578,15 +2580,15 @@ impl<'ast> State<'_, 'ast> {
         els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
     }
 
-    fn can_header_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {
+    fn can_header_be_inlined(&self, func: &ast::ItemFunction<'_>) -> bool {
         self.estimate_header_size(func) <= self.space_left()
     }
 
-    fn can_header_params_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {
+    fn can_header_params_be_inlined(&self, func: &ast::ItemFunction<'_>) -> bool {
         self.estimate_header_params_size(func) <= self.space_left()
     }
 
-    fn estimate_header_size(&mut self, func: &ast::ItemFunction<'_>) -> usize {
+    fn estimate_header_size(&self, func: &ast::ItemFunction<'_>) -> usize {
         let ast::ItemFunction { kind: _, ref header, ref body, body_span: _ } = *func;
 
         // ' ' + visibility
@@ -2619,15 +2621,14 @@ impl<'ast> State<'_, 'ast> {
             + end
     }
 
-    fn estimate_header_params_size(&mut self, func: &ast::ItemFunction<'_>) -> usize {
+    fn estimate_header_params_size(&self, func: &ast::ItemFunction<'_>) -> usize {
         let ast::ItemFunction { kind, ref header, body: _, body_span: _ } = *func;
 
         let kw = match kind {
             ast::FunctionKind::Constructor => 11, // 'constructor'
-            ast::FunctionKind::Function => 9,     // 'function '
-            ast::FunctionKind::Modifier => 9,     // 'modifier '
-            ast::FunctionKind::Fallback => 8,     // 'fallback'
-            ast::FunctionKind::Receive => 7,      // 'receive'
+            ast::FunctionKind::Function | ast::FunctionKind::Modifier => 9, // 'function ' / 'modifier '
+            ast::FunctionKind::Fallback => 8,                               // 'fallback'
+            ast::FunctionKind::Receive => 7,                                // 'receive'
         };
 
         // '(' + param + (', ' + param) + ')'
@@ -2678,20 +2679,20 @@ enum MemberOrCallArgs {
 }
 
 impl MemberOrCallArgs {
-    fn size(&self) -> usize {
+    const fn size(&self) -> usize {
         match self {
             Self::CallArgs(size, ..) | Self::Member(size) => *size,
         }
     }
 
-    fn member_size(&self) -> usize {
+    const fn member_size(&self) -> usize {
         match self {
             Self::CallArgs(..) => 0,
             Self::Member(size) => *size,
         }
     }
 
-    fn has_comments(&self) -> bool {
+    const fn has_comments(&self) -> bool {
         matches!(self, Self::CallArgs(.., true))
     }
 }
@@ -2750,7 +2751,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
             let before_limit = self.attributes[a].span.lo();
             let inner_limit = self.attributes[a].span.hi();
             let after_limit =
-                if !is_last { self.attributes[a + 1].span.lo() } else { self.limit_pos };
+                if is_last { self.limit_pos } else { self.attributes[a + 1].span.lo() };
 
             let mut c = 0;
             while c < self.comments.len() {
@@ -2834,7 +2835,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 }
 
-fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
+const fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     match stmt {
         ast::StmtKind::Assembly { .. }
         | ast::StmtKind::Block { .. }
@@ -2879,7 +2880,7 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
     }
 }
 
-fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
@@ -2893,13 +2894,12 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
             }
         }
         ast::ExprKind::Unary(_, expr) => has_complex_successor(&expr.kind, left),
-        ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
-        ast::ExprKind::Tuple(..) => false,
+        ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) | ast::ExprKind::Tuple(..) => false,
         _ => true,
     }
 }
 
-fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
 }
 
@@ -2907,7 +2907,7 @@ fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
 /// Used to determine if `.field` after such a call should avoid breaking.
 /// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
 /// E.g., `someFunc(a, b).field` → false (positional args)
-fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
     if let ast::ExprKind::Call(_, args) = expr_kind {
         matches!(args.kind, ast::CallArgsKind::Named(_))
     } else {

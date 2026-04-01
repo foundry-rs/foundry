@@ -56,7 +56,7 @@ pub(crate) struct TomlFileProvider {
 }
 
 impl TomlFileProvider {
-    pub(crate) fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
+    pub(crate) const fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
         Self { env_var, env_val: OnceCell::new(), default, cache: OnceCell::new() }
     }
 
@@ -255,7 +255,7 @@ impl Provider for TomlFileProvider {
 /// `Config::STANDALONE_SECTIONS`
 ///
 /// For the `[profile]` section, profile names (like `ci-venom`) are preserved as-is,
-/// but the config keys within each profile are still converted to snake_case.
+/// but the config keys within each profile are still converted to `snake_case`.
 pub(crate) struct ForcedSnakeCaseData<P>(pub(crate) P);
 
 impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
@@ -297,7 +297,7 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
     }
 }
 
-/// Recursively converts all keys in a Value (if it's a Dict) to snake_case.
+/// Recursively converts all keys in a Value (if it's a Dict) to `snake_case`.
 fn snake_case_value_keys(value: Value) -> Value {
     match value {
         Value::Dict(tag, dict) => {
@@ -498,7 +498,7 @@ impl Provider for DappEnvCompatProvider {
 /// key = "value"
 /// ```
 ///
-/// RenameProfileProvider will output
+/// `RenameProfileProvider` will output
 ///
 /// ```toml
 /// [to]
@@ -543,7 +543,7 @@ impl<P: Provider> Provider for RenameProfileProvider<P> {
 /// key = "value"
 /// ```
 ///
-/// UnwrapProfileProvider will output:
+/// `UnwrapProfileProvider` will output:
 ///
 /// ```toml
 /// [profile]
@@ -556,7 +556,11 @@ struct UnwrapProfileProvider<P> {
 }
 
 impl<P> UnwrapProfileProvider<P> {
-    pub fn new(provider: P, wrapping_key: impl Into<Profile>, profile: impl Into<Profile>) -> Self {
+    pub(crate) fn new(
+        provider: P,
+        wrapping_key: impl Into<Profile>,
+        profile: impl Into<Profile>,
+    ) -> Self {
         Self { provider, wrapping_key: wrapping_key.into(), profile: profile.into() }
     }
 }
@@ -605,7 +609,7 @@ impl<P: Provider> Provider for UnwrapProfileProvider<P> {
 /// key = "value"
 /// ```
 ///
-/// WrapProfileProvider will output:
+/// `WrapProfileProvider` will output:
 ///
 /// ```toml
 /// [wrapping_key.profile]
@@ -618,7 +622,11 @@ pub(crate) struct WrapProfileProvider<P> {
 }
 
 impl<P> WrapProfileProvider<P> {
-    pub fn new(provider: P, wrapping_key: impl Into<Profile>, profile: impl Into<Profile>) -> Self {
+    pub(crate) fn new(
+        provider: P,
+        wrapping_key: impl Into<Profile>,
+        profile: impl Into<Profile>,
+    ) -> Self {
         Self { provider, wrapping_key: wrapping_key.into(), profile: profile.into() }
     }
 }
@@ -657,7 +665,7 @@ impl<P: Provider> Provider for WrapProfileProvider<P> {
 /// key2 = "value2"
 /// ```
 ///
-/// OptionalStrictProfileProvider will output:
+/// `OptionalStrictProfileProvider` will output:
 ///
 /// ```toml
 /// [cool]
@@ -672,9 +680,9 @@ pub(crate) struct OptionalStrictProfileProvider<P> {
 }
 
 impl<P> OptionalStrictProfileProvider<P> {
-    pub const PROFILE_PROFILE: Profile = Profile::const_new("profile");
+    pub(crate) const PROFILE_PROFILE: Profile = Profile::const_new("profile");
 
-    pub fn new(provider: P, profiles: impl IntoIterator<Item = impl Into<Profile>>) -> Self {
+    pub(crate) fn new(provider: P, profiles: impl IntoIterator<Item = impl Into<Profile>>) -> Self {
         Self { provider, profiles: profiles.into_iter().map(|profile| profile.into()).collect() }
     }
 }

@@ -37,7 +37,7 @@ impl FromStr for Numeric {
     }
 }
 
-/// An enum that represents either a [serde_json::Number] integer, or a hex [U256].
+/// An enum that represents either a [`serde_json::Number`] integer, or a hex [U256].
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum NumberOrHexU256 {
@@ -58,7 +58,7 @@ impl NumberOrHexU256 {
 }
 
 /// Deserializes the input into a U256, accepting both 0x-prefixed hex and decimal strings with
-/// arbitrary precision, defined by serde_json's [`Number`](serde_json::Number).
+/// arbitrary precision, defined by `serde_json`'s [`Number`](serde_json::Number).
 pub fn from_int_or_hex<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
     D: Deserializer<'de>,

@@ -147,7 +147,7 @@ fn breakpoint<SPEC, BLOCK, N: Network>(
 
 /// Gets chain information for the given alias.
 fn get_chain<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+    state: &Cheatcodes<SPEC, BLOCK, N>,
     chain_alias: &str,
 ) -> Result {
     // Parse the chain alias - works for both chain names and IDs

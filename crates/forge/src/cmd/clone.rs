@@ -36,7 +36,7 @@ use std::{
 use tracing::trace;
 use url::Url;
 
-/// CloneMetadata stores the metadata that are not included by `foundry.toml` but necessary for a
+/// `CloneMetadata` stores the metadata that are not included by `foundry.toml` but necessary for a
 /// cloned contract. The metadata can be serialized to a metadata file in the cloned project root.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -256,7 +256,7 @@ impl CloneArgs {
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
-            main_artifact.storage_layout.to_owned().expect("storage layout not found");
+            main_artifact.storage_layout.clone().expect("storage layout not found");
 
         // dump the metadata to the root directory
         let creation_tx = client.contract_creation_data(address).await?;
@@ -352,7 +352,7 @@ impl CloneArgs {
 /// It will update the following fields:
 /// - `auto_detect_solc` to `false`
 /// - `solc_version` to the value from the metadata
-/// - `evm_version` to the value from the metadata, if the metadata's evm_version is "Default", then
+/// - `evm_version` to the value from the metadata, if the metadata's `evm_version` is "Default", then
 ///   this is derived from the solc version this contract was compiled with.
 /// - `via_ir` to the value from the metadata
 /// - `libraries` to the value from the metadata
@@ -652,7 +652,7 @@ pub fn find_main_contract<'a>(
     rv.ok_or_else(|| eyre::eyre!("contract not found"))
 }
 
-/// ExplorerClient is a trait that defines the methods to interact with block explorers.
+/// `ExplorerClient` is a trait that defines the methods to interact with block explorers.
 /// It is defined as a wrapper of the `foundry_block_explorers::Client` to allow mocking.
 #[cfg_attr(test, mockall::automock)]
 pub(crate) trait ExplorerClient {
@@ -682,19 +682,19 @@ impl ExplorerClient for Client {
     }
 }
 
-/// SourcifyClient is a client for interacting with Sourcify API.
+/// `SourcifyClient` is a client for interacting with Sourcify API.
 pub(crate) struct SourcifyClient {
     client: reqwest::Client,
     chain: Chain,
     base_url: String,
-    /// Whether the base_url already contains the full path (v2/contract/chain)
+    /// Whether the `base_url` already contains the full path (v2/contract/chain)
     is_full_path: bool,
     /// Cached creation data from the first API call
     cached_creation_data: std::sync::Arc<std::sync::Mutex<Option<ContractCreationData>>>,
 }
 
 impl SourcifyClient {
-    pub fn with_url(chain: Chain, verifier_url: Option<&str>) -> Self {
+    pub(crate) fn with_url(chain: Chain, verifier_url: Option<&str>) -> Self {
         let (base_url, is_full_path) = match verifier_url {
             Some(url) => (
                 Url::parse(url).unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap()),
@@ -1016,8 +1016,8 @@ mod tests {
         contract_name: &str,
         stripped_creation_code: &str,
     ) {
-        compiled.compiled_contracts_by_compiler_version().iter().for_each(|(_, contracts)| {
-            contracts.iter().for_each(|(name, contract)| {
+        for contracts in compiled.compiled_contracts_by_compiler_version().values() {
+            for (name, contract) in contracts {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.bin_ref().expect("creation code not found");
@@ -1027,8 +1027,8 @@ mod tests {
                         "inconsistent creation code"
                     );
                 }
-            });
-        });
+            }
+        }
     }
 
     fn mock_etherscan(address: Address) -> impl super::ExplorerClient {

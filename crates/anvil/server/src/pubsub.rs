@@ -109,7 +109,7 @@ impl<Handler: PubSubRpcHandler> RpcHandler for ContextAwareHandler<Handler> {
 /// Represents a connection to a client via websocket
 ///
 /// Contains the state for the entire connection
-pub struct PubSubConnection<Handler: PubSubRpcHandler, Connection> {
+pub(crate) struct PubSubConnection<Handler: PubSubRpcHandler, Connection> {
     /// the handler for the websocket connection
     handler: Handler,
     /// contains all the subscription related context
@@ -123,7 +123,7 @@ pub struct PubSubConnection<Handler: PubSubRpcHandler, Connection> {
 }
 
 impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection> {
-    pub fn new(connection: Connection, handler: Handler) -> Self {
+    pub(crate) fn new(connection: Connection, handler: Handler) -> Self {
         Self {
             connection,
             handler,

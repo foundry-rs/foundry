@@ -60,7 +60,7 @@ impl CleanArgs {
         for chain_or_all in chains {
             match chain_or_all {
                 ChainOrAll::NamedChain(chain) => {
-                    clean_chain_cache(chain, blocks.to_vec(), etherscan)?
+                    clean_chain_cache(chain, blocks.clone(), etherscan)?
                 }
                 ChainOrAll::All => {
                     if etherscan {
@@ -173,7 +173,7 @@ impl TypedValueParser for ChainOrAllValueParser {
 }
 
 fn possible_chains() -> PossibleValuesParser {
-    Some(&"all").into_iter().chain(NamedChain::VARIANTS).into()
+    std::iter::once(&"all").chain(NamedChain::VARIANTS).into()
 }
 
 #[cfg(test)]

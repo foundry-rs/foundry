@@ -10,7 +10,7 @@ mod handlers;
 mod utils;
 
 /// Configures an [`axum::Router`] that handles Beacon REST API calls.
-pub fn router<N: Network>(api: EthApi<N>) -> Router {
+pub(super) fn router<N: Network>(api: EthApi<N>) -> Router {
     Router::new()
         .route(
             "/eth/v1/beacon/blob_sidecars/{block_id}",

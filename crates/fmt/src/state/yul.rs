@@ -109,11 +109,10 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::Continue => self.print_word("continue"),
             yul::StmtKind::FunctionDef(func) => {
                 let yul::Function { name, parameters, returns, body } = func;
-                let params_hi = parameters
-                    .last()
-                    .map_or(returns.first().map_or(body.span.lo(), |r| r.span.lo()), |p| {
-                        p.span.hi()
-                    });
+                let params_hi = parameters.last().map_or_else(
+                    || returns.first().map_or_else(|| body.span.lo(), |r| r.span.lo()),
+                    |p| p.span.hi(),
+                );
 
                 self.cbox(0);
                 self.s.ibox(0);
@@ -136,8 +135,8 @@ impl<'ast> State<'_, 'ast> {
                 if has_returns {
                     self.commasep(
                         returns,
-                        returns.first().map_or(params_hi, |ret| ret.span.lo()),
-                        returns.last().map_or(body.span.lo(), |ret| ret.span.hi()),
+                        returns.first().map_or_else(|| params_hi, |ret| ret.span.lo()),
+                        returns.last().map_or_else(|| body.span.lo(), |ret| ret.span.hi()),
                         Self::print_ident,
                         get_span!(),
                         ListFormat::yul(Some("->"), Some("{")),
@@ -153,7 +152,7 @@ impl<'ast> State<'_, 'ast> {
                 self.commasep(
                     idents,
                     stmt.span.lo(),
-                    idents.last().map_or(stmt.span.lo(), |i| i.span.hi()),
+                    idents.last().map_or_else(|| stmt.span.lo(), |i| i.span.hi()),
                     Self::print_ident,
                     get_span!(),
                     ListFormat::consistent(),
@@ -253,7 +252,9 @@ impl<'ast> State<'_, 'ast> {
                 |s, stmt| {
                     s.print_yul_stmt(stmt);
                     s.print_comments(stmt.span.hi(), CommentConfig::default());
-                    if i != n_args {
+                    if i == n_args {
+                        s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
+                    } else {
                         let next_span = block[i + 1].span;
                         s.print_trailing_comment(stmt.span.hi(), Some(next_span.lo()));
                         if !s.is_bol_or_only_ind() && !s.inline_config.is_disabled(stmt.span) {
@@ -270,8 +271,6 @@ impl<'ast> State<'_, 'ast> {
                             }
                         }
                         i += 1;
-                    } else {
-                        s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
                     }
                 },
                 |b| b.span,
@@ -300,7 +299,7 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
-    fn estimate_yul_header_params_size(&mut self, func: &yul::Function<'_>) -> usize {
+    fn estimate_yul_header_params_size(&self, func: &yul::Function<'_>) -> usize {
         // '(' + param + (', ' + param) + ')'
         let params = func
             .parameters
@@ -311,7 +310,7 @@ impl<'ast> State<'_, 'ast> {
         9 + self.estimate_size(func.name.span) + 1 + params + 3
     }
 
-    fn can_yul_header_params_be_inlined(&mut self, func: &yul::Function<'_>) -> bool {
+    fn can_yul_header_params_be_inlined(&self, func: &yul::Function<'_>) -> bool {
         self.estimate_yul_header_params_size(func) <= self.space_left()
     }
 }

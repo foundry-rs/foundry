@@ -168,10 +168,8 @@ where
         match err {
             EVMError::Transaction(err) => match err {
                 OpTransactionError::Base(err) => InvalidTransactionError::from(err).into(),
-                OpTransactionError::DepositSystemTxPostRegolith => {
-                    Self::DepositTransactionUnsupported
-                }
-                OpTransactionError::HaltedDepositPostRegolith => {
+                OpTransactionError::DepositSystemTxPostRegolith
+                | OpTransactionError::HaltedDepositPostRegolith => {
                     Self::DepositTransactionUnsupported
                 }
                 OpTransactionError::MissingEnvelopedTx => Self::InvalidTransaction(err.into()),
@@ -304,7 +302,7 @@ pub enum InvalidTransactionError {
     /// Thrown if the sender of a transaction is a contract.
     #[error("sender not an eoa")]
     SenderNoEOA,
-    /// Thrown when a tx was signed with a different chain_id
+    /// Thrown when a tx was signed with a different `chain_id`
     #[error("invalid chain id for signer")]
     InvalidChainId,
     /// Thrown when a legacy tx was signed for a different chain
@@ -484,15 +482,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                             data: serde_json::to_value(data).ok(),
                         }
                     }
-                    InvalidTransactionError::GasTooLow => {
-                        // <https://eips.ethereum.org/EIPS/eip-1898>
-                        RpcError {
-                            code: ErrorCode::ServerError(-32000),
-                            message: err.to_string().into(),
-                            data: None,
-                        }
-                    }
-                    InvalidTransactionError::GasTooHigh(_) => {
+                    InvalidTransactionError::GasTooLow | InvalidTransactionError::GasTooHigh(_) => {
                         // <https://eips.ethereum.org/EIPS/eip-1898>
                         RpcError {
                             code: ErrorCode::ServerError(-32000),
@@ -506,10 +496,8 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::EmptyRawTransactionData => {
                     RpcError::invalid_params("Empty transaction data")
                 }
-                BlockchainError::FailedToDecodeSignedTransaction => {
-                    RpcError::invalid_params("Failed to decode transaction")
-                }
-                BlockchainError::FailedToDecodeTransaction => {
+                BlockchainError::FailedToDecodeSignedTransaction
+                | BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
                 }
                 BlockchainError::FailedToDecodeReceipt => {
@@ -539,75 +527,38 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                         err => RpcError::internal_error_with(format!("Fork Error: {err:?}")),
                     }
                 }
-                err @ BlockchainError::EvmError(_) => {
-                    RpcError::internal_error_with(err.to_string())
-                }
-                err @ BlockchainError::EvmOverrideError(_) => {
-                    RpcError::invalid_params(err.to_string())
-                }
+                err @ (BlockchainError::EvmError(_)
+                | BlockchainError::DataUnavailable
+                | BlockchainError::TrieError(_)) => RpcError::internal_error_with(err.to_string()),
+                err @ (BlockchainError::EvmOverrideError(_)
+                | BlockchainError::BlockOutOfRange(_, _)
+                | BlockchainError::StateOverrideError(_)
+                | BlockchainError::TimestampError(_)
+                | BlockchainError::EIP1559TransactionUnsupportedAtHardfork
+                | BlockchainError::EIP2930TransactionUnsupportedAtHardfork
+                | BlockchainError::EIP4844TransactionUnsupportedAtHardfork
+                | BlockchainError::EIP7702TransactionUnsupportedAtHardfork
+                | BlockchainError::DepositTransactionUnsupported
+                | BlockchainError::TempoTransactionUnsupported
+                | BlockchainError::ExcessBlobGasNotSet
+                | BlockchainError::UnknownTransactionType
+                | BlockchainError::InvalidTransactionRequest(_)
+                | BlockchainError::RecoveryError(_)) => RpcError::invalid_params(err.to_string()),
                 err @ BlockchainError::InvalidUrl(_) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::Internal(err) => RpcError::internal_error_with(err),
-                err @ BlockchainError::BlockOutOfRange(_, _) => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::BlockNotFound => RpcError {
-                    // <https://eips.ethereum.org/EIPS/eip-1898>
-                    code: ErrorCode::ServerError(-32001),
-                    message: err.to_string().into(),
-                    data: None,
-                },
-                err @ BlockchainError::TransactionNotFound => RpcError {
-                    code: ErrorCode::ServerError(-32001),
-                    message: err.to_string().into(),
-                    data: None,
-                },
-                err @ BlockchainError::DataUnavailable => {
-                    RpcError::internal_error_with(err.to_string())
-                }
-                err @ BlockchainError::TrieError(_) => {
-                    RpcError::internal_error_with(err.to_string())
+                err @ (BlockchainError::BlockNotFound | BlockchainError::TransactionNotFound) => {
+                    RpcError {
+                        // <https://eips.ethereum.org/EIPS/eip-1898>
+                        code: ErrorCode::ServerError(-32001),
+                        message: err.to_string().into(),
+                        data: None,
+                    }
                 }
                 BlockchainError::UintConversion(err) => RpcError::invalid_params(err),
-                err @ BlockchainError::StateOverrideError(_) => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::TimestampError(_) => {
-                    RpcError::invalid_params(err.to_string())
-                }
                 BlockchainError::DatabaseError(err) => {
                     RpcError::internal_error_with(err.to_string())
                 }
-                err @ BlockchainError::EIP1559TransactionUnsupportedAtHardfork => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::EIP4844TransactionUnsupportedAtHardfork => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::EIP7702TransactionUnsupportedAtHardfork => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::DepositTransactionUnsupported => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::TempoTransactionUnsupported => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::ExcessBlobGasNotSet => {
-                    RpcError::invalid_params(err.to_string())
-                }
                 err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
-                err @ BlockchainError::UnknownTransactionType => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::InvalidTransactionRequest(_) => {
-                    RpcError::invalid_params(err.to_string())
-                }
-                err @ BlockchainError::RecoveryError(_) => {
-                    RpcError::invalid_params(err.to_string())
-                }
                 BlockchainError::FilterNotFound => RpcError {
                     code: ErrorCode::ServerError(-32000),
                     message: "filter not found".into(),

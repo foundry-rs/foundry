@@ -181,12 +181,12 @@ impl<'a> BacktraceBuilder<'a> {
 /// It uses the program counter (PC) from the traces to map to a specific source location for the
 /// call.
 ///
-/// Each step/call in the backtrace is classified as a BacktraceFrame
+/// Each step/call in the backtrace is classified as a `BacktraceFrame`
 #[non_exhaustive]
 pub struct Backtrace<'a> {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     frames: Vec<BacktraceFrame>,
-    /// Map from address to PcSourceMapper
+    /// Map from address to `PcSourceMapper`
     pc_mappers: HashMap<Address, PcSourceMapper<'a>>,
     /// Linked libraries from configuration
     linked_libraries: Vec<LinkedLib>,
@@ -302,7 +302,7 @@ impl<'a> Backtrace<'a> {
     }
 
     /// Returns true if the backtrace is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 }
@@ -346,7 +346,7 @@ struct BacktraceFrame {
 
 impl BacktraceFrame {
     /// Creates a new backtrace frame.
-    fn new(contract_address: Address) -> Self {
+    const fn new(contract_address: Address) -> Self {
         Self {
             contract_address,
             contract_name: None,
@@ -379,7 +379,7 @@ impl BacktraceFrame {
     }
 
     /// Sets the byte offset.
-    fn with_byte_offset(mut self, offset: usize) -> Self {
+    const fn with_byte_offset(mut self, offset: usize) -> Self {
         self.byte_offset = Some(offset);
         self
     }
@@ -391,7 +391,11 @@ impl fmt::Display for BacktraceFrame {
         let mut result = String::new();
 
         // No contract name, show address
-        result.push_str(self.contract_name.as_ref().unwrap_or(&self.contract_address.to_string()));
+        if let Some(name) = &self.contract_name {
+            result.push_str(name);
+        } else {
+            result.push_str(&self.contract_address.to_string());
+        }
 
         // Add function name if available
         result.push_str(&self.function_name.as_ref().map_or(String::new(), |f| format!(".{f}")));
@@ -406,7 +410,8 @@ impl fmt::Display for BacktraceFrame {
             result.push_str(&line.to_string());
 
             result.push(':');
-            result.push_str(&self.column.as_ref().map_or("0".to_string(), |c| c.to_string()));
+            result
+                .push_str(&self.column.as_ref().map_or_else(|| "0".to_string(), |c| c.to_string()));
         }
 
         // Add location in parentheses if available

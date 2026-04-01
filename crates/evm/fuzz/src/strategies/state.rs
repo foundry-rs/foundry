@@ -88,8 +88,8 @@ impl EvmFuzzState {
         }
     }
 
-    /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to
-    /// the given [FuzzDictionaryConfig].
+    /// Collects state changes from a [`StateChangeset`] and logs into an [`EvmFuzzState`] according to
+    /// the given [`FuzzDictionaryConfig`].
     pub fn collect_values_from_call(
         &self,
         fuzzed_contracts: &FuzzRunIdentifiedContracts,
@@ -460,7 +460,7 @@ impl FuzzDictionary {
         }
     }
 
-    pub fn values(&self) -> &B256IndexSet {
+    pub const fn values(&self) -> &B256IndexSet {
         &self.state_values
     }
 
@@ -499,7 +499,7 @@ impl FuzzDictionary {
     }
 
     #[inline]
-    pub fn addresses(&self) -> &AddressIndexSet {
+    pub const fn addresses(&self) -> &AddressIndexSet {
         &self.addresses
     }
 

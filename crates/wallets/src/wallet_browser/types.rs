@@ -17,19 +17,19 @@ pub(crate) enum BrowserApiResponse<T = ()> {
 
 impl BrowserApiResponse<()> {
     /// Create a successful response with no data.
-    pub fn ok() -> Self {
+    pub(super) const fn ok() -> Self {
         Self::Ok(())
     }
 }
 
 impl<T> BrowserApiResponse<T> {
     /// Create a successful response with the given data.
-    pub fn with_data(data: T) -> Self {
+    pub(super) const fn with_data(data: T) -> Self {
         Self::Ok(data)
     }
 
     /// Create an error response with the given message.
-    pub fn error(msg: impl Into<String>) -> Self {
+    pub(super) fn error(msg: impl Into<String>) -> Self {
         Self::Error { message: msg.into() }
     }
 }
@@ -89,7 +89,7 @@ pub struct BrowserSignRequest {
 /// Represents a typed data signing request sent to the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct BrowserSignTypedDataRequest {
+pub(super) struct BrowserSignTypedDataRequest {
     /// The unique identifier for the signing request.
     pub id: Uuid,
     /// The address that should sign the typed data.
@@ -121,7 +121,7 @@ pub struct Connection {
 
 impl Connection {
     /// Create a new connection instance.
-    pub fn new(address: Address, chain_id: ChainId) -> Self {
+    pub const fn new(address: Address, chain_id: ChainId) -> Self {
         Self { address, chain_id }
     }
 }

@@ -182,10 +182,8 @@ impl FuzzedExecutor {
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        let mut max_workers = Ord::max(1, config.runs / MIN_RUNS_PER_WORKER);
-        if config.runs == 0 {
-            max_workers = 0;
-        }
+        let max_workers =
+            if config.runs == 0 { 0 } else { Ord::max(1, config.runs / MIN_RUNS_PER_WORKER) };
         let num_workers = Ord::min(rayon::current_num_threads(), max_workers as usize);
         Self { executor_f: executor, runner, sender, config, persisted_failure, num_workers }
     }
@@ -422,7 +420,7 @@ impl FuzzedExecutor {
             self.config.corpus.clone(),
             strategy.boxed(),
             // Master worker replays the persisted corpus using the executor
-            if worker_id == 0 { Some(&self.executor_f) } else { None },
+            (worker_id == 0).then_some(&self.executor_f),
             Some(func),
             None, // fuzzed_contracts for invariant tests
         )?;
@@ -633,7 +631,7 @@ impl FuzzedExecutor {
     }
 
     /// Determines the number of runs per worker.
-    fn runs_per_worker(&self, worker_id: usize) -> u32 {
+    const fn runs_per_worker(&self, worker_id: usize) -> u32 {
         let worker_id = worker_id as u32;
         let total_runs = self.config.runs;
         let n = self.num_workers as u32;

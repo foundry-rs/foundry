@@ -81,14 +81,14 @@ pub struct WalletOpts {
 
     /// Use AWS Key Management Service.
     ///
-    /// Ensure the AWS_KMS_KEY_ID environment variable is set.
+    /// Ensure the `AWS_KMS_KEY_ID` environment variable is set.
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
 
     /// Use Google Cloud Key Management Service.
     ///
-    /// Ensure the following environment variables are set: GCP_PROJECT_ID, GCP_LOCATION,
-    /// GCP_KEY_RING, GCP_KEY_NAME, GCP_KEY_VERSION.
+    /// Ensure the following environment variables are set: `GCP_PROJECT_ID`, `GCP_LOCATION`,
+    /// `GCP_KEY_RING`, `GCP_KEY_NAME`, `GCP_KEY_VERSION`.
     ///
     /// See: <https://cloud.google.com/kms/docs>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
@@ -96,8 +96,8 @@ pub struct WalletOpts {
 
     /// Use Turnkey.
     ///
-    /// Ensure the following environment variables are set: TURNKEY_API_PRIVATE_KEY,
-    /// TURNKEY_ORGANIZATION_ID, TURNKEY_ADDRESS.
+    /// Ensure the following environment variables are set: `TURNKEY_API_PRIVATE_KEY`,
+    /// `TURNKEY_ORGANIZATION_ID`, `TURNKEY_ADDRESS`.
     ///
     /// See: <https://docs.turnkey.com/getting-started/quickstart>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "turnkey"))]

@@ -40,7 +40,7 @@ pub struct GeneratedOutputRef<'a> {
     pub(crate) intermediate: &'a IntermediateOutput,
 }
 
-/// Intermediate output for the compiled [SessionSource]
+/// Intermediate output for the compiled [`SessionSource`]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IntermediateOutput {
     /// All expressions within the REPL contract's run function and top level scope.
@@ -63,7 +63,7 @@ pub struct IntermediateContract {
     pub variable_definitions: HashMap<String, Box<pt::VariableDefinition>>,
 }
 
-/// A defined type for a map of contract names to [IntermediateContract]s
+/// A defined type for a map of contract names to [`IntermediateContract`]s
 type IntermediateContracts = HashMap<String, IntermediateContract>;
 
 impl fmt::Debug for GeneratedOutput {
@@ -367,7 +367,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     }
 }
 
-/// Configuration for the [SessionSource]
+/// Configuration for the [`SessionSource`]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionSourceConfig {
     /// Foundry configuration
@@ -469,11 +469,11 @@ impl SessionSource {
     /// ### Takes
     ///
     /// - An instance of [Solc]
-    /// - An instance of [SessionSourceConfig]
+    /// - An instance of [`SessionSourceConfig`]
     ///
     /// ### Returns
     ///
-    /// A new instance of [SessionSource]
+    /// A new instance of [`SessionSource`]
     pub fn new(mut config: SessionSourceConfig) -> Result<Self> {
         config.detect_solc()?;
         Ok(Self {
@@ -488,7 +488,7 @@ impl SessionSource {
         })
     }
 
-    /// Clones the [SessionSource] and appends a new line of code.
+    /// Clones the [`SessionSource`] and appends a new line of code.
     ///
     /// Returns `true` if the new line was added to `run()`.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(Self, bool)> {
@@ -637,7 +637,7 @@ impl SessionSource {
     ///
     /// ### Returns
     ///
-    /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
+    /// Optionally, a map of contract names to a vec of [`IntermediateContract`]s.
     pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
         let mut res_map = HashMap::default();
         let parsed_map = self.get_sources();
@@ -743,12 +743,12 @@ contract {contract_name} {{
         sess.dcx.emitted_errors().unwrap()
     }
 
-    /// Gets the [IntermediateContract] for a Solidity source string and inserts it into the
+    /// Gets the [`IntermediateContract`] for a Solidity source string and inserts it into the
     /// passed `res_map`. In addition, recurses on any imported files as well.
     ///
     /// ### Takes
     /// - `content` - A Solidity source string
-    /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
+    /// - `res_map` - A mutable reference to a map of contract names to [`IntermediateContract`]s
     pub fn get_intermediate_contract(
         content: &str,
         res_map: &mut HashMap<String, IntermediateContract>,
@@ -815,7 +815,7 @@ contract {contract_name} {{
     ///
     /// ### Takes
     ///
-    /// A reference to a [pt::Statement]
+    /// A reference to a [`pt::Statement`]
     ///
     /// ### Returns
     ///
@@ -848,7 +848,7 @@ contract {contract_name} {{
 
 /// A Parse Tree Fragment
 ///
-/// Used to determine whether an input will go to the "run()" function,
+/// Used to determine whether an input will go to the "`run()`" function,
 /// the top level of the contract, or in global scope.
 #[derive(Debug)]
 enum ParseTreeFragment {
@@ -856,6 +856,6 @@ enum ParseTreeFragment {
     Source,
     /// Code for the top level of the contract
     Contract,
-    /// Code for the "run()" function
+    /// Code for the "`run()`" function
     Function,
 }

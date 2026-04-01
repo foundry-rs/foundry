@@ -107,7 +107,7 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        let mut output = compiler.compile(&project)?;
+        let output = compiler.compile(&project)?;
 
         // Cache project selectors.
         cache_local_signatures(&output)?;
@@ -118,8 +118,7 @@ impl BuildArgs {
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
         if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
-            self.lint(&project, &config, self.paths.as_deref(), &mut output)
-                .wrap_err("Lint failed")?;
+            self.lint(&project, &config, self.paths.as_deref(), &output).wrap_err("Lint failed")?;
         }
 
         Ok(output)
@@ -130,7 +129,7 @@ impl BuildArgs {
         project: &Project,
         config: &Config,
         files: Option<&[PathBuf]>,
-        output: &mut ProjectCompileOutput,
+        output: &ProjectCompileOutput,
     ) -> Result<()> {
         let format_json = shell::is_json();
         if project.compiler.solc.is_some() && !shell::is_quiet() {
@@ -215,7 +214,7 @@ impl BuildArgs {
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 
@@ -230,7 +229,7 @@ impl BuildArgs {
         })
     }
 
-    /// Check soldeer.lock file consistency using soldeer_core APIs
+    /// Check soldeer.lock file consistency using `soldeer_core` APIs
     async fn check_soldeer_lock_consistency(&self, config: &Config) {
         let soldeer_lock_path = config.root.join("soldeer.lock");
         if !soldeer_lock_path.exists() {

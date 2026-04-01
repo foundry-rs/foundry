@@ -74,7 +74,7 @@ fn fuzz_param_inner(
     };
 
     match *param {
-        DynSolType::Address => value(),
+        DynSolType::Address | DynSolType::Bytes | DynSolType::FixedBytes(1..=32) => value(),
         DynSolType::Int(n @ 8..=256) => super::IntStrategy::new(n, fuzz_fixtures)
             .prop_map(move |x| DynSolValue::Int(x, n))
             .boxed(),
@@ -82,8 +82,6 @@ fn fuzz_param_inner(
             .prop_map(move |x| DynSolValue::Uint(x, n))
             .boxed(),
         DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
-        DynSolType::Bytes => value(),
-        DynSolType::FixedBytes(_size @ 1..=32) => value(),
         DynSolType::String => value()
             .prop_map(move |value| {
                 DynSolValue::String(

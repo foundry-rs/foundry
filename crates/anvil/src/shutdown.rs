@@ -38,7 +38,7 @@ impl Signal {
 }
 
 /// Create a channel pair that's used to propagate shutdown event
-pub fn signal() -> (Signal, Shutdown) {
+pub(crate) fn signal() -> (Signal, Shutdown) {
     let (sender, receiver) = oneshot::channel();
     (Signal(sender), Shutdown(receiver.shared()))
 }

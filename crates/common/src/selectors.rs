@@ -30,7 +30,7 @@ const MAX_TIMEDOUT_REQ: usize = 4usize;
 /// List of signatures for a given [`SelectorKind`].
 pub type OpenChainSignatures = Vec<String>;
 
-/// A client that can request API data from OpenChain.
+/// A client that can request API data from `OpenChain`.
 #[derive(Clone, Debug)]
 pub struct OpenChainClient {
     inner: reqwest::Client,
@@ -129,7 +129,7 @@ impl OpenChainClient {
         Ok(())
     }
 
-    /// Decodes the given function or event selector using OpenChain
+    /// Decodes the given function or event selector using `OpenChain`
     pub async fn decode_selector(
         &self,
         selector: SelectorKind,
@@ -137,7 +137,7 @@ impl OpenChainClient {
         Ok(self.decode_selectors(&[selector]).await?.pop().unwrap())
     }
 
-    /// Decodes the given function, error or event selectors using OpenChain.
+    /// Decodes the given function, error or event selectors using `OpenChain`.
     pub async fn decode_selectors(
         &self,
         selectors: &[SelectorKind],
@@ -199,7 +199,7 @@ impl OpenChainClient {
             .collect())
     }
 
-    /// Fetches a function signature given the selector using OpenChain
+    /// Fetches a function signature given the selector using `OpenChain`
     pub async fn decode_function_selector(
         &self,
         selector: Selector,
@@ -223,7 +223,7 @@ impl OpenChainClient {
         Ok(sigs)
     }
 
-    /// Fetches an event signature given the 32 byte topic using OpenChain.
+    /// Fetches an event signature given the 32 byte topic using `OpenChain`.
     pub async fn decode_event_topic(&self, topic: B256) -> eyre::Result<OpenChainSignatures> {
         self.decode_selector(SelectorKind::Event(topic)).await
     }
@@ -281,7 +281,7 @@ impl OpenChainClient {
         Ok(possible_info)
     }
 
-    /// uploads selectors to OpenChain using the given data
+    /// uploads selectors to `OpenChain` using the given data
     pub async fn import_selectors(
         &self,
         data: SelectorImportData,
@@ -358,7 +358,7 @@ impl fmt::Display for PossibleSigs {
     }
 }
 
-/// The kind of selector to fetch from OpenChain.
+/// The kind of selector to fetch from `OpenChain`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SelectorKind {
     /// A function selector.
@@ -371,7 +371,7 @@ pub enum SelectorKind {
 
 impl SelectorKind {
     /// Returns the function selector if it is a function OR custom error.
-    pub fn as_function(&self) -> Option<Selector> {
+    pub const fn as_function(&self) -> Option<Selector> {
         match *self {
             Self::Function(selector) | Self::Error(selector) => Some(selector),
             _ => None,
@@ -379,7 +379,7 @@ impl SelectorKind {
     }
 
     /// Returns the event selector if it is an event.
-    pub fn as_event(&self) -> Option<B256> {
+    pub const fn as_event(&self) -> Option<B256> {
         match *self {
             Self::Event(hash) => Some(hash),
             _ => None,
@@ -387,29 +387,29 @@ impl SelectorKind {
     }
 }
 
-/// Decodes the given function or event selector using OpenChain.
+/// Decodes the given function or event selector using `OpenChain`.
 pub async fn decode_selector(selector: SelectorKind) -> eyre::Result<OpenChainSignatures> {
     OpenChainClient::new()?.decode_selector(selector).await
 }
 
-/// Decodes the given function or event selectors using OpenChain.
+/// Decodes the given function or event selectors using `OpenChain`.
 pub async fn decode_selectors(
     selectors: &[SelectorKind],
 ) -> eyre::Result<Vec<OpenChainSignatures>> {
     OpenChainClient::new()?.decode_selectors(selectors).await
 }
 
-/// Fetches a function signature given the selector using OpenChain.
+/// Fetches a function signature given the selector using `OpenChain`.
 pub async fn decode_function_selector(selector: Selector) -> eyre::Result<OpenChainSignatures> {
     OpenChainClient::new()?.decode_function_selector(selector).await
 }
 
-/// Fetches all possible signatures and attempts to abi decode the calldata using OpenChain.
+/// Fetches all possible signatures and attempts to abi decode the calldata using `OpenChain`.
 pub async fn decode_calldata(calldata: &str) -> eyre::Result<OpenChainSignatures> {
     OpenChainClient::new()?.decode_calldata(calldata).await
 }
 
-/// Fetches an event signature given the 32 byte topic using OpenChain.
+/// Fetches an event signature given the 32 byte topic using `OpenChain`.
 pub async fn decode_event_topic(topic: B256) -> eyre::Result<OpenChainSignatures> {
     OpenChainClient::new()?.decode_event_topic(topic).await
 }
@@ -444,7 +444,7 @@ pub struct RawSelectorImportData {
 }
 
 impl RawSelectorImportData {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.function.is_empty() && self.event.is_empty() && self.error.is_empty()
     }
 }
@@ -499,7 +499,7 @@ impl SelectorImportResponse {
     }
 }
 
-/// uploads selectors to OpenChain using the given data
+/// uploads selectors to `OpenChain` using the given data
 pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<SelectorImportResponse> {
     OpenChainClient::new()?.import_selectors(data).await
 }

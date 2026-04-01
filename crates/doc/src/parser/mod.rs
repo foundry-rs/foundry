@@ -26,7 +26,7 @@ pub use comment::{Comment, CommentTag, Comments, CommentsRef};
 /// The documentation parser. This type implements a [Visitor] trait.
 ///
 /// While walking the parse tree, [Parser] will collect relevant source items and corresponding
-/// doc comments. The resulting [ParseItem]s can be accessed by calling [Parser::items].
+/// doc comments. The resulting [`ParseItem`]s can be accessed by calling [`Parser::items`].
 #[derive(Debug, Default)]
 pub struct Parser {
     /// Initial comments from solang parser.
@@ -92,19 +92,19 @@ impl Parser {
         Ok(())
     }
 
-    /// Create new [ParseItem] with comments and formatted code.
-    fn new_item(&mut self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
+    /// Create new [`ParseItem`] with comments and formatted code.
+    fn new_item(&self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
         let docs = self.parse_docs(loc_start)?;
         Ok(ParseItem::new(source).with_comments(docs).with_code(&self.source, self.tab_width))
     }
 
     /// Parse the doc comments from the current start location.
-    fn parse_docs(&mut self, end: usize) -> ParserResult<Comments> {
+    fn parse_docs(&self, end: usize) -> ParserResult<Comments> {
         self.parse_docs_range(self.context.doc_start_loc, end)
     }
 
     /// Parse doc comments from the within specified range.
-    fn parse_docs_range(&mut self, start: usize, end: usize) -> ParserResult<Comments> {
+    fn parse_docs_range(&self, start: usize, end: usize) -> ParserResult<Comments> {
         let mut res = vec![];
         for comment in parse_doccomments(&self.comments, start, end) {
             match comment {

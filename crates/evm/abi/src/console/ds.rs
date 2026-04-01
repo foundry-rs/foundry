@@ -1,4 +1,4 @@
-//! DSTest log interface.
+//! `DSTest` log interface.
 
 use super::{format_units_int, format_units_uint};
 use alloy_primitives::hex;

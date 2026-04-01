@@ -12,7 +12,7 @@ use futures::{FutureExt, future};
 
 /// Handles incoming JSON-RPC Request.
 // NOTE: `handler` must come first because the `request` extractor consumes the request body.
-pub async fn handle<Http: RpcHandler, Ws>(
+pub(crate) async fn handle<Http: RpcHandler, Ws>(
     State((handler, _)): State<(Http, Ws)>,
     request: Result<Json<Request>, JsonRejection>,
 ) -> Json<Response> {
@@ -31,7 +31,7 @@ pub async fn handle<Http: RpcHandler, Ws>(
 ///
 /// This will try to deserialize the payload into the request type of the handler and if successful
 /// invoke the handler
-pub async fn handle_request<Handler: RpcHandler>(
+pub(crate) async fn handle_request<Handler: RpcHandler>(
     req: Request,
     handler: Handler,
 ) -> Option<Response> {

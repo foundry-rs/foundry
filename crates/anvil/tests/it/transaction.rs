@@ -1013,7 +1013,7 @@ async fn can_stream_pending_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_access_list() {
-    /// returns a String representation of the AccessList, with sorted
+    /// returns a String representation of the `AccessList`, with sorted
     /// keys (address) and storage slots
     fn access_list_to_sorted_string(a: AccessList) -> String {
         let mut a = a.0;

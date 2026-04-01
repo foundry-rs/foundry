@@ -78,15 +78,15 @@ impl FromStr for FoundryHardfork {
 }
 
 impl FoundryHardfork {
-    pub fn ethereum(h: EthereumHardfork) -> Self {
+    pub const fn ethereum(h: EthereumHardfork) -> Self {
         Self::Ethereum(h)
     }
 
-    pub fn optimism(h: OpHardfork) -> Self {
+    pub const fn optimism(h: OpHardfork) -> Self {
         Self::Optimism(h)
     }
 
-    pub fn tempo(h: TempoHardfork) -> Self {
+    pub const fn tempo(h: TempoHardfork) -> Self {
         Self::Tempo(h)
     }
 }
@@ -167,8 +167,7 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
         EthereumHardfork::Shanghai => SpecId::SHANGHAI,
         EthereumHardfork::Cancun => SpecId::CANCUN,
         EthereumHardfork::Prague => SpecId::PRAGUE,
-        EthereumHardfork::Osaka => SpecId::OSAKA,
-        EthereumHardfork::Bpo1 | EthereumHardfork::Bpo2 => SpecId::OSAKA,
+        EthereumHardfork::Osaka | EthereumHardfork::Bpo1 | EthereumHardfork::Bpo2 => SpecId::OSAKA,
         EthereumHardfork::Bpo3 | EthereumHardfork::Bpo4 | EthereumHardfork::Bpo5 => {
             unimplemented!()
         }

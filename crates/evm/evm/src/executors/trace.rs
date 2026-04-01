@@ -73,7 +73,7 @@ impl TracingExecutor {
     }
 
     /// Returns the spec id of the executor
-    pub fn spec_id(&self) -> SpecId {
+    pub const fn spec_id(&self) -> SpecId {
         self.executor.spec_id()
     }
 

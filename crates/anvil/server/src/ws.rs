@@ -16,7 +16,7 @@ use std::{
 /// Handles incoming Websocket upgrade
 ///
 /// This is the entrypoint invoked by the axum server for a websocket request
-pub async fn handle_ws<Http, Ws: PubSubRpcHandler>(
+pub(crate) async fn handle_ws<Http, Ws: PubSubRpcHandler>(
     ws: WebSocketUpgrade,
     State((_, handler)): State<(Http, Ws)>,
 ) -> Response {

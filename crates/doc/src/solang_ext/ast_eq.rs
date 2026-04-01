@@ -19,13 +19,13 @@ fn to_num_reversed(string: &str) -> U256 {
     string.replace('_', "").trim().chars().rev().collect::<String>().parse().unwrap()
 }
 
-/// Helper to filter [ParameterList] to omit empty
+/// Helper to filter [`ParameterList`] to omit empty
 /// parameters
 fn filter_params(list: &ParameterList) -> ParameterList {
     list.iter().filter(|(_, param)| param.is_some()).cloned().collect::<Vec<_>>()
 }
 
-/// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
+/// Check if two `ParseTrees` are equal ignoring location information or ordering if ordering does
 /// not matter
 pub trait AstEq {
     fn ast_eq(&self, other: &Self) -> bool;
@@ -100,10 +100,10 @@ where
     T: AstEq,
 {
     fn ast_eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() {
-            false
-        } else {
+        if self.len() == other.len() {
             self.iter().zip(other.iter()).all(|(left, right)| left.ast_eq(right))
+        } else {
+            false
         }
     }
 }

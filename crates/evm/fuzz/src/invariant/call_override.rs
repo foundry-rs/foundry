@@ -8,11 +8,11 @@ use proptest::{
 };
 use std::{collections::HashSet, sync::Arc};
 
-/// Given a TestRunner and a strategy, it generates calls. Used inside the Fuzzer inspector to
+/// Given a `TestRunner` and a strategy, it generates calls. Used inside the Fuzzer inspector to
 /// override external calls to test for potential reentrancy vulnerabilities.
 ///
 /// The key insight is that we only override calls TO handler contracts (targeted contracts).
-/// This simulates a malicious contract that reenters when receiving ETH via its receive() function.
+/// This simulates a malicious contract that reenters when receiving ETH via its `receive()` function.
 #[derive(Clone, Debug)]
 pub struct RandomCallGenerator {
     /// Address of the test contract.

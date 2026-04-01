@@ -15,14 +15,14 @@ use foundry_primitives::FoundryNetwork;
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
 #[derive(Clone)]
-pub struct HttpEthRpcHandler {
+pub(super) struct HttpEthRpcHandler {
     /// Access to the node
     api: EthApi<FoundryNetwork>,
 }
 
 impl HttpEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
+    pub(super) const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 }
@@ -38,14 +38,14 @@ impl RpcHandler for HttpEthRpcHandler {
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls and `EthPubSub` via pubsub connection
 #[derive(Clone)]
-pub struct PubSubEthRpcHandler {
+pub(super) struct PubSubEthRpcHandler {
     /// Access to the node
     api: EthApi<FoundryNetwork>,
 }
 
 impl PubSubEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
+    pub(super) const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 
@@ -61,9 +61,8 @@ impl PubSubEthRpcHandler {
             }
             EthPubSub::EthSubscribe(kind, raw_params) => {
                 let filter = match &*raw_params {
-                    Params::None => None,
                     Params::Logs(filter) => Some(filter.clone()),
-                    Params::Bool(_) => None,
+                    Params::None | Params::Bool(_) => None,
                 };
                 let params = FilteredParams::new(filter.map(|b| *b));
 

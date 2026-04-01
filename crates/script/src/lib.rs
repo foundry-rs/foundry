@@ -254,6 +254,7 @@ impl ScriptArgs {
     }
 
     /// Executes the script
+    #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
@@ -448,7 +449,6 @@ impl ScriptArgs {
                 bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                 unknown_c += 1;
             }
-            continue;
         }
 
         let mut prompt_user = false;
@@ -504,7 +504,7 @@ impl ScriptArgs {
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
-    fn should_broadcast(&self) -> bool {
+    const fn should_broadcast(&self) -> bool {
         self.broadcast || self.resume || self.verify
     }
 }
@@ -517,12 +517,12 @@ impl Provider for ScriptArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
 
-        if let Some(ref etherscan_api_key) =
+        if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
             dict.insert(
                 "etherscan_api_key".to_string(),
-                figment::value::Value::from(etherscan_api_key.to_string()),
+                figment::value::Value::from(etherscan_api_key.clone()),
             );
         }
 

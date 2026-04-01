@@ -116,8 +116,7 @@ impl PartialEq for CachedEndpoints {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Pattern(a), Self::Pattern(b)) => a.as_str() == b.as_str(),
-            (&Self::All, &Self::All) => true,
-            (&Self::Remote, &Self::Remote) => true,
+            (&Self::All, &Self::All) | (&Self::Remote, &Self::Remote) => true,
             _ => false,
         }
     }
@@ -233,7 +232,7 @@ mod tests {
     #[test]
     fn can_parse_storage_config() {
         #[derive(Serialize, Deserialize)]
-        pub struct Wrapper {
+        pub(crate) struct Wrapper {
             pub rpc_storage_caching: StorageCachingConfig,
         }
 

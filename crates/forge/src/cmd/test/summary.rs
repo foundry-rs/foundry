@@ -9,7 +9,7 @@ use serde_json::json;
 use std::{collections::HashMap, fmt::Display};
 
 /// Represents a test summary report.
-pub struct TestSummaryReport {
+pub(super) struct TestSummaryReport {
     /// Whether the report should be detailed.
     is_detailed: bool,
     /// The test outcome to report.
@@ -17,7 +17,7 @@ pub struct TestSummaryReport {
 }
 
 impl TestSummaryReport {
-    pub fn new(is_detailed: bool, outcome: TestOutcome) -> Self {
+    pub(super) const fn new(is_detailed: bool, outcome: TestOutcome) -> Self {
         Self { is_detailed, outcome }
     }
 }
@@ -129,13 +129,13 @@ impl TestSummaryReport {
 /// ╭-----------------------+----------------+-------+---------+----------╮
 /// | Contract              | Selector       | Calls | Reverts | Discards |
 /// +=====================================================================+
-/// | AnotherCounterHandler | doWork         | 7451  | 123     | 4941     |
+/// | `AnotherCounterHandler` | doWork         | 7451  | 123     | 4941     |
 /// |-----------------------+----------------+-------+---------+----------|
-/// | AnotherCounterHandler | doWorkThing    | 7279  | 137     | 4849     |
+/// | `AnotherCounterHandler` | doWorkThing    | 7279  | 137     | 4849     |
 /// |-----------------------+----------------+-------+---------+----------|
-/// | CounterHandler        | doAnotherThing | 7302  | 150     | 4794     |
+/// | `CounterHandler`        | doAnotherThing | 7302  | 150     | 4794     |
 /// |-----------------------+----------------+-------+---------+----------|
-/// | CounterHandler        | doSomething    | 7382  | 160     |4794      |
+/// | `CounterHandler`        | doSomething    | 7382  | 160     |4794      |
 /// ╰-----------------------+----------------+-------+---------+----------╯
 pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,

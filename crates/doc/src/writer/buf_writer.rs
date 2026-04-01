@@ -34,22 +34,22 @@ pub struct BufWriter {
 }
 
 impl BufWriter {
-    /// Create new instance of [BufWriter] from [ToString].
+    /// Create new instance of [`BufWriter`] from [`ToString`].
     pub fn new(content: impl ToString) -> Self {
         Self { buf: content.to_string() }
     }
 
     /// Returns true if the buffer is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 
-    /// Write [AsDoc] implementation to the buffer.
+    /// Write [`AsDoc`] implementation to the buffer.
     pub fn write_doc<T: AsDoc>(&mut self, doc: &T) -> fmt::Result {
         write!(self.buf, "{}", doc.as_doc()?)
     }
 
-    /// Write [AsDoc] implementation to the buffer with newline.
+    /// Write [`AsDoc`] implementation to the buffer with newline.
     pub fn writeln_doc<T: AsDoc>(&mut self, doc: &T) -> fmt::Result {
         writeln!(self.buf, "{}", doc.as_doc()?)
     }
@@ -69,22 +69,22 @@ impl BufWriter {
         writeln!(self.buf)
     }
 
-    /// Writes a title to the buffer formatted as [Markdown::H1].
+    /// Writes a title to the buffer formatted as [`Markdown::H1`].
     pub fn write_title(&mut self, title: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::H1(title))
     }
 
-    /// Writes a subtitle to the bugger formatted as [Markdown::H2].
+    /// Writes a subtitle to the bugger formatted as [`Markdown::H2`].
     pub fn write_subtitle(&mut self, subtitle: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::H2(subtitle))
     }
 
-    /// Writes heading to the buffer formatted as [Markdown::H3].
+    /// Writes heading to the buffer formatted as [`Markdown::H3`].
     pub fn write_heading(&mut self, heading: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::H3(heading))
     }
 
-    /// Writes text in italics to the buffer formatted as [Markdown::Italic].
+    /// Writes text in italics to the buffer formatted as [`Markdown::Italic`].
     pub fn write_italic(&mut self, text: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Italic(text))
     }
@@ -100,12 +100,12 @@ impl BufWriter {
         Ok(())
     }
 
-    /// Writes bold text to the buffer formatted as [Markdown::Bold].
+    /// Writes bold text to the buffer formatted as [`Markdown::Bold`].
     pub fn write_bold(&mut self, text: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Bold(text))
     }
 
-    /// Writes link to the buffer formatted as [Markdown::Link].
+    /// Writes link to the buffer formatted as [`Markdown::Link`].
     pub fn write_link(&mut self, name: &str, path: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Link(name, path))
     }
@@ -223,7 +223,7 @@ impl BufWriter {
             });
 
             let row = [
-                Markdown::Code(&param_name.unwrap_or("<none>".to_string())).as_doc()?,
+                Markdown::Code(&param_name.unwrap_or_else(|| "<none>".to_string())).as_doc()?,
                 comment.unwrap_or_default().replace('\n', " "),
             ];
             self.write_piped(&row.join("|"))?;

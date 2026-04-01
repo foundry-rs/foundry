@@ -17,7 +17,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 /// State after we have broadcasted the script.
-/// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
+/// It is assumed that at this point [`BroadcastedState::sequence`] contains receipts for all
 /// broadcasted transactions.
 pub struct BroadcastedState<N: Network>
 where
@@ -57,7 +57,7 @@ where
 
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
 #[derive(Clone)]
-pub struct VerifyBundle {
+pub(crate) struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: ContractsByArtifact,
     pub project_paths: ProjectPathOpts,
@@ -68,7 +68,7 @@ pub struct VerifyBundle {
 }
 
 impl VerifyBundle {
-    pub fn new(
+    pub(crate) fn new(
         project: &Project,
         config: &Config,
         known_contracts: ContractsByArtifact,
@@ -88,7 +88,7 @@ impl VerifyBundle {
             cache_path: Some(project.paths.cache.clone()),
             lib_paths: project.paths.libraries.clone(),
             hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: if config_path.exists() { Some(config_path) } else { None },
+            config_path: config_path.exists().then_some(config_path),
         };
 
         let via_ir = config.via_ir;
@@ -105,7 +105,7 @@ impl VerifyBundle {
     }
 
     /// Configures the chain and sets the etherscan key, if available
-    pub fn set_chain(&mut self, config: &Config, chain: Chain) {
+    pub(crate) fn set_chain(&mut self, config: &Config, chain: Chain) {
         // If dealing with multiple chains, we need to be able to change in between the config
         // chain_id.
         self.etherscan.key = config.get_etherscan_api_key(Some(chain));
@@ -114,7 +114,7 @@ impl VerifyBundle {
 
     /// Given a `VerifyBundle` and contract details, it tries to generate a valid `VerifyArgs` to
     /// use against the `contract_address`.
-    pub fn get_verify_args(
+    pub(crate) fn get_verify_args(
         &self,
         contract_address: Address,
         create2_offset: usize,
@@ -176,7 +176,7 @@ impl VerifyBundle {
                     evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
-                    compilation_profile: Some(artifact.profile.to_string()),
+                    compilation_profile: Some(artifact.profile.clone()),
                     language: None,
                     creation_transaction_hash: None,
                 };
@@ -211,14 +211,14 @@ async fn verify_contracts<N: Network<ReceiptResponse: FoundryReceiptResponse>>(
 
         for (receipt, tx) in sequence.receipts.iter_mut().zip(sequence.transactions.iter()) {
             // create2 hash offset
-            let mut offset = 0;
-
-            if tx.is_create2()
+            let offset = if tx.is_create2()
                 && let Some(contract_address) = tx.contract_address
             {
                 receipt.set_contract_address(contract_address);
-                offset = 32;
-            }
+                32
+            } else {
+                0
+            };
 
             // Verify contract created directly from the transaction
             if let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input()) {

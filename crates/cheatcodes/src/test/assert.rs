@@ -32,7 +32,7 @@ enum AssertionKind {
 }
 
 impl AssertionKind {
-    fn inverse(self) -> Self {
+    const fn inverse(self) -> Self {
         match self {
             Self::Eq => Self::Ne,
             Self::Ne => Self::Eq,
@@ -43,7 +43,7 @@ impl AssertionKind {
         }
     }
 
-    fn to_str(self) -> &'static str {
+    const fn to_str(self) -> &'static str {
         match self {
             Self::Eq => "==",
             Self::Ne => "!=",
@@ -221,7 +221,7 @@ fn handle_assertion_result_mono<CTX: ContextTr<Db: Database<Error = DatabaseErro
     }
 }
 
-/// Implements [crate::Cheatcode] for pairs of cheatcodes.
+/// Implements [`crate::Cheatcode`] for pairs of cheatcodes.
 ///
 /// Accepts a list of pairs of cheatcodes, where the first cheatcode is the one that doesn't contain
 /// a custom error message, and the second one contains it at `error` field.
@@ -453,11 +453,11 @@ impl_assertions! {
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
 }
 
-fn assert_true(condition: bool) -> Result<(), ()> {
+const fn assert_true(condition: bool) -> Result<(), ()> {
     if condition { Ok(()) } else { Err(()) }
 }
 
-fn assert_false(condition: bool) -> Result<(), ()> {
+const fn assert_false(condition: bool) -> Result<(), ()> {
     assert_true(!condition)
 }
 
@@ -470,10 +470,10 @@ fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a
 }
 
 fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
-    if left != right {
-        Ok(())
-    } else {
+    if left == right {
         Err(ComparisonAssertionError { kind: AssertionKind::Ne, left, right })
+    } else {
+        Ok(())
     }
 }
 
@@ -565,14 +565,13 @@ fn uint_assert_approx_eq_rel(
     if right.is_zero() {
         if left.is_zero() {
             return Ok(());
-        } else {
-            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-                left,
-                right,
-                max_delta,
-                real_delta: EqRelDelta::Undefined,
-            })));
-        };
+        }
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })));
     }
 
     let delta = calc_delta_full::<U256>(left.abs_diff(right), right)?;
@@ -597,14 +596,13 @@ fn int_assert_approx_eq_rel(
     if right.is_zero() {
         if left.is_zero() {
             return Ok(());
-        } else {
-            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-                left,
-                right,
-                max_delta,
-                real_delta: EqRelDelta::Undefined,
-            })));
         }
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })));
     }
 
     let delta = calc_delta_full::<I256>(get_delta_int(left, right), right.unsigned_abs())?;

@@ -20,8 +20,8 @@ use std::{collections::HashMap, str::FromStr as _};
 ///
 /// This endpoint is deprecated. Use `GET /eth/v1/beacon/blobs/{block_id}` instead.
 ///
-/// GET /eth/v1/beacon/blob_sidecars/{block_id}
-pub async fn handle_get_blob_sidecars<N: Network>(
+/// GET /`eth/v1/beacon/blob_sidecars/{block_id`}
+pub(super) async fn handle_get_blob_sidecars<N: Network>(
     State(_api): State<EthApi<N>>,
     Path(_block_id): Path<String>,
     Query(_params): Query<HashMap<String, String>>,
@@ -32,8 +32,8 @@ pub async fn handle_get_blob_sidecars<N: Network>(
 
 /// Handles incoming Beacon API requests for blobs
 ///
-/// GET /eth/v1/beacon/blobs/{block_id}
-pub async fn handle_get_blobs<N: Network>(
+/// GET /`eth/v1/beacon/blobs/{block_id`}
+pub(super) async fn handle_get_blobs<N: Network>(
     headers: HeaderMap,
     State(api): State<EthApi<N>>,
     Path(block_id): Path<String>,
@@ -94,7 +94,7 @@ pub async fn handle_get_blobs<N: Network>(
 /// Only returns the `genesis_time`, other fields are set to zero.
 ///
 /// GET /eth/v1/beacon/genesis
-pub async fn handle_get_genesis<N: Network>(State(api): State<EthApi<N>>) -> Response {
+pub(super) async fn handle_get_genesis<N: Network>(State(api): State<EthApi<N>>) -> Response {
     match api.anvil_get_genesis_time() {
         Ok(genesis_time) => Json(GenesisResponse {
             data: GenesisData {

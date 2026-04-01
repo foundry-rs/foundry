@@ -92,8 +92,8 @@ pub fn replay_run(
 
 /// Replays and shrinks a call sequence, collecting logs and traces.
 ///
-/// For check mode (target_value=None): shrinks to find shortest failing sequence.
-/// For optimization mode (target_value=Some): shrinks to find shortest sequence producing target.
+/// For check mode (`target_value=None)`: shrinks to find shortest failing sequence.
+/// For optimization mode (`target_value=Some)`: shrinks to find shortest sequence producing target.
 #[expect(clippy::too_many_arguments)]
 pub fn replay_error(
     config: InvariantConfig,

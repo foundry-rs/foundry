@@ -16,9 +16,9 @@ use parking_lot::RwLock;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use yansi::Paint;
 
-/// State of [ProgressBar]s displayed for the given [ScriptSequence].
+/// State of [`ProgressBar`]s displayed for the given [`ScriptSequence`].
 #[derive(Debug)]
-pub struct SequenceProgressState {
+pub(crate) struct SequenceProgressState {
     /// The top spinner with content of the format "Sequence #{id} on {network} | {status}""
     top_spinner: ProgressBar,
     /// Progress bar with the count of transactions.
@@ -27,12 +27,12 @@ pub struct SequenceProgressState {
     receipts: ProgressBar,
     /// Standalone spinners for pending transactions.
     tx_spinners: B256HashMap<ProgressBar>,
-    /// Copy of the main [MultiProgress] instance.
+    /// Copy of the main [`MultiProgress`] instance.
     multi: MultiProgress,
 }
 
 impl SequenceProgressState {
-    pub fn new<N: Network>(
+    pub(crate) fn new<N: Network>(
         sequence_idx: usize,
         sequence: &ScriptSequence<N>,
         multi: MultiProgress,
@@ -83,7 +83,7 @@ impl SequenceProgressState {
 
     /// Called when a new transaction is sent. Displays a spinner with a hash of the transaction and
     /// advances the sent transactions progress bar.
-    pub fn tx_sent(&mut self, tx_hash: B256) {
+    pub(crate) fn tx_sent(&mut self, tx_hash: B256) {
         // Avoid showing more than 10 spinners.
         if self.tx_spinners.len() < 10 {
             let spinner = if shell::is_quiet() || shell::is_json() {
@@ -108,15 +108,19 @@ impl SequenceProgressState {
     }
 
     /// Removes the pending transaction spinner and advances confirmed transactions progress bar.
-    pub fn finish_tx_spinner(&mut self, tx_hash: B256) {
+    pub(crate) fn finish_tx_spinner(&mut self, tx_hash: B256) {
         if let Some(spinner) = self.tx_spinners.remove(&tx_hash) {
             spinner.finish_and_clear();
         }
         self.receipts.inc(1);
     }
 
-    /// Same as finish_tx_spinner but also prints a message to stdout above all other progress bars.
-    pub fn finish_tx_spinner_with_msg(&mut self, tx_hash: B256, msg: &str) -> std::io::Result<()> {
+    /// Same as `finish_tx_spinner` but also prints a message to stdout above all other progress bars.
+    pub(crate) fn finish_tx_spinner_with_msg(
+        &mut self,
+        tx_hash: B256,
+        msg: &str,
+    ) -> std::io::Result<()> {
         self.finish_tx_spinner(tx_hash);
 
         if !(shell::is_quiet() || shell::is_json()) {
@@ -127,27 +131,27 @@ impl SequenceProgressState {
     }
 
     /// Sets status for the current sequence progress.
-    pub fn set_status(&mut self, status: &str) {
+    pub(crate) fn set_status(&self, status: &str) {
         self.top_spinner.set_message(format!(" | {status}"));
     }
 
     /// Hides transactions and receipts progress bar, leaving only top line with the latest set
     /// status.
-    pub fn finish(&self) {
+    pub(crate) fn finish(&self) {
         self.top_spinner.finish();
         self.txs.finish_and_clear();
         self.receipts.finish_and_clear();
     }
 }
 
-/// Cloneable wrapper around [SequenceProgressState].
+/// Cloneable wrapper around [`SequenceProgressState`].
 #[derive(Debug, Clone)]
-pub struct SequenceProgress {
+pub(crate) struct SequenceProgress {
     pub inner: Arc<RwLock<SequenceProgressState>>,
 }
 
 impl SequenceProgress {
-    pub fn new<N: Network>(
+    pub(crate) fn new<N: Network>(
         sequence_idx: usize,
         sequence: &ScriptSequence<N>,
         multi: MultiProgress,
@@ -158,17 +162,17 @@ impl SequenceProgress {
     }
 }
 
-/// Container for multiple [SequenceProgress] instances keyed by sequence index.
+/// Container for multiple [`SequenceProgress`] instances keyed by sequence index.
 #[derive(Debug, Clone, Default)]
-pub struct ScriptProgress {
+pub(crate) struct ScriptProgress {
     state: Arc<RwLock<HashMap<usize, SequenceProgress>>>,
     multi: MultiProgress,
 }
 
 impl ScriptProgress {
-    /// Returns a [SequenceProgress] instance for the given sequence index. If it doesn't exist,
+    /// Returns a [`SequenceProgress`] instance for the given sequence index. If it doesn't exist,
     /// creates one.
-    pub fn get_sequence_progress<N: Network>(
+    pub(crate) fn get_sequence_progress<N: Network>(
         &self,
         sequence_idx: usize,
         sequence: &ScriptSequence<N>,
@@ -191,7 +195,7 @@ impl ScriptProgress {
     /// has not confirmed, and cannot be found in the mempool, we remove it from
     /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
     /// later steps.
-    pub async fn wait_for_pending<N: Network>(
+    pub(crate) async fn wait_for_pending<N: Network>(
         &self,
         sequence_idx: usize,
         deployment_sequence: &mut ScriptSequence<N>,

@@ -11,7 +11,7 @@ use std::{
 
 pub const FOUNDRY_LOCK: &str = "foundry.lock";
 
-/// A type alias for a HashMap of dependencies keyed by relative path to the submodule dir.
+/// A type alias for a `HashMap` of dependencies keyed by relative path to the submodule dir.
 pub type DepMap = HashMap<PathBuf, DepIdentifier>;
 
 /// A lockfile handler that keeps track of the dependencies and their current state.
@@ -39,7 +39,7 @@ impl<'a> Lockfile<'a> {
     }
 
     /// Set the git instance to be used for submodule operations.
-    pub fn with_git(mut self, git: &'a Git<'_>) -> Self {
+    pub const fn with_git(mut self, git: &'a Git<'_>) -> Self {
         self.git = Some(git);
         self
     }
@@ -54,7 +54,6 @@ impl<'a> Lockfile<'a> {
     /// - The lockfile is out of sync with the git submodules.
     pub fn sync(&mut self, lib: &Path) -> Result<Option<DepMap>> {
         match self.read() {
-            Ok(_) => {}
             Err(e) if !e.to_string().contains("Lockfile not found") => {
                 return Err(e);
             }
@@ -77,16 +76,16 @@ impl<'a> Lockfile<'a> {
                 let rel_path = sub.path();
                 let rev = sub.rev();
 
-                let entry = self.deps.entry(rel_path.to_path_buf());
+                let entry = self.deps.entry(rel_path.clone());
 
                 match entry {
                     Entry::Occupied(e) if e.get().rev() != rev => {
-                        out_of_sync.insert(rel_path.to_path_buf(), e.get().clone());
+                        out_of_sync.insert(rel_path.clone(), e.get().clone());
                     }
                     Entry::Vacant(e) => {
                         // Check if there is branch specified for the submodule at rel_path in
                         // .gitmodules
-                        let maybe_branch = modules_with_branch.get(rel_path).map(|b| b.to_string());
+                        let maybe_branch = modules_with_branch.get(rel_path).cloned();
 
                         trace!(?maybe_branch, submodule = ?rel_path, "submodule branch");
                         if let Some(branch) = maybe_branch {
@@ -96,14 +95,14 @@ impl<'a> Lockfile<'a> {
                                 r#override: false,
                             };
                             e.insert(dep_id.clone());
-                            out_of_sync.insert(rel_path.to_path_buf(), dep_id);
+                            out_of_sync.insert(rel_path.clone(), dep_id);
                             continue;
                         }
 
                         let dep_id = DepIdentifier::Rev { rev: rev.to_string(), r#override: false };
                         trace!(submodule=?rel_path, ?dep_id, "submodule dep_id");
                         e.insert(dep_id.clone());
-                        out_of_sync.insert(rel_path.to_path_buf(), dep_id);
+                        out_of_sync.insert(rel_path.clone(), dep_id);
                     }
                     _ => {}
                 }
@@ -275,9 +274,7 @@ impl DepIdentifier {
     /// Get the commit hash of the dependency.
     pub fn rev(&self) -> &str {
         match self {
-            Self::Branch { rev, .. } => rev,
-            Self::Tag { rev, .. } => rev,
-            Self::Rev { rev, .. } => rev,
+            Self::Branch { rev, .. } | Self::Tag { rev, .. } | Self::Rev { rev, .. } => rev,
         }
     }
 
@@ -286,8 +283,7 @@ impl DepIdentifier {
     /// In case of a Rev, this will return the commit hash.
     pub fn name(&self) -> &str {
         match self {
-            Self::Branch { name, .. } => name,
-            Self::Tag { name, .. } => name,
+            Self::Branch { name, .. } | Self::Tag { name, .. } => name,
             Self::Rev { rev, .. } => rev,
         }
     }
@@ -295,32 +291,31 @@ impl DepIdentifier {
     /// Get the name/rev to checkout at.
     pub fn checkout_id(&self) -> &str {
         match self {
-            Self::Branch { name, .. } => name,
-            Self::Tag { name, .. } => name,
+            Self::Branch { name, .. } | Self::Tag { name, .. } => name,
             Self::Rev { rev, .. } => rev,
         }
     }
 
     /// Marks as dependency as overridden.
-    pub fn mark_override(&mut self) {
+    pub const fn mark_override(&mut self) {
         match self {
-            Self::Branch { r#override, .. } => *r#override = true,
-            Self::Tag { r#override, .. } => *r#override = true,
-            Self::Rev { r#override, .. } => *r#override = true,
+            Self::Branch { r#override, .. }
+            | Self::Tag { r#override, .. }
+            | Self::Rev { r#override, .. } => *r#override = true,
         }
     }
 
     /// Returns whether the dependency has been overridden.
-    pub fn overridden(&self) -> bool {
+    pub const fn overridden(&self) -> bool {
         match self {
-            Self::Branch { r#override, .. } => *r#override,
-            Self::Tag { r#override, .. } => *r#override,
-            Self::Rev { r#override, .. } => *r#override,
+            Self::Branch { r#override, .. }
+            | Self::Tag { r#override, .. }
+            | Self::Rev { r#override, .. } => *r#override,
         }
     }
 
     /// Returns whether the dependency is a branch.
-    pub fn is_branch(&self) -> bool {
+    pub const fn is_branch(&self) -> bool {
         matches!(self, Self::Branch { .. })
     }
 }

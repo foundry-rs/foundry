@@ -133,8 +133,8 @@ fn infer_source_types(
     }
 }
 
-/// Checks if a type cast from source_type to target_type is unsafe.
-fn is_unsafe_elementary_typecast(
+/// Checks if a type cast from `source_type` to `target_type` is unsafe.
+const fn is_unsafe_elementary_typecast(
     source_type: &ElementaryType,
     target_type: &ElementaryType,
 ) -> bool {
@@ -146,7 +146,11 @@ fn is_unsafe_elementary_typecast(
         }
 
         // Signed to unsigned conversion (potential loss of sign)
-        (ElementaryType::Int(_), ElementaryType::UInt(_)) => true,
+        // Dynamic bytes to fixed bytes (potential truncation)
+        // Address to int (sign issues)
+        (ElementaryType::Int(_), ElementaryType::UInt(_))
+        | (ElementaryType::Bytes | ElementaryType::String, ElementaryType::FixedBytes(_))
+        | (ElementaryType::Address(_), ElementaryType::Int(_)) => true,
 
         // Unsigned to signed conversion with same or smaller size
         (ElementaryType::UInt(source_size), ElementaryType::Int(target_size)) => {
@@ -158,15 +162,8 @@ fn is_unsafe_elementary_typecast(
             source_size.bytes() > target_size.bytes()
         }
 
-        // Dynamic bytes to fixed bytes (potential truncation)
-        (ElementaryType::Bytes, ElementaryType::FixedBytes(_))
-        | (ElementaryType::String, ElementaryType::FixedBytes(_)) => true,
-
         // Address to smaller uint (truncation) - address is 160 bits
         (ElementaryType::Address(_), ElementaryType::UInt(target_size)) => target_size.bits() < 160,
-
-        // Address to int (sign issues)
-        (ElementaryType::Address(_), ElementaryType::Int(_)) => true,
 
         _ => false,
     }

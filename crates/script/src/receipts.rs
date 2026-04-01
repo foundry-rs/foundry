@@ -27,12 +27,12 @@ impl FoundryReceiptResponse for TransactionReceipt {
 #[error(
     "Received a pending receipt for {tx_hash}, but transaction is still known to the node, retrying"
 )]
-pub struct PendingReceiptError {
+pub(crate) struct PendingReceiptError {
     pub tx_hash: TxHash,
 }
 
 /// Convenience enum for internal signalling of transaction status
-pub enum TxStatus<R: ReceiptResponse> {
+pub(crate) enum TxStatus<R: ReceiptResponse> {
     Dropped,
     Success(R),
     Revert(R),
@@ -40,13 +40,13 @@ pub enum TxStatus<R: ReceiptResponse> {
 
 impl<R: ReceiptResponse> From<R> for TxStatus<R> {
     fn from(receipt: R) -> Self {
-        if !receipt.status() { Self::Revert(receipt) } else { Self::Success(receipt) }
+        if receipt.status() { Self::Success(receipt) } else { Self::Revert(receipt) }
     }
 }
 
 /// Checks the status of a txhash by first polling for a receipt, then for
 /// mempool inclusion. Returns the tx hash, and a status
-pub async fn check_tx_status<N: Network>(
+pub(crate) async fn check_tx_status<N: Network>(
     provider: &RootProvider<N>,
     hash: TxHash,
     timeout: u64,
@@ -101,7 +101,7 @@ pub async fn check_tx_status<N: Network>(
 }
 
 /// Prints parts of the receipt to stdout
-pub fn format_receipt<N: Network>(
+pub(crate) fn format_receipt<N: Network>(
     chain: Chain,
     receipt: &N::ReceiptResponse,
     sequence: Option<&ScriptSequence<N>>,

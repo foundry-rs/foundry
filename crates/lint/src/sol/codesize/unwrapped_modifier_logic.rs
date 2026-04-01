@@ -79,7 +79,7 @@ impl UnwrappedModifierLogic {
         let (mut res, mut has_valid_stmt) = (false, false);
         for stmt in stmts {
             match &stmt.kind {
-                hir::StmtKind::Placeholder => continue,
+                hir::StmtKind::Placeholder => {}
                 hir::StmtKind::Expr(expr) => {
                     if !self.is_valid_expr(hir, expr) || has_valid_stmt {
                         res = true;
@@ -133,7 +133,7 @@ impl UnwrappedModifierLogic {
         let param_decls = param_decls.join(", ");
 
         let body_indent = " ".repeat(ctx.get_span_indentation(
-            before.first().or(after.first()).map(|stmt| stmt.span).unwrap_or(func.span),
+            before.first().or_else(|| after.first()).map(|stmt| stmt.span).unwrap_or(func.span),
         ));
         let body = match (wrap_before, wrap_after) {
             (true, true) => format!(

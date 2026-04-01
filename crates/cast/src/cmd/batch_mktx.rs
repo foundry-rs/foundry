@@ -34,8 +34,8 @@ pub struct BatchMakeTxArgs {
     ///
     /// Examples:
     ///   --call "0x123:0.1ether" (ETH transfer)
-    ///   --call "0x456::transfer(address,uint256):0x789,1000" (ERC20 transfer)
-    ///   --call "0xabc::0x123def" (raw calldata)
+    ///   --call "`0x456::transfer(address,uint256):0x789,1000`" (ERC20 transfer)
+    ///   --call "`0xabc::0x123def`" (raw calldata)
     #[arg(long = "call", value_name = "SPEC", required = true)]
     pub calls: Vec<String>,
 
@@ -49,7 +49,7 @@ pub struct BatchMakeTxArgs {
     #[arg(long)]
     pub raw_unsigned: bool,
 
-    /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
+    /// Call `eth_signTransaction` using the `--from` argument or $`ETH_FROM` as sender
     #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
     pub ethsign: bool,
 }

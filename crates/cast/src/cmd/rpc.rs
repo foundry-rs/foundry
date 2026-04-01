@@ -15,8 +15,8 @@ pub struct RpcArgs {
     ///
     /// Interpreted as JSON:
     ///
-    /// cast rpc eth_getBlockByNumber 0x123 false
-    /// => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
+    /// cast rpc `eth_getBlockByNumber` 0x123 false
+    /// => {"method": "`eth_getBlockByNumber`", "params": ["0x123", false] ... }
     params: Vec<String>,
 
     /// Send raw JSON parameters
@@ -24,8 +24,8 @@ pub struct RpcArgs {
     /// The first param will be interpreted as a raw JSON array of params.
     /// If no params are given, stdin will be used. For example:
     ///
-    /// cast rpc eth_getBlockByNumber '["0x123", false]' --raw
-    ///     => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
+    /// cast rpc `eth_getBlockByNumber` '["0x123", false]' --raw
+    ///     => {"method": "`eth_getBlockByNumber`", "params": ["0x123", false] ... }
     #[arg(long, short = 'w')]
     raw: bool,
 

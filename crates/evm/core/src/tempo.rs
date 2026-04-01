@@ -1,7 +1,7 @@
 //! Tempo precompile and contract initialization for Foundry.
 //!
 //! This module provides the core initialization logic for Tempo-specific precompiles,
-//! fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD), and standard contracts.
+//! fee tokens (`PathUSD`, `AlphaUSD`, `BetaUSD`, `ThetaUSD`), and standard contracts.
 //!
 //! It includes a storage provider adapter for Foundry's `Backend` and the shared
 //! genesis initialization function used by both anvil and forge.
@@ -33,13 +33,13 @@ use tempo_precompiles::{
 
 use crate::backend::Backend;
 
-/// PathUSD token address.
+/// `PathUSD` token address.
 pub const PATH_USD_ADDRESS: Address = address!("20C0000000000000000000000000000000000000");
-/// AlphaUSD token address.
+/// `AlphaUSD` token address.
 pub const ALPHA_USD_ADDRESS: Address = address!("20C0000000000000000000000000000000000001");
-/// BetaUSD token address.
+/// `BetaUSD` token address.
 pub const BETA_USD_ADDRESS: Address = address!("20C0000000000000000000000000000000000002");
-/// ThetaUSD token address.
+/// `ThetaUSD` token address.
 pub const THETA_USD_ADDRESS: Address = address!("20C0000000000000000000000000000000000003");
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
@@ -203,7 +203,7 @@ impl PrecompileStorageProvider for FoundryStorageProvider<'_> {
 /// Initialize Tempo precompiles and contracts using a storage provider.
 ///
 /// This is the core initialization logic that sets up Tempo-specific precompiles,
-/// fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD), and standard contracts.
+/// fee tokens (`PathUSD`, `AlphaUSD`, `BetaUSD`, `ThetaUSD`), and standard contracts.
 ///
 /// This function should be called during genesis setup when running in Tempo mode.
 /// It uses the `StorageCtx` pattern to work with any storage backend that implements

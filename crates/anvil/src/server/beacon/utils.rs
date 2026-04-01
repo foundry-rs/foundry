@@ -2,7 +2,7 @@ use hyper::HeaderMap;
 
 /// Helper function to determine if the Accept header indicates a preference for SSZ (octet-stream)
 /// over JSON.
-pub fn must_be_ssz(headers: &HeaderMap) -> bool {
+pub(super) fn must_be_ssz(headers: &HeaderMap) -> bool {
     headers
         .get(axum::http::header::ACCEPT)
         .and_then(|v| v.to_str().ok())

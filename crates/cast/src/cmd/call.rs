@@ -464,8 +464,8 @@ impl CallArgs {
 
         let block_param = self
             .block
-            .map(|b| serde_json::to_value(b).unwrap_or(serde_json::json!("latest")))
-            .unwrap_or(serde_json::json!("latest"));
+            .map(|b| serde_json::to_value(b).unwrap_or_else(|_| serde_json::json!("latest")))
+            .unwrap_or_else(|| serde_json::json!("latest"));
 
         let params = serde_json::json!([call_object, block_param]);
 

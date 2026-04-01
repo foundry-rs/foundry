@@ -6,15 +6,17 @@ use foundry_test_utils::util::OutputExt;
 
 mod anvil_const {
     /// First Anvil account
-    pub const PK1: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-    pub const ADDR1: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    pub(super) const PK1: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    pub(super) const ADDR1: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
     /// Second Anvil account
-    pub const _PK2: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
-    pub const ADDR2: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+    pub(super) const _PK2: &str =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+    pub(super) const ADDR2: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
     /// Contract address deploying from ADDR1 with nonce 0
-    pub const TOKEN: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+    pub(super) const TOKEN: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 }
 
 fn get_u256_from_cmd(cmd: &mut foundry_test_utils::TestCommand, args: &[&str]) -> U256 {
@@ -43,7 +45,7 @@ fn get_allowance(
     get_u256_from_cmd(cmd, &["erc20", "allowance", token, owner, spender, "--rpc-url", rpc])
 }
 
-/// Helper function to deploy TestToken contract
+/// Helper function to deploy `TestToken` contract
 fn deploy_test_token(
     cmd: &mut foundry_test_utils::TestCommand,
     rpc: &str,

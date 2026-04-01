@@ -53,7 +53,7 @@ pub struct ChiselDispatcher {
     pub helper: SolidityHelper,
 }
 
-/// Helper function that formats solidity source with the given [FormatterConfig]
+/// Helper function that formats solidity source with the given [`FormatterConfig`]
 pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<String> {
     let formatted = forge_fmt::format(source, config).into_result()?;
     Ok(formatted)
@@ -72,12 +72,12 @@ impl ChiselDispatcher {
     }
 
     /// Returns the [`SessionSource`].
-    pub fn source(&self) -> &SessionSource {
+    pub const fn source(&self) -> &SessionSource {
         &self.session.source
     }
 
     /// Returns the [`SessionSource`].
-    pub fn source_mut(&mut self) -> &mut SessionSource {
+    pub const fn source_mut(&mut self) -> &mut SessionSource {
         &mut self.session.source
     }
 
@@ -105,7 +105,7 @@ impl ChiselDispatcher {
         }
     }
 
-    /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
+    /// Dispatches an input as a command via [`Self::dispatch_command`] or as a Solidity snippet.
     pub async fn dispatch(&mut self, mut input: &str) -> Result<ControlFlow<()>> {
         if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
             return match ChiselCommand::parse(command) {
@@ -511,7 +511,7 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
     let mut only_trivia = true;
     let mut new_input = Cow::Borrowed(input);
     for (pos, token) in solar::parse::Cursor::new(input).with_position() {
-        use RawTokenKind::*;
+        use RawTokenKind::{BlockComment, LineComment, Literal, Whitespace};
 
         if matches!(token.kind, Whitespace | LineComment { .. } | BlockComment { .. }) {
             continue;

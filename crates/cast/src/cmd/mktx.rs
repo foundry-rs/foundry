@@ -58,7 +58,7 @@ pub struct MakeTxArgs {
     #[arg(long)]
     raw_unsigned: bool,
 
-    /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
+    /// Call `eth_signTransaction` using the `--from` argument or $`ETH_FROM` as sender
     #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
     ethsign: bool,
 }

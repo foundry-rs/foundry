@@ -137,11 +137,11 @@ impl InspectArgs {
                 print_json_str(&artifact.ewasm, None)?;
             }
             ContractArtifactField::Errors => {
-                let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);
+                let out = artifact.abi.as_ref().map_or_else(Map::new, parse_errors);
                 print_errors_events(&out, true, wrap)?;
             }
             ContractArtifactField::Events => {
-                let out = artifact.abi.as_ref().map_or(Map::new(), parse_events);
+                let out = artifact.abi.as_ref().map_or_else(Map::new, parse_events);
                 print_errors_events(&out, false, wrap)?;
             }
             ContractArtifactField::StandardJson => {
@@ -166,16 +166,11 @@ impl InspectArgs {
                     .collect();
                 if shell::is_json() {
                     return print_json(&all_libs);
-                } else {
-                    sh_println!(
-                        "Dynamically linked libraries:\n{}",
-                        all_libs
-                            .iter()
-                            .map(|v| format!("  {v}"))
-                            .collect::<Vec<String>>()
-                            .join("\n")
-                    )?;
                 }
+                sh_println!(
+                    "Dynamically linked libraries:\n{}",
+                    all_libs.iter().map(|v| format!("  {v}")).collect::<Vec<String>>().join("\n")
+                )?;
             }
             ContractArtifactField::Linearization => {
                 print_linearization(
@@ -256,15 +251,15 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
             for func in abi.functions.values().flatten() {
                 let selector = func.selector().to_string();
                 let state_mut = func.state_mutability.as_json_str();
-                let func_sig = if !func.outputs.is_empty() {
+                let func_sig = if func.outputs.is_empty() {
+                    format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
+                } else {
                     format!(
                         "{}({}) {state_mut} returns ({})",
                         func.name,
                         get_ty_sig(&func.inputs),
                         get_ty_sig(&func.outputs)
                     )
-                } else {
-                    format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
                 };
                 table.add_row(["function", &func_sig, &selector]);
             }
@@ -311,9 +306,9 @@ fn internal_ty(ty: &InternalType) -> String {
     match ty {
         InternalType::AddressPayable(addr) => addr.clone(),
         InternalType::Contract(contract) => contract.clone(),
-        InternalType::Enum { contract, ty } => contract_ty(contract.as_deref(), ty),
-        InternalType::Struct { contract, ty } => contract_ty(contract.as_deref(), ty),
-        InternalType::Other { contract, ty } => contract_ty(contract.as_deref(), ty),
+        InternalType::Enum { contract, ty }
+        | InternalType::Struct { contract, ty }
+        | InternalType::Other { contract, ty } => contract_ty(contract.as_deref(), ty),
     }
 }
 
@@ -375,7 +370,7 @@ fn print_method_identifiers(
         headers,
         |table| {
             for (method, identifier) in method_identifiers {
-                table.add_row([method, identifier]);
+                table.add_row([method.as_str(), identifier.as_str()]);
             }
         },
         should_wrap,
@@ -521,7 +516,7 @@ fn print_linearization(
         headers,
         |table| {
             for (order, source, contract) in &chain {
-                table.add_row([order.to_string(), source.to_string(), contract.to_string()]);
+                table.add_row([order.to_string(), source.clone(), contract.clone()]);
             }
         },
         should_wrap,
@@ -647,7 +642,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
     fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
         type Caf = ContractArtifactField;
         match field {
-            Caf::Abi => Ok(Self::Abi),
+            Caf::Abi | Caf::Errors | Caf::Events => Ok(Self::Abi),
             Caf::Bytecode => {
                 Ok(Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)))
             }
@@ -665,8 +660,6 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
             Caf::Metadata => Ok(Self::Metadata),
             Caf::UserDoc => Ok(Self::UserDoc),
             Caf::Ewasm => Ok(Self::Ewasm(EwasmOutputSelection::All)),
-            Caf::Errors => Ok(Self::Abi),
-            Caf::Events => Ok(Self::Abi),
             Caf::StandardJson => {
                 Err(eyre!("StandardJson is not supported for ContractOutputSelection"))
             }
@@ -684,8 +677,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events, Cos::Abi)
-                | (Self::Errors, Cos::Abi)
+            (Self::Abi | Self::Events | Self::Errors, Cos::Abi)
                 | (Self::Bytecode, Cos::Evm(Eos::ByteCode(_)))
                 | (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_)))
                 | (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly))

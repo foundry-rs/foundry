@@ -124,11 +124,11 @@ impl<T> Pool<T> {
         };
         trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
 
-        let mut dropped = None;
-        if !removed.is_empty() {
-            dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
+        if removed.is_empty() {
+            None
+        } else {
+            removed.into_iter().find(|t| *t.pending_transaction.hash() == tx)
         }
-        dropped
     }
 
     /// Notifies listeners if the transaction was added to the ready queue.
@@ -177,7 +177,7 @@ impl<T: Clone> Pool<T> {
 }
 
 impl<T: Transaction> Pool<T> {
-    /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
+    /// Invoked when a set of transactions ([`Self::ready_transactions()`]) was executed.
     ///
     /// This will remove the transactions from the pool.
     pub fn on_mined_block(&self, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
@@ -251,7 +251,7 @@ impl<T> PoolInner<T> {
     }
 
     /// Returns an iterator over all transactions in the pool filtered by the sender
-    pub fn transactions_by_sender(
+    pub(crate) fn transactions_by_sender(
         &self,
         sender: Address,
     ) -> impl Iterator<Item = Arc<PoolTransaction<T>>> + '_ {
@@ -381,9 +381,8 @@ impl<T: Transaction> PoolInner<T> {
                         debug!(target: "txpool", "[{:?}] Failed to add tx: {:?}", current_hash,
         err);
                         return Err(err);
-                    } else {
-                        ready.discarded.push(current_hash);
                     }
+                    ready.discarded.push(current_hash);
                 }
             }
             is_new_tx = false;
@@ -404,7 +403,10 @@ impl<T: Transaction> PoolInner<T> {
     ///
     /// This will effectively remove those transactions that satisfy the markers and transactions
     /// from the pending queue might get promoted to if the markers unlock them.
-    pub fn prune_markers(&mut self, markers: impl IntoIterator<Item = TxMarker>) -> PruneResult<T> {
+    pub(crate) fn prune_markers(
+        &mut self,
+        markers: impl IntoIterator<Item = TxMarker>,
+    ) -> PruneResult<T> {
         let mut imports = vec![];
         let mut pruned = vec![];
 
@@ -496,7 +498,7 @@ pub enum AddedTransaction<T> {
 }
 
 impl<T> AddedTransaction<T> {
-    pub fn hash(&self) -> &TxHash {
+    pub const fn hash(&self) -> &TxHash {
         match self {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,

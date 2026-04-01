@@ -265,7 +265,7 @@ impl CreateArgs {
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
-            compilation_profile: Some(id.profile.to_string()),
+            compilation_profile: Some(id.profile.clone()),
             language: None,
             creation_transaction_hash: None,
         };
@@ -377,7 +377,14 @@ impl CreateArgs {
         }
 
         if dry_run {
-            if !shell::is_json() {
+            if shell::is_json() {
+                let output = json!({
+                    "contract": self.contract.name,
+                    "transaction": &deployer.tx,
+                    "abi":&abi
+                });
+                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+            } else {
                 sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
 
                 sh_println!("Contract: {}", self.contract.name)?;
@@ -390,13 +397,6 @@ impl CreateArgs {
                 sh_warn!(
                     "To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more."
                 )?;
-            } else {
-                let output = json!({
-                    "contract": self.contract.name,
-                    "transaction": &deployer.tx,
-                    "abi":&abi
-                });
-                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
             }
 
             return Ok(());
@@ -427,7 +427,7 @@ impl CreateArgs {
         sh_println!("Starting contract verification...")?;
 
         let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
-            if optimizer { Some(self.build.compiler.optimizer_runs.unwrap_or(200)) } else { None }
+            optimizer.then(|| self.build.compiler.optimizer_runs.unwrap_or(200))
         } else {
             self.build.compiler.optimizer_runs
         };
@@ -455,7 +455,7 @@ impl CreateArgs {
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
-            compilation_profile: Some(id.profile.to_string()),
+            compilation_profile: Some(id.profile.clone()),
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };
@@ -595,7 +595,7 @@ impl<N: Network, P: Provider<N> + Clone> DeploymentTxFactory<N, P> {
     /// Creates a factory for deployment of the Contract with bytecode, and the
     /// constructor defined in the abi. The client will be used to send any deployment
     /// transaction.
-    pub fn new(abi: JsonAbi, bytecode: Bytes, client: P, timeout: u64) -> Self {
+    pub const fn new(abi: JsonAbi, bytecode: Bytes, client: P, timeout: u64) -> Self {
         Self { client, abi, bytecode, timeout, _network: PhantomData }
     }
 

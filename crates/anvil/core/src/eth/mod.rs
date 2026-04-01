@@ -31,7 +31,7 @@ use self::serde_helpers::*;
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
-pub struct Params<T: Default> {
+pub struct Params<T> {
     #[serde(default)]
     pub params: T,
 }
@@ -141,7 +141,7 @@ pub enum EthRequest {
     #[serde(rename = "eth_sign")]
     EthSign(Address, Bytes),
 
-    /// The sign method calculates an Ethereum specific signature, equivalent to eth_sign:
+    /// The sign method calculates an Ethereum specific signature, equivalent to `eth_sign`:
     /// <https://docs.metamask.io/wallet/reference/personal_sign/>
     #[serde(rename = "personal_sign")]
     PersonalSign(Bytes, Address),
@@ -651,7 +651,7 @@ pub enum EthRequest {
     OtsGetTransactionError(B256),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
-    /// Given a block number, return its data. Similar to the standard eth_getBlockByNumber/Hash
+    /// Given a block number, return its data. Similar to the standard `eth_getBlockByNumber/Hash`
     /// method, but can be optimized by excluding unnecessary data such as transactions and
     /// logBloom
     #[serde(rename = "ots_getBlockDetails")]
@@ -667,7 +667,7 @@ pub enum EthRequest {
 
     /// Otterscan's `ots_getBlockTransactions` endpoint
     /// Gets paginated transaction data for a certain block. Return data is similar to
-    /// eth_getBlockBy* + eth_getTransactionReceipt.
+    /// `eth_getBlockBy`* + `eth_getTransactionReceipt`.
     #[serde(rename = "ots_getBlockTransactions")]
     OtsGetBlockTransactions(u64, usize, usize),
 
@@ -683,7 +683,7 @@ pub enum EthRequest {
 
     /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
     /// Given a sender address and a nonce, returns the tx hash or null if not found. It returns
-    /// only the tx hash on success, you can use the standard eth_getTransactionByHash after that
+    /// only the tx hash on success, you can use the standard `eth_getTransactionByHash` after that
     /// to get the full transaction data.
     #[serde(rename = "ots_getTransactionBySenderAndNonce")]
     OtsGetTransactionBySenderAndNonce(

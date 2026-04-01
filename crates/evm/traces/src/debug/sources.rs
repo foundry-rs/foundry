@@ -122,9 +122,9 @@ impl ArtifactData {
 /// Container with artifacts data useful for identifying individual execution steps.
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
-    /// Map over build_id -> file_id -> (source code, language)
+    /// Map over `build_id` -> `file_id` -> (source code, language)
     pub sources_by_id: HashMap<String, HashMap<u32, Arc<SourceData>>>,
-    /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
+    /// Map over contract name -> Vec<(bytecode, `build_id`, `file_id`)>
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
 }
 

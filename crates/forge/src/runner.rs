@@ -51,7 +51,7 @@ use tracing::Span;
 /// predeploy libraries.
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
-pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+pub(crate) const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 /// A type that executes all tests of a contract
 pub struct ContractRunner<'a> {
@@ -83,7 +83,7 @@ impl<'a> std::ops::Deref for ContractRunner<'a> {
 }
 
 impl<'a> ContractRunner<'a> {
-    pub fn new(
+    pub const fn new(
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor,
@@ -243,7 +243,7 @@ impl<'a> ContractRunner<'a> {
     /// `function fixture_owner() public returns (address[] memory){}`
     /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
-    fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
+    fn fuzz_fixtures(&self, address: Address) -> FuzzFixtures {
         let mut fixtures = HashMap::default();
         let fixture_functions = self.contract.abi.functions().filter(|func| func.is_fixture());
         for func in fixture_functions {
@@ -354,10 +354,10 @@ impl<'a> ContractRunner<'a> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
-            let fail_msg = if !setup.deployment_failure {
-                "setUp()".to_string()
-            } else {
+            let fail_msg = if setup.deployment_failure {
                 "constructor()".to_string()
+            } else {
+                "setUp()".to_string()
             };
             return SuiteResult::new(
                 start.elapsed(),
@@ -496,7 +496,7 @@ impl<'a> FunctionRunner<'a> {
         }
     }
 
-    fn revert_decoder(&self) -> &'a RevertDecoder {
+    const fn revert_decoder(&self) -> &'a RevertDecoder {
         &self.cr.mcr.revert_decoder
     }
 

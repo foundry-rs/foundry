@@ -18,9 +18,9 @@ pub struct SourceData {
 pub struct PcSourceMapper<'a> {
     /// Mapping from instruction counter to program counter.
     ic_pc_map: IcPcMap,
-    /// Source data consists of the source_map and the deployed bytecode
+    /// Source data consists of the `source_map` and the deployed bytecode
     source_data: SourceData,
-    /// Source files i.e source path and content (indexed by source_id)
+    /// Source files i.e source path and content (indexed by `source_id`)
     sources: &'a [(PathBuf, String)],
     /// Cached line offset mappings for each source file.
     line_offsets: Vec<Vec<usize>>,
@@ -139,8 +139,8 @@ fn compute_line_offsets(content: &str) -> Vec<usize> {
     offsets
 }
 
-/// Loads sources for a specific ArtifactId.build_id
-pub fn load_build_sources(
+/// Loads sources for a specific `ArtifactId.build_id`
+pub(super) fn load_build_sources(
     build_id: &str,
     output: &ProjectCompileOutput,
     root: &Path,

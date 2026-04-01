@@ -141,7 +141,7 @@ pub struct TestArgs {
     #[arg(long)]
     trace_depth: Option<usize>,
 
-    /// Output test results as JUnit XML report.
+    /// Output test results as `JUnit` XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
     pub junit: bool,
 
@@ -449,10 +449,11 @@ impl TestArgs {
         let num_filtered = runner.matching_test_functions(filter).count();
 
         if num_filtered == 0 {
-            let mut total_tests = num_filtered;
-            if !filter.is_empty() {
-                total_tests = runner.matching_test_functions(&EmptyTestFilter::default()).count();
-            }
+            let total_tests = if filter.is_empty() {
+                num_filtered
+            } else {
+                runner.matching_test_functions(&EmptyTestFilter::default()).count()
+            };
             if total_tests == 0 {
                 sh_println!(
                     "No tests found in project! Forge looks for functions that start with `test`"
@@ -500,7 +501,7 @@ impl TestArgs {
         // Run tests in a non-streaming fashion and collect results for serialization.
         if !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
-            results.values_mut().for_each(|suite_result| {
+            for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
                     if verbosity >= 2 {
                         // Decode logs at level 2 and above.
@@ -510,7 +511,7 @@ impl TestArgs {
                         test_result.logs = vec![];
                     }
                 }
-            });
+            }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
         }
@@ -768,14 +769,9 @@ impl TestArgs {
                                 .iter()
                                 .filter_map(|(k, v)| {
                                     previous_snapshots.get(k).and_then(|previous_snapshot| {
-                                        if previous_snapshot != v {
-                                            Some((
-                                                k.clone(),
-                                                (previous_snapshot.clone(), v.clone()),
-                                            ))
-                                        } else {
-                                            None
-                                        }
+                                        (previous_snapshot != v).then(|| {
+                                            (k.clone(), (previous_snapshot.clone(), v.clone()))
+                                        })
                                     })
                                 })
                                 .collect();
@@ -896,7 +892,7 @@ impl TestArgs {
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 
@@ -935,7 +931,7 @@ impl Provider for TestArgs {
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
-            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.clone().into());
         }
 
         if self.show_progress {
@@ -986,7 +982,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+                && let Some(test_match) = test_name.split('(').next()
             {
                 filter.push_str(test_match);
                 if failures.peek().is_some() {
@@ -998,7 +994,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     }
 }
 
-/// Generate test report in JUnit XML report format.
+/// Generate test report in `JUnit` XML report format.
 fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> Report {
     let mut total_duration = Duration::default();
     let mut junit_report = Report::new("Test run");

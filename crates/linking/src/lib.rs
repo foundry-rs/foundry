@@ -59,7 +59,7 @@ impl<'a> Linker<'a> {
         Linker { root: root.into(), contracts }
     }
 
-    /// Helper method to convert [ArtifactId] to the format in which libraries are stored in
+    /// Helper method to convert [`ArtifactId`] to the format in which libraries are stored in
     /// [Libraries] object.
     ///
     /// Strips project root path from source file path.
@@ -71,7 +71,7 @@ impl<'a> Linker<'a> {
         (path.to_path_buf(), name.to_owned())
     }
 
-    /// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
+    /// Finds an [`ArtifactId`] object in the given [`ArtifactContracts`] keys which corresponds to the
     /// library path in the form of "./path/to/Lib.sol:Lib"
     ///
     /// Optionally accepts solc version, and if present, only compares artifacts with given version.

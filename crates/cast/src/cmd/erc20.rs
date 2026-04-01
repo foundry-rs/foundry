@@ -299,22 +299,22 @@ pub enum Erc20Subcommand {
 }
 
 impl Erc20Subcommand {
-    fn rpc_opts(&self) -> &RpcOpts {
+    const fn rpc_opts(&self) -> &RpcOpts {
         match self {
-            Self::Allowance { rpc, .. } => rpc,
-            Self::Approve { send_tx, .. } => &send_tx.eth.rpc,
-            Self::Balance { rpc, .. } => rpc,
-            Self::Transfer { send_tx, .. } => &send_tx.eth.rpc,
-            Self::Name { rpc, .. } => rpc,
-            Self::Symbol { rpc, .. } => rpc,
-            Self::Decimals { rpc, .. } => rpc,
-            Self::TotalSupply { rpc, .. } => rpc,
-            Self::Mint { send_tx, .. } => &send_tx.eth.rpc,
-            Self::Burn { send_tx, .. } => &send_tx.eth.rpc,
+            Self::Allowance { rpc, .. }
+            | Self::Balance { rpc, .. }
+            | Self::Name { rpc, .. }
+            | Self::Symbol { rpc, .. }
+            | Self::Decimals { rpc, .. }
+            | Self::TotalSupply { rpc, .. } => rpc,
+            Self::Approve { send_tx, .. }
+            | Self::Transfer { send_tx, .. }
+            | Self::Mint { send_tx, .. }
+            | Self::Burn { send_tx, .. } => &send_tx.eth.rpc,
         }
     }
 
-    fn erc20_opts(&self) -> Option<&Erc20TxOpts> {
+    const fn erc20_opts(&self) -> Option<&Erc20TxOpts> {
         match self {
             Self::Approve { tx, .. }
             | Self::Transfer { tx, .. }
@@ -552,7 +552,7 @@ impl Erc20Subcommand {
     }
 }
 
-/// Applies Tempo access key fields (from, key_id) to a transaction request.
+/// Applies Tempo access key fields (from, `key_id`) to a transaction request.
 ///
 /// Note: `key_authorization` is intentionally not set here. It is only included
 /// if the key is not yet provisioned on-chain (checked in [`send_tempo_keychain`]).

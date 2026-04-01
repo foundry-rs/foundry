@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, address};
 
-/// The ECRecover precompile address.
+/// The `ECRecover` precompile address.
 pub const EC_RECOVER: Address = address!("0x0000000000000000000000000000000000000001");
 
 /// The SHA-256 precompile address.
@@ -12,22 +12,22 @@ pub const RIPEMD_160: Address = address!("0x000000000000000000000000000000000000
 /// The Identity precompile address.
 pub const IDENTITY: Address = address!("0x0000000000000000000000000000000000000004");
 
-/// The ModExp precompile address.
+/// The `ModExp` precompile address.
 pub const MOD_EXP: Address = address!("0x0000000000000000000000000000000000000005");
 
-/// The ECAdd precompile address.
+/// The `ECAdd` precompile address.
 pub const EC_ADD: Address = address!("0x0000000000000000000000000000000000000006");
 
-/// The ECMul precompile address.
+/// The `ECMul` precompile address.
 pub const EC_MUL: Address = address!("0x0000000000000000000000000000000000000007");
 
-/// The ECPairing precompile address.
+/// The `ECPairing` precompile address.
 pub const EC_PAIRING: Address = address!("0x0000000000000000000000000000000000000008");
 
-/// The Blake2F precompile address.
+/// The `Blake2F` precompile address.
 pub const BLAKE_2F: Address = address!("0x0000000000000000000000000000000000000009");
 
-/// The PointEvaluation precompile address.
+/// The `PointEvaluation` precompile address.
 pub const POINT_EVALUATION: Address = address!("0x000000000000000000000000000000000000000a");
 
 /// The BLS12-381 G1ADD precompile address.

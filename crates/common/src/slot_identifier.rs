@@ -19,7 +19,7 @@ pub const ENCODING_MAPPING: &str = "mapping";
 /// "bytes" encoding type for bytes and string types, which use either inplace or keccak256
 /// hash-based storage depending on length
 pub const ENCODING_BYTES: &str = "bytes";
-/// "dynamic_array" encoding type for dynamic arrays, which uses keccak256 hash-based storage
+/// "`dynamic_array`" encoding type for dynamic arrays, which uses keccak256 hash-based storage
 pub const ENCODING_DYN_ARRAY: &str = "dynamic_array";
 
 /// Information about a storage slot including its label, type, and decoded values.
@@ -40,7 +40,7 @@ pub struct SlotInfo {
     pub offset: i64,
     /// The storage slot number as a string
     pub slot: String,
-    /// For struct members, contains nested SlotInfo for each member
+    /// For struct members, contains nested `SlotInfo` for each member
     ///
     /// This is populated when a struct's members / fields are packed in a single slot.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,7 +57,7 @@ pub struct SlotInfo {
     pub keys: Option<Vec<String>>,
 }
 
-/// Wrapper type that holds both the original type label and the parsed DynSolType.
+/// Wrapper type that holds both the original type label and the parsed `DynSolType`.
 ///
 /// We need both because:
 /// - `label`: Used for serialization to ensure output matches user expectations
@@ -124,7 +124,7 @@ impl SlotInfo {
     }
 
     /// Slot is of type [`DynSolType::Bytes`] or [`DynSolType::String`]
-    pub fn is_bytes_or_string(&self) -> bool {
+    pub const fn is_bytes_or_string(&self) -> bool {
         matches!(self.slot_type.dyn_sol_type, DynSolType::Bytes | DynSolType::String)
     }
 
@@ -155,7 +155,7 @@ impl SlotInfo {
     /// Decodes both previous and new [`DynSolType::Bytes`] or [`DynSolType::String`] values
     /// that span across multiple slots using state diff data.
     ///
-    /// Accepts a mapping of storage_slot to (previous_value, new_value).
+    /// Accepts a mapping of `storage_slot` to (`previous_value`, `new_value`).
     pub fn decode_bytes_or_string_values(
         &mut self,
         base_slot: &B256,
@@ -198,7 +198,7 @@ impl SlotInfo {
     }
 
     /// Aggregates a [`DynSolType::Bytes`] or [`DynSolType::String`] value that spans across
-    /// multiple slots by looking up the length in the base_slot.
+    /// multiple slots by looking up the length in the `base_slot`.
     ///
     /// Returns the aggregated raw bytes.
     fn aggregate_bytes_or_strings(
@@ -318,7 +318,7 @@ impl SlotInfo {
     }
 }
 
-/// Custom serializer for StorageTypeInfo that only outputs the label
+/// Custom serializer for `StorageTypeInfo` that only outputs the label
 fn serialize_slot_type<S>(info: &StorageTypeInfo, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -376,8 +376,8 @@ pub struct SlotIdentifier {
 }
 
 impl SlotIdentifier {
-    /// Creates a new SlotIdentifier with the given storage layout.
-    pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
+    /// Creates a new `SlotIdentifier` with the given storage layout.
+    pub const fn new(storage_layout: Arc<StorageLayout>) -> Self {
         Self { storage_layout }
     }
 
@@ -511,7 +511,7 @@ impl SlotIdentifier {
     /// * `storage` - The storage metadata from the layout
     /// * `storage_type` - Type information for the storage slot
     /// * `slot` - The target slot being identified
-    /// * `array_start_slot` - The starting slot of the array in storage i.e base_slot
+    /// * `array_start_slot` - The starting slot of the array in storage i.e `base_slot`
     /// * `slot_str` - String representation of the slot for output
     fn handle_array_slot(
         &self,
@@ -654,37 +654,37 @@ impl SlotIdentifier {
                     members: if member_infos.is_empty() { None } else { Some(member_infos) },
                     keys: None,
                 });
-            } else {
-                // Multi-slot struct - return the first member.
-                let member_label = format!("{}.{}", base_label, first_member.label);
-
-                // If the first member is itself a struct, recurse
-                if is_struct(&member_type_info.label) {
-                    return self.handle_struct(
-                        &member_label,
-                        member_type_info,
-                        target_slot,
-                        struct_start_slot,
-                        first_member.offset,
-                        slot_str,
-                        depth + 1,
-                    );
-                }
-
-                // Return the first member as a primitive
-                return Some(SlotInfo {
-                    label: member_label,
-                    slot_type: StorageTypeInfo {
-                        label: member_type_info.label.clone(),
-                        dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
-                    },
-                    offset: first_member.offset,
-                    slot: slot_str.to_string(),
-                    decoded: None,
-                    members: None,
-                    keys: None,
-                });
             }
+
+            // Multi-slot struct - return the first member.
+            let member_label = format!("{}.{}", base_label, first_member.label);
+
+            // If the first member is itself a struct, recurse
+            if is_struct(&member_type_info.label) {
+                return self.handle_struct(
+                    &member_label,
+                    member_type_info,
+                    target_slot,
+                    struct_start_slot,
+                    first_member.offset,
+                    slot_str,
+                    depth + 1,
+                );
+            }
+
+            // Return the first member as a primitive
+            return Some(SlotInfo {
+                label: member_label,
+                slot_type: StorageTypeInfo {
+                    label: member_type_info.label.clone(),
+                    dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
+                },
+                offset: first_member.offset,
+                slot: slot_str.to_string(),
+                decoded: None,
+                members: None,
+                keys: None,
+            });
         }
 
         // Not the base slot - search through members
@@ -954,14 +954,9 @@ impl SlotIdentifier {
                 let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
                 key_types.extend(nested_keys);
                 return Some((key_types, final_value, storage_type.label.clone()));
-            } else {
-                // Value is not a mapping, we're done
-                return Some((
-                    key_types,
-                    value_storage_type.label.clone(),
-                    storage_type.label.clone(),
-                ));
             }
+            // Value is not a mapping, we're done
+            return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
         }
 
         None

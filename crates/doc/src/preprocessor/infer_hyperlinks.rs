@@ -15,7 +15,7 @@ static RE_INLINE_LINK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)(\{(?P<xref>xref-)?(?P<identifier>[a-zA-Z_][0-9a-zA-Z_]*)(-(?P<part>[a-zA-Z_][0-9a-zA-Z_-]*))?}(\[(?P<link>(.*?))\])?)").unwrap()
 });
 
-/// [InferInlineHyperlinks] preprocessor id.
+/// [`InferInlineHyperlinks`] preprocessor id.
 pub const INFER_INLINE_HYPERLINKS_ID: PreprocessorId = PreprocessorId("infer inline hyperlinks");
 
 /// The infer hyperlinks preprocessor tries to map @dev tags to referenced items
@@ -115,7 +115,7 @@ impl InferInlineHyperlinks {
                         ));
                     }
                 }
-                ParseSource::Variable(_) => {}
+                ParseSource::Variable(_) | ParseSource::Enum(_) | ParseSource::Type(_) => {}
                 ParseSource::Event(ev) => {
                     let ev_name = &ev.name.safe_unwrap().name;
                     if ev_name == link.ref_name() {
@@ -143,8 +143,6 @@ impl InferInlineHyperlinks {
                         ));
                     }
                 }
-                ParseSource::Enum(_) => {}
-                ParseSource::Type(_) => {}
             }
         }
 
@@ -169,9 +167,9 @@ impl InferInlineHyperlinks {
                         Self::find_match(
                             &link,
                             doc.relative_output_path(),
-                            doc.content.iter_items().flat_map(|item| {
-                                Some(item).into_iter().chain(item.children.iter())
-                            }),
+                            doc.content
+                                .iter_items()
+                                .flat_map(|item| std::iter::once(item).chain(item.children.iter())),
                         )
                     })
                 } else {
@@ -182,7 +180,7 @@ impl InferInlineHyperlinks {
                         parent
                             .content
                             .iter_items()
-                            .flat_map(|item| Some(item).into_iter().chain(item.children.iter())),
+                            .flat_map(|item| std::iter::once(item).chain(item.children.iter())),
                     )
                 };
                 if let Some(target) = target {
@@ -203,7 +201,7 @@ struct InlineLinkTarget<'a> {
 }
 
 impl<'a> InlineLinkTarget<'a> {
-    fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
+    const fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
         Self { section: Cow::Borrowed(section), target_path }
     }
 }
@@ -261,12 +259,8 @@ impl<'a> InlineLink<'a> {
         self.exact_identifier().split('-').next().unwrap()
     }
 
-    fn exact_identifier(&self) -> &str {
-        let mut name = self.identifier;
-        if let Some(part) = self.part {
-            name = part;
-        }
-        name
+    const fn exact_identifier(&self) -> &str {
+        if let Some(part) = self.part { part } else { self.identifier }
     }
 
     /// Returns the content of the matched link.
@@ -275,7 +269,7 @@ impl<'a> InlineLink<'a> {
     }
 
     /// Returns true if the link is external.
-    fn is_external(&self) -> bool {
+    const fn is_external(&self) -> bool {
         self.part.is_some()
     }
 }

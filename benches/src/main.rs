@@ -44,7 +44,7 @@ struct Cli {
     output_file: String,
 
     /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
+    /// `forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage`)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 

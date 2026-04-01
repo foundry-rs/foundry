@@ -8,7 +8,7 @@ use std::{
 };
 
 /// A Future that will execute a given `task` for each new block that arrives on the stream.
-pub struct BlockListener<St, F, Fut> {
+pub(crate) struct BlockListener<St, F, Fut> {
     stream: St,
     task_factory: F,
     task: Option<Pin<Box<Fut>>>,
@@ -20,7 +20,7 @@ where
     St: Stream,
     F: Fn(<St as Stream>::Item) -> Fut,
 {
-    pub fn new(on_shutdown: Shutdown, block_stream: St, task_factory: F) -> Self {
+    pub(crate) const fn new(on_shutdown: Shutdown, block_stream: St, task_factory: F) -> Self {
         Self { stream: block_stream, task_factory, task: None, on_shutdown }
     }
 }

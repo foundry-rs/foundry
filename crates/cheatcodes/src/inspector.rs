@@ -81,7 +81,7 @@ use std::{
 
 mod utils;
 
-pub mod analysis;
+pub(crate) mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
@@ -166,7 +166,7 @@ pub(crate) fn exec_create<CTX: ContextTr, N: Network>(
     Ok(outcome.unwrap())
 }
 
-/// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
+/// Basic implementation of [`CheatcodesExecutor`] that simply returns the [Cheatcodes] instance as an
 /// inspector.
 #[derive(Debug, Default, Clone, Copy)]
 struct TransparentCheatcodesExecutor;
@@ -252,7 +252,7 @@ macro_rules! try_or_return {
 /// Contains additional, test specific resources that should be kept for the duration of the test
 #[derive(Debug, Default)]
 pub struct TestContext {
-    /// Buffered readers for files opened for reading (path => BufReader mapping)
+    /// Buffered readers for files opened for reading (path => `BufReader` mapping)
     pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
 }
 
@@ -317,12 +317,12 @@ pub struct GasMetering {
 
 impl GasMetering {
     /// Start the gas recording.
-    pub fn start(&mut self) {
+    pub const fn start(&mut self) {
         self.recording = true;
     }
 
     /// Stop the gas recording.
-    pub fn stop(&mut self) {
+    pub const fn stop(&mut self) {
         self.recording = false;
     }
 
@@ -746,10 +746,10 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
 
     /// Apply EIP-2930 access list.
     ///
-    /// If the transaction type is [TransactionType::Legacy] we need to upgrade it to
-    /// [TransactionType::Eip2930] in order to use access lists. Other transaction types support
+    /// If the transaction type is [`TransactionType::Legacy`] we need to upgrade it to
+    /// [`TransactionType::Eip2930`] in order to use access lists. Other transaction types support
     /// access lists themselves.
-    fn apply_accesslist<CTX: FoundryContextExt>(&mut self, ecx: &mut CTX) {
+    fn apply_accesslist<CTX: FoundryContextExt>(&self, ecx: &mut CTX) {
         if let Some(access_list) = &self.access_list {
             ecx.tx_mut().set_access_list(access_list.clone());
 
@@ -940,7 +940,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
             if prank.delegate_call
                 && curr_depth == prank.depth
-                && let CallScheme::DelegateCall = call.scheme
+                && call.scheme == CallScheme::DelegateCall
             {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
@@ -950,21 +950,23 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
             }
 
             if curr_depth >= prank.depth && call.caller == prank.prank_caller {
-                let mut prank_applied = false;
-
                 // At the target depth we set `msg.sender`
-                if curr_depth == prank.depth {
+                let prank_applied = if curr_depth == prank.depth {
                     // Ensure new caller is loaded and touched
                     let _ = journaled_account(ecx, prank.new_caller);
                     call.caller = prank.new_caller;
-                    prank_applied = true;
-                }
+                    true
+                } else {
+                    false
+                };
 
                 // At the target depth, or deeper, we set `tx.origin`
-                if let Some(new_origin) = prank.new_origin {
+                let prank_applied = if let Some(new_origin) = prank.new_origin {
                     ecx.tx_mut().set_caller(new_origin);
-                    prank_applied = true;
-                }
+                    true
+                } else {
+                    prank_applied
+                };
 
                 // If prank applied for first time, then update
                 if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
@@ -1096,19 +1098,12 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
-            let initialized;
-            let old_balance;
-            let old_nonce;
-
-            if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
-                initialized = acc.data.info.exists();
-                old_balance = acc.data.info.balance;
-                old_nonce = acc.data.info.nonce;
-            } else {
-                initialized = false;
-                old_balance = U256::ZERO;
-                old_nonce = 0;
-            }
+            let (initialized, old_balance, old_nonce) =
+                if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
+                    (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
+                } else {
+                    (false, U256::ZERO, 0)
+                };
 
             let kind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
@@ -1409,10 +1404,9 @@ where
                             outcome.result.output = error.abi_encode().into();
                         }
                     };
-                } else {
-                    // Call didn't revert, reset `assume_no_revert` state.
-                    self.assume_no_revert = None;
                 }
+                // Call didn't revert, reset `assume_no_revert` state.
+                self.assume_no_revert = None;
             }
         }
 
@@ -1506,13 +1500,12 @@ where
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if outcome.result.is_revert() {
-                    last_recorded_depth.iter_mut().for_each(|element| {
+                    for element in &mut last_recorded_depth {
                         element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
+                        for storage_access in &mut element.storageAccesses {
+                            storage_access.reverted = true;
+                        }
+                    }
                 }
 
                 if let Some(call_access) = last_recorded_depth.first_mut() {
@@ -1581,7 +1574,7 @@ where
                         },
                     };
 
-                    if count != expected.count { Some((expected, count)) } else { None }
+                    (count != expected.count).then_some((expected, count))
                 })
                 .collect::<Vec<_>>();
 
@@ -1772,21 +1765,23 @@ where
             && curr_depth >= prank.depth
             && input.caller() == prank.prank_caller
         {
-            let mut prank_applied = false;
-
             // At the target depth we set `msg.sender`
-            if curr_depth == prank.depth {
+            let prank_applied = if curr_depth == prank.depth {
                 // Ensure new caller is loaded and touched
                 let _ = journaled_account(ecx, prank.new_caller);
                 input.set_caller(prank.new_caller);
-                prank_applied = true;
-            }
+                true
+            } else {
+                false
+            };
 
             // At the target depth, or deeper, we set `tx.origin`
-            if let Some(new_origin) = prank.new_origin {
+            let prank_applied = if let Some(new_origin) = prank.new_origin {
                 ecx.tx_mut().set_caller(new_origin);
-                prank_applied = true;
-            }
+                true
+            } else {
+                prank_applied
+            };
 
             // If prank applied for first time, then update
             if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
@@ -1939,13 +1934,13 @@ where
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if outcome.result.is_revert() {
-                    last_depth.iter_mut().for_each(|element| {
+                    for element in last_depth.iter_mut() {
                         element.reverted = true;
                         element
                             .storageAccesses
                             .iter_mut()
                             .for_each(|storage_access| storage_access.reverted = true);
-                    })
+                    }
                 }
 
                 if let Some(create_access) = last_depth.first_mut() {
@@ -2045,7 +2040,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     }
 
     #[cold]
-    fn meter_gas_record<CTX: ContextTr>(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
+    fn meter_gas_record<CTX: ContextTr>(&mut self, interpreter: &Interpreter, ecx: &CTX) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 let curr_depth = ecx.journal().depth();
@@ -2067,7 +2062,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     }
 
     #[cold]
-    fn meter_gas_end(&mut self, interpreter: &mut Interpreter) {
+    fn meter_gas_end(&mut self, interpreter: &Interpreter) {
         // Remove recorded gas if we exit frame.
         if let Some(interpreter_action) = interpreter.bytecode.action.as_ref()
             && will_exit(interpreter_action)
@@ -2086,7 +2081,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     }
 
     #[cold]
-    fn meter_gas_check(&mut self, interpreter: &mut Interpreter) {
+    fn meter_gas_check(&self, interpreter: &mut Interpreter) {
         if let Some(interpreter_action) = interpreter.bytecode.action.as_ref()
             && will_exit(interpreter_action)
         {
@@ -2109,11 +2104,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end<CTX: ContextTr>(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut CTX,
-    ) {
+    fn arbitrary_storage_end<CTX: ContextTr>(&mut self, interpreter: &Interpreter, ecx: &mut CTX) {
         let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
         } else {
@@ -2149,7 +2140,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
 
     /// Records storage slots reads and writes.
     #[cold]
-    fn record_accesses(&mut self, interpreter: &mut Interpreter) {
+    fn record_accesses(&mut self, interpreter: &Interpreter) {
         let access = &mut self.accesses;
         match interpreter.bytecode.opcode() {
             op::SLOAD => {
@@ -2169,7 +2160,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
         CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>,
     >(
         &mut self,
-        interpreter: &mut Interpreter,
+        interpreter: &Interpreter,
         ecx: &mut CTX,
     ) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
@@ -2234,13 +2225,13 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
 
                 // Try to include present value for informational purposes, otherwise assume
                 // it's not set (zero value)
-                let mut present_value = U256::ZERO;
-                // Try to load the account and the slot's present value
-                if ecx.journal_mut().load_account(address).is_ok()
+                let present_value = if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
-                    present_value = previous.data;
-                }
+                    previous.data
+                } else {
+                    U256::ZERO
+                };
                 let access = crate::Vm::StorageAccess {
                     account: interpreter.input.target_address,
                     slot: key.into(),
@@ -2261,12 +2252,13 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
                 let address = interpreter.input.target_address;
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
-                let mut previous_value = U256::ZERO;
-                if ecx.journal_mut().load_account(address).is_ok()
+                let previous_value = if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
-                    previous_value = previous.data;
-                }
+                    previous.data
+                } else {
+                    U256::ZERO
+                };
 
                 let access = crate::Vm::StorageAccess {
                     account: address,
@@ -2292,18 +2284,12 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
                 };
                 let address =
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
-                let initialized;
-                let balance;
-                let nonce;
-                if let Ok(acc) = ecx.journal_mut().load_account(address) {
-                    initialized = acc.data.info.exists();
-                    balance = acc.data.info.balance;
-                    nonce = acc.data.info.nonce;
-                } else {
-                    initialized = false;
-                    balance = U256::ZERO;
-                    nonce = 0;
-                }
+                let (initialized, balance, nonce) =
+                    if let Ok(acc) = ecx.journal_mut().load_account(address) {
+                        (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
+                    } else {
+                        (false, U256::ZERO, 0)
+                    };
                 let curr_depth =
                     ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {
@@ -2512,7 +2498,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     }
 
     #[cold]
-    fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
+    fn set_gas_limit_type(&mut self, interpreter: &Interpreter) {
         match interpreter.bytecode.opcode() {
             op::CREATE2 => self.dynamic_gas_limit = true,
             op::CALL => {
@@ -2552,7 +2538,7 @@ fn disallowed_mem_write(
 }
 
 /// Returns true if the kind of account access is a call.
-fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
+const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
         crate::Vm::AccountAccessKind::Call
@@ -2573,7 +2559,7 @@ fn record_logs(recorded_logs: &mut Option<Vec<Vm::Log>>, log: &Log) {
     }
 }
 
-/// Appends an AccountAccess that resumes the recording of the current context.
+/// Appends an `AccountAccess` that resumes the recording of the current context.
 fn append_storage_access(
     last: &mut Vec<AccountAccess>,
     storage_access: crate::Vm::StorageAccess,
@@ -2622,7 +2608,7 @@ fn append_storage_access(
 }
 
 /// Returns the [`spec::Cheatcode`] definition for a given [`spec::CheatcodeDef`] implementor.
-fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
+const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
     T::CHEATCODE
 }
 
@@ -2630,11 +2616,11 @@ fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature.split('(').next().unwrap()
 }
 
-fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
+const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.id
 }
 
-fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
+const fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature
 }
 
@@ -2703,7 +2689,7 @@ fn apply_dispatch<
 }
 
 /// Helper function to check if frame execution will exit.
-fn will_exit(action: &InterpreterAction) -> bool {
+const fn will_exit(action: &InterpreterAction) -> bool {
     match action {
         InterpreterAction::Return(result) => {
             result.result.is_ok_or_revert() || result.result.is_error()

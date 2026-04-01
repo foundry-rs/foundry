@@ -16,6 +16,7 @@
 macro_rules! declare_forge_lint {
     ($id:ident, $severity:expr, $str_id:expr, $desc:expr) => {
         // Declare the static `Lint` metadata
+        #[allow(unreachable_pub)]
         pub static $id: SolLint = SolLint {
             id: $str_id,
             severity: $severity,

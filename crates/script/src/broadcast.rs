@@ -33,7 +33,7 @@ use crate::{
     sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
 
-pub async fn estimate_gas<N: Network, P: Provider<N>>(
+pub(crate) async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
@@ -53,7 +53,7 @@ where
     Ok(())
 }
 
-pub async fn next_nonce(
+pub(crate) async fn next_nonce(
     caller: Address,
     provider_url: &str,
     block_number: Option<u64>,
@@ -67,7 +67,7 @@ pub async fn next_nonce(
 
 /// Represents how to send a single transaction.
 #[derive(Clone)]
-pub enum SendTransactionKind<'a, N: Network> {
+pub(crate) enum SendTransactionKind<'a, N: Network> {
     Unlocked(N::TransactionRequest),
     Raw(N::TransactionRequest, &'a EthereumWallet),
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
@@ -88,7 +88,7 @@ where
     /// 1. Nonce synchronization: Waits for the provider's nonce to catch up to the expected
     ///    transaction nonce when doing sequential broadcast
     /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
-    pub async fn prepare(
+    pub(crate) async fn prepare(
         &mut self,
         provider: &RootProvider<N>,
         sequential_broadcast: bool,
@@ -148,7 +148,7 @@ where
     /// - Submit via `eth_sendTransaction` for unlocked accounts
     /// - Sign and submit via `eth_sendRawTransaction` for raw transactions
     /// - Submit pre-signed transaction via `eth_sendRawTransaction`
-    pub async fn send(self, provider: Arc<RootProvider<N>>) -> Result<TxHash> {
+    pub(crate) async fn send(self, provider: Arc<RootProvider<N>>) -> Result<TxHash> {
         match self {
             Self::Unlocked(tx) => {
                 debug!("sending transaction from unlocked account {:?}", tx);
@@ -212,7 +212,7 @@ where
     ///
     /// This is a convenience method that combines [`prepare`](Self::prepare) and
     /// [`send`](Self::send) into a single call.
-    pub async fn prepare_and_send(
+    pub(crate) async fn prepare_and_send(
         mut self,
         provider: Arc<RootProvider<N>>,
         sequential_broadcast: bool,
@@ -234,7 +234,7 @@ where
 }
 
 /// Represents how to send _all_ transactions
-pub enum SendTransactionsKind<N: Network> {
+pub(crate) enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(AddressHashSet),
     /// Send a signed transaction via `eth_sendRawTransaction`, or via browser
@@ -249,7 +249,7 @@ impl<N: Network> SendTransactionsKind<N> {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked
-    pub fn for_sender(
+    pub(crate) fn for_sender(
         &self,
         addr: &Address,
         tx: N::TransactionRequest,

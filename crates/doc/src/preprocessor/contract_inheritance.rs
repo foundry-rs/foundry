@@ -5,7 +5,7 @@ use crate::{
 use alloy_primitives::map::HashMap;
 use std::path::PathBuf;
 
-/// [ContractInheritance] preprocessor id.
+/// [`ContractInheritance`] preprocessor id.
 pub const CONTRACT_INHERITANCE_ID: PreprocessorId = PreprocessorId("contract_inheritance");
 
 /// The contract inheritance preprocessor.

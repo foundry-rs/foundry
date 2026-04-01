@@ -151,9 +151,9 @@ pub mod inspector;
 pub mod state;
 pub mod storage;
 
-/// Helper trait that combines revm::DatabaseRef with Debug.
+/// Helper trait that combines `revm::DatabaseRef` with Debug.
 /// This is needed because alloy-evm requires Debug on Database implementations.
-/// With trait upcasting now stable, we can now upcast from this trait to revm::DatabaseRef.
+/// With trait upcasting now stable, we can now upcast from this trait to `revm::DatabaseRef`.
 pub trait DatabaseRef: revm::DatabaseRef<Error = DatabaseError> + Debug {}
 impl<T> DatabaseRef for T where T: revm::DatabaseRef<Error = DatabaseError> + Debug {}
 impl DatabaseRef for dyn crate::eth::backend::db::Db {}
@@ -181,7 +181,7 @@ impl<T> fmt::Debug for BlockRequest<T> {
 }
 
 impl<T> BlockRequest<T> {
-    pub fn block_number(&self) -> BlockNumber {
+    pub const fn block_number(&self) -> BlockNumber {
         match *self {
             Self::Pending(_) => BlockNumber::Pending,
             Self::Number(n) => BlockNumber::Number(n),
@@ -189,7 +189,7 @@ impl<T> BlockRequest<T> {
     }
 }
 
-/// Gives access to the [revm::Database]
+/// Gives access to the [`revm::Database`]
 pub struct Backend<N: Network> {
     /// Access to [`revm::Database`] abstraction.
     ///
@@ -236,7 +236,7 @@ pub struct Backend<N: Network> {
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
-    /// Recorder used for decoding traces, used together with print_traces
+    /// Recorder used for decoding traces, used together with `print_traces`
     call_trace_decoder: Arc<CallTraceDecoder>,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
@@ -347,12 +347,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the `TimeManager` responsible for timestamps
-    pub fn time(&self) -> &TimeManager {
+    pub const fn time(&self) -> &TimeManager {
         &self.time
     }
 
     /// Returns the `CheatsManager` responsible for executing cheatcodes
-    pub fn cheats(&self) -> &CheatsManager {
+    pub const fn cheats(&self) -> &CheatsManager {
         &self.cheats
     }
 
@@ -364,12 +364,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the `FeeManager` that manages fee/pricings
-    pub fn fees(&self) -> &FeeManager {
+    pub const fn fees(&self) -> &FeeManager {
         &self.fees
     }
 
     /// The EVM environment data of the blockchain
-    pub fn evm_env(&self) -> &Arc<RwLock<EvmEnv>> {
+    pub const fn evm_env(&self) -> &Arc<RwLock<EvmEnv>> {
         &self.evm_env
     }
 
@@ -403,7 +403,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the genesis data for the Beacon API.
-    pub fn genesis_time(&self) -> u64 {
+    pub const fn genesis_time(&self) -> u64 {
         self.genesis.timestamp
     }
 
@@ -478,12 +478,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
-    pub fn is_optimism(&self) -> bool {
+    pub const fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
     }
 
     /// Returns true if Tempo network mode is active
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         self.networks.is_tempo()
     }
 
@@ -572,7 +572,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
-    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+    pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
         }
@@ -580,7 +580,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if Tempo transactions are not active
-    pub fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
+    pub const fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
         if self.is_tempo() {
             return Ok(());
         }
@@ -603,7 +603,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns whether the minimum suggested priority fee is enforced
-    pub fn is_min_priority_fee_enforced(&self) -> bool {
+    pub const fn is_min_priority_fee_enforced(&self) -> bool {
         self.fees.is_min_priority_fee_enforced()
     }
 
@@ -821,7 +821,7 @@ impl<N: Network> Backend<N> {
     ///
     /// Based on Reth implementation: <https://github.com/paradigmxyz/reth/blob/66cfa9ed1a8c4bc2424aacf6fb2c1e67a78ee9a2/crates/rpc/rpc/src/debug.rs#L1146-L1178>
     ///
-    /// Key should be: 0x63 (1-byte prefix) + 32 bytes (code_hash)
+    /// Key should be: 0x63 (1-byte prefix) + 32 bytes (`code_hash`)
     /// Total key length must be 33 bytes.
     pub async fn debug_db_get(&self, key: String) -> Result<Option<Bytes>, BlockchainError> {
         let key_bytes = if key.starts_with("0x") {
@@ -1347,11 +1347,7 @@ impl<N: Network> Backend<N> {
             gas_priority_fee: max_priority_fee_per_gas,
             max_fee_per_blob_gas: max_fee_per_blob_gas
                 .or_else(|| {
-                    if !blob_hashes.is_empty() {
-                        evm_env.block_env.blob_gasprice()
-                    } else {
-                        Some(0)
-                    }
+                    if blob_hashes.is_empty() { Some(0) } else { evm_env.block_env.blob_gasprice() }
                 })
                 .unwrap_or_default(),
             kind: match to {
@@ -1361,7 +1357,7 @@ impl<N: Network> Backend<N> {
             tx_type,
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),
-            chain_id: Some(chain_id.unwrap_or(self.chain_id().to::<u64>())),
+            chain_id: Some(chain_id.unwrap_or_else(|| self.chain_id().to::<u64>())),
             access_list: access_list.unwrap_or_default(),
             blob_hashes,
             ..Default::default()
@@ -1658,7 +1654,7 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Replays all transactions in a block with the tracing inspector to generate TraceResults
+    /// Replays all transactions in a block with the tracing inspector to generate `TraceResults`
     fn replay_block_transactions_with_inspector(
         &self,
         block: &Block,
@@ -1781,6 +1777,7 @@ impl<N: Network> Backend<N> {
         }))
     }
 
+    #[allow(clippy::large_stack_frames)]
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
@@ -1966,7 +1963,7 @@ impl<N: Network> Backend<N> {
         if self.networks.is_tempo() && !self.is_fork() {
             let chain_id = self.evm_env.read().cfg_env.chain_id;
             let timestamp = self.genesis.timestamp;
-            let test_accounts: Vec<Address> = self.genesis.accounts.to_vec();
+            let test_accounts: Vec<Address> = self.genesis.accounts.clone();
             let hardfork = tempo_chainspec::hardfork::TempoHardfork::default();
             let mut db = self.db.write().await;
             crate::eth::backend::tempo::initialize_tempo_precompiles(
@@ -2113,7 +2110,7 @@ impl<N: Network> Backend<N> {
         }
 
         // Clear all storage and reinitialize with genesis
-        let base_fee = if self.fees.is_eip1559() { Some(self.fees.base_fee()) } else { None };
+        let base_fee = self.fees.is_eip1559().then(|| self.fees.base_fee());
         *self.blockchain.storage.write() = BlockchainStorage::new(
             &self.evm_env.read(),
             base_fee,
@@ -2316,12 +2313,7 @@ where
 
         // get the range that predates the fork if any
         if let Some(fork) = self.get_fork() {
-            let mut to_on_fork = to;
-
-            if !fork.predates_fork(to) {
-                // adjust the ranges
-                to_on_fork = fork.block_number();
-            }
+            let to_on_fork = if fork.predates_fork(to) { to } else { fork.block_number() };
 
             if fork.predates_fork_inclusive(from) {
                 // this data is only available on the forked client
@@ -2375,7 +2367,7 @@ where
 }
 
 // Mining methods — generic over N: Network, with Foundry-associated-type bounds for now.
-impl<N: Network> Backend<N>
+impl<N> Backend<N>
 where
     Self: TransactionValidator<FoundryTxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
@@ -2453,8 +2445,7 @@ where
                 let mix_hash = evm_env.block_env.prevrandao;
                 let beneficiary = evm_env.block_env.beneficiary;
                 let timestamp = evm_env.block_env.timestamp;
-                let base_fee =
-                    if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
+                let base_fee = (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee);
                 let excess_blob_gas =
                     if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
@@ -2709,8 +2700,7 @@ where
         let mix_hash = evm_env.block_env.prevrandao;
         let beneficiary = evm_env.block_env.beneficiary;
         let timestamp = evm_env.block_env.timestamp;
-        let base_fee =
-            if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
+        let base_fee = (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee);
         let excess_blob_gas = if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
         let blob_params = self.blob_params();
@@ -2788,7 +2778,7 @@ where
         f(Box::new(cache_db), block_info)
     }
 
-    /// Executes the [TransactionRequest] without writing to the DB
+    /// Executes the [`TransactionRequest`] without writing to the DB
     ///
     /// # Errors
     ///
@@ -3011,11 +3001,10 @@ where
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
                     return Ok(f(Box::new(state_db), block_env_from_header(&block.header)));
-                } else {
-                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                    if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                        return Ok(f(Box::new(state), block_env_from_header(&block.header)));
-                    }
+                }
+                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                    return Ok(f(Box::new(state), block_env_from_header(&block.header)));
                 }
             }
 
@@ -3418,11 +3407,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
-        let historical_states = if preserve_historical_states {
-            Some(self.states.write().serialized_states())
-        } else {
-            None
-        };
+        let historical_states =
+            preserve_historical_states.then(|| self.states.write().serialized_states());
 
         let state = self.db.read().await.dump_state(
             at,
@@ -3450,7 +3436,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         Ok(encoder.finish().unwrap_or_default().into())
     }
 
-    /// Apply [SerializableState] data to the backend storage.
+    /// Apply [`SerializableState`] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
         // load the blocks and transactions into the storage
         self.blockchain.storage.write().load_blocks(state.blocks.clone());
@@ -3463,7 +3449,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
-            let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
+            let best_number =
+                state.best_block_number.unwrap_or_else(|| block.number.saturating_to());
             if let Some((number, hash)) = fork_num_and_hash {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number

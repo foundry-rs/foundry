@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Various error variants for `fs` operations that serve as an addition to the io::Error which
+/// Various error variants for `fs` operations that serve as an addition to the `io::Error` which
 /// does not provide any information about the path.
 #[derive(Debug, thiserror::Error)]
 #[expect(missing_docs)]

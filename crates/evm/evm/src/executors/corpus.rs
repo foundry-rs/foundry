@@ -113,13 +113,13 @@ struct CorpusEntry {
 
 impl CorpusEntry {
     /// Creates a corpus entry with a new UUID.
-    pub fn new(tx_seq: Vec<BasicTxDetails>) -> Self {
+    pub(crate) fn new(tx_seq: Vec<BasicTxDetails>) -> Self {
         Self::new_with(tx_seq, Uuid::new_v4())
     }
 
     /// Creates a corpus entry with a path.
     /// The UUID is parsed from the file name, otherwise a new UUID is generated.
-    pub fn new_existing(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> Result<Self> {
+    pub(crate) fn new_existing(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> Result<Self> {
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             eyre::bail!("invalid corpus file path: {path:?}");
         };
@@ -128,7 +128,7 @@ impl CorpusEntry {
     }
 
     /// Creates a corpus entry with the given UUID.
-    pub fn new_with(tx_seq: Vec<BasicTxDetails>, uuid: Uuid) -> Self {
+    pub(crate) fn new_with(tx_seq: Vec<BasicTxDetails>, uuid: Uuid) -> Self {
         Self {
             uuid,
             total_mutations: 0,
@@ -220,7 +220,7 @@ impl fmt::Display for CorpusMetrics {
 
 impl CorpusMetrics {
     /// Records number of new edges or features explored during the campaign.
-    pub fn update_seen(&mut self, is_edge: bool) {
+    pub(super) const fn update_seen(&mut self, is_edge: bool) {
         if is_edge {
             self.cumulative_edges_seen += 1;
         } else {
@@ -229,7 +229,7 @@ impl CorpusMetrics {
     }
 
     /// Updates campaign favored items.
-    pub fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
+    pub(super) const fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
         if is_favored && !corpus_favored {
             self.favored_items += 1;
         } else if !is_favored && corpus_favored {
@@ -239,7 +239,7 @@ impl CorpusMetrics {
 }
 
 /// Per-worker corpus manager.
-pub struct WorkerCorpus {
+pub(super) struct WorkerCorpus {
     /// Worker Id
     id: usize,
     /// In-memory corpus entries populated from the persisted files and
@@ -264,14 +264,14 @@ pub struct WorkerCorpus {
     /// Last sync timestamp in seconds.
     last_sync_timestamp: u64,
     /// Worker Dir
-    /// corpus_dir/worker1/
+    /// `corpus_dir/worker1`/
     worker_dir: Option<PathBuf>,
     /// Metrics at last sync - used to calculate deltas while syncing with global metrics
     last_sync_metrics: CorpusMetrics,
 }
 
 impl WorkerCorpus {
-    pub fn new(
+    pub(super) fn new(
         id: usize,
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
@@ -379,7 +379,7 @@ impl WorkerCorpus {
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
     #[instrument(skip_all)]
-    pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
+    pub(super) fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
         let Some(worker_corpus) = &self.worker_dir else {
             return;
         };
@@ -441,7 +441,7 @@ impl WorkerCorpus {
     }
 
     /// Collects coverage from call result and updates metrics.
-    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
+    pub(super) fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
         if !self.config.collect_edge_coverage() {
             return false;
         }
@@ -456,7 +456,7 @@ impl WorkerCorpus {
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
     /// configured max mutations value. Used by invariant test campaigns.
     #[instrument(skip_all)]
-    pub fn new_inputs(
+    pub(super) fn new_inputs(
         &mut self,
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
@@ -585,7 +585,7 @@ impl WorkerCorpus {
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
     /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
     #[instrument(skip_all)]
-    pub fn new_input(
+    pub(super) fn new_input(
         &mut self,
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
@@ -598,22 +598,22 @@ impl WorkerCorpus {
 
         self.evict_oldest_corpus()?;
 
-        let tx = if !self.in_memory_corpus.is_empty() {
+        let tx = if self.in_memory_corpus.is_empty() {
+            self.new_tx(test_runner)?
+        } else {
             let corpus = &self.in_memory_corpus
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
             tx
-        } else {
-            self.new_tx(test_runner)?
         };
 
         Ok(tx.call_details.calldata)
     }
 
     /// Generates single call from corpus strategy.
-    pub fn new_tx(&self, test_runner: &mut TestRunner) -> Result<BasicTxDetails> {
+    pub(super) fn new_tx(&self, test_runner: &mut TestRunner) -> Result<BasicTxDetails> {
         Ok(self
             .tx_generator
             .new_tree(test_runner)
@@ -627,8 +627,8 @@ impl WorkerCorpus {
     /// If running with coverage guided fuzzing it returns a new call only when sequence
     /// does not have enough entries, or randomly. Otherwise, returns the next call from initial
     /// sequence.
-    pub fn generate_next_input(
-        &mut self,
+    pub(super) fn generate_next_input(
+        &self,
         test_runner: &mut TestRunner,
         sequence: &[BasicTxDetails],
         discarded: bool,
@@ -756,7 +756,7 @@ impl WorkerCorpus {
         Ok(imports)
     }
 
-    /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
+    /// Syncs and calibrates the in memory corpus and updates the `history_map` if new coverage is
     /// found from the corpus findings of other workers.
     #[instrument(skip_all)]
     fn calibrate(
@@ -817,7 +817,7 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_existing(tx_seq.to_vec(), entry.path.clone())?;
+                let corpus_entry = CorpusEntry::new_existing(tx_seq.clone(), entry.path.clone())?;
                 self.in_memory_corpus.push(corpus_entry);
             } else {
                 // Remove the file as it did not generate new coverage.
@@ -875,7 +875,7 @@ impl WorkerCorpus {
 
     /// Exports the global corpus to the `sync/` directories of all the non-master workers.
     #[instrument(skip_all)]
-    fn export_to_workers(&mut self, num_workers: usize) -> Result<()> {
+    fn export_to_workers(&self, num_workers: usize) -> Result<()> {
         assert_eq!(self.id, 0, "master worker only");
         if self.worker_dir.is_none() {
             return Ok(());
@@ -970,9 +970,9 @@ impl WorkerCorpus {
         self.last_sync_metrics = self.metrics.clone();
     }
 
-    /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
+    /// Syncs the workers `in_memory_corpus` and `history_map` with the findings from other workers.
     #[instrument(skip_all)]
-    pub fn sync(
+    pub(super) fn sync(
         &mut self,
         num_workers: usize,
         executor: &Executor,

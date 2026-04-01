@@ -1050,9 +1050,8 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let run_log = re.replace_all(&run_log, "");
 
     // Clean up carriage return OS differences
-    let re = Regex::new(r"\r\n").unwrap();
-    let fixtures_log = re.replace_all(&fixtures_log, "\n");
-    let run_log = re.replace_all(&run_log, "\n");
+    let fixtures_log = fixtures_log.replace("\r\n", "\n");
+    let run_log = run_log.replace("\r\n", "\n");
 
     similar_asserts::assert_eq!(fixtures_log, run_log);
 });

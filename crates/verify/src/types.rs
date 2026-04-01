@@ -5,7 +5,7 @@ use std::{fmt, str::FromStr};
 /// Enum to represent the type of verification: `full` or `partial`.
 /// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
 #[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq, Serialize, Deserialize, Copy)]
-pub enum VerificationType {
+pub(crate) enum VerificationType {
     #[default]
     #[serde(rename = "full")]
     Full,

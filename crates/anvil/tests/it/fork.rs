@@ -41,7 +41,7 @@ const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
 
 /// Represents an anvil fork of an anvil node
 #[expect(unused)]
-pub struct LocalFork {
+pub(crate) struct LocalFork {
     origin_api: EthApi<FoundryNetwork>,
     origin_handle: NodeHandle,
     fork_api: EthApi<FoundryNetwork>,
@@ -51,12 +51,12 @@ pub struct LocalFork {
 #[expect(dead_code)]
 impl LocalFork {
     /// Spawns two nodes with the test config
-    pub async fn new() -> Self {
+    pub(crate) async fn new() -> Self {
         Self::setup(NodeConfig::test(), NodeConfig::test()).await
     }
 
     /// Spawns two nodes where one is a fork of the other
-    pub async fn setup(origin: NodeConfig, fork: NodeConfig) -> Self {
+    pub(crate) async fn setup(origin: NodeConfig, fork: NodeConfig) -> Self {
         let (origin_api, origin_handle) = spawn(origin).await;
 
         let (fork_api, fork_handle) =
@@ -65,7 +65,7 @@ impl LocalFork {
     }
 }
 
-pub fn fork_config() -> NodeConfig {
+pub(crate) fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
@@ -557,7 +557,7 @@ async fn can_reset_fork_to_new_fork() {
     let optimism = next_rpc_endpoint(NamedChain::Optimism);
 
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(optimism.to_string()),
+        json_rpc_url: Some(optimism.clone()),
         block_number: Some(124659890),
     }))
     .await
@@ -1581,12 +1581,12 @@ async fn test_add_balance() {
 async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let config: NodeConfig = fork_config();
 
-    let (mut api, _handle) = spawn(config).await;
+    let (api, _handle) = spawn(config).await;
     let info = api.anvil_node_info().await.unwrap();
     let number = info.fork_config.fork_block_number.unwrap();
     assert_eq!(number, BLOCK_NUMBER);
 
-    async fn get_block_from_cache_path(api: &mut EthApi<FoundryNetwork>) -> u64 {
+    async fn get_block_from_cache_path(api: &EthApi<FoundryNetwork>) -> u64 {
         let db = api.backend.get_db().read().await;
         let cache_path = db.maybe_inner().unwrap().cache().cache_path().unwrap();
         cache_path
@@ -1600,7 +1600,7 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
             .expect("must be valid number")
     }
 
-    assert_eq!(BLOCK_NUMBER, get_block_from_cache_path(&mut api).await);
+    assert_eq!(BLOCK_NUMBER, get_block_from_cache_path(&api).await);
 
     // Reset to older block without specifying a new rpc url
     api.anvil_reset(Some(Forking {
@@ -1610,7 +1610,7 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     .await
     .unwrap();
 
-    assert_eq!(BLOCK_NUMBER - 1_000_000, get_block_from_cache_path(&mut api).await);
+    assert_eq!(BLOCK_NUMBER - 1_000_000, get_block_from_cache_path(&api).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]

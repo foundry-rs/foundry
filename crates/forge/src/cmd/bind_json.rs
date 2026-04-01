@@ -112,7 +112,7 @@ impl BindJsonArgs {
                     &sess,
                     &arena,
                     FileName::Real(path.clone()),
-                    content.to_string(),
+                    content.clone(),
                 )?;
                 let ast = parser.parse_file().map_err(|e| e.emit())?;
 
@@ -157,13 +157,13 @@ impl BindJsonArgs {
 
             let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {
-                if !include.is_empty() {
-                    if !include.iter().any(|matcher| matcher.is_match(path)) {
+                if include.is_empty() {
+                    // Exclude library files by default
+                    if project.paths.has_library_ancestor(path) {
                         continue;
                     }
                 } else {
-                    // Exclude library files by default
-                    if project.paths.has_library_ancestor(path) {
+                    if !include.iter().any(|matcher| matcher.is_match(path)) {
                         continue;
                     }
                 }
@@ -286,7 +286,7 @@ impl BindJsonArgs {
         }
 
         for (s, fn_name) in structs_to_write.iter_mut().zip(fn_names) {
-            s.name_in_fns = fn_name.unwrap_or(s.name.clone());
+            s.name_in_fns = fn_name.unwrap_or_else(|| s.name.clone());
         }
     }
 
@@ -398,7 +398,7 @@ struct PreprocessorVisitor {
 }
 
 impl PreprocessorVisitor {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { updates: Vec::new() }
     }
 
@@ -452,7 +452,7 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
         var: &'ast ast::VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Remove `immutable` attributes.
-        if let Some(VarMut::Immutable) = var.mutability {
+        if var.mutability == Some(VarMut::Immutable) {
             self.updates.push((var.span, ""));
         }
 
@@ -486,13 +486,13 @@ impl StructToWrite {
         self.contract_name.as_deref().unwrap_or(&self.name)
     }
 
-    /// Same as [StructToWrite::struct_or_contract_name] but with alias applied.
+    /// Same as [`StructToWrite::struct_or_contract_name`] but with alias applied.
     fn struct_or_contract_name_with_alias(&self) -> &str {
-        self.import_alias.as_deref().unwrap_or(self.struct_or_contract_name())
+        self.import_alias.as_deref().unwrap_or_else(|| self.struct_or_contract_name())
     }
 
     /// Path which can be used to reference this struct in input/output parameters. Either
-    /// StructName or ParentName.StructName
+    /// `StructName` or ParentName.StructName
     fn full_path(&self) -> String {
         if self.contract_name.is_some() {
             format!("{}.{}", self.struct_or_contract_name_with_alias(), self.name)

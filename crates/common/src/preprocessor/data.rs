@@ -13,7 +13,7 @@ use std::{
 
 /// Keeps data about project contracts definitions referenced from tests and scripts.
 /// Contract id -> Contract data definition mapping.
-pub type PreprocessorData = BTreeMap<ContractId, ContractData>;
+pub(super) type PreprocessorData = BTreeMap<ContractId, ContractData>;
 
 /// Collects preprocessor data from referenced contracts.
 pub(crate) fn collect_preprocessor_data(
@@ -51,7 +51,7 @@ pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -
 
 /// Keeps data about a contract constructor.
 #[derive(Debug)]
-pub struct ContractConstructorData {
+pub(super) struct ContractConstructorData {
     /// ABI encoded args.
     pub abi_encode_args: String,
     /// Constructor struct fields.
@@ -166,7 +166,7 @@ impl ContractData {
     /// ```solidity
     /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs({name: name, symbol: symbol})))
     /// ```
-    pub fn build_helper(&self) -> Option<String> {
+    pub(super) fn build_helper(&self) -> Option<String> {
         let Self { contract_id, path, name, constructor_data, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };

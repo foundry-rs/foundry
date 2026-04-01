@@ -548,7 +548,7 @@ fn get_artifact_code<SPEC, BLOCK, N: Network>(
                                 // Try filtering by profile as well
                                 filtered.retain(|(id, _)| id.profile == running.profile);
 
-                                if filtered.len() == 1 { Some(filtered[0]) } else { None }
+                                (filtered.len() == 1).then(|| filtered[0])
                             })
                             .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
                     )

@@ -12,7 +12,7 @@ const LIVE_RELOAD_ENDPOINT: &str = "/__livereload";
 
 /// Basic mdbook server. Given a path, hostname and port, serves the mdbook.
 #[derive(Debug)]
-pub struct Server {
+pub(super) struct Server {
     path: PathBuf,
     hostname: String,
     port: usize,
@@ -27,30 +27,30 @@ impl Default for Server {
 
 impl Server {
     /// Create a new instance.
-    pub fn new(path: PathBuf) -> Self {
+    pub(super) fn new(path: PathBuf) -> Self {
         Self { path, ..Default::default() }
     }
 
     /// Set the host to serve on.
-    pub fn with_hostname(mut self, hostname: String) -> Self {
+    pub(super) fn with_hostname(mut self, hostname: String) -> Self {
         self.hostname = hostname;
         self
     }
 
     /// Set the port to serve on.
-    pub fn with_port(mut self, port: usize) -> Self {
+    pub(super) const fn with_port(mut self, port: usize) -> Self {
         self.port = port;
         self
     }
 
     /// Set whether to open the browser after serving.
-    pub fn open(mut self, open: bool) -> Self {
+    pub(super) const fn open(mut self, open: bool) -> Self {
         self.open = open;
         self
     }
 
     /// Serve the mdbook.
-    pub fn serve(self) -> eyre::Result<()> {
+    pub(super) fn serve(self) -> eyre::Result<()> {
         let mut book =
             MDBook::load(&self.path).map_err(|err| eyre::eyre!("failed to load book: {err:?}"))?;
 

@@ -14,7 +14,7 @@ const MIN_SPACE: isize = 40;
 
 /// How to break. Described in more detail in the module docs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Breaks {
+pub(crate) enum Breaks {
     Consistent,
     Inconsistent,
 }
@@ -73,7 +73,7 @@ enum PrintFrame {
 pub(crate) const SIZE_INFINITY: isize = 0xffff;
 
 #[derive(Debug)]
-pub struct Printer {
+pub(crate) struct Printer {
     out: String,
     /// Number of spaces left on line.
     space: isize,
@@ -107,13 +107,13 @@ pub struct Printer {
 }
 
 #[derive(Debug)]
-pub struct BufEntry {
+pub(crate) struct BufEntry {
     token: Token,
     size: isize,
 }
 
 impl Printer {
-    pub fn new(margin: usize, use_tab_with_size: Option<usize>) -> Self {
+    pub(crate) fn new(margin: usize, use_tab_with_size: Option<usize>) -> Self {
         let margin = (margin as isize).clamp(MIN_SPACE, SIZE_INFINITY - 1);
         Self {
             out: String::new(),
@@ -215,7 +215,7 @@ impl Printer {
     {
         for i in self.buf.index_range().rev() {
             let token = &self.buf[i].token;
-            if let Token::End = token {
+            if matches!(token, Token::End) {
                 // It's safe to skip the end of a box.
                 continue;
             }

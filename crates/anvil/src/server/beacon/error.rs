@@ -13,7 +13,7 @@ use std::{
 
 /// Represents a Beacon API error response
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BeaconError {
+pub(super) struct BeaconError {
     /// HTTP status code
     #[serde(skip)]
     pub status_code: u16,
@@ -25,33 +25,33 @@ pub struct BeaconError {
 
 impl BeaconError {
     /// Creates a new beacon error with the given code
-    pub fn new(code: BeaconErrorCode, message: impl Into<Cow<'static, str>>) -> Self {
+    pub(super) fn new(code: BeaconErrorCode, message: impl Into<Cow<'static, str>>) -> Self {
         let status_code = code.status_code();
         Self { status_code, code, message: message.into() }
     }
 
     /// Helper function to create a 400 Bad Request error for invalid block ID
-    pub fn invalid_block_id(block_id: impl Display) -> Self {
+    pub(super) fn invalid_block_id(block_id: impl Display) -> Self {
         Self::new(BeaconErrorCode::BadRequest, format!("Invalid block ID: {block_id}"))
     }
 
     /// Helper function to create a 404 Not Found error for block not found
-    pub fn block_not_found() -> Self {
+    pub(super) fn block_not_found() -> Self {
         Self::new(BeaconErrorCode::NotFound, "Block not found")
     }
 
     /// Helper function to create a 500 Internal Server Error
-    pub fn internal_error() -> Self {
+    pub(super) fn internal_error() -> Self {
         Self::new(BeaconErrorCode::InternalError, "Internal server error")
     }
 
     /// Helper function to create a 410 Gone error for deprecated endpoints
-    pub fn deprecated_endpoint_with_hint(hint: impl Display) -> Self {
+    pub(super) fn deprecated_endpoint_with_hint(hint: impl Display) -> Self {
         Self::new(BeaconErrorCode::Gone, format!("This endpoint is deprecated. {hint}"))
     }
 
     /// Converts to an Axum response
-    pub fn into_response(self) -> Response {
+    pub(super) fn into_response(self) -> Response {
         let status =
             StatusCode::from_u16(self.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
@@ -83,7 +83,7 @@ impl IntoResponse for BeaconError {
 /// Beacon API error codes following the beacon chain specification
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u16)]
-pub enum BeaconErrorCode {
+pub(super) enum BeaconErrorCode {
     BadRequest = 400,
     NotFound = 404,
     Gone = 410,
@@ -92,12 +92,12 @@ pub enum BeaconErrorCode {
 
 impl BeaconErrorCode {
     /// Returns the HTTP status code for this error
-    pub const fn status_code(&self) -> u16 {
+    pub(super) const fn status_code(&self) -> u16 {
         *self as u16
     }
 
     /// Returns a string representation of the error code
-    pub const fn as_str(&self) -> &'static str {
+    pub(super) const fn as_str(&self) -> &'static str {
         match self {
             Self::BadRequest => "Bad Request",
             Self::NotFound => "Not Found",

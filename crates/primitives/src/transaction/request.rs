@@ -49,10 +49,10 @@ impl FoundryTransactionRequest {
     }
 
     /// Get the deposit transaction parts from the request, calling [`get_deposit_tx_parts`] helper
-    /// with OtherFields.
+    /// with `OtherFields`.
     ///
     /// # Returns
-    /// - Ok(deposit_tx_parts) if all necessary keys are present to build a deposit transaction.
+    /// - `Ok(deposit_tx_parts)` if all necessary keys are present to build a deposit transaction.
     /// - Err(missing) if some keys are missing to build a deposit transaction.
     pub fn get_deposit_tx_parts(&self) -> Result<DepositTransactionParts, Vec<&'static str>> {
         match self {

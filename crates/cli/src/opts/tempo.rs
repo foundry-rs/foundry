@@ -45,14 +45,14 @@ pub struct TempoOpts {
 
     /// Access key ID for Tempo Keychain signature transactions.
     ///
-    /// Used during gas estimation to override the key_id that would normally be
+    /// Used during gas estimation to override the `key_id` that would normally be
     /// recovered from the signature.
     #[arg(long = "tempo.key-id")]
     pub key_id: Option<Address>,
 
     /// Enable expiring nonce mode for Tempo transactions.
     ///
-    /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
+    /// Sets nonce to 0 and `nonce_key` to `U256::MAX`, enabling time-bounded transaction
     /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
     #[arg(long = "tempo.expiring-nonce", requires = "valid_before")]
     pub expiring_nonce: bool,
@@ -74,7 +74,7 @@ pub struct TempoOpts {
 
 impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         self.fee_token.is_some()
             || self.sequence_key.is_some()
             || self.sponsor_signature.is_some()

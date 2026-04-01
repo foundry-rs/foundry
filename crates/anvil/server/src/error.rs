@@ -2,7 +2,7 @@
 
 /// An error that can occur when reading an incoming request
 #[derive(Debug, thiserror::Error)]
-pub enum RequestError {
+pub(crate) enum RequestError {
     #[error(transparent)]
     Axum(#[from] axum::Error),
     #[error(transparent)]

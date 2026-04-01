@@ -66,48 +66,44 @@ pub struct Comment {
 
 impl Comment {
     /// Create new instance of [Comment].
-    pub fn new(tag: CommentTag, value: String) -> Self {
+    pub const fn new(tag: CommentTag, value: String) -> Self {
         Self { tag, value }
     }
 
-    /// Create new instance of [Comment] from [DocCommentTag]
+    /// Create new instance of [Comment] from [`DocCommentTag`]
     /// if it has a valid natspec tag.
     pub fn from_doc_comment(value: DocCommentTag) -> Option<Self> {
         CommentTag::from_str(&value.tag).map(|tag| Self { tag, value: value.value })
     }
 
     /// Split the comment at first word.
-    /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
+    /// Useful for [`CommentTag::Param`] and [`CommentTag::Return`] comments.
     pub fn split_first_word(&self) -> Option<(&str, &str)> {
         self.value.trim_start().split_once(' ')
     }
 
     /// Match the first word of the comment with the expected.
     /// Returns [None] if the word doesn't match.
-    /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
+    /// Useful for [`CommentTag::Param`] and [`CommentTag::Return`] comments.
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
-        self.split_first_word().and_then(
-            |(word, rest)| {
-                if word == expected { Some(rest) } else { None }
-            },
-        )
+        self.split_first_word().and_then(|(word, rest)| (word == expected).then_some(rest))
     }
 
     /// Check if this comment is a custom tag.
-    pub fn is_custom(&self) -> bool {
+    pub const fn is_custom(&self) -> bool {
         matches!(self.tag, CommentTag::Custom(_))
     }
 }
 
 /// The collection of natspec [Comment] items.
-#[derive(Clone, Debug, Default, PartialEq, Deref, DerefMut)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deref, DerefMut)]
 pub struct Comments(Vec<Comment>);
 
-/// Forward the [Comments] function implementation to the [CommentsRef]
+/// Forward the [Comments] function implementation to the [`CommentsRef`]
 /// reference type.
 macro_rules! ref_fn {
     ($vis:vis fn $name:ident(&self$(, )?$($arg_name:ident: $arg:ty),*) -> $ret:ty) => {
-        /// Forward the function implementation to [CommentsRef] reference type.
+        /// Forward the function implementation to [`CommentsRef`] reference type.
         $vis fn $name(&self, $($arg_name: $arg),*) -> $ret {
             CommentsRef::from(self).$name($($arg_name),*)
         }
@@ -125,7 +121,7 @@ impl Comments {
     ///
     /// Looks up comments in `inheritdocs` using the key `{base}.{ident}` where `base` is
     /// extracted from an `@inheritdoc` tag. Merges the found comments by inserting
-    /// [CommentTag] from the inherited collection into the current one unless they are
+    /// [`CommentTag`] from the inherited collection into the current one unless they are
     /// already present.
     pub fn merge_inheritdoc(
         &self,
@@ -151,12 +147,12 @@ impl Comments {
 
 impl From<Vec<DocCommentTag>> for Comments {
     fn from(value: Vec<DocCommentTag>) -> Self {
-        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
+        Self(value.into_iter().filter_map(Comment::from_doc_comment).collect())
     }
 }
 
 /// The collection of references to natspec [Comment] items.
-#[derive(Debug, Default, PartialEq, Deref)]
+#[derive(Debug, Default, PartialEq, Eq, Deref)]
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {
@@ -189,7 +185,7 @@ impl<'a> CommentsRef<'a> {
         })
     }
 
-    /// Find an [CommentTag::Inheritdoc] comment and extract the base.
+    /// Find an [`CommentTag::Inheritdoc`] comment and extract the base.
     fn find_inheritdoc_base(&self) -> Option<&'a str> {
         self.iter()
             .find(|c| matches!(c.tag, CommentTag::Inheritdoc))

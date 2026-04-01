@@ -707,7 +707,7 @@ impl<N: Network> ClientForkConfig<N> {
     }
 }
 
-/// Contains cached state fetched to serve EthApi requests
+/// Contains cached state fetched to serve `EthApi` requests
 ///
 /// This is used as a cache so repeated requests to the same data are not sent to the remote client
 #[derive(Clone, Debug)]

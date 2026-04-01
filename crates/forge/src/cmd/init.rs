@@ -279,7 +279,7 @@ impl InitArgs {
     }
 }
 
-/// Initialises `root` as a git repository, if it isn't one already, unless 'use_parent_git' is
+/// Initialises `root` as a git repository, if it isn't one already, unless '`use_parent_git`' is
 /// true.
 ///
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.

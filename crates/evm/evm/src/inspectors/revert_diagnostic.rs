@@ -15,12 +15,12 @@ use std::fmt;
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
 /// Checks if the call scheme corresponds to any sort of delegate call
-pub fn is_delegatecall(scheme: CallScheme) -> bool {
+pub(super) const fn is_delegatecall(scheme: CallScheme) -> bool {
     matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum DetailedRevertReason {
+pub(super) enum DetailedRevertReason {
     CallToNonContract(Address),
     DelegateCallToNonContract(Address),
 }
@@ -68,12 +68,12 @@ pub struct RevertDiagnostic {
 impl RevertDiagnostic {
     /// Returns the effective target address whose code would be executed.
     /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
-    fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
+    const fn code_target_address(&self, inputs: &CallInputs) -> Address {
         if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
     }
 
     /// Derives the revert reason based on the cached data. Should only be called after a revert.
-    fn reason(&self) -> Option<DetailedRevertReason> {
+    const fn reason(&self) -> Option<DetailedRevertReason> {
         if let Some((addr, scheme, _)) = self.non_contract_call {
             let reason = if is_delegatecall(scheme) {
                 DetailedRevertReason::DelegateCallToNonContract(addr)
@@ -109,7 +109,7 @@ impl RevertDiagnostic {
     ///  - if `non_contract_size_check` was set at the current depth, `broadcast_diagnostic` is
     ///    called. Otherwise, it is cleared.
     #[cold]
-    fn handle_revert<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
+    fn handle_revert<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &CTX) {
         // REVERT (offset, size)
         if let Ok(size) = interp.stack.peek(1)
             && size.is_zero()
@@ -139,7 +139,7 @@ impl RevertDiagnostic {
     ///  - Optimistically caches the target address and current depth in `non_contract_size_check`,
     ///    pending later validation.
     #[cold]
-    fn handle_extcodesize<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
+    fn handle_extcodesize<CTX: ContextTr>(&mut self, interp: &Interpreter, ctx: &CTX) {
         // EXTCODESIZE (address)
         if let Ok(word) = interp.stack.peek(0) {
             let addr = Address::from_word(word.into());
@@ -156,7 +156,7 @@ impl RevertDiagnostic {
 
     /// Tracks `EXTCODESIZE` output. If the bytecode size is NOT 0, clears the cache.
     #[cold]
-    fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
+    fn handle_extcodesize_output(&mut self, interp: &Interpreter) {
         if let Ok(size) = interp.stack.peek(0)
             && size != U256::ZERO
         {

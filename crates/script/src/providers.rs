@@ -8,13 +8,13 @@ use std::{ops::Deref, sync::Arc};
 
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
 #[derive(Default)]
-pub struct ProvidersManager {
+pub(crate) struct ProvidersManager {
     pub inner: HashMap<String, ProviderInfo>,
 }
 
 impl ProvidersManager {
     /// Get or initialize the RPC provider.
-    pub async fn get_or_init_provider(
+    pub(crate) async fn get_or_init_provider(
         &mut self,
         rpc: &str,
         is_legacy: bool,
@@ -39,7 +39,7 @@ impl Deref for ProvidersManager {
 
 /// Holds related metadata to each provider RPC.
 #[derive(Debug)]
-pub struct ProviderInfo {
+pub(crate) struct ProviderInfo {
     pub provider: Arc<RootProvider<Ethereum>>,
     pub chain: u64,
     pub gas_price: GasPrice,
@@ -47,13 +47,13 @@ pub struct ProviderInfo {
 
 /// Represents the outcome of a gas price request
 #[derive(Debug)]
-pub enum GasPrice {
+pub(crate) enum GasPrice {
     Legacy(Result<u128>),
     EIP1559(Result<Eip1559Estimation>),
 }
 
 impl ProviderInfo {
-    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
+    pub(crate) async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
         let provider = Arc::new(ProviderBuilder::new(rpc).build()?);
         let chain = provider.get_chain_id().await?;
 
@@ -75,7 +75,7 @@ impl ProviderInfo {
     }
 
     /// Returns the gas price to use
-    pub fn gas_price(&self) -> Result<u128> {
+    pub(crate) fn gas_price(&self) -> Result<u128> {
         let res = match &self.gas_price {
             GasPrice::Legacy(res) => res.as_ref(),
             GasPrice::EIP1559(res) => res.as_ref().map(|res| &res.max_fee_per_gas),

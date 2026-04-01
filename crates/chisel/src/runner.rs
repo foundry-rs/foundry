@@ -1,4 +1,4 @@
-//! ChiselRunner
+//! `ChiselRunner`
 //!
 //! This module contains the `ChiselRunner` struct, which assists with deploying
 //! and calling the REPL contract on a in-memory REVM instance.
@@ -50,9 +50,9 @@ pub struct ChiselResult {
     pub state: Option<(Vec<U256>, Vec<u8>)>,
 }
 
-/// ChiselRunner implementation
+/// `ChiselRunner` implementation
 impl ChiselRunner {
-    /// Create a new [ChiselRunner]
+    /// Create a new [`ChiselRunner`]
     ///
     /// ### Takes
     ///
@@ -60,8 +60,8 @@ impl ChiselRunner {
     ///
     /// ### Returns
     ///
-    /// A new [ChiselRunner]
-    pub fn new(
+    /// A new [`ChiselRunner`]
+    pub const fn new(
         executor: Executor,
         initial_balance: U256,
         sender: Address,

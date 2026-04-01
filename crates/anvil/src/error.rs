@@ -1,5 +1,5 @@
 /// Result alias
-pub type NodeResult<T> = Result<T, NodeError>;
+pub(crate) type NodeResult<T> = Result<T, NodeError>;
 
 /// An error that can occur when launching a anvil instance
 #[derive(Debug, thiserror::Error)]

@@ -19,7 +19,7 @@ pub struct StateSnapshot {
 #[derive(Clone, Debug)]
 pub struct BackendStateSnapshot<T, SPEC, BLOCK> {
     pub db: T,
-    /// The journaled_state state at a specific point
+    /// The `journaled_state` state at a specific point
     pub journaled_state: JournaledState,
     /// Contains the evm env at the time of the snapshot
     pub snap_evm_env: EvmEnv<SPEC, BLOCK>,
@@ -27,7 +27,7 @@ pub struct BackendStateSnapshot<T, SPEC, BLOCK> {
 
 impl<T, SPEC, BLOCK> BackendStateSnapshot<T, SPEC, BLOCK> {
     /// Takes a new state snapshot.
-    pub fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv<SPEC, BLOCK>) -> Self {
+    pub const fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv<SPEC, BLOCK>) -> Self {
         Self { db, journaled_state, snap_evm_env: evm_env }
     }
 
@@ -35,8 +35,8 @@ impl<T, SPEC, BLOCK> BackendStateSnapshot<T, SPEC, BLOCK> {
     ///
     /// Since we want to keep all additional logs that were emitted since the snapshot was taken
     /// we'll merge additional logs into the snapshot's `revm::JournaledState`. Additional logs are
-    /// those logs that are missing in the snapshot's journaled_state, since the current
-    /// journaled_state includes the same logs, we can simply replace use that See also
+    /// those logs that are missing in the snapshot's `journaled_state`, since the current
+    /// `journaled_state` includes the same logs, we can simply replace use that See also
     /// `DatabaseExt::revert`.
     pub fn merge(&mut self, current: &JournaledState) {
         self.journaled_state.logs.clone_from(&current.logs);
@@ -57,7 +57,7 @@ pub enum RevertStateSnapshotAction {
 
 impl RevertStateSnapshotAction {
     /// Returns `true` if the action is to keep the state snapshot.
-    pub fn is_keep(&self) -> bool {
+    pub const fn is_keep(&self) -> bool {
         matches!(self, Self::RevertKeep)
     }
 }

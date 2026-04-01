@@ -57,7 +57,7 @@ impl<'gcx> SourceVisitor<'gcx> {
         }
     }
 
-    fn checkpoint(&self) -> SourceVisitorCheckpoint {
+    const fn checkpoint(&self) -> SourceVisitorCheckpoint {
         SourceVisitorCheckpoint {
             items: self.items.len(),
             all_lines: self.all_lines.len(),
@@ -181,7 +181,7 @@ impl<'gcx> SourceVisitor<'gcx> {
         first.line_index as u32 + 1..last.line_index as u32 + 2
     }
 
-    fn next_branch_id(&mut self) -> u32 {
+    const fn next_branch_id(&mut self) -> u32 {
         let id = self.branch_id;
         self.branch_id = id + 1;
         id
@@ -432,9 +432,9 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
 fn is_regular_call(lhs: &hir::Expr<'_>) -> bool {
     match lhs.peel_parens().kind {
         // StructConstructorCall
-        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Struct(_))]) => false,
+        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Struct(_))])
         // TypeConversion
-        hir::ExprKind::Type(_) => false,
+        | hir::ExprKind::Type(_) => false,
         _ => true,
     }
 }
@@ -543,7 +543,7 @@ impl SourceAnalysis {
     }
 
     /// Returns all the mutable coverage items.
-    pub fn all_items_mut(&mut self) -> &mut Vec<CoverageItem> {
+    pub const fn all_items_mut(&mut self) -> &mut Vec<CoverageItem> {
         &mut self.all_items
     }
 

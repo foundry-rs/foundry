@@ -73,12 +73,11 @@ impl FoundryTxEnvelope {
             Self::Eip1559(tx) => Ok(TxEnvelope::Eip1559(tx)),
             Self::Eip4844(tx) => Ok(TxEnvelope::Eip4844(tx)),
             Self::Eip7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
-            Self::Deposit(_) => Err(self),
-            Self::Tempo(_) => Err(self),
+            Self::Deposit(_) | Self::Tempo(_) => Err(self),
         }
     }
 
-    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
+    pub const fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
         match self {
             Self::Eip4844(signed_variant) => match signed_variant.tx() {
                 TxEip4844Variant::TxEip4844WithSidecar(with_sidecar) => Some(with_sidecar),

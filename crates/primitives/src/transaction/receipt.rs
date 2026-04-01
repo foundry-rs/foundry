@@ -168,17 +168,17 @@ impl<T> FoundryReceiptEnvelope<T> {
     /// Return the receipt's bloom.
     pub const fn logs_bloom(&self) -> &Bloom {
         match self {
-            Self::Legacy(t) => &t.logs_bloom,
-            Self::Eip2930(t) => &t.logs_bloom,
-            Self::Eip1559(t) => &t.logs_bloom,
-            Self::Eip4844(t) => &t.logs_bloom,
-            Self::Eip7702(t) => &t.logs_bloom,
+            Self::Legacy(t)
+            | Self::Eip2930(t)
+            | Self::Eip1559(t)
+            | Self::Eip4844(t)
+            | Self::Eip7702(t)
+            | Self::Tempo(t) => &t.logs_bloom,
             Self::Deposit(t) => &t.logs_bloom,
-            Self::Tempo(t) => &t.logs_bloom,
         }
     }
 
-    /// Return the receipt's deposit_nonce if it is a deposit receipt.
+    /// Return the receipt's `deposit_nonce` if it is a deposit receipt.
     pub fn deposit_nonce(&self) -> Option<u64> {
         self.as_deposit_receipt().and_then(|r| r.deposit_nonce)
     }
@@ -271,12 +271,12 @@ impl Encodable for FoundryReceiptEnvelope {
             Self::Legacy(r) => r.encode(out),
             receipt => {
                 let payload_len = match receipt {
-                    Self::Eip2930(r) => r.length() + 1,
-                    Self::Eip1559(r) => r.length() + 1,
-                    Self::Eip4844(r) => r.length() + 1,
-                    Self::Eip7702(r) => r.length() + 1,
+                    Self::Eip2930(r)
+                    | Self::Eip1559(r)
+                    | Self::Eip4844(r)
+                    | Self::Eip7702(r)
+                    | Self::Tempo(r) => r.length() + 1,
                     Self::Deposit(r) => r.length() + 1,
-                    Self::Tempo(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
 
@@ -392,12 +392,12 @@ impl Encodable2718 for FoundryReceiptEnvelope {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(r) => r.length(),
-            Self::Eip2930(r) => 1 + r.length(),
-            Self::Eip1559(r) => 1 + r.length(),
-            Self::Eip4844(r) => 1 + r.length(),
-            Self::Eip7702(r) => 1 + r.length(),
+            Self::Eip2930(r)
+            | Self::Eip1559(r)
+            | Self::Eip4844(r)
+            | Self::Eip7702(r)
+            | Self::Tempo(r) => 1 + r.length(),
             Self::Deposit(r) => 1 + r.length(),
-            Self::Tempo(r) => 1 + r.length(),
         }
     }
 

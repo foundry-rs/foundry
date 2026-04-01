@@ -521,7 +521,7 @@ pub enum CastSubcommand {
         #[command(flatten)]
         rpc: RpcOpts,
 
-        /// If specified, the transaction will be converted to a TransactionRequest JSON format.
+        /// If specified, the transaction will be converted to a `TransactionRequest` JSON format.
         #[arg(long)]
         to_request: bool,
 
@@ -1147,7 +1147,7 @@ pub enum CastSubcommand {
         resolve: bool,
     },
 
-    /// Inspect the TxPool of a node.
+    /// Inspect the `TxPool` of a node.
     #[command(visible_alias = "tp")]
     TxPool {
         #[command(subcommand)]

@@ -120,7 +120,7 @@ impl EvmFoldedStackTraceBuilder {
         }
     }
 
-    /// Exits all the previous internal calls that should end before starting step_idx.
+    /// Exits all the previous internal calls that should end before starting `step_idx`.
     fn exit_previous_steps(&mut self, step_exits: &mut Vec<usize>, step_idx: usize) {
         let initial_length = step_exits.len();
         step_exits.retain(|&number| number > step_idx);
@@ -151,13 +151,13 @@ impl EvmFoldedStackTraceBuilder {
 ///
 /// The translated folded stack trace lines look like:
 /// 1. top
-/// 2. top;child_a
-/// 3. top;child_b
+/// 2. `top;child_a`
+/// 3. `top;child_b`
 ///
 /// Including the gas consumed by the function by itself.
 /// 1. top 200 // 500 - 100 - 200
-/// 2. top;child_a 100
-/// 3. top;child_b 200
+/// 2. `top;child_a` 100
+/// 3. `top;child_b` 200
 #[derive(Debug, Default)]
 pub struct FoldedStackTraceBuilder {
     /// Trace entries.
@@ -189,7 +189,7 @@ impl FoldedStackTraceBuilder {
     }
 
     /// Exit execution of a function call.
-    pub fn exit(&mut self) {
+    pub const fn exit(&mut self) {
         self.exits += 1;
     }
 

@@ -29,7 +29,7 @@ use tokio::{task::JoinHandle, time::Interval};
 /// transactions for the next block, then those transactions are handed off to the backend to
 /// construct a new block, if all transactions were successfully included in a new block they get
 /// purged from the `Pool`.
-pub struct NodeService<N: Network>
+pub(crate) struct NodeService<N: Network>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
@@ -47,12 +47,12 @@ where
     filter_eviction_interval: Interval,
 }
 
-impl<N: Network> NodeService<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>>
+    NodeService<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope>,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
-    pub fn new(
+    pub(crate) fn new(
         pool: Arc<Pool<N::TxEnvelope>>,
         backend: Arc<Backend<N>>,
         miner: Miner<N::TxEnvelope>,
@@ -72,10 +72,10 @@ where
     }
 }
 
-impl<N: Network> Future for NodeService<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>> Future
+    for NodeService<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope>,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     type Output = NodeResult<()>;
 
@@ -128,20 +128,20 @@ struct BlockProducer<N: Network> {
     queued: VecDeque<Vec<Arc<PoolTransaction<N::TxEnvelope>>>>,
 }
 
-impl<N: Network> BlockProducer<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>>
+    BlockProducer<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope>,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     fn new(backend: Arc<Backend<N>>) -> Self {
         Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }
     }
 }
 
-impl<N: Network> Stream for BlockProducer<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static>
+    Stream for BlockProducer<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope> + Send + Sync + 'static,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static,
 {
     type Item = MinedBlockOutcome<N::TxEnvelope>;
 
@@ -179,9 +179,8 @@ where
                         panic!("miner task failed: {err}");
                     }
                 };
-            } else {
-                pin.block_mining = Some(mining)
             }
+            pin.block_mining = Some(mining)
         }
 
         Poll::Pending

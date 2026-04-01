@@ -107,7 +107,7 @@ struct DynValueDisplay<'a> {
 
 impl<'a> DynValueDisplay<'a> {
     /// Creates a new [`Display`](fmt::Display) wrapper for the given value.
-    fn new(value: &'a DynSolValue, raw: bool) -> Self {
+    const fn new(value: &'a DynSolValue, raw: bool) -> Self {
         Self { value, formatter: DynValueFormatter { raw } }
     }
 }
@@ -118,7 +118,7 @@ impl fmt::Display for DynValueDisplay<'_> {
     }
 }
 
-/// Parses string input as Token against the expected ParamType
+/// Parses string input as Token against the expected `ParamType`
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a DynSolType, &'a str)>>(
     params: I,
 ) -> alloy_dyn_abi::Result<Vec<DynSolValue>> {
@@ -149,7 +149,7 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, true).to_string()
 }
 
-/// Serializes given [DynSolValue] into a [serde_json::Value].
+/// Serializes given [`DynSolValue`] into a [`serde_json::Value`].
 pub fn serialize_value_as_json(
     value: DynSolValue,
     defs: Option<&StructDefinitions>,
@@ -242,7 +242,7 @@ impl From<TypeDefMap> for StructDefinitions {
 }
 
 impl StructDefinitions {
-    pub fn new(map: TypeDefMap) -> Self {
+    pub const fn new(map: TypeDefMap) -> Self {
         Self(map)
     }
 

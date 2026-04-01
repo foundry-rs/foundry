@@ -18,11 +18,11 @@ pub struct DebugTraceIdentifier {
 }
 
 impl DebugTraceIdentifier {
-    pub fn new(contracts_sources: ContractSources) -> Self {
+    pub const fn new(contracts_sources: ContractSources) -> Self {
         Self { contracts_sources }
     }
 
-    /// Identifies internal function invocations in a given [CallTraceNode].
+    /// Identifies internal function invocations in a given [`CallTraceNode`].
     ///
     /// Accepts the node itself and identified name of the contract which node corresponds to.
     pub fn identify_node_steps(&self, node: &mut CallTraceNode, contract_name: &str) {
@@ -30,7 +30,7 @@ impl DebugTraceIdentifier {
     }
 }
 
-/// Walks through the [CallTraceStep]s attempting to match JUMPs to internal functions.
+/// Walks through the [`CallTraceStep`]s attempting to match JUMPs to internal functions.
 ///
 /// This is done by looking up jump kinds in the source maps. The structure of internal function
 /// call always looks like this:
@@ -40,16 +40,16 @@ impl DebugTraceIdentifier {
 ///     - JUMP
 ///     - JUMPDEST
 ///
-/// The assumption we rely on is that first JUMP into function will be marked as [Jump::In] in
-/// source map, and second JUMP out of the function will be marked as [Jump::Out].
+/// The assumption we rely on is that first JUMP into function will be marked as [`Jump::In`] in
+/// source map, and second JUMP out of the function will be marked as [`Jump::Out`].
 ///
 /// Also, we rely on JUMPDEST after first JUMP pointing to the source location of the body of
-/// function which was entered. We pass this source part to [parse_function_from_loc] to extract the
+/// function which was entered. We pass this source part to [`parse_function_from_loc`] to extract the
 /// function name.
 ///
-/// When we find a [Jump::In] and identify the function name, we push it to the stack.
+/// When we find a [`Jump::In`] and identify the function name, we push it to the stack.
 ///
-/// When we find a [Jump::Out] we try to find a matching [Jump::In] in the stack. A match is found
+/// When we find a [`Jump::Out`] we try to find a matching [`Jump::In`] in the stack. A match is found
 /// when source location of the JUMP-in matches the source location of final JUMPDEST (this would be
 /// the location of the function invocation), or when source location of first JUMODEST matches the
 /// source location of the JUMP-out (this would be the location of function body).
@@ -65,7 +65,7 @@ struct DebugStepsWalker<'a> {
 }
 
 impl<'a> DebugStepsWalker<'a> {
-    pub fn new(
+    pub(crate) const fn new(
         node: &'a mut CallTraceNode,
         sources: &'a ContractSources,
         contract_name: &'a str,
@@ -110,7 +110,7 @@ impl<'a> DebugStepsWalker<'a> {
             && loc.index() == other_loc.index()
     }
 
-    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::In].
+    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [`Jump::In`].
     fn jump_in(&mut self) {
         // This usually means that this is a jump into the external function which is an
         // entrypoint for the current frame. We don't want to include this to avoid
@@ -128,7 +128,7 @@ impl<'a> DebugStepsWalker<'a> {
         }
     }
 
-    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::Out].
+    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [`Jump::Out`].
     fn jump_out(&mut self) {
         let Some((i, _)) = self.stack.iter().enumerate().rfind(|(_, (_, step_idx))| {
             self.is_same_loc(*step_idx, self.current_step)
@@ -186,7 +186,7 @@ impl<'a> DebugStepsWalker<'a> {
         self.current_step += 1;
     }
 
-    pub fn walk(mut self) {
+    pub(crate) fn walk(mut self) {
         while self.current_step < self.node.trace.steps.len() {
             self.step();
         }
@@ -232,7 +232,7 @@ fn parse_types(source: &str) -> (Option<Parameters<'_>>, Option<Parameters<'_>>)
     (inputs, outputs)
 }
 
-/// Given [Parameters] and [CallTraceStep], tries to decode parameters by using stack and memory.
+/// Given [Parameters] and [`CallTraceStep`], tries to decode parameters by using stack and memory.
 fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Option<Vec<String>> {
     let params = &args.params;
 
@@ -281,7 +281,7 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
     Some(decoded)
 }
 
-/// Decodes given [DynSolType] from memory.
+/// Decodes given [`DynSolType`] from memory.
 fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option<DynSolValue> {
     let first_word = memory.get(location..location + 32)?;
 

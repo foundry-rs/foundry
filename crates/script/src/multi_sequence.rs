@@ -26,7 +26,7 @@ pub struct MultiChainSequence<N: Network> {
 
 /// Sensitive values from script sequences.
 #[derive(Clone, Default, Serialize, Deserialize)]
-pub struct SensitiveMultiChainSequence {
+pub(crate) struct SensitiveMultiChainSequence {
     pub deployments: Vec<SensitiveScriptSequence>,
 }
 
@@ -52,16 +52,16 @@ impl<N: Network> MultiChainSequence<N> {
     }
 
     /// Gets paths in the formats
-    /// ./broadcast/multi/contract_filename[-timestamp]/sig.json and
-    /// ./cache/multi/contract_filename[-timestamp]/sig.json
+    /// ./`broadcast/multi/contract_filename`[-timestamp]/sig.json and
+    /// ./`cache/multi/contract_filename`[-timestamp]/sig.json
     pub fn get_paths(
         config: &Config,
         sig: &str,
         target: &ArtifactId,
         dry_run: bool,
     ) -> Result<(PathBuf, PathBuf)> {
-        let mut broadcast = config.broadcast.to_path_buf();
-        let mut cache = config.cache_path.to_path_buf();
+        let mut broadcast = config.broadcast.clone();
+        let mut cache = config.cache_path.clone();
         let mut common = PathBuf::new();
 
         common.push("multi");

@@ -32,7 +32,7 @@ impl LogCollector {
     #[cold]
     fn do_hardhat_log<CTX: ContextTr>(
         &mut self,
-        context: &mut CTX,
+        context: &CTX,
         inputs: &CallInputs,
     ) -> Option<CallOutcome> {
         if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {

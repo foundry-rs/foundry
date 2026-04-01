@@ -29,7 +29,7 @@ use std::{collections::BTreeMap, sync::OnceLock};
 
 mod precompiles;
 
-/// Build a new [CallTraceDecoder].
+/// Build a new [`CallTraceDecoder`].
 #[derive(Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct CallTraceDecoderBuilder {
@@ -75,7 +75,7 @@ impl CallTraceDecoderBuilder {
 
     /// Sets the verbosity level of the decoder.
     #[inline]
-    pub fn with_verbosity(mut self, level: u8) -> Self {
+    pub const fn with_verbosity(mut self, level: u8) -> Self {
         self.decoder.verbosity = level;
         self
     }
@@ -89,7 +89,7 @@ impl CallTraceDecoderBuilder {
 
     /// Sets the signature identifier for events and functions.
     #[inline]
-    pub fn with_label_disabled(mut self, disable_alias: bool) -> Self {
+    pub const fn with_label_disabled(mut self, disable_alias: bool) -> Self {
         self.decoder.disable_labels = disable_alias;
         self
     }
@@ -110,7 +110,7 @@ impl CallTraceDecoderBuilder {
 
 /// The call trace decoder.
 ///
-/// The decoder collects address labels and ABIs from any number of [TraceIdentifier]s, which it
+/// The decoder collects address labels and ABIs from any number of [`TraceIdentifier`]s, which it
 /// then uses to decode the call trace.
 ///
 /// Note that a call trace decoder is required for each new set of traces, since addresses in
@@ -305,7 +305,7 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    pub fn without_label(&mut self, disable: bool) {
+    pub const fn without_label(&mut self, disable: bool) {
         self.disable_labels = disable;
     }
 
@@ -365,8 +365,8 @@ impl CallTraceDecoder {
     }
 
     /// Populates the traces with decoded data by mutating the
-    /// [CallTrace] in place. See [CallTraceDecoder::decode_function] and
-    /// [CallTraceDecoder::decode_event] for more details.
+    /// [`CallTrace`] in place. See [`CallTraceDecoder::decode_function`] and
+    /// [`CallTraceDecoder::decode_event`] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
@@ -425,7 +425,9 @@ impl CallTraceDecoder {
                 && !contract_selectors.contains(&selector)
                 && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
             {
-                let return_data = if !trace.success {
+                let return_data = if trace.success {
+                    None
+                } else {
                     let revert_msg = self.revert_decoder.decode(&trace.output, trace.status);
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
@@ -436,8 +438,6 @@ impl CallTraceDecoder {
                     } else {
                         Some(revert_msg)
                     }
-                } else {
-                    None
                 };
 
                 return if let Some(func) = functions.first() {
@@ -520,20 +520,12 @@ impl CallTraceDecoder {
             "broadcast" | "startBroadcast" => {
                 // Redact private key if defined
                 // broadcast(uint256) / startBroadcast(uint256)
-                if !func.inputs.is_empty() && func.inputs[0].ty == "uint256" {
-                    Some(vec!["<pk>".to_string()])
-                } else {
-                    None
-                }
+                (!func.inputs.is_empty() && func.inputs[0].ty == "uint256").then(|| vec!["<pk>".to_string()])
             }
             "getNonce" => {
                 // Redact private key if defined
                 // getNonce(Wallet)
-                if !func.inputs.is_empty() && func.inputs[0].ty == "tuple" {
-                    Some(vec!["<pk>".to_string()])
-                } else {
-                    None
-                }
+                (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
             "sign" | "signP256" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;

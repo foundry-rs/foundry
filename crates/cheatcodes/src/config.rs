@@ -38,7 +38,7 @@ pub struct CheatsConfig {
     pub fs_permissions: FsPermissions,
     /// Project root
     pub root: PathBuf,
-    /// Absolute Path to broadcast dir i.e project_root/broadcast
+    /// Absolute Path to broadcast dir i.e `project_root/broadcast`
     pub broadcast: PathBuf,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
@@ -100,7 +100,7 @@ impl CheatsConfig {
         Self::new(config, evm_opts, self.available_artifacts.clone(), self.running_artifact.clone())
     }
 
-    /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
+    /// Attempts to canonicalize (see [`std::fs::canonicalize`]) the path.
     ///
     /// Canonicalization fails for non-existing paths, in which case we just normalize the path.
     pub fn normalized_path(&self, path: impl AsRef<Path>) -> PathBuf {
@@ -122,7 +122,7 @@ impl CheatsConfig {
         self.fs_permissions.is_path_allowed(path, kind)
     }
 
-    /// Returns an error if no access is granted to access `path`, See also [Self::is_path_allowed]
+    /// Returns an error if no access is granted to access `path`, See also [`Self::is_path_allowed`]
     ///
     /// Returns the normalized version of `path`, see [`CheatsConfig::normalized_path`]
     pub fn ensure_path_allowed(

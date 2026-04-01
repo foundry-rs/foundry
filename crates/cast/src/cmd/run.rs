@@ -251,7 +251,7 @@ impl RunArgs {
                         break;
                     }
 
-                    let tx_env = tx.as_envelope().map_or(Default::default(), |tx_envelope| {
+                    let tx_env = tx.as_envelope().map_or_else(Default::default, |tx_envelope| {
                         TxEnv::from_recovered_tx(tx_envelope, tx.from())
                     });
 
@@ -298,7 +298,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let tx_env = tx.as_envelope().map_or(Default::default(), |tx_envelope| {
+            let tx_env = tx.as_envelope().map_or_else(Default::default, |tx_envelope| {
                 TxEnv::from_recovered_tx(tx_envelope, tx.from())
             });
 

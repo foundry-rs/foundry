@@ -157,7 +157,7 @@ impl WalletSigner {
     /// Returns a list of addresses available to use with current signer
     ///
     /// - for Ledger and Trezor signers the number of addresses to retrieve is specified as argument
-    /// - the result for Ledger signers includes addresses available for both LedgerLive and Legacy
+    /// - the result for Ledger signers includes addresses available for both `LedgerLive` and Legacy
     ///   derivation paths
     /// - for Local and AWS signers the result contains a single address
     /// - errors when retrieving addresses are logged but do not prevent returning available

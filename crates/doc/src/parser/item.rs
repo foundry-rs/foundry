@@ -18,12 +18,12 @@ pub struct ParseItem {
     pub code: String,
 }
 
-/// Defines a method that filters [ParseItem]'s children and returns the source pt token of the
+/// Defines a method that filters [`ParseItem`]'s children and returns the source pt token of the
 /// children matching the target variant as well as its comments.
-/// Returns [Option::None] if no children matching the variant are found.
+/// Returns [`Option::None`] if no children matching the variant are found.
 macro_rules! filter_children_fn {
     ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
-        /// Filter children items for [ParseSource::$variant] variants.
+        /// Filter children items for [`ParseSource::$variant`] variants.
         $vis fn $name(&self) -> Option<Vec<(&$ret, &Comments, &String)>> {
             let items = self.children.iter().filter_map(|item| match item.source {
                 ParseSource::$variant(ref inner) => Some((inner, &item.comments, &item.code)),
@@ -39,7 +39,7 @@ macro_rules! filter_children_fn {
     };
 }
 
-/// Defines a method that returns [ParseSource] inner element if it matches
+/// Defines a method that returns [`ParseSource`] inner element if it matches
 /// the variant
 macro_rules! as_inner_source {
     ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
@@ -55,7 +55,7 @@ macro_rules! as_inner_source {
 }
 
 impl ParseItem {
-    /// Create new instance of [ParseItem].
+    /// Create new instance of [`ParseItem`].
     pub fn new(source: ParseSource) -> Self {
         Self {
             source,
@@ -65,19 +65,19 @@ impl ParseItem {
         }
     }
 
-    /// Set comments on the [ParseItem].
+    /// Set comments on the [`ParseItem`].
     pub fn with_comments(mut self, comments: Comments) -> Self {
         self.comments = comments;
         self
     }
 
-    /// Set children on the [ParseItem].
+    /// Set children on the [`ParseItem`].
     pub fn with_children(mut self, children: Vec<Self>) -> Self {
         self.children = children;
         self
     }
 
-    /// Set the source code of this [ParseItem].
+    /// Set the source code of this [`ParseItem`].
     ///
     /// The parameter should be the full source file where this parse item originated from.
     pub fn with_code(mut self, source: &str, tab_width: usize) -> Self {
@@ -159,16 +159,16 @@ impl ParseSource {
     /// Get the identity of the source
     pub fn ident(&self) -> String {
         match self {
-            Self::Contract(contract) => contract.name.safe_unwrap().name.to_owned(),
-            Self::Variable(var) => var.name.safe_unwrap().name.to_owned(),
-            Self::Event(event) => event.name.safe_unwrap().name.to_owned(),
-            Self::Error(error) => error.name.safe_unwrap().name.to_owned(),
-            Self::Struct(structure) => structure.name.safe_unwrap().name.to_owned(),
-            Self::Enum(enumerable) => enumerable.name.safe_unwrap().name.to_owned(),
+            Self::Contract(contract) => contract.name.safe_unwrap().name.clone(),
+            Self::Variable(var) => var.name.safe_unwrap().name.clone(),
+            Self::Event(event) => event.name.safe_unwrap().name.clone(),
+            Self::Error(error) => error.name.safe_unwrap().name.clone(),
+            Self::Struct(structure) => structure.name.safe_unwrap().name.clone(),
+            Self::Enum(enumerable) => enumerable.name.safe_unwrap().name.clone(),
             Self::Function(func) => {
-                func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned())
+                func.name.as_ref().map_or_else(|| func.ty.to_string(), |n| n.name.clone())
             }
-            Self::Type(ty) => ty.name.name.to_owned(),
+            Self::Type(ty) => ty.name.name.clone(),
         }
     }
 

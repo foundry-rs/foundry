@@ -301,7 +301,7 @@ impl NodeArgs {
     fn account_generator(&self) -> AccountGenerator {
         let mut generator = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm.chain_id.unwrap_or(CHAIN_ID.into()));
+            .chain_id(self.evm.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
             generator = generator.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
@@ -336,7 +336,7 @@ impl NodeArgs {
 
     /// Starts the node
     ///
-    /// See also [crate::spawn()]
+    /// See also [`crate::spawn()`]
     pub async fn run(self) -> eyre::Result<()> {
         let dump_state = self.dump_state_path();
         let dump_interval =
@@ -624,7 +624,7 @@ pub struct AnvilEvmArgs {
     pub networks: NetworkConfigs,
 }
 
-/// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
+/// Resolves an alias passed as fork-url to the matching url defined in the `rpc_endpoints` section
 /// of the project configuration file.
 /// Does nothing if the fork-url is not a configured alias.
 impl AnvilEvmArgs {

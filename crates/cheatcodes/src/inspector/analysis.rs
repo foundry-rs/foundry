@@ -52,7 +52,7 @@ impl std::fmt::Debug for CheatcodeAnalysis {
 }
 
 impl CheatcodeAnalysis {
-    pub fn new(compiler: Arc<solar::sema::Compiler>) -> Self {
+    pub const fn new(compiler: Arc<solar::sema::Compiler>) -> Self {
         Self { compiler, struct_defs: OnceLock::new() }
     }
 
@@ -80,12 +80,12 @@ struct StructDefinitionResolver<'gcx> {
 
 impl<'gcx> StructDefinitionResolver<'gcx> {
     /// Constructs a new generator.
-    pub fn new(gcx: Gcx<'gcx>) -> Self {
+    pub(crate) const fn new(gcx: Gcx<'gcx>) -> Self {
         Self { gcx, struct_defs: TypeDefMap::new() }
     }
 
     /// Processes the HIR to generate all the struct definitions.
-    pub fn process(mut self) -> Result<StructDefinitions, AnalysisError> {
+    pub(crate) fn process(mut self) -> Result<StructDefinitions, AnalysisError> {
         for id in self.hir().strukt_ids() {
             self.resolve_struct_definition(id)?;
         }

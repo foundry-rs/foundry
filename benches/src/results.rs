@@ -30,7 +30,7 @@ pub struct HyperfineOutput {
 /// Aggregated benchmark results
 #[derive(Debug, Default)]
 pub struct BenchmarkResults {
-    /// Map of benchmark_name -> version -> repo -> result
+    /// Map of `benchmark_name` -> version -> repo -> result
     pub data: HashMap<String, HashMap<String, HashMap<String, HyperfineResult>>>,
     /// Track the baseline version for comparison
     pub baseline_version: Option<String>,

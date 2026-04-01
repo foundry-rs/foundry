@@ -104,10 +104,9 @@ pub enum ScriptPredeployLibraries {
 }
 
 impl ScriptPredeployLibraries {
-    pub fn libraries_count(&self) -> usize {
+    pub const fn libraries_count(&self) -> usize {
         match self {
-            Self::Default(libs) => libs.len(),
-            Self::Create2(libs, _) => libs.len(),
+            Self::Default(libs) | Self::Create2(libs, _) => libs.len(),
         }
     }
 }
@@ -163,7 +162,7 @@ pub struct PreprocessedState {
 
 impl PreprocessedState {
     /// Parses user input and compiles the contracts depending on script target.
-    /// After compilation, finds exact [ArtifactId] of the target contract.
+    /// After compilation, finds exact [`ArtifactId`] of the target contract.
     pub fn compile(self) -> Result<CompiledState> {
         let Self { args, script_config, script_wallets, browser_wallet } = self;
         let project = script_config.config.project()?;
@@ -185,12 +184,11 @@ impl PreprocessedState {
             }
         };
 
-        #[expect(clippy::redundant_clone)]
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
         )
-        .chain([target_path.to_path_buf()]);
+        .chain([target_path.clone()]);
 
         let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
 
@@ -290,7 +288,15 @@ impl CompiledState {
         };
 
         let (args, build_data, script_wallets, browser_wallet, script_config) =
-            if !self.args.unlocked {
+            if self.args.unlocked {
+                (
+                    self.args,
+                    self.build_data,
+                    self.script_wallets,
+                    self.browser_wallet,
+                    self.script_config,
+                )
+            } else {
                 let mut froms = sequence.sequences().iter().flat_map(|s| {
                     s.transactions
                         .iter()
@@ -303,7 +309,15 @@ impl CompiledState {
                     .signers()
                     .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
 
-                if !froms.all(|from| available_signers.contains(&from)) {
+                if froms.all(|from| available_signers.contains(&from)) {
+                    (
+                        self.args,
+                        self.build_data,
+                        self.script_wallets,
+                        self.browser_wallet,
+                        self.script_config,
+                    )
+                } else {
                     // IF we are missing required signers, execute script as we might need to
                     // collect private keys from the execution.
                     let executed = self.link().await?.prepare_execution().await?.execute().await?;
@@ -314,23 +328,7 @@ impl CompiledState {
                         executed.browser_wallet,
                         executed.script_config,
                     )
-                } else {
-                    (
-                        self.args,
-                        self.build_data,
-                        self.script_wallets,
-                        self.browser_wallet,
-                        self.script_config,
-                    )
                 }
-            } else {
-                (
-                    self.args,
-                    self.build_data,
-                    self.script_wallets,
-                    self.browser_wallet,
-                    self.script_config,
-                )
             };
 
         // Collect libraries from sequence and link contracts with them.

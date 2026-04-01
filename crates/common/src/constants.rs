@@ -55,7 +55,7 @@ pub const TYPE_BINDING_PREFIX: &str = "string constant schema_";
 ///
 /// Transactions from these senders usually don't have a any fee information OR set absurdly high fees that exceed the gas limit (See: <https://github.com/foundry-rs/foundry/pull/10608>)
 ///
-/// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS], [MONAD_SYSTEM_ADDRESS] and [Address::ZERO]
+/// See: [`ARBITRUM_SENDER`], [`OPTIMISM_SYSTEM_ADDRESS`], [`MONAD_SYSTEM_ADDRESS`] and [`Address::ZERO`]
 pub fn is_known_system_sender(sender: Address) -> bool {
     [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, MONAD_SYSTEM_ADDRESS, Address::ZERO]
         .contains(&sender)

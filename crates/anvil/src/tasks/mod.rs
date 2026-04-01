@@ -13,12 +13,12 @@ use futures::StreamExt;
 use std::fmt;
 use tokio::{runtime::Handle, task::JoinHandle};
 
-pub mod block_listener;
+pub(crate) mod block_listener;
 
 /// A helper struct for managing additional tokio tasks.
 #[derive(Clone)]
 pub struct TaskManager {
-    /// Tokio runtime handle that's used to spawn futures, See [tokio::runtime::Handle].
+    /// Tokio runtime handle that's used to spawn futures, See [`tokio::runtime::Handle`].
     tokio_handle: Handle,
     /// A receiver for the shutdown signal
     on_shutdown: Shutdown,
@@ -26,7 +26,7 @@ pub struct TaskManager {
 
 impl TaskManager {
     /// Creates a new instance of the task manager
-    pub fn new(tokio_handle: Handle, on_shutdown: Shutdown) -> Self {
+    pub const fn new(tokio_handle: Handle, on_shutdown: Shutdown) -> Self {
         Self { tokio_handle, on_shutdown }
     }
 

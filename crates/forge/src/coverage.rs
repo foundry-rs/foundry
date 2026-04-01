@@ -115,7 +115,7 @@ pub struct LcovReporter {
 
 impl LcovReporter {
     /// Create a new LCOV reporter.
-    pub fn new(path: PathBuf, version: Version) -> Self {
+    pub const fn new(path: PathBuf, version: Version) -> Self {
         Self { path, version }
     }
 }
@@ -270,7 +270,7 @@ pub struct BytecodeReporter {
 }
 
 impl BytecodeReporter {
-    pub fn new(root: PathBuf, destdir: PathBuf) -> Self {
+    pub const fn new(root: PathBuf, destdir: PathBuf) -> Self {
         Self { root, destdir }
     }
 }
@@ -303,7 +303,7 @@ impl CoverageReporter for BytecodeReporter {
                 let hits = hits
                     .get(code.offset)
                     .map(|h| format!("[{h:03}]"))
-                    .unwrap_or("     ".to_owned());
+                    .unwrap_or_else(|| "     ".to_owned());
                 let source_id = source_element.index();
                 let source_path = source_id.and_then(|i| {
                     report.source_paths.get(&(contract_id.version.clone(), i as usize))
@@ -352,11 +352,15 @@ struct LineNumberCache {
 }
 
 impl LineNumberCache {
-    pub fn new(root: PathBuf) -> Self {
+    pub(crate) fn new(root: PathBuf) -> Self {
         Self { root, line_offsets: HashMap::default() }
     }
 
-    pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {
+    pub(crate) fn get_position(
+        &mut self,
+        path: &Path,
+        offset: usize,
+    ) -> eyre::Result<(usize, usize)> {
         let line_offsets = match self.line_offsets.entry(path.to_path_buf()) {
             hash_map::Entry::Occupied(o) => o.into_mut(),
             hash_map::Entry::Vacant(v) => {

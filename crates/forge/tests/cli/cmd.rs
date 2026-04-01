@@ -345,7 +345,7 @@ ignore them in the `.gitignore` file.
 "#]]);
 
     // ensure nothing was emitted, dir is empty
-    assert!(!nested.read_dir().map(|mut i| i.next().is_some()).unwrap_or_default());
+    assert!(!nested.read_dir().is_ok_and(|mut i| i.next().is_some()));
 });
 
 // Checks that a forge project can be initialized without creating a git repository

@@ -130,7 +130,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the gas price.
     #[inline]
-    pub fn gas_price(mut self, gas_price: u128) -> Self {
+    pub const fn gas_price(mut self, gas_price: u128) -> Self {
         self.gas_price = Some(gas_price);
         self
     }
@@ -158,28 +158,28 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub fn chisel_state(mut self, final_pc: usize) -> Self {
+    pub const fn chisel_state(mut self, final_pc: usize) -> Self {
         self.chisel_state = Some(final_pc);
         self
     }
 
     /// Set the log collector, and whether to print the logs directly to stdout.
     #[inline]
-    pub fn logs(mut self, live_logs: bool) -> Self {
+    pub const fn logs(mut self, live_logs: bool) -> Self {
         self.logs = Some(live_logs);
         self
     }
 
     /// Set whether to collect line coverage information.
     #[inline]
-    pub fn line_coverage(mut self, yes: bool) -> Self {
+    pub const fn line_coverage(mut self, yes: bool) -> Self {
         self.line_coverage = Some(yes);
         self
     }
 
     /// Set whether to enable the trace printer.
     #[inline]
-    pub fn print(mut self, yes: bool) -> Self {
+    pub const fn print(mut self, yes: bool) -> Self {
         self.print = Some(yes);
         self
     }
@@ -197,20 +197,20 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
     /// Set whether to enable the call isolation.
     /// For description of call isolation, see [`InspectorStack::enable_isolation`].
     #[inline]
-    pub fn enable_isolation(mut self, yes: bool) -> Self {
+    pub const fn enable_isolation(mut self, yes: bool) -> Self {
         self.enable_isolation = yes;
         self
     }
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
+    pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self
     }
 
     #[inline]
-    pub fn create2_deployer(mut self, create2_deployer: Address) -> Self {
+    pub const fn create2_deployer(mut self, create2_deployer: Address) -> Self {
         self.create2_deployer = create2_deployer;
         self
     }
@@ -330,7 +330,7 @@ pub struct InnerContextData {
 /// are not called.
 ///
 /// Stack is divided into [Cheatcodes] and `InspectorStackInner`. This is done to allow assembling
-/// `InspectorStackRefMut` inside [Cheatcodes] to allow usage of it as [revm::Inspector]. This gives
+/// `InspectorStackRefMut` inside [Cheatcodes] to allow usage of it as [`revm::Inspector`]. This gives
 /// us ability to create and execute separate EVM frames from inside cheatcodes while still having
 /// access to entire stack of inspectors and correctly handling traces, logs, debugging info
 /// collection, etc.
@@ -373,9 +373,9 @@ pub struct InspectorStackInner {
     pub reverter: Option<Address>,
 }
 
-/// Struct keeping mutable references to both parts of [InspectorStack] and implementing
-/// [revm::Inspector]. This struct can be obtained via [InspectorStack::as_mut].
-pub struct InspectorStackRefMut<'a, SPEC, BLOCK, N: Network> {
+/// Struct keeping mutable references to both parts of [`InspectorStack`] and implementing
+/// [`revm::Inspector`]. This struct can be obtained via [`InspectorStack::as_mut`].
+pub(super) struct InspectorStackRefMut<'a, SPEC, BLOCK, N: Network> {
     pub cheatcodes: Option<&'a mut Cheatcodes<SPEC, BLOCK, N>>,
     pub inner: &'a mut InspectorStackInner,
 }
@@ -456,13 +456,9 @@ impl<
 
     fn set_in_inner_context(&mut self, enabled: bool, original_origin: Option<Address>) {
         self.in_inner_context = enabled;
-        self.inner_context_data = if enabled {
-            Some(InnerContextData {
-                original_origin: original_origin.expect("origin required when enabling inner ctx"),
-            })
-        } else {
-            None
-        };
+        self.inner_context_data = enabled.then(|| InnerContextData {
+            original_origin: original_origin.expect("origin required when enabling inner ctx"),
+        });
     }
 }
 
@@ -538,13 +534,13 @@ impl<SPEC, BLOCK, N: Network> InspectorStack<SPEC, BLOCK, N> {
 
     /// Set whether to enable call isolation.
     #[inline]
-    pub fn enable_isolation(&mut self, yes: bool) {
+    pub const fn enable_isolation(&mut self, yes: bool) {
         self.inner.enable_isolation = yes;
     }
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(&mut self, networks: NetworkConfigs) {
+    pub const fn networks(&mut self, networks: NetworkConfigs) {
         self.inner.networks = networks;
     }
 
@@ -653,9 +649,9 @@ impl<SPEC, BLOCK, N: Network> InspectorStack<SPEC, BLOCK, N> {
 impl InspectorStackRefMut<'_, SpecId, BlockEnv, Ethereum> {
     /// Adjusts the EVM data for the inner EVM context.
     /// Should be called on the top-level call of inner context (depth == 0 &&
-    /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
+    /// `self.in_inner_context`) Decreases sender nonce for CALLs to keep backwards compatibility
     /// Updates tx.origin to the value before entering inner context
-    fn adjust_evm_data_for_inner_context<CTX: FoundryContextExt>(&mut self, ecx: &mut CTX) {
+    fn adjust_evm_data_for_inner_context<CTX: FoundryContextExt>(&self, ecx: &mut CTX) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
         ecx.tx_mut().set_caller(inner_context_data.original_origin);
@@ -903,7 +899,7 @@ impl InspectorStackRefMut<'_, SpecId, BlockEnv, Ethereum> {
     }
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
-    fn top_level_frame_start<CTX: ContextTr<Journal: JournalExt>>(&mut self, ecx: &mut CTX) {
+    fn top_level_frame_start<CTX: ContextTr<Journal: JournalExt>>(&mut self, ecx: &CTX) {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert

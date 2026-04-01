@@ -1,7 +1,7 @@
 //! Tempo precompile and fee token initialization for Anvil.
 //!
 //! When running in Tempo mode, Anvil needs to set up Tempo-specific precompiles
-//! and fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD) to enable proper
+//! and fee tokens (`PathUSD`, `AlphaUSD`, `BetaUSD`, `ThetaUSD`) to enable proper
 //! transaction validation.
 //!
 //! This module provides a storage provider adapter for Anvil's `Db` trait and

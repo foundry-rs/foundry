@@ -43,25 +43,25 @@ pub enum BytecodeType {
 
 impl BytecodeType {
     /// Check if the bytecode type is creation
-    pub fn is_creation(&self) -> bool {
+    pub const fn is_creation(&self) -> bool {
         matches!(self, Self::Creation)
     }
 
     /// Check if the bytecode type is runtime
-    pub fn is_runtime(&self) -> bool {
+    pub const fn is_runtime(&self) -> bool {
         matches!(self, Self::Runtime)
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct JsonResult {
+pub(crate) struct JsonResult {
     pub bytecode_type: BytecodeType,
     pub match_type: Option<VerificationType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
-pub fn match_bytecodes(
+pub(crate) fn match_bytecodes(
     local_bytecode: &[u8],
     bytecode: &[u8],
     constructor_args: &[u8],
@@ -83,7 +83,7 @@ pub fn match_bytecodes(
     }
 }
 
-pub fn build_project(
+pub(crate) fn build_project(
     args: &VerifyBytecodeArgs,
     config: &Config,
 ) -> Result<CompactContractBytecode> {
@@ -99,7 +99,7 @@ pub fn build_project(
     Ok(artifact.into_contract_bytecode())
 }
 
-pub fn print_result(
+pub(crate) fn print_result(
     res: Option<VerificationType>,
     bytecode_type: BytecodeType,
     json_results: &mut Vec<JsonResult>,
@@ -107,15 +107,15 @@ pub fn print_result(
     config: &Config,
 ) {
     if let Some(res) = res {
-        if !shell::is_json() {
+        if shell::is_json() {
+            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
+            json_results.push(json_res);
+        } else {
             let _ = sh_println!(
                 "{} with status {}",
                 format!("{bytecode_type:?} code matched").green().bold(),
                 res.green().bold()
             );
-        } else {
-            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
-            json_results.push(json_res);
         }
     } else if !shell::is_json() {
         let _ = sh_err!(
@@ -190,7 +190,9 @@ fn find_mismatch_in_settings(
     {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
+            local_settings
+                .optimizer_runs
+                .map_or_else(|| "unknown".to_string(), |runs| runs.to_string()),
             etherscan_settings.runs
         );
         mismatches.push(str);
@@ -199,7 +201,7 @@ fn find_mismatch_in_settings(
     mismatches
 }
 
-pub fn maybe_predeploy_contract(
+pub(crate) fn maybe_predeploy_contract(
     creation_data: Result<ContractCreationData, EtherscanError>,
 ) -> Result<(Option<ContractCreationData>, bool), eyre::ErrReport> {
     let mut maybe_predeploy = false;
@@ -221,7 +223,7 @@ pub fn maybe_predeploy_contract(
     }
 }
 
-pub fn check_and_encode_args(
+pub(crate) fn check_and_encode_args(
     artifact: &CompactContractBytecode,
     args: Vec<String>,
 ) -> Result<Vec<u8>, eyre::ErrReport> {
@@ -239,7 +241,7 @@ pub fn check_and_encode_args(
     }
 }
 
-pub fn check_explorer_args(source_code: ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
+pub(crate) fn check_explorer_args(source_code: ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
     if let Some(args) = source_code.items.first() {
         Ok(args.constructor_arguments.clone())
     } else {
@@ -247,7 +249,7 @@ pub fn check_explorer_args(source_code: ContractMetadata) -> Result<Bytes, eyre:
     }
 }
 
-pub fn check_args_len(
+pub(crate) fn check_args_len(
     artifact: &CompactContractBytecode,
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
@@ -263,7 +265,7 @@ pub fn check_args_len(
     Ok(())
 }
 
-pub async fn get_tracing_executor(
+pub(crate) async fn get_tracing_executor(
     fork_config: &mut Config,
     fork_blk_num: u64,
     evm_version: EvmVersion,
@@ -289,14 +291,18 @@ pub async fn get_tracing_executor(
     Ok((evm_env, tx_env, executor))
 }
 
-pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: NetworkConfigs) {
+pub(crate) fn configure_env_block(
+    evm_env: &mut EvmEnv,
+    block: &AnyRpcBlock,
+    config: NetworkConfigs,
+) {
     let number = evm_env.block_env.number;
     evm_env.block_env = block_env_from_header(&block.header);
     evm_env.block_env.number = number;
     apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(evm_env, block, config);
 }
 
-pub fn deploy_contract(
+pub(crate) fn deploy_contract(
     executor: &mut TracingExecutor,
     evm_env: &EvmEnv,
     tx_env: &TxEnv,
@@ -349,7 +355,7 @@ pub fn deploy_contract(
     }
 }
 
-pub async fn get_runtime_codes(
+pub(crate) async fn get_runtime_codes(
     executor: &mut TracingExecutor,
     provider: &impl Provider<AnyNetwork>,
     address: Address,
@@ -382,7 +388,7 @@ pub async fn get_runtime_codes(
 /// Returns `true` if the URL only consists of host.
 ///
 /// This is used to check user input url for missing /api path
-pub fn is_host_only(url: &Url) -> bool {
+pub(crate) fn is_host_only(url: &Url) -> bool {
     matches!(url.path(), "/" | "")
 }
 
@@ -396,11 +402,11 @@ pub fn is_host_only(url: &Url) -> bool {
 /// let version = ensure_solc_build_metadata(version).await?;
 /// assert_ne!(version.build, BuildMetadata::EMPTY);
 /// ```
-pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
-    if version.build != BuildMetadata::EMPTY {
-        Ok(version)
-    } else {
+pub(crate) async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
+    if version.build == BuildMetadata::EMPTY {
         Ok(lookup_compiler_version(&version).await?)
+    } else {
+        Ok(version)
     }
 }
 

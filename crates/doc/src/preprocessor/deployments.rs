@@ -36,7 +36,7 @@ impl Preprocessor for Deployments {
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
         let deployments_dir =
-            self.root.join(self.deployments.as_deref().unwrap_or(Path::new("deployments")));
+            self.root.join(self.deployments.as_deref().unwrap_or_else(|| Path::new("deployments")));
 
         // Gather all networks from the deployments directory.
         let networks = fs::read_dir(&deployments_dir)?

@@ -17,7 +17,7 @@ use semver::{BuildMetadata, Version};
 use std::path::Path;
 
 #[derive(Debug)]
-pub struct EtherscanFlattenedSource;
+pub(super) struct EtherscanFlattenedSource;
 impl EtherscanSourceProvider for EtherscanFlattenedSource {
     fn source(
         &self,
@@ -105,15 +105,15 @@ Diagnostics: {diags}",
     }
 }
 
-/// Strips [BuildMetadata] from the [Version]
+/// Strips [`BuildMetadata`] from the [Version]
 ///
 /// **Note:** this is only for local compilation as a dry run, therefore this will return a
 /// sanitized variant of the specific version so that it can be installed. This is merely
 /// intended to ensure the flattened code can be compiled without errors.
 fn strip_build_meta(version: Version) -> Version {
-    if version.build != BuildMetadata::EMPTY {
-        Version::new(version.major, version.minor, version.patch)
-    } else {
+    if version.build == BuildMetadata::EMPTY {
         version
+    } else {
+        Version::new(version.major, version.minor, version.patch)
     }
 }

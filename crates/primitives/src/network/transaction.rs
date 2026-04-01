@@ -77,7 +77,7 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     /// Sets the blob sidecar (either EIP-4844 or EIP-7594 variant) of the transaction.
     ///
     /// Note: This will also set the versioned blob hashes accordingly:
-    /// [BlobTransactionSidecarVariant::versioned_hashes]
+    /// [`BlobTransactionSidecarVariant::versioned_hashes`]
     fn set_blob_sidecar(&mut self, _sidecar: BlobTransactionSidecarVariant) {}
 
     /// Builder-pattern method for setting the blob sidecar of the transaction.
@@ -167,7 +167,7 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
 
     /// Set the access key ID for a Tempo transaction.
     ///
-    /// Used during gas estimation to override the key_id that would normally be
+    /// Used during gas estimation to override the `key_id` that would normally be
     /// recovered from the signature.
     fn set_key_id(&mut self, _key_id: Address) {}
 
@@ -177,29 +177,29 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
         self
     }
 
-    /// Get the valid_before timestamp for a Tempo expiring nonce transaction.
+    /// Get the `valid_before` timestamp for a Tempo expiring nonce transaction.
     fn valid_before(&self) -> Option<u64> {
         None
     }
 
-    /// Set the valid_before timestamp for a Tempo expiring nonce transaction.
+    /// Set the `valid_before` timestamp for a Tempo expiring nonce transaction.
     fn set_valid_before(&mut self, _valid_before: u64) {}
 
-    /// Builder-pattern method for setting the valid_before timestamp.
+    /// Builder-pattern method for setting the `valid_before` timestamp.
     fn with_valid_before(mut self, valid_before: u64) -> Self {
         self.set_valid_before(valid_before);
         self
     }
 
-    /// Get the valid_after timestamp for a Tempo expiring nonce transaction.
+    /// Get the `valid_after` timestamp for a Tempo expiring nonce transaction.
     fn valid_after(&self) -> Option<u64> {
         None
     }
 
-    /// Set the valid_after timestamp for a Tempo expiring nonce transaction.
+    /// Set the `valid_after` timestamp for a Tempo expiring nonce transaction.
     fn set_valid_after(&mut self, _valid_after: u64) {}
 
-    /// Builder-pattern method for setting the valid_after timestamp.
+    /// Builder-pattern method for setting the `valid_after` timestamp.
     fn with_valid_after(mut self, valid_after: u64) -> Self {
         self.set_valid_after(valid_after);
         self

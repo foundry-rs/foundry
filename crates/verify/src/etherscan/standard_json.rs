@@ -4,7 +4,7 @@ use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 
 #[derive(Debug)]
-pub struct EtherscanStandardJsonSource;
+pub(super) struct EtherscanStandardJsonSource;
 impl EtherscanSourceProvider for EtherscanStandardJsonSource {
     fn source(
         &self,

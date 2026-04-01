@@ -239,7 +239,7 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_difficulty: Option<u64>,
 
-    /// The block prevrandao value. NOTE: Before merge this field was mix_hash.
+    /// The block prevrandao value. NOTE: Before merge this field was `mix_hash`.
     #[arg(long, value_name = "PREVRANDAO")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_prevrandao: Option<B256>,

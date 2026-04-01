@@ -37,7 +37,7 @@ pub fn precompile() -> DynPrecompile {
 
 /// Celo transfer precompile implementation.
 ///
-/// Uses load_account to modify balances directly, making it compatible with PrecompilesMap.
+/// Uses `load_account` to modify balances directly, making it compatible with `PrecompilesMap`.
 pub fn celo_transfer_precompile(mut input: PrecompileInput<'_>) -> PrecompileResult {
     // Check minimum gas requirement
     if input.gas < CELO_TRANSFER_GAS_COST {

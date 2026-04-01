@@ -129,7 +129,7 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Gets paginated transaction data for a certain block. Return data is similar to
-    /// eth_getBlockBy* + eth_getTransactionReceipt.
+    /// `eth_getBlockBy`* + `eth_getTransactionReceipt`.
     pub async fn ots_get_block_transactions(
         &self,
         number: u64,
@@ -239,7 +239,7 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Given a sender address and a nonce, returns the tx hash or null if not found. It returns
-    /// only the tx hash on success, you can use the standard eth_getTransactionByHash after that to
+    /// only the tx hash on success, you can use the standard `eth_getTransactionByHash` after that to
     /// get the full transaction data.
     pub async fn ots_get_transaction_by_sender_and_nonce(
         &self,
@@ -294,7 +294,7 @@ impl EthApi<FoundryNetwork> {
 
         Ok(None)
     }
-    /// The response for ots_getBlockDetails includes an `issuance` object that requires computing
+    /// The response for `ots_getBlockDetails` includes an `issuance` object that requires computing
     /// the total gas spent in a given block.
     ///
     /// The only way to do this with the existing API is to explicitly fetch all receipts, to get

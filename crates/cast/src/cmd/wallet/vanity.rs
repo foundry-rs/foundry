@@ -14,7 +14,7 @@ use std::{
     time::Instant,
 };
 
-/// Type alias for the result of [generate_wallet].
+/// Type alias for the result of [`generate_wallet`].
 pub type GeneratedWallet = (SigningKey, Address);
 
 /// CLI arguments for `cast wallet vanity`.
@@ -46,21 +46,21 @@ pub struct VanityArgs {
     pub save_path: Option<PathBuf>,
 }
 
-/// WalletData contains address and private_key information for a wallet.
+/// `WalletData` contains address and `private_key` information for a wallet.
 #[derive(Serialize, Deserialize)]
 struct WalletData {
     address: String,
     private_key: String,
 }
 
-/// Wallets is a collection of WalletData.
+/// Wallets is a collection of `WalletData`.
 #[derive(Default, Serialize, Deserialize)]
 struct Wallets {
     wallets: Vec<WalletData>,
 }
 
 impl WalletData {
-    pub fn new(wallet: &PrivateKeySigner) -> Self {
+    pub(crate) fn new(wallet: &PrivateKeySigner) -> Self {
         Self {
             address: wallet.address().to_checksum(None),
             private_key: format!("0x{}", hex::encode(wallet.credential().to_bytes())),
@@ -128,11 +128,7 @@ impl VanityArgs {
                 let matcher = RightHexMatcher { right };
                 find_vanity!(matcher, nonce)
             }
-            (None, Some(re), None, None) => {
-                let matcher = SingleRegexMatcher { re };
-                find_vanity!(matcher, nonce)
-            }
-            (None, None, None, Some(re)) => {
+            (None, Some(re), None, None) | (None, None, None, Some(re)) => {
                 let matcher = SingleRegexMatcher { re };
                 find_vanity!(matcher, nonce)
             }
@@ -162,7 +158,7 @@ impl VanityArgs {
     }
 }
 
-/// Saves the specified `wallet` to a 'vanity_addresses.json' file at the given `save_path`.
+/// Saves the specified `wallet` to a '`vanity_addresses.json`' file at the given `save_path`.
 /// If the file exists, the wallet data is appended to the existing content;
 /// otherwise, a new file is created.
 fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
@@ -193,7 +189,7 @@ pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
     wallet_generator().find_any(create_nonce_matcher(matcher, nonce)).map(|(key, _)| key.into())
 }
 
-/// Creates a matcher function, which takes a reference to a [GeneratedWallet] and returns
+/// Creates a matcher function, which takes a reference to a [`GeneratedWallet`] and returns
 /// whether it found a match or not by using `matcher`.
 #[inline]
 pub fn create_matcher<T: VanityMatcher>(matcher: T) -> impl Fn(&GeneratedWallet) -> bool {
@@ -201,7 +197,7 @@ pub fn create_matcher<T: VanityMatcher>(matcher: T) -> impl Fn(&GeneratedWallet)
 }
 
 /// Creates a contract address matcher function that uses the specified nonce.
-/// The returned function takes a reference to a [GeneratedWallet] and returns
+/// The returned function takes a reference to a [`GeneratedWallet`] and returns
 /// whether the contract address created with the nonce matches using `matcher`.
 #[inline]
 pub fn create_nonce_matcher<T: VanityMatcher>(
@@ -214,7 +210,7 @@ pub fn create_nonce_matcher<T: VanityMatcher>(
     }
 }
 
-/// Returns an infinite parallel iterator which yields a [GeneratedWallet].
+/// Returns an infinite parallel iterator which yields a [`GeneratedWallet`].
 #[inline]
 pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, impl Fn(()) -> GeneratedWallet> {
     iter::repeat(()).map(|()| generate_wallet())

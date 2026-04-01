@@ -19,7 +19,7 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Rpc options")]
 pub struct RpcOpts {
-    /// The RPC endpoint, default value is http://localhost:8545.
+    /// The RPC endpoint, default value is <http://localhost:8545>.
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
 
@@ -33,7 +33,7 @@ pub struct RpcOpts {
     /// Disable automatic proxy detection.
     ///
     /// Use this in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox) where
-    /// system proxy detection causes crashes. When enabled, HTTP_PROXY/HTTPS_PROXY environment
+    /// system proxy detection causes crashes. When enabled, `HTTP_PROXY/HTTPS_PROXY` environment
     /// variables and system proxy settings will be ignored.
     #[arg(long = "no-proxy", alias = "disable-proxy", default_value = "false")]
     pub no_proxy: bool,
@@ -51,7 +51,7 @@ pub struct RpcOpts {
     /// The JWT secret will be used to create a JWT for a RPC. For example, the following can be
     /// used to simulate a CL `engine_forkchoiceUpdated` call:
     ///
-    /// cast rpc --jwt-secret <JWT_SECRET> engine_forkchoiceUpdatedV2
+    /// cast rpc --jwt-secret <`JWT_SECRET`> `engine_forkchoiceUpdatedV2`
     /// '["0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc",
     /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc",
     /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc"]'

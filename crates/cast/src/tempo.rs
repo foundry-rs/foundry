@@ -6,7 +6,7 @@ pub use foundry_wallets::tempo::sign_with_access_key;
 
 /// Checks whether an access key is already provisioned on-chain.
 ///
-/// Queries the AccountKeychain precompile's `getKey` function. A key is considered
+/// Queries the `AccountKeychain` precompile's `getKey` function. A key is considered
 /// provisioned if the returned `keyId` is non-zero (i.e. the key exists and has not
 /// been revoked).
 pub async fn is_key_provisioned<P: Provider<TempoNetwork>>(

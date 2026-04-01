@@ -276,12 +276,12 @@ const GAS_TRANSFER: u64 = 21_000;
 /// Test that Optimism uses Canyon base fee params instead of Ethereum params.
 ///
 /// Optimism Canyon uses different EIP-1559 parameters:
-/// - elasticity_multiplier: 6 (vs Ethereum's 2)
-/// - base_fee_max_change_denominator: 250 (vs Ethereum's 8)
+/// - `elasticity_multiplier`: 6 (vs Ethereum's 2)
+/// - `base_fee_max_change_denominator`: 250 (vs Ethereum's 8)
 ///
 /// This means with a full block:
-/// - Ethereum: base_fee increases by base_fee * 1 / 8 = 12.5%
-/// - Optimism: base_fee increases by base_fee * 5 / 250 = 2%
+/// - Ethereum: `base_fee` increases by `base_fee` * 1 / 8 = 12.5%
+/// - Optimism: `base_fee` increases by `base_fee` * 5 / 250 = 2%
 #[tokio::test(flavor = "multi_thread")]
 async fn test_optimism_base_fee_params() {
     // Spawn an Optimism node with a gas limit equal to one transfer (full block scenario)

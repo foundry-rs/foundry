@@ -67,7 +67,7 @@ impl LintArgs {
                         inputs
                             .extend(foundry_compilers::utils::source_files(path, SOLC_EXTENSIONS));
                     } else if path.is_sol() {
-                        inputs.push(path.to_path_buf());
+                        inputs.push(path.clone());
                     } else {
                         warn!("cannot process path {}", path.display());
                     }
@@ -90,7 +90,8 @@ impl LintArgs {
         let (include, exclude, severity) = match &self.lint {
             Some(cli_lints) => (Some(parse_lints(cli_lints)?), None, vec![]),
             None => {
-                let severity = self.severity.clone().unwrap_or(config.lint.severity.clone());
+                let severity =
+                    self.severity.clone().unwrap_or_else(|| config.lint.severity.clone());
                 (None, Some(parse_lints(&config.lint.exclude_lints)?), severity)
             }
         };

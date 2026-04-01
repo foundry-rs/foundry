@@ -56,17 +56,15 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
+#[allow(clippy::large_stack_frames)]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
-        CastSubcommand::MaxInt { r#type } => {
+        CastSubcommand::MaxInt { r#type } | CastSubcommand::MaxUint { r#type } => {
             sh_println!("{}", SimpleCast::max_int(&r#type)?)?;
         }
         CastSubcommand::MinInt { r#type } => {
             sh_println!("{}", SimpleCast::min_int(&r#type)?)?;
-        }
-        CastSubcommand::MaxUint { r#type } => {
-            sh_println!("{}", SimpleCast::max_int(&r#type)?)?;
         }
         CastSubcommand::AddressZero => {
             sh_println!("{:?}", Address::ZERO)?;
@@ -196,10 +194,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&tokens);
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
-            if !packed {
-                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
-            } else {
+            if packed {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
+            } else {
+                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
             }
         }
         CastSubcommand::AbiEncodeEvent { sig, args } => {

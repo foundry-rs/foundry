@@ -14,7 +14,10 @@ use tower_http::{cors::CorsLayer, set_header::SetResponseHeaderLayer};
 
 use crate::wallet_browser::{handlers, state::BrowserWalletState};
 
-pub async fn build_router<N: Network>(state: Arc<BrowserWalletState<N>>, port: u16) -> Router {
+pub(super) async fn build_router<N: Network>(
+    state: Arc<BrowserWalletState<N>>,
+    port: u16,
+) -> Router {
     let api = Router::new()
         .route("/transaction/request", get(handlers::get_next_transaction_request))
         .route("/transaction/response", post(handlers::post_transaction_response))

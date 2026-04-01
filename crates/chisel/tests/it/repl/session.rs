@@ -6,7 +6,7 @@ const TIMEOUT_SECS: u64 = 3;
 const PROMPT: &str = "➜ ";
 
 /// Testing session for Chisel.
-pub struct ChiselSession {
+pub(super) struct ChiselSession {
     session: Box<PtySession>,
     project: Box<TestProject>,
     is_repl: bool,
@@ -21,7 +21,7 @@ fn is_repl(args: &[String]) -> bool {
 
 #[allow(dead_code)]
 impl ChiselSession {
-    pub fn new(name: &str, flags: &str, init: bool) -> Self {
+    pub(super) fn new(name: &str, flags: &str, init: bool) -> Self {
         let project = foundry_test_utils::TestProject::new(name, PathStyle::Dapptools);
         if init {
             foundry_test_utils::util::initialize(project.root());
@@ -64,17 +64,17 @@ impl ChiselSession {
         session
     }
 
-    pub fn project(&self) -> &TestProject {
+    pub(super) fn project(&self) -> &TestProject {
         &self.project
     }
 
-    pub fn is_repl(&self) -> bool {
+    pub(super) const fn is_repl(&self) -> bool {
         self.is_repl
     }
 
     /// Send a line to the REPL and expects the prompt to appear.
     #[track_caller]
-    pub fn sendln(&mut self, line: &str) {
+    pub(super) fn sendln(&mut self, line: &str) {
         self.sendln_raw(line);
         if self.is_repl() {
             self.expect_prompt();
@@ -85,7 +85,7 @@ impl ChiselSession {
     ///
     /// You might want to call `expect_prompt` after this.
     #[track_caller]
-    pub fn sendln_raw(&mut self, line: &str) {
+    pub(super) fn sendln_raw(&mut self, line: &str) {
         match self.session.send_line(line) {
             Ok(_) => (),
             Err(e) => {
@@ -96,7 +96,7 @@ impl ChiselSession {
 
     /// Expect the needle to appear.
     #[track_caller]
-    pub fn expect(&mut self, needle: &str) {
+    pub(super) fn expect(&mut self, needle: &str) {
         match self.session.exp_string(needle) {
             Ok(_) => (),
             Err(e) => {
@@ -107,13 +107,13 @@ impl ChiselSession {
 
     /// Expect the prompt to appear.
     #[track_caller]
-    pub fn expect_prompt(&mut self) {
+    pub(super) fn expect_prompt(&mut self) {
         self.expect(PROMPT);
     }
 
     /// Expect the prompt to appear `n` times.
     #[track_caller]
-    pub fn expect_prompts(&mut self, n: usize) {
+    pub(super) fn expect_prompts(&mut self, n: usize) {
         for _ in 0..n {
             self.expect_prompt();
         }

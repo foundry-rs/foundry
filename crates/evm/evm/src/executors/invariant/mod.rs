@@ -188,12 +188,12 @@ impl InvariantTest {
     }
 
     /// Returns number of invariant test reverts.
-    fn reverts(&self) -> usize {
+    const fn reverts(&self) -> usize {
         self.test_data.failures.reverts
     }
 
     /// Whether invariant test has errors or not.
-    fn has_errors(&self) -> bool {
+    const fn has_errors(&self) -> bool {
         self.test_data.failures.error.is_some()
     }
 
@@ -788,7 +788,7 @@ impl<'a> InvariantExecutor<'a> {
     /// Makes sure that the contract exists in the project. If so, it returns its artifact
     /// identifier.
     fn validate_selected_contract(
-        &mut self,
+        &self,
         contract: String,
         selectors: &[FixedBytes<4>],
     ) -> Result<String> {
@@ -915,7 +915,7 @@ impl<'a> InvariantExecutor<'a> {
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {
                             let mut contract =
-                                TargetedContract::new(identifier.to_string(), abi.clone());
+                                TargetedContract::new(identifier.clone(), abi.clone());
                             contract.storage_layout =
                                 contract_data.storage_layout.as_ref().map(Arc::clone);
                             contract
@@ -1041,18 +1041,16 @@ fn collect_data(
     run_depth: u32,
 ) {
     // Verify it has no code.
-    let mut has_code = false;
-    if let Some(Some(code)) =
+    let has_code = if let Some(Some(code)) =
         state_changeset.get(&tx.sender).map(|account| account.info.code.as_ref())
     {
-        has_code = !code.is_empty();
-    }
+        !code.is_empty()
+    } else {
+        false
+    };
 
     // We keep the nonce changes to apply later.
-    let mut sender_changeset = None;
-    if !has_code {
-        sender_changeset = state_changeset.remove(&tx.sender);
-    }
+    let sender_changeset = if has_code { None } else { state_changeset.remove(&tx.sender) };
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(

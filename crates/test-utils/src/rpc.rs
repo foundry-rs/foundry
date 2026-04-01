@@ -228,7 +228,7 @@ fn debug_url(url: &str) -> impl std::fmt::Display + '_ {
         "{scheme}://{host}{path}",
         scheme = url.scheme(),
         host = url.host_str().unwrap(),
-        path = url.path().get(..8).unwrap_or(url.path()),
+        path = url.path().get(..8).unwrap_or_else(|| url.path()),
     )
 }
 
@@ -276,8 +276,6 @@ mod tests {
                 first_abi = Some(abi);
             }
         }
-        if !failed.is_empty() {
-            panic!("failed keys: {failed:#?}");
-        }
+        assert!(failed.is_empty(), "failed keys: {failed:#?}")
     }
 }

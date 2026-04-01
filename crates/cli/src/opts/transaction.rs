@@ -79,7 +79,7 @@ pub struct TransactionOpts {
     #[arg(long)]
     pub legacy: bool,
 
-    /// Send a blob transaction using EIP-7594 (PeerDAS) format.
+    /// Send a blob transaction using EIP-7594 (`PeerDAS`) format.
     ///
     /// Note: Use with `--eip4844` for the legacy EIP-4844 format.
     #[arg(long, conflicts_with = "legacy")]

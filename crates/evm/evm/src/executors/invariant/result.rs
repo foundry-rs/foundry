@@ -51,7 +51,7 @@ pub(crate) struct RichInvariantResults {
 }
 
 impl RichInvariantResults {
-    pub(crate) fn new(can_continue: bool, call_result: Option<RawCallResult>) -> Self {
+    pub(crate) const fn new(can_continue: bool, call_result: Option<RawCallResult>) -> Self {
         Self { can_continue, call_result }
     }
 }

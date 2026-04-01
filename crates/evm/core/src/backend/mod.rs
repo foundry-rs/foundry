@@ -82,8 +82,8 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
     /// Creates a new state snapshot at the current point of execution.
     ///
     /// A state snapshot is associated with a new unique id that's created for the snapshot.
-    /// State snapshots can be reverted: [DatabaseExt::revert_state], however, depending on the
-    /// [RevertStateSnapshotAction], it will keep the snapshot alive or delete it.
+    /// State snapshots can be reverted: [`DatabaseExt::revert_state`], however, depending on the
+    /// [`RevertStateSnapshotAction`], it will keep the snapshot alive or delete it.
     fn snapshot_state(
         &mut self,
         journaled_state: &JournaledState,
@@ -101,7 +101,7 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
     /// This will also revert any changes in the `EvmEnv` and `TxEnv` and replace them with the
     /// captured values from `Self::snapshot_state`.
     ///
-    /// Depending on [RevertStateSnapshotAction] it will keep the snapshot alive or delete it.
+    /// Depending on [`RevertStateSnapshotAction`] it will keep the snapshot alive or delete it.
     fn revert_state(
         &mut self,
         id: U256,
@@ -219,7 +219,7 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
         inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()>;
 
-    /// Executes a given TransactionRequest, commits the new state to the DB
+    /// Executes a given `TransactionRequest`, commits the new state to the DB
     fn transact_from_tx(
         &mut self,
         tx_env: TX,
@@ -282,7 +282,7 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
     /// Returns a more useful error message if that's the case
     fn diagnose_revert(&self, callee: Address, evm_state: &EvmState) -> Option<RevertDiagnostic>;
 
-    /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
+    /// Loads the account allocs from the given `allocs` map into the passed [`JournaledState`].
     ///
     /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
     fn load_allocs(
@@ -443,10 +443,10 @@ pub struct Backend<N: Network = AnyNetwork, F: FoundryEvmFactory = EthEvmFactory
     forks: MultiFork<N, F::Spec, F::BlockEnv>,
     // The default in memory db
     mem_db: FoundryEvmInMemoryDB,
-    /// The journaled_state to use to initialize new forks with
+    /// The `journaled_state` to use to initialize new forks with
     ///
     /// The way [`JournaledState`] works is, that it holds the "hot" accounts loaded from the
-    /// underlying `Database` that feeds the Account and State data to the journaled_state so it
+    /// underlying `Database` that feeds the Account and State data to the `journaled_state` so it
     /// can apply changes to the state while the EVM executes.
     ///
     /// In a way the `JournaledState` is something like a cache that
@@ -587,7 +587,7 @@ where
 
     /// Returns all snapshots created in this backend
     #[allow(clippy::type_complexity)]
-    pub fn state_snapshots(
+    pub const fn state_snapshots(
         &self,
     ) -> &StateSnapshots<
         BackendStateSnapshot<BackendDatabaseSnapshot<N, F::BlockEnv>, F::Spec, F::BlockEnv>,
@@ -623,7 +623,7 @@ where
     }
 
     /// Returns the set caller address
-    pub fn caller_address(&self) -> Option<Address> {
+    pub const fn caller_address(&self) -> Option<Address> {
         self.inner.caller
     }
 
@@ -632,16 +632,16 @@ where
     /// If an error occurs in a restored state snapshot, the test is considered failed.
     ///
     /// This returns whether there was a reverted state snapshot that recorded an error.
-    pub fn has_state_snapshot_failure(&self) -> bool {
+    pub const fn has_state_snapshot_failure(&self) -> bool {
         self.inner.has_state_snapshot_failure
     }
 
     /// Sets the state snapshot failure flag.
-    pub fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
+    pub const fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
         self.inner.has_state_snapshot_failure = has_state_snapshot_failure
     }
 
-    /// When creating or switching forks, we update the AccountInfo of the contract
+    /// When creating or switching forks, we update the `AccountInfo` of the contract
     pub(crate) fn update_fork_db(
         &self,
         active_journaled_state: &mut JournaledState,
@@ -669,13 +669,13 @@ where
     }
 
     /// Returns the memory db used if not in forking mode
-    pub fn mem_db(&self) -> &FoundryEvmInMemoryDB {
+    pub const fn mem_db(&self) -> &FoundryEvmInMemoryDB {
         &self.mem_db
     }
 
     /// Returns true if the `id` is currently active
     pub fn is_active_fork(&self, id: LocalForkId) -> bool {
-        self.active_fork_ids.map(|(i, _)| i == id).unwrap_or_default()
+        self.active_fork_ids.is_some_and(|(i, _)| i == id)
     }
 
     /// Returns `true` if the `Backend` is currently in forking mode
@@ -1207,7 +1207,7 @@ where
     }
 
     /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing
-    /// [ForkId] that is mapped to the [LocalForkId]
+    /// [`ForkId`] that is mapped to the [`LocalForkId`]
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
@@ -1432,7 +1432,7 @@ where
         None
     }
 
-    /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
+    /// Loads the account allocs from the given `allocs` map into the passed [`JournaledState`].
     ///
     /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
     fn load_allocs(
@@ -1625,10 +1625,10 @@ where
     }
 }
 
-/// Variants of a [revm::Database]
+/// Variants of a [`revm::Database`]
 #[derive(Clone, Debug)]
 pub enum BackendDatabaseSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
-    /// Simple in-memory [revm::Database]
+    /// Simple in-memory [`revm::Database`]
     InMemory(FoundryEvmInMemoryDB),
     /// Contains the entire forking mode database
     Forked(LocalForkId, ForkId, ForkLookupIndex, Box<Fork<N, B>>),
@@ -1643,7 +1643,7 @@ pub struct Fork<N: Network, B: ForkBlockEnv = BlockEnv> {
 
 impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
     /// Returns a reference to the underlying [`SharedBackend`].
-    pub fn backend(&self) -> &SharedBackend<N, B> {
+    pub const fn backend(&self) -> &SharedBackend<N, B> {
         &self.db.db
     }
 
@@ -1934,7 +1934,7 @@ pub(crate) fn merge_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv
     active_journaled_state: &mut JournaledState,
     target_fork: &mut Fork<N, B>,
 ) {
-    for addr in accounts.into_iter() {
+    for addr in accounts {
         merge_db_account_data(addr, active, &mut target_fork.db);
         merge_journaled_state_data(addr, active_journaled_state, &mut target_fork.journaled_state);
     }
@@ -1997,7 +1997,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv>(
 
 /// Returns true of the address is a contract
 fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
-    evm_state.get(&acc).map(|acc| acc.info.code_hash != KECCAK_EMPTY).unwrap_or_default()
+    evm_state.get(&acc).is_some_and(|acc| acc.info.code_hash != KECCAK_EMPTY)
 }
 
 /// Updates the evm env's block with the block's data

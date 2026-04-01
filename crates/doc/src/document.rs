@@ -6,7 +6,7 @@ use std::{
     sync::Mutex,
 };
 
-/// The wrapper around the [ParseItem] containing additional
+/// The wrapper around the [`ParseItem`] containing additional
 /// information the original item and extra context for outputting it.
 #[derive(Debug)]
 pub struct Document {
@@ -89,27 +89,19 @@ pub enum DocumentContent {
 }
 
 impl DocumentContent {
-    pub(crate) fn len(&self) -> usize {
+    pub(crate) const fn len(&self) -> usize {
         match self {
             Self::Empty => 0,
             Self::Single(_) => 1,
-            Self::Constants(items) => items.len(),
-            Self::OverloadedFunctions(items) => items.len(),
+            Self::Constants(items) | Self::OverloadedFunctions(items) => items.len(),
         }
     }
 
     pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut ParseItem> {
         match self {
             Self::Empty => None,
-            Self::Single(item) => {
-                if index == 0 {
-                    Some(item)
-                } else {
-                    None
-                }
-            }
-            Self::Constants(items) => items.get_mut(index),
-            Self::OverloadedFunctions(items) => items.get_mut(index),
+            Self::Single(item) => (index == 0).then_some(item),
+            Self::Constants(items) | Self::OverloadedFunctions(items) => items.get_mut(index),
         }
     }
 
@@ -128,10 +120,7 @@ impl DocumentContent {
         match self {
             Self::Empty => ParseItemIterMut { next: None, other: None },
             Self::Single(item) => ParseItemIterMut { next: Some(item), other: None },
-            Self::Constants(items) => {
-                ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
-            }
-            Self::OverloadedFunctions(items) => {
+            Self::Constants(items) | Self::OverloadedFunctions(items) => {
                 ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
             }
         }

@@ -312,7 +312,7 @@ impl VerifyArgs {
         )
     }
 
-    /// Resolves [VerificationContext] object either from entered contract name or by trying to
+    /// Resolves [`VerificationContext`] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
         let mut config = self.load_config()?;

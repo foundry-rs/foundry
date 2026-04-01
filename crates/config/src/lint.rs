@@ -66,7 +66,7 @@ pub struct LintSpecificConfig {
 
     /// Contract types that are allowed to appear multiple times in the same file.
     ///
-    /// Valid values: "interface", "library", "abstract_contract"
+    /// Valid values: "interface", "library", "`abstract_contract`"
     ///
     /// Defaults to an empty array (all contract types are flagged when multiple exist).
     /// Note: Regular contracts cannot be exempted and will always be flagged when multiple exist.
@@ -120,7 +120,7 @@ pub enum Severity {
 }
 
 impl Severity {
-    fn to_str(self) -> &'static str {
+    const fn to_str(self) -> &'static str {
         match self {
             Self::High => "High",
             Self::Med => "Med",
@@ -131,7 +131,7 @@ impl Severity {
         }
     }
 
-    fn to_str_kebab(self) -> &'static str {
+    const fn to_str_kebab(self) -> &'static str {
         match self {
             Self::High => "high",
             Self::Med => "medium",
@@ -148,8 +148,7 @@ impl Severity {
             Self::Med => Paint::rgb(message, 255, 135, 61).bold().to_string(),
             Self::Low => Paint::yellow(message).bold().to_string(),
             Self::Info => Paint::cyan(message).bold().to_string(),
-            Self::Gas => Paint::green(message).bold().to_string(),
-            Self::CodeSize => Paint::green(message).bold().to_string(),
+            Self::Gas | Self::CodeSize => Paint::green(message).bold().to_string(),
         }
     }
 }

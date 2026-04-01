@@ -29,9 +29,9 @@ impl<'ast> EarlyLintPass<'ast> for PascalCaseStruct {
     }
 }
 
-/// If the string `s` is not PascalCase, returns a `Some(String)` with the
+/// If the string `s` is not `PascalCase`, returns a `Some(String)` with the
 /// suggested conversion. Otherwise, returns `None`.
-pub fn check_pascal_case(s: &str) -> Option<String> {
+pub(super) fn check_pascal_case(s: &str) -> Option<String> {
     if s.len() <= 1 {
         return None;
     }

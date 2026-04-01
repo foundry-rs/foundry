@@ -393,7 +393,7 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
     parse_json_as(value, ty).map(|v| v.abi_encode())
 }
 
-/// Parses given [serde_json::Value] as a [DynSolValue].
+/// Parses given [`serde_json::Value`] as a [`DynSolValue`].
 pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValue> {
     let to_string = |v: &Value| {
         let mut s = v.to_string();
@@ -503,7 +503,7 @@ fn encode(values: Vec<DynSolValue>) -> Vec<u8> {
 /// Canonicalize a json path key to always start from the root of the document.
 /// Read more about json path syntax: <https://goessner.net/articles/JsonPath/>
 pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
-    if !path.starts_with('$') { format!("${path}").into() } else { path.into() }
+    if path.starts_with('$') { path.into() } else { format!("${path}").into() }
 }
 
 /// Converts a JSON [`Value`] to a [`DynSolValue`] by trying to guess encoded type. For safer
@@ -666,7 +666,7 @@ fn serialize_json<SPEC, BLOCK, N: Network>(
     Ok(stringified.abi_encode())
 }
 
-/// Resolves a [DynSolType] from user input.
+/// Resolves a [`DynSolType`] from user input.
 pub(super) fn resolve_type(
     type_description: &str,
     struct_defs: Option<&StructDefinitions>,
@@ -817,8 +817,8 @@ mod tests {
         }) && value.as_type().is_some()
     }
 
-    /// [DynSolValue::Bytes] of length 32 and 20 are converted to [DynSolValue::FixedBytes] and
-    /// [DynSolValue::Address] respectively. Thus, we can't distinguish between address and bytes of
+    /// [`DynSolValue::Bytes`] of length 32 and 20 are converted to [`DynSolValue::FixedBytes`] and
+    /// [`DynSolValue::Address`] respectively. Thus, we can't distinguish between address and bytes of
     /// length 20 during decoding. Because of that, there are issues with handling of arrays of
     /// those types.
     fn fixup_guessable(value: DynSolValue) -> DynSolValue {

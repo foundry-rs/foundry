@@ -197,7 +197,7 @@ impl DependencyInstallOpts {
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
                         dep_id = Some(DepIdentifier::Branch {
-                            name: tag_or_branch.to_string(),
+                            name: tag_or_branch.clone(),
                             rev,
                             r#override: false,
                         });
@@ -567,7 +567,7 @@ impl Installer<'_> {
                     sh_println!("[{i}] {c} selected")?;
                     return Ok(c.clone());
                 }
-                _ => continue,
+                _ => {}
             }
         }
     }

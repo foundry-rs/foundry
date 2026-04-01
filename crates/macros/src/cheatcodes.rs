@@ -10,7 +10,7 @@ macro_rules! emit_warning {
     };
 }
 
-pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
+pub(crate) fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
     let name_s = name.to_string();
     match &input.data {
@@ -185,8 +185,7 @@ fn derive_struct(
 
     if doc.is_empty() {
         let n = match kind {
-            StructKind::Error => "n",
-            StructKind::Event => "n",
+            StructKind::Error | StructKind::Event => "n",
             StructKind::Struct => "",
         };
         emit_warning!(name.span(), "missing documentation for a{n} {}", kind.as_str());
@@ -206,9 +205,7 @@ fn derive_struct(
                 let ty = &def[..ty_end];
                 let ty_start = ty.rfind(';').or_else(|| ty.find('{')).expect("bad struct def") + 1;
                 let ty = ty[ty_start..].trim();
-                if ty.is_empty() {
-                    panic!("bad struct def: {def:?}")
-                }
+                assert!(!ty.is_empty(), "bad struct def: {def:?}");
 
                 let doc = get_docstring(&f.attrs);
                 let doc = doc.trim();
@@ -265,7 +262,7 @@ enum StructKind {
 }
 
 impl StructKind {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Struct => "struct",
             Self::Error => "error",

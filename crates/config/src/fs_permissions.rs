@@ -68,7 +68,8 @@ impl FsPermissions {
 
         // Find all matching permissions at the longest matching path
         for perm in &self.permissions {
-            let permission_path = dunce::canonicalize(&perm.path).unwrap_or(perm.path.clone());
+            let permission_path =
+                dunce::canonicalize(&perm.path).unwrap_or_else(|_| perm.path.clone());
             if path.starts_with(&permission_path) {
                 let path_len = permission_path.components().count();
                 if path_len > max_path_len {
@@ -90,7 +91,7 @@ impl FsPermissions {
             }
         }
 
-        if max_path_len > 0 { Some(highest_permission) } else { None }
+        (max_path_len > 0).then_some(highest_permission)
     }
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries
@@ -112,12 +113,12 @@ impl FsPermissions {
     }
 
     /// Returns true if no permissions are configured
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.permissions.is_empty()
     }
 
     /// Returns the number of configured permissions
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.permissions.len()
     }
 }
@@ -158,7 +159,7 @@ impl PathPermission {
     }
 
     /// Returns true if the access is allowed
-    pub fn is_granted(&self, kind: FsAccessKind) -> bool {
+    pub const fn is_granted(&self, kind: FsAccessKind) -> bool {
         self.access.is_granted(kind)
     }
 }
@@ -197,14 +198,13 @@ pub enum FsAccessPermission {
 
 impl FsAccessPermission {
     /// Returns true if the access is allowed
-    pub fn is_granted(&self, kind: FsAccessKind) -> bool {
-        match (self, kind) {
-            (Self::ReadWrite, _) => true,
-            (Self::Write, FsAccessKind::Write) => true,
-            (Self::Read, FsAccessKind::Read) => true,
-            (Self::None, _) => false,
-            _ => false,
-        }
+    pub const fn is_granted(&self, kind: FsAccessKind) -> bool {
+        matches!(
+            (self, kind),
+            (Self::ReadWrite, _)
+                | (Self::Write, FsAccessKind::Write)
+                | (Self::Read, FsAccessKind::Read)
+        )
     }
 }
 

@@ -12,12 +12,12 @@ use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
-pub struct ScriptTransactionBuilder<N: Network> {
+pub(crate) struct ScriptTransactionBuilder<N: Network> {
     transaction: TransactionWithMetadata<N>,
 }
 
 impl<N: Network> ScriptTransactionBuilder<N> {
-    pub fn new(transaction: TransactionMaybeSigned<N>, rpc: String) -> Self {
+    pub(crate) fn new(transaction: TransactionMaybeSigned<N>, rpc: String) -> Self {
         let mut transaction = TransactionWithMetadata::from_tx_request(transaction);
         transaction.rpc = rpc;
         // If tx.gas is already set that means it was specified in script
@@ -27,7 +27,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     }
 
     /// Populate the transaction as CALL tx
-    pub fn set_call(
+    pub(crate) fn set_call(
         &mut self,
         local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
@@ -90,7 +90,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     ///
     /// If this is a CREATE2 transaction this attempt to decode the arguments from the CREATE2
     /// deployer's function
-    pub fn set_create(
+    pub(crate) fn set_create(
         &mut self,
         is_create2: bool,
         address: Address,
@@ -144,7 +144,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     }
 
     /// Populates additional data from the transaction execution result.
-    pub fn with_execution_result(
+    pub(crate) fn with_execution_result(
         mut self,
         result: &ScriptResult,
         gas_estimate_multiplier: u64,
@@ -171,7 +171,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         self
     }
 
-    pub fn build(self) -> TransactionWithMetadata<N> {
+    pub(crate) fn build(self) -> TransactionWithMetadata<N> {
         self.transaction
     }
 }

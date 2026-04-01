@@ -29,11 +29,11 @@ use std::{
     sync::Arc,
 };
 
-/// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
-/// which are obtained from [ScriptResult].
+/// Same as [`ExecutedState`](crate::execute::ExecutedState), but also contains [`ExecutionArtifacts`]
+/// which are obtained from [`ScriptResult`].
 ///
-/// Can be either converted directly to [BundledState] or driven to it through
-/// [FilledTransactionsState].
+/// Can be either converted directly to [`BundledState`] or driven to it through
+/// [`FilledTransactionsState`].
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
@@ -233,13 +233,13 @@ impl PreSimulationState {
             .collect()
     }
 
-    /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
+    /// Build [`ScriptRunner`] forking given RPC for each RPC used in the script.
     async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
 
         if !shell::is_json() {
             let n = rpcs.len();
-            let s = if n != 1 { "s" } else { "" };
+            let s = if n == 1 { "" } else { "s" };
             sh_println!("\n## Setting up {n} EVM{s}.")?;
         }
 
@@ -254,7 +254,7 @@ impl PreSimulationState {
 }
 
 /// At this point we have converted transactions collected during script execution to
-/// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
+/// [`TransactionWithMetadata`] objects which contain additional metadata needed for broadcasting and
 /// verification.
 pub struct FilledTransactionsState {
     pub args: ScriptArgs,
@@ -291,7 +291,7 @@ impl FilledTransactionsState {
         let mut txes_iter = mem::take(&mut self.transactions).into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = tx.rpc.to_owned();
+            let tx_rpc = tx.rpc.clone();
             let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
@@ -383,15 +383,7 @@ impl FilledTransactionsState {
                     .unwrap_or_else(|_| "[Could not calculate]".to_string());
                 let estimated_amount = estimated_amount_raw.trim_end_matches('0');
 
-                if !shell::is_json() {
-                    sh_println!("\n==========================")?;
-                    sh_println!("\nChain {}", provider_info.chain)?;
-
-                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
-                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
-                    sh_println!("\n==========================")?;
-                } else {
+                if shell::is_json() {
                     sh_println!(
                         "{}",
                         serde_json::json!({
@@ -402,6 +394,14 @@ impl FilledTransactionsState {
                             "token_symbol": token_symbol,
                         })
                     )?;
+                } else {
+                    sh_println!("\n==========================")?;
+                    sh_println!("\nChain {}", provider_info.chain)?;
+
+                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
+                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
+                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
+                    sh_println!("\n==========================")?;
                 }
             }
         }
@@ -428,7 +428,7 @@ impl FilledTransactionsState {
         })
     }
 
-    /// Creates a [ScriptSequence] object from the given transactions.
+    /// Creates a [`ScriptSequence`] object from the given transactions.
     fn create_sequence(
         &self,
         multi: bool,
