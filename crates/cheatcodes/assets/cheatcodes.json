@@ -3758,7 +3758,7 @@
       },
       "group": "utilities",
       "status": "stable",
-      "safety": "safe"
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -9868,7 +9868,7 @@
       },
       "group": "utilities",
       "status": "stable",
-      "safety": "safe"
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -9888,7 +9888,7 @@
       },
       "group": "utilities",
       "status": "stable",
-      "safety": "safe"
+      "safety": "unsafe"
     },
     {
       "func": {

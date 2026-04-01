@@ -18,6 +18,7 @@ use revm::{
     interpreter::InstructionResult,
 };
 use serde::Serialize;
+use tempo_revm::TempoInvalidTransaction;
 use tokio::time::Duration;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
@@ -107,6 +108,10 @@ pub enum BlockchainError {
         "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
     )]
     DepositTransactionUnsupported,
+    #[error(
+        "tempo transaction received but is not supported.\n\nYou can use it by running anvil with '--tempo'."
+    )]
+    TempoTransactionUnsupported,
     #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
     #[error("Excess blob gas not set.")]
@@ -170,6 +175,28 @@ where
                     Self::DepositTransactionUnsupported
                 }
                 OpTransactionError::MissingEnvelopedTx => Self::InvalidTransaction(err.into()),
+            },
+            EVMError::Header(err) => match err {
+                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
+                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
+            },
+            EVMError::Database(err) => err.into(),
+            EVMError::Custom(err) => Self::Message(err),
+        }
+    }
+}
+
+impl<T> From<EVMError<T, TempoInvalidTransaction>> for BlockchainError
+where
+    T: Into<Self>,
+{
+    fn from(err: EVMError<T, TempoInvalidTransaction>) -> Self {
+        match err {
+            EVMError::Transaction(err) => match err {
+                TempoInvalidTransaction::EthInvalidTransaction(err) => {
+                    InvalidTransactionError::from(err).into()
+                }
+                err => Self::Message(format!("tempo transaction error: {err}")),
             },
             EVMError::Header(err) => match err {
                 InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
@@ -563,6 +590,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::DepositTransactionUnsupported => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::TempoTransactionUnsupported => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::ExcessBlobGasNotSet => {

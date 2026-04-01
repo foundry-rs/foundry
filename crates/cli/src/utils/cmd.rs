@@ -123,8 +123,11 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::EtherlinkShadownet
                     | NamedChain::Karura
                     | NamedChain::KaruraTestnet
+                    | NamedChain::Kusama
                     | NamedChain::Mantle
                     | NamedChain::MantleSepolia
+                    | NamedChain::MegaEth
+                    | NamedChain::MegaEthTestnet
                     | NamedChain::Metis
                     | NamedChain::Monad
                     | NamedChain::MonadTestnet
@@ -132,9 +135,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::Moonbeam
                     | NamedChain::MoonbeamDev
                     | NamedChain::Moonriver
-                    | NamedChain::PolkadotTestnet
-                    | NamedChain::Kusama
                     | NamedChain::Polkadot
+                    | NamedChain::PolkadotTestnet
             );
     }
     false

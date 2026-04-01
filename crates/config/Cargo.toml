@@ -20,6 +20,7 @@ foundry-compilers = { workspace = true, features = ["svm-solc"] }
 alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
+foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 
 revm.workspace = true

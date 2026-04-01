@@ -329,7 +329,7 @@ impl<T: Transaction> PoolInner<T> {
         tx: PoolTransaction<T>,
     ) -> Result<AddedTransaction<T>, PoolError> {
         if self.contains(&tx.hash()) {
-            warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
+            debug!(target: "txpool", "[{:?}] Already imported", tx.hash());
             return Err(PoolError::AlreadyImported(tx.hash()));
         }
 

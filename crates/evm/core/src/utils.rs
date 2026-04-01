@@ -1,4 +1,4 @@
-use crate::EvmEnv;
+use crate::{EvmEnv, FoundryBlock};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
@@ -7,14 +7,11 @@ use alloy_primitives::{B256, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use foundry_config::NamedChain;
 use foundry_evm_networks::NetworkConfigs;
-pub use revm::state::EvmState as StateChangeset;
-use revm::{
-    context::BlockEnv,
-    primitives::{
-        eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-        hardfork::SpecId,
-    },
+use revm::primitives::{
+    eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+    hardfork::SpecId,
 };
+pub use revm::state::EvmState as StateChangeset;
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
@@ -23,18 +20,17 @@ pub fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
 }
 
-/// Constructs a [`BlockEnv`] from a block header.
-pub fn block_env_from_header(header: &impl BlockHeader) -> BlockEnv {
-    BlockEnv {
-        number: U256::from(header.number()),
-        beneficiary: header.beneficiary(),
-        timestamp: U256::from(header.timestamp()),
-        difficulty: header.difficulty(),
-        prevrandao: header.mix_hash(),
-        basefee: header.base_fee_per_gas().unwrap_or_default(),
-        gas_limit: header.gas_limit(),
-        ..Default::default()
-    }
+/// Constructs a generic [`FoundryBlock`] from a block header.
+pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockHeader) -> BLOCK {
+    let mut block = BLOCK::default();
+    block.set_number(U256::from(header.number()));
+    block.set_beneficiary(header.beneficiary());
+    block.set_timestamp(U256::from(header.timestamp()));
+    block.set_difficulty(header.difficulty());
+    block.set_prevrandao(header.mix_hash());
+    block.set_basefee(header.base_fee_per_gas().unwrap_or_default());
+    block.set_gas_limit(header.gas_limit());
+    block
 }
 
 /// Depending on the configured chain id and block number this should apply any specific changes
@@ -42,9 +38,14 @@ pub fn block_env_from_header(header: &impl BlockHeader) -> BlockEnv {
 /// - checks for prevrandao mixhash after merge
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
 ///
-/// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    evm_env: &mut EvmEnv,
+/// Should be called with proper chain id (retrieved from provider if not provided), works with any
+/// [`FoundryBlock`] type.
+pub fn apply_chain_and_block_specific_env_changes<
+    N: Network,
+    SPEC: Into<SpecId> + Copy,
+    BLOCK: FoundryBlock,
+>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
@@ -57,8 +58,9 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
             Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
-                    evm_env.block_env.difficulty =
-                        evm_env.block_env.prevrandao.unwrap_or_default().into();
+                    evm_env
+                        .block_env
+                        .set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
                 }
 
                 return;
@@ -70,7 +72,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
                 // specification. This will confuse revm and causes emulation
                 // failure.
-                evm_env.block_env.prevrandao = Some(evm_env.block_env.difficulty.into());
+                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
                 return;
             }
             c if c.is_arbitrum() => {
@@ -83,22 +85,23 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                         serde_json::from_value::<U256>(l1_block_number).ok()
                     })
                 {
-                    evm_env.block_env.number = l1_block_number.to();
+                    evm_env.block_env.set_number(l1_block_number);
                 }
             }
             _ => {}
         }
     }
 
-    if configs.bypass_prevrandao(evm_env.cfg_env.chain_id) && evm_env.block_env.prevrandao.is_none()
+    if configs.bypass_prevrandao(evm_env.cfg_env.chain_id)
+        && evm_env.block_env.prevrandao().is_none()
     {
         // <https://github.com/foundry-rs/foundry/issues/4232>
-        evm_env.block_env.prevrandao = Some(B256::random());
+        evm_env.block_env.set_prevrandao(Some(B256::random()));
     }
 
     // if difficulty is `0` we assume it's past merge
     if block.header().difficulty().is_zero() {
-        evm_env.block_env.difficulty = evm_env.block_env.prevrandao.unwrap_or_default().into();
+        evm_env.block_env.set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
     }
 }
 

@@ -54,6 +54,7 @@ use std::{
 mod macros;
 
 pub mod utils;
+pub use foundry_evm_hardforks::{FromEvmVersion, evm_spec_id};
 pub use utils::*;
 
 mod endpoints;

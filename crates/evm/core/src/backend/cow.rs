@@ -2,17 +2,16 @@
 
 use super::BackendError;
 use crate::{
-    EthInspectorExt,
+    FoundryInspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
     fork::{CreateFork, ForkId},
 };
-use alloy_evm::{Evm, EvmEnv};
+use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
-use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -21,7 +20,7 @@ use revm::{
     context::TxEnv,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{HashMap as Map, hardfork::SpecId},
+    primitives::{AddressMap, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState},
 };
 use std::{borrow::Cow, collections::BTreeMap};
@@ -64,7 +63,7 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: EthInspectorExt>(
+    pub fn inspect<I: for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>>(
         &mut self,
         evm_env: &mut EvmEnv,
         tx_env: &mut TxEnv,
@@ -74,17 +73,12 @@ impl<'a> CowBackend<'a> {
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller, tx_env.kind));
 
-        let mut evm = crate::evm::new_eth_evm_with_inspector(
-            self,
-            evm_env.clone(),
-            tx_env.clone(),
-            inspector,
-        );
+        let mut evm = crate::evm::new_eth_evm_with_inspector(self, evm_env.clone(), inspector);
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
-        *evm_env = EvmEnv::new(evm.cfg.clone(), evm.block.clone());
         *tx_env = evm.tx.clone();
+        *evm_env = evm.finish().1;
 
         Ok(res)
     }
@@ -127,10 +121,10 @@ impl DatabaseExt for CowBackend<'_> {
         id: U256,
         journaled_state: &JournaledState,
         evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        caller: Address,
         action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
-        self.backend_mut().revert_state(id, journaled_state, evm_env, tx_env, action)
+        self.backend_mut().revert_state(id, journaled_state, evm_env, caller, action)
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
@@ -174,10 +168,9 @@ impl DatabaseExt for CowBackend<'_> {
         id: Option<LocalForkId>,
         block_number: u64,
         evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut().roll_fork(id, block_number, evm_env, tx_env, journaled_state)
+        self.backend_mut().roll_fork(id, block_number, evm_env, journaled_state)
     }
 
     fn roll_fork_to_transaction(
@@ -185,16 +178,9 @@ impl DatabaseExt for CowBackend<'_> {
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut().roll_fork_to_transaction(
-            id,
-            transaction,
-            evm_env,
-            tx_env,
-            journaled_state,
-        )
+        self.backend_mut().roll_fork_to_transaction(id, transaction, evm_env, journaled_state)
     }
 
     fn transact(
@@ -202,21 +188,20 @@ impl DatabaseExt for CowBackend<'_> {
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: EvmEnv,
-        tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()> {
-        self.backend_mut().transact(id, transaction, evm_env, tx_env, journaled_state, inspector)
+        self.backend_mut().transact(id, transaction, evm_env, journaled_state, inspector)
     }
 
     fn transact_from_tx(
         &mut self,
-        transaction: &TransactionRequest,
+        tx_env: TxEnv,
         evm_env: EvmEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()> {
-        self.backend_mut().transact_from_tx(transaction, evm_env, journaled_state, inspector)
+        self.backend_mut().transact_from_tx(tx_env, evm_env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -326,7 +311,7 @@ impl Database for CowBackend<'_> {
 }
 
 impl DatabaseCommit for CowBackend<'_> {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         self.backend.to_mut().commit(changes)
     }
 }

@@ -2,15 +2,17 @@
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
-use foundry_evm_core::backend::DatabaseExt;
+use foundry_evm_core::backend::DatabaseError;
 use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
+    Database,
     bytecode::Bytecode,
     context::{Cfg, ContextTr, JournalTr, Transaction},
     context_interface::transaction::SignedAuthorization,
@@ -20,9 +22,12 @@ use revm::{
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<
+        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
+        N: Network,
+    >(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self {} = self;
         broadcast(ccx, None, true)
@@ -30,9 +35,12 @@ impl Cheatcode for broadcast_0Call {
 }
 
 impl Cheatcode for broadcast_1Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<
+        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
+        N: Network,
+    >(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), true)
@@ -40,9 +48,12 @@ impl Cheatcode for broadcast_1Call {
 }
 
 impl Cheatcode for broadcast_2Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<
+        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
+        N: Network,
+    >(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, true)
@@ -50,9 +61,9 @@ impl Cheatcode for broadcast_2Call {
 }
 
 impl Cheatcode for attachDelegation_0Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { signedDelegation } = self;
         attach_delegation(ccx, signedDelegation, false)
@@ -60,9 +71,9 @@ impl Cheatcode for attachDelegation_0Call {
 }
 
 impl Cheatcode for attachDelegation_1Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { signedDelegation, crossChain } = self;
         attach_delegation(ccx, signedDelegation, *crossChain)
@@ -70,9 +81,9 @@ impl Cheatcode for attachDelegation_1Call {
 }
 
 impl Cheatcode for signDelegation_0Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { implementation, privateKey } = *self;
         sign_delegation(ccx, privateKey, implementation, None, false, false)
@@ -80,9 +91,9 @@ impl Cheatcode for signDelegation_0Call {
 }
 
 impl Cheatcode for signDelegation_1Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { implementation, privateKey, nonce } = *self;
         sign_delegation(ccx, privateKey, implementation, Some(nonce), false, false)
@@ -90,9 +101,9 @@ impl Cheatcode for signDelegation_1Call {
 }
 
 impl Cheatcode for signDelegation_2Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { implementation, privateKey, crossChain } = *self;
         sign_delegation(ccx, privateKey, implementation, None, crossChain, false)
@@ -100,9 +111,9 @@ impl Cheatcode for signDelegation_2Call {
 }
 
 impl Cheatcode for signAndAttachDelegation_0Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { implementation, privateKey } = *self;
         sign_delegation(ccx, privateKey, implementation, None, false, true)
@@ -110,9 +121,9 @@ impl Cheatcode for signAndAttachDelegation_0Call {
 }
 
 impl Cheatcode for signAndAttachDelegation_1Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { implementation, privateKey, nonce } = *self;
         sign_delegation(ccx, privateKey, implementation, Some(nonce), false, true)
@@ -120,9 +131,9 @@ impl Cheatcode for signAndAttachDelegation_1Call {
 }
 
 impl Cheatcode for signAndAttachDelegation_2Call {
-    fn apply_stateful<CTX: ContextTr<Db: DatabaseExt>>(
+    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { implementation, privateKey, crossChain } = *self;
         sign_delegation(ccx, privateKey, implementation, None, crossChain, true)
@@ -130,8 +141,8 @@ impl Cheatcode for signAndAttachDelegation_2Call {
 }
 
 /// Helper function to attach an EIP-7702 delegation.
-fn attach_delegation<CTX: ContextTr<Db: DatabaseExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn attach_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    ccx: &mut CheatsCtxt<'_, CTX, N>,
     delegation: &SignedDelegation,
     cross_chain: bool,
 ) -> Result {
@@ -154,8 +165,8 @@ fn attach_delegation<CTX: ContextTr<Db: DatabaseExt>>(
 
 /// Helper function to sign and attach (if needed) an EIP-7702 delegation.
 /// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
-fn sign_delegation<CTX: ContextTr<Db: DatabaseExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn sign_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    ccx: &mut CheatsCtxt<'_, CTX, N>,
     private_key: Uint<256, 4>,
     implementation: Address,
     nonce: Option<u64>,
@@ -227,8 +238,8 @@ fn next_delegation_nonce(
     }
 }
 
-fn write_delegation<CTX: ContextTr<Db: DatabaseExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn write_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    ccx: &mut CheatsCtxt<'_, CTX, N>,
     auth: SignedAuthorization,
 ) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
@@ -264,7 +275,10 @@ fn write_delegation<CTX: ContextTr<Db: DatabaseExt>>(
 }
 
 impl Cheatcode for attachBlobCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr, N: Network>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
+    ) -> Result {
         let Self { blob } = self;
         ensure!(
             ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
@@ -283,9 +297,12 @@ impl Cheatcode for attachBlobCall {
 }
 
 impl Cheatcode for startBroadcast_0Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<
+        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
+        N: Network,
+    >(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self {} = self;
         broadcast(ccx, None, false)
@@ -293,9 +310,12 @@ impl Cheatcode for startBroadcast_0Call {
 }
 
 impl Cheatcode for startBroadcast_1Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<
+        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
+        N: Network,
+    >(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), false)
@@ -303,9 +323,12 @@ impl Cheatcode for startBroadcast_1Call {
 }
 
 impl Cheatcode for startBroadcast_2Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
+    fn apply_stateful<
+        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
+        N: Network,
+    >(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
     ) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, false)
@@ -313,7 +336,10 @@ impl Cheatcode for startBroadcast_2Call {
 }
 
 impl Cheatcode for stopBroadcastCall {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr, N: Network>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
+    ) -> Result {
         let Self {} = self;
         let Some(broadcast) = ccx.state.broadcast.take() else {
             bail!("no broadcast in progress to stop");
@@ -324,7 +350,10 @@ impl Cheatcode for stopBroadcastCall {
 }
 
 impl Cheatcode for getWalletsCall {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<CTX: ContextTr, N: Network>(
+        &self,
+        ccx: &mut CheatsCtxt<'_, CTX, N>,
+    ) -> Result {
         let wallets = ccx.state.wallets().signers().unwrap_or_default();
         Ok(wallets.abi_encode())
     }
@@ -400,8 +429,11 @@ impl Wallets {
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
-fn broadcast<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn broadcast<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+    N: Network,
+>(
+    ccx: &mut CheatsCtxt<'_, CTX, N>,
     new_origin: Option<&Address>,
     single_call: bool,
 ) -> Result {
@@ -446,8 +478,11 @@ fn broadcast<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
 /// Sets up broadcasting from a script with the sender derived from `private_key`.
 /// Adds this private key to `state`'s `wallets` vector to later be used for signing
 /// if broadcast is successful.
-fn broadcast_key<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn broadcast_key<
+    CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
+    N: Network,
+>(
+    ccx: &mut CheatsCtxt<'_, CTX, N>,
     private_key: &U256,
     single_call: bool,
 ) -> Result {

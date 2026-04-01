@@ -78,8 +78,8 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
-    FoundryNetwork, FoundryTransactionRequest, FoundryTxEnvelope, FoundryTxReceipt, FoundryTxType,
-    FoundryTypedTx,
+    FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
+    FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -387,14 +387,14 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
         node_info!("anvil_nodeInfo");
 
-        let env = self.backend.env().read();
+        let evm_env = self.backend.evm_env().read();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
-        let hard_fork: &str = env.evm_env.cfg_env.spec.into();
+        let hard_fork: &str = (*evm_env.spec_id()).into();
 
         Ok(NodeInfo {
             current_block_number: self.backend.best_number(),
-            current_block_timestamp: env.evm_env.block_env.timestamp.saturating_to(),
+            current_block_timestamp: evm_env.block_env.timestamp.saturating_to(),
             current_block_hash: self.backend.best_hash(),
             hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {
@@ -622,11 +622,34 @@ impl<N: Network> EthApi<N> {
     pub fn storage_info(&self) -> StorageInfo<N> {
         StorageInfo::new(Arc::clone(&self.backend))
     }
-}
 
-// == impl EthApi anvil endpoints ==
+    /// Handler for RPC call: `anvil_getBlobByHash`
+    pub fn anvil_get_blob_by_versioned_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<alloy_consensus::Blob>> {
+        node_info!("anvil_getBlobByHash");
+        Ok(self.backend.get_blob_by_versioned_hash(hash)?)
+    }
 
-impl EthApi<FoundryNetwork> {
+    /// Handler for RPC call: `anvil_getBlobsByBlockId`
+    pub fn anvil_get_blobs_by_block_id(
+        &self,
+        block_id: impl Into<BlockId>,
+        versioned_hashes: Vec<B256>,
+    ) -> Result<Option<Vec<Blob>>> {
+        node_info!("anvil_getBlobsByBlockId");
+        Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
+    }
+
+    /// Returns the genesis time for the Beacon chain
+    ///
+    /// Handler for Beacon API call: `GET /eth/v1/beacon/genesis`
+    pub fn anvil_get_genesis_time(&self) -> Result<u64> {
+        node_info!("anvil_getGenesisTime");
+        Ok(self.backend.genesis_time())
+    }
+
     /// Reset the fork to a fresh forked state, and optionally update the fork config.
     ///
     /// If `forking` is `None` then this will disable forking entirely.
@@ -647,6 +670,66 @@ impl EthApi<FoundryNetwork> {
         Ok(())
     }
 
+    /// Revert the state of the blockchain to a previous snapshot.
+    /// Takes a single parameter, which is the snapshot id to revert to.
+    ///
+    /// Handler for RPC call: `evm_revert`
+    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
+        node_info!("evm_revert");
+        self.backend.revert_state_snapshot(id).await
+    }
+
+    /// Send transactions impersonating specific account and contract addresses.
+    ///
+    /// Handler for ETH RPC call: `anvil_impersonateAccount`
+    pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
+        node_info!("anvil_impersonateAccount");
+        self.backend.impersonate(address);
+        Ok(())
+    }
+
+    /// Stops impersonating an account if previously set with `anvil_impersonateAccount`.
+    ///
+    /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
+    pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
+        node_info!("anvil_stopImpersonatingAccount");
+        self.backend.stop_impersonating(address);
+        Ok(())
+    }
+
+    /// If set to true will make every account impersonated
+    ///
+    /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
+    pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
+        node_info!("anvil_autoImpersonateAccount");
+        self.backend.auto_impersonate_account(enabled);
+        Ok(())
+    }
+
+    /// Registers a new address and signature pair to impersonate.
+    pub async fn anvil_impersonate_signature(
+        &self,
+        signature: Bytes,
+        address: Address,
+    ) -> Result<()> {
+        node_info!("anvil_impersonateSignature");
+        self.backend.impersonate_signature(signature, address).await
+    }
+}
+
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> EthApi<N> {
+    /// Returns the current state
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState> {
+        self.backend.serialized_state(preserve_historical_states).await
+    }
+}
+
+// == impl EthApi anvil endpoints ==
+
+impl EthApi<FoundryNetwork> {
     /// Create a buffer that represents all state on the chain, which can be loaded to separate
     /// process by calling `anvil_loadState`
     ///
@@ -659,14 +742,6 @@ impl EthApi<FoundryNetwork> {
         self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
     }
 
-    /// Returns the current state
-    pub async fn serialized_state(
-        &self,
-        preserve_historical_states: bool,
-    ) -> Result<SerializableState> {
-        self.backend.serialized_state(preserve_historical_states).await
-    }
-
     /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
     /// storage.
     ///
@@ -674,15 +749,6 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
         self.backend.load_state_bytes(buf).await
-    }
-
-    /// Revert the state of the blockchain to a previous snapshot.
-    /// Takes a single parameter, which is the snapshot id to revert to.
-    ///
-    /// Handler for RPC call: `evm_revert`
-    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
-        node_info!("evm_revert");
-        self.backend.revert_state_snapshot(id).await
     }
 
     async fn block_request(
@@ -915,6 +981,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthCoinbase(()) => self.author().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
                 self.storage_at(addr, slot, block).await.to_rpc_result()
+            }
+            EthRequest::EthGetStorageValues(requests, block) => {
+                self.storage_values(requests, block).await.to_rpc_result()
             }
             EthRequest::EthGetBlockByHash(hash, full) => {
                 if full {
@@ -1507,6 +1576,47 @@ impl EthApi<FoundryNetwork> {
         self.backend.storage_at(address, index, Some(block_request)).await
     }
 
+    /// Returns storage values for multiple accounts and slots in a single call.
+    ///
+    /// Handler for ETH RPC call: `eth_getStorageValues`
+    pub async fn storage_values(
+        &self,
+        requests: HashMap<Address, Vec<B256>>,
+        block_number: Option<BlockId>,
+    ) -> Result<HashMap<Address, Vec<B256>>> {
+        node_info!("eth_getStorageValues");
+
+        let total_slots: usize = requests.values().map(|s| s.len()).sum();
+        if total_slots > 1024 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "total slot count {total_slots} exceeds limit 1024"
+            ))));
+        }
+
+        let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            let mut result: HashMap<Address, Vec<B256>> = HashMap::default();
+            for (address, slots) in requests {
+                let mut values = Vec::with_capacity(slots.len());
+                for slot in &slots {
+                    let val = fork
+                        .storage_at(address, (*slot).into(), Some(BlockNumber::Number(number)))
+                        .await?;
+                    values.push(B256::from(val));
+                }
+                result.insert(address, values);
+            }
+            return Ok(result);
+        }
+
+        self.backend.storage_values(requests, Some(block_request)).await
+    }
+
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
@@ -1973,12 +2083,8 @@ impl EthApi<FoundryNetwork> {
                 // execute again but with access list set
                 request.access_list = Some(access_list.clone());
 
-                let (exit, out, gas_used, _) = self.backend.call_with_state(
-                    &state,
-                    request.clone(),
-                    FeeDetails::zero(),
-                    block_env,
-                )?;
+                let (exit, out, gas_used, _) =
+                    self.backend.call_with_state(&state, request, FeeDetails::zero(), block_env)?;
                 ensure_return_ok(exit, &out)?;
 
                 Ok(AccessListResult {
@@ -2057,37 +2163,10 @@ impl EthApi<FoundryNetwork> {
         Ok(FillTransaction { raw, tx })
     }
 
-    /// Handler for RPC call: `anvil_getBlobByHash`
-    pub fn anvil_get_blob_by_versioned_hash(
-        &self,
-        hash: B256,
-    ) -> Result<Option<alloy_consensus::Blob>> {
-        node_info!("anvil_getBlobByHash");
-        Ok(self.backend.get_blob_by_versioned_hash(hash)?)
-    }
-
     /// Handler for RPC call: `anvil_getBlobsByTransactionHash`
     pub fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByTransactionHash");
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
-    }
-
-    /// Handler for RPC call: `anvil_getBlobsByBlockId`
-    pub fn anvil_get_blobs_by_block_id(
-        &self,
-        block_id: impl Into<BlockId>,
-        versioned_hashes: Vec<B256>,
-    ) -> Result<Option<Vec<Blob>>> {
-        node_info!("anvil_getBlobsByBlockId");
-        Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
-    }
-
-    /// Returns the genesis time for the Beacon chain
-    ///
-    /// Handler for Beacon API call: `GET /eth/v1/beacon/genesis`
-    pub fn anvil_get_genesis_time(&self) -> Result<u64> {
-        node_info!("anvil_getGenesisTime");
-        Ok(self.backend.genesis_time())
     }
 
     /// Get transaction by its hash.
@@ -2323,7 +2402,7 @@ impl EthApi<FoundryNetwork> {
             current: EthForkConfig {
                 activation_time: 0,
                 blob_schedule: self.backend.blob_params(),
-                chain_id: self.backend.env().read().evm_env.cfg_env.chain_id,
+                chain_id: self.backend.chain_id().to::<u64>(),
                 fork_id: Bytes::from_static(&[0; 4]),
                 precompiles: self.backend.precompiles(),
                 system_contracts: self.backend.system_contracts(),
@@ -2664,43 +2743,6 @@ impl EthApi<FoundryNetwork> {
 // == impl EthApi anvil endpoints ==
 
 impl EthApi<FoundryNetwork> {
-    /// Send transactions impersonating specific account and contract addresses.
-    ///
-    /// Handler for ETH RPC call: `anvil_impersonateAccount`
-    pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
-        node_info!("anvil_impersonateAccount");
-        self.backend.impersonate(address);
-        Ok(())
-    }
-
-    /// Stops impersonating an account if previously set with `anvil_impersonateAccount`.
-    ///
-    /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
-    pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
-        node_info!("anvil_stopImpersonatingAccount");
-        self.backend.stop_impersonating(address);
-        Ok(())
-    }
-
-    /// If set to true will make every account impersonated
-    ///
-    /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
-    pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
-        node_info!("anvil_autoImpersonateAccount");
-        self.backend.auto_impersonate_account(enabled);
-        Ok(())
-    }
-
-    /// Registers a new address and signature pair to impersonate.
-    pub async fn anvil_impersonate_signature(
-        &self,
-        signature: Bytes,
-        address: Address,
-    ) -> Result<()> {
-        node_info!("anvil_impersonateSignature");
-        self.backend.impersonate_signature(signature, address).await
-    }
-
     /// Mines a series of blocks.
     ///
     /// Handler for ETH RPC call: `anvil_mine`
@@ -3445,8 +3487,7 @@ impl EthApi<FoundryNetwork> {
             FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
             FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
-            // TODO(onbjerg): we should impl support for Tempo transactions
-            FoundryTxEnvelope::Tempo(_) => todo!(),
+            FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active(),
         }
     }
 }
@@ -3549,6 +3590,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::CreateContractSizeLimit
                 | InstructionResult::CreateContractStartingWithEF
                 | InstructionResult::CreateInitCodeSizeLimit
+                | InstructionResult::InvalidImmediateEncoding
                 | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
             },
         }

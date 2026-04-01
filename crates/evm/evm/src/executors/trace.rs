@@ -4,11 +4,15 @@ use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{Chain, Config, utils::evm_spec_id};
+use foundry_config::{Chain, Config, evm_spec_id};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceMode;
-use revm::{context::TxEnv, primitives::hardfork::SpecId, state::Bytecode};
+use revm::{
+    context::{Transaction, TxEnv},
+    primitives::hardfork::SpecId,
+    state::Bytecode,
+};
 use std::ops::{Deref, DerefMut};
 
 /// A default executor with tracing enabled
@@ -81,13 +85,13 @@ impl TracingExecutor {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
-        let (evm_env, tx_env) = evm_opts.env().await?;
+        let (evm_env, tx_env, fork_block) = evm_opts.env::<_, _, TxEnv>().await?;
 
-        let fork = evm_opts.get_fork(config, evm_env.clone()).unwrap();
+        let fork = evm_opts.get_fork(config, &evm_env, fork_block).unwrap();
         let networks = evm_opts.networks.with_chain_id(evm_env.cfg_env.chain_id);
         config.labels.extend(networks.precompiles_label());
 
-        let chain = tx_env.chain_id.unwrap().into();
+        let chain = tx_env.chain_id().unwrap().into();
         Ok((evm_env, tx_env, fork, chain, networks))
     }
 }

@@ -1,4 +1,4 @@
-use crate::{signer::WalletSigner, utils, wallet_raw::RawWalletOpts};
+use crate::{signer::WalletSigner, tempo::TempoAccessKeyConfig, utils, wallet_raw::RawWalletOpts};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::Result;
@@ -105,7 +105,16 @@ pub struct WalletOpts {
 }
 
 impl WalletOpts {
-    pub async fn signer(&self) -> Result<WalletSigner> {
+    /// Attempts to resolve a signer from the configured wallet options.
+    ///
+    /// Returns the signer and, for Tempo keychain mode, an [`TempoAccessKeyConfig`] describing the
+    /// root wallet and provisioning data.
+    ///
+    /// Returns `Ok((None, None))` if no wallet option was configured and no Tempo fallback
+    /// matched.
+    pub async fn maybe_signer(
+        &self,
+    ) -> Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
         trace!("start finding signer");
 
         let get_env = |key: &str| {
@@ -158,7 +167,29 @@ impl WalletOpts {
                 unreachable!()
             }
         } else {
-            eyre::bail!(
+            // No explicit wallet option was provided. Try Tempo wallet as a fallback
+            // if `--from` is set.
+            if let Some(from) = self.from {
+                match crate::tempo::lookup_signer(from)? {
+                    crate::tempo::TempoLookup::Direct(signer) => {
+                        return Ok((Some(signer), None));
+                    }
+                    crate::tempo::TempoLookup::Keychain(signer, config) => {
+                        return Ok((Some(signer), Some(*config)));
+                    }
+                    crate::tempo::TempoLookup::NotFound => {}
+                }
+            }
+
+            return Ok((None, None));
+        };
+
+        Ok((Some(signer), None))
+    }
+
+    pub async fn signer(&self) -> Result<WalletSigner> {
+        self.maybe_signer().await?.0.ok_or_else(|| {
+            eyre::eyre!(
                 "\
 Error accessing local wallet. Did you pass a keystore, hardware wallet, private key or mnemonic?
 
@@ -182,9 +213,7 @@ respectively. The sender address can be specified by setting the `ETH_FROM` envi
 variable to the desired unlocked account address, or by providing the address directly
 using the --from flag."
             )
-        };
-
-        Ok(signer)
+        })
     }
 }
 
