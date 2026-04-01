@@ -1,5 +1,6 @@
 //! Contains various tests for `forge test`.
 
+use alloy_chains::NamedChain;
 use alloy_primitives::U256;
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
@@ -4460,3 +4461,161 @@ Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
 });
+
+// Regression tests for Arbitrum fork block number handling.
+// On Arbitrum, `block.number` is remapped to the L1 block number by
+// `apply_chain_and_block_specific_env_changes`. These tests verify that all fork
+// creation paths correctly pin to the actual L2 block, so contracts that exist on
+// modern L2 blocks remain accessible.
+
+// Tests that `--fork-url` correctly pins to L2 and that contracts exist.
+forgetest_init!(
+    #[ignore]
+    flaky_arbitrum_fork_initial_pin,
+    |prj, cmd| {
+        let rpc = rpc::next_rpc_endpoint(NamedChain::Arbitrum);
+
+        prj.add_test(
+            "ArbFork.t.sol",
+            r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IUSDC {
+    function decimals() external view returns (uint8);
+}
+
+interface IPayloadsController {
+    function getPayloadsCount() external view returns (uint40);
+}
+
+contract ArbForkInitialPinTest is Test {
+    address constant USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    address constant PAYLOADS = 0x89644CA1bB8064760312AE4F03ea41b05dA3637C;
+
+    function test_contractsExist() external view {
+        assertTrue(USDC.code.length > 0, "USDC should have code");
+        assertTrue(PAYLOADS.code.length > 0, "PayloadsController should have code");
+        assertEq(IUSDC(USDC).decimals(), 6);
+        assertTrue(IPayloadsController(PAYLOADS).getPayloadsCount() > 0);
+    }
+}
+    "#,
+        );
+
+        cmd.args(["test", "-vvvv", "--fork-url", rpc.as_str()]).assert_success();
+    }
+);
+
+// Tests that `vm.createSelectFork` correctly pins to L2 on Arbitrum.
+forgetest_init!(
+    #[ignore]
+    flaky_arbitrum_fork_create_select_fork,
+    |prj, cmd| {
+        let rpc = rpc::next_rpc_endpoint(NamedChain::Arbitrum);
+
+        prj.add_test(
+            "ArbForkCSF.t.sol",
+            &format!(
+                r#"
+import {{Test}} from "forge-std/Test.sol";
+
+interface IUSDC {{
+    function decimals() external view returns (uint8);
+}}
+
+contract ArbForkCreateSelectForkTest is Test {{
+    address constant USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+
+    function test_createSelectFork_latest() external {{
+        vm.createSelectFork("{rpc}");
+        assertTrue(USDC.code.length > 0, "USDC should have code");
+        assertEq(IUSDC(USDC).decimals(), 6);
+    }}
+
+    function test_createSelectFork_specificBlock() external {{
+        vm.createSelectFork("{rpc}", 440_000_000);
+        assertTrue(USDC.code.length > 0, "USDC should have code at block 440M");
+        assertEq(IUSDC(USDC).decimals(), 6);
+    }}
+
+    function test_createFork_then_selectFork() external {{
+        uint256 forkId = vm.createFork("{rpc}");
+        vm.selectFork(forkId);
+        assertTrue(USDC.code.length > 0, "USDC should have code after selectFork");
+        assertEq(IUSDC(USDC).decimals(), 6);
+    }}
+}}
+    "#
+            ),
+        );
+
+        cmd.args(["test", "-vvvv"]).assert_success();
+    }
+);
+
+// Tests that `vm.rollFork` to a specific L2 block works on Arbitrum.
+forgetest_init!(
+    #[ignore]
+    flaky_arbitrum_fork_roll_fork,
+    |prj, cmd| {
+        let rpc = rpc::next_rpc_endpoint(NamedChain::Arbitrum);
+
+        prj.add_test(
+            "ArbForkRoll.t.sol",
+            &format!(
+                r#"
+import {{Test}} from "forge-std/Test.sol";
+
+interface IUSDC {{
+    function decimals() external view returns (uint8);
+}}
+
+interface IPayloadsController {{
+    function getPayloadsCount() external view returns (uint40);
+}}
+
+contract ArbForkRollTest is Test {{
+    address constant USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    address constant PAYLOADS = 0x89644CA1bB8064760312AE4F03ea41b05dA3637C;
+
+    function test_rollFork_specificBlock() external {{
+        vm.createSelectFork("{rpc}");
+        assertTrue(USDC.code.length > 0, "pre-roll: USDC should exist");
+
+        vm.rollFork(440_000_000);
+        assertTrue(USDC.code.length > 0, "post-roll: USDC should exist at 440M");
+        assertEq(IUSDC(USDC).decimals(), 6);
+        assertTrue(IPayloadsController(PAYLOADS).getPayloadsCount() > 0);
+    }}
+
+    function test_rollFork_nonActiveFork() external {{
+        uint256 fork1 = vm.createSelectFork("{rpc}");
+        uint256 fork2 = vm.createFork("{rpc}", 430_000_000);
+
+        vm.rollFork(fork2, 445_000_000);
+        vm.selectFork(fork2);
+
+        assertTrue(USDC.code.length > 0, "rolled fork: USDC should exist at 445M");
+        assertEq(IUSDC(USDC).decimals(), 6);
+    }}
+
+    function test_multipleForks_differentState() external {{
+        uint256 fork1 = vm.createFork("{rpc}", 440_000_000);
+        uint256 fork2 = vm.createFork("{rpc}", 445_000_000);
+
+        vm.selectFork(fork1);
+        uint40 count1 = IPayloadsController(PAYLOADS).getPayloadsCount();
+
+        vm.selectFork(fork2);
+        uint40 count2 = IPayloadsController(PAYLOADS).getPayloadsCount();
+
+        assertTrue(count2 >= count1, "later block should have >= payloads");
+    }}
+}}
+    "#
+            ),
+        );
+
+        cmd.args(["test", "-vvvv"]).assert_success();
+    }
+);

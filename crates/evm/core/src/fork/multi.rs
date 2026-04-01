@@ -356,13 +356,23 @@ impl<
         additional_senders: Vec<CreateSender<N, SPEC, BLOCK>>,
     ) {
         self.forks.insert(fork_id.clone(), fork.clone());
-        let _ = sender.send(Ok((fork_id.clone(), fork.backend.clone(), fork.evm_env.clone(), fork.fork_block_number)));
+        let _ = sender.send(Ok((
+            fork_id.clone(),
+            fork.backend.clone(),
+            fork.evm_env.clone(),
+            fork.fork_block_number,
+        )));
 
         // Notify all additional senders and track unique forkIds.
         for sender in additional_senders {
             let next_fork_id = fork.inc_senders(fork_id.clone());
             self.forks.insert(next_fork_id.clone(), fork.clone());
-            let _ = sender.send(Ok((next_fork_id, fork.backend.clone(), fork.evm_env.clone(), fork.fork_block_number)));
+            let _ = sender.send(Ok((
+                next_fork_id,
+                fork.backend.clone(),
+                fork.evm_env.clone(),
+                fork.fork_block_number,
+            )));
         }
     }
 
@@ -557,7 +567,13 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
         backend: SharedBackend<N, BLOCK>,
         fork_block_number: u64,
     ) -> Self {
-        Self { opts, evm_env, backend, num_senders: Arc::new(AtomicUsize::new(1)), fork_block_number }
+        Self {
+            opts,
+            evm_env,
+            backend,
+            num_senders: Arc::new(AtomicUsize::new(1)),
+            fork_block_number,
+        }
     }
 
     /// Increment senders and return unique identifier of the fork.

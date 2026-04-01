@@ -495,6 +495,50 @@ mod tests {
         );
     }
 
+    // Verifies that `MultiFork::create_fork` stores the actual L2 block number in
+    // `CreatedFork::fork_block_number`, distinct from the remapped `block_env.number` on
+    // Arbitrum.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multifork_stores_l2_block_number_on_arbitrum() {
+        let endpoint =
+            foundry_test_utils::rpc::next_rpc_endpoint(foundry_config::NamedChain::Arbitrum);
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(endpoint.clone());
+
+        let (evm_env, _, fork_block) = evm_opts.env::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let fork_block = fork_block.expect("should have resolved a fork block number");
+
+        // Create a fork via MultiFork — this is the path used by cheatcodes
+        let fork_opts = evm_opts.get_fork(&Config::default(), &evm_env, Some(fork_block)).unwrap();
+        let multi_fork =
+            crate::fork::MultiFork::<alloy_network::AnyNetwork, SpecId, BlockEnv>::spawn();
+        let (fork_id, _, returned_env, returned_block) =
+            multi_fork.create_fork(fork_opts).unwrap();
+
+        // The returned fork block number should be the actual L2 block
+        assert_eq!(
+            returned_block, fork_block,
+            "MultiFork::create_fork should return the actual L2 block number"
+        );
+
+        // block_env.number in the returned env is the remapped L1 block (smaller)
+        let env_block: u64 = returned_env.block_env.number.to();
+        assert!(
+            fork_block > env_block,
+            "fork_block ({fork_block}) should be L2 block, env block ({env_block}) should be L1"
+        );
+
+        // get_fork_block_number should return the same L2 block
+        let stored_block = multi_fork.get_fork_block_number(fork_id).unwrap();
+        assert_eq!(
+            stored_block,
+            Some(fork_block),
+            "get_fork_block_number should return the actual L2 block number"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn get_fork_preserves_explicit_block_number() {
         let endpoint = foundry_test_utils::rpc::next_http_rpc_endpoint();
