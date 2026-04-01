@@ -507,7 +507,7 @@ where
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork, _) = backend.forks.create_fork(fork)?;
+            let (fork_id, fork, _, _) = backend.forks.create_fork(fork)?;
             let fork_db = ForkDB::new(fork);
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
@@ -896,6 +896,7 @@ where
         &mut self,
         id: LocalForkId,
         evm_env: EvmEnv,
+        replay_block_number: u64,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<N::TransactionResponse>> {
@@ -904,8 +905,7 @@ where
         let persistent_accounts = self.inner.persistent_accounts.clone();
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        let full_block =
-            fork.backend().get_full_block(evm_env.block_env.number().saturating_to::<u64>())?;
+        let full_block = fork.backend().get_full_block(replay_block_number)?;
 
         // Collect non-system transactions up to and including the target.
         let txs = full_block
@@ -1042,7 +1042,7 @@ where
 
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork, _) = self.forks.create_fork(create_fork)?;
+        let (fork_id, fork, _, _) = self.forks.create_fork(create_fork)?;
 
         let fork_db = ForkDB::new(fork);
         let (id, _) =
@@ -1218,7 +1218,7 @@ where
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
-        let (fork_id, backend, fork_env) =
+        let (fork_id, backend, fork_env, _) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
         // this will update the local mapping
         self.inner.roll_fork(id, fork_id, backend)?;
@@ -1301,7 +1301,8 @@ where
             .update_block_env(self.inner.ensure_fork_id(id).cloned()?, evm_env.block_env.clone());
 
         // replay all transactions that came before
-        self.replay_until(id, evm_env.clone(), transaction, journaled_state)?;
+        let replay_block = block.header().number();
+        self.replay_until(id, evm_env.clone(), replay_block, transaction, journaled_state)?;
 
         Ok(())
     }

@@ -136,7 +136,7 @@ impl<
     pub fn create_fork(
         &self,
         fork: CreateFork,
-    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>)> {
+    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, u64)> {
         trace!("Creating new fork, url={}, block={:?}", fork.url, fork.evm_opts.fork_block_number);
         let (sender, rx) = oneshot_channel();
         let req = Request::CreateFork(Box::new(fork), sender);
@@ -152,7 +152,7 @@ impl<
         &self,
         fork: ForkId,
         block: u64,
-    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>)> {
+    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, u64)> {
         trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollFork(fork, block, sender);
@@ -214,6 +214,15 @@ impl<
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
+
+    /// Returns the actual block number (L2 on Arbitrum) of the given fork, if any.
+    pub fn get_fork_block_number(&self, fork: ForkId) -> eyre::Result<Option<u64>> {
+        trace!(?fork, "getting fork block number");
+        let (sender, rx) = oneshot_channel();
+        let req = Request::GetForkBlockNumber(fork, sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()?)
+    }
 }
 
 type CreateFuture<N, SPEC, BLOCK> = Pin<
@@ -228,7 +237,7 @@ type CreateFuture<N, SPEC, BLOCK> = Pin<
     >,
 >;
 type CreateSender<N, SPEC, BLOCK> =
-    OneshotSender<eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>)>>;
+    OneshotSender<eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>, u64)>>;
 type GetEvmEnvSender<SPEC, BLOCK> = OneshotSender<Option<EvmEnv<SPEC, BLOCK>>>;
 
 /// Request that's send to the handler.
@@ -250,6 +259,8 @@ enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     ShutDown(OneshotSender<()>),
     /// Returns the Fork Url for the `ForkId` if it exists.
     GetForkUrl(ForkId, OneshotSender<Option<String>>),
+    /// Returns the actual block number (L2 on Arbitrum) of the given fork.
+    GetForkBlockNumber(ForkId, OneshotSender<Option<u64>>),
 }
 
 enum ForkTask<N: Network, SPEC, BLOCK: ForkBlockEnv> {
@@ -345,13 +356,13 @@ impl<
         additional_senders: Vec<CreateSender<N, SPEC, BLOCK>>,
     ) {
         self.forks.insert(fork_id.clone(), fork.clone());
-        let _ = sender.send(Ok((fork_id.clone(), fork.backend.clone(), fork.evm_env.clone())));
+        let _ = sender.send(Ok((fork_id.clone(), fork.backend.clone(), fork.evm_env.clone(), fork.fork_block_number)));
 
         // Notify all additional senders and track unique forkIds.
         for sender in additional_senders {
             let next_fork_id = fork.inc_senders(fork_id.clone());
             self.forks.insert(next_fork_id.clone(), fork.clone());
-            let _ = sender.send(Ok((next_fork_id, fork.backend.clone(), fork.evm_env.clone())));
+            let _ = sender.send(Ok((next_fork_id, fork.backend.clone(), fork.evm_env.clone(), fork.fork_block_number)));
         }
     }
 
@@ -407,6 +418,10 @@ impl<
             Request::GetForkUrl(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.opts.url.clone());
                 let _ = sender.send(fork);
+            }
+            Request::GetForkBlockNumber(fork_id, sender) => {
+                let block = self.forks.get(&fork_id).map(|f| f.fork_block_number);
+                let _ = sender.send(block);
             }
         }
     }
@@ -530,6 +545,9 @@ struct CreatedFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     /// How many consumers there are, since a `SharedBacked` can be used by multiple
     /// consumers.
     num_senders: Arc<AtomicUsize>,
+    /// The actual block number the fork was pinned to.
+    /// On Arbitrum this differs from `evm_env.block_env.number` which is remapped to the L1 block.
+    fork_block_number: u64,
 }
 
 impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
@@ -537,8 +555,9 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
         opts: CreateFork,
         evm_env: EvmEnv<SPEC, BLOCK>,
         backend: SharedBackend<N, BLOCK>,
+        fork_block_number: u64,
     ) -> Self {
-        Self { opts, evm_env, backend, num_senders: Arc::new(AtomicUsize::new(1)) }
+        Self { opts, evm_env, backend, num_senders: Arc::new(AtomicUsize::new(1)), fork_block_number }
     }
 
     /// Increment senders and return unique identifier of the fork.
@@ -607,7 +626,7 @@ async fn create_fork<
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork_id = ForkId::new(&fork.url, Some(number));
-    let fork = CreatedFork::new(fork, evm_env, backend);
+    let fork = CreatedFork::new(fork, evm_env, backend, number);
 
     Ok((fork_id, fork, handler))
 }
