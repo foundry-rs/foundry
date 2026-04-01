@@ -114,7 +114,7 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub legacy: bool,
 
-    /// Broadcasts the transactions.
+    /// Publish the prepared transaction to the network instead of running a simulation.
     #[arg(long)]
     pub broadcast: bool,
 
