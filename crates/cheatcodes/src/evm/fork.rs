@@ -583,7 +583,11 @@ fn rpc_call(url: &str, method: &str, params: &str) -> Result {
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?,
     );
 
-    Ok(result_as_tokens.abi_encode())
+    let payload = match &result_as_tokens {
+        DynSolValue::Bytes(b) => b.clone(),
+        _ => result_as_tokens.abi_encode(),
+    };
+    Ok(DynSolValue::Bytes(payload).abi_encode())
 }
 
 /// Convert fixed bytes and address values to bytes in order to prevent encoding issues.

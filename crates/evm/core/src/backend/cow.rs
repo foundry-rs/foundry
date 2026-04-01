@@ -188,11 +188,10 @@ impl DatabaseExt for CowBackend<'_> {
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: EvmEnv,
-        tx_env: TxEnv,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()> {
-        self.backend_mut().transact(id, transaction, evm_env, tx_env, journaled_state, inspector)
+        self.backend_mut().transact(id, transaction, evm_env, journaled_state, inspector)
     }
 
     fn transact_from_tx(

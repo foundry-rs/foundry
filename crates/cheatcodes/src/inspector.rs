@@ -222,9 +222,8 @@ where
         transaction: B256,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
-        let tx_env = ecx.tx_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, tx_env, inner, cheats)
+        db.transact(fork_id, transaction, evm_env, inner, cheats)
     }
 
     fn transact_from_tx_on_db(

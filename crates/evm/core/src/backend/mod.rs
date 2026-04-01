@@ -215,7 +215,6 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: EvmEnv<SPEC, BLOCK>,
-        tx_env: TX,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()>;
@@ -1312,7 +1311,6 @@ where
         maybe_id: Option<LocalForkId>,
         transaction: B256,
         mut evm_env: EvmEnv,
-        mut tx_env: TxEnv,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()> {
@@ -1325,6 +1323,7 @@ where
             let fork = self.inner.get_fork_by_id_mut(id)?;
             fork.backend().get_transaction(transaction)?
         };
+        let tx_env = tx.try_any_to_tx_env()?;
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
         // the current context, but we're assuming the user wants to transact the transaction as it
@@ -1338,9 +1337,8 @@ where
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
-            &tx,
-            &mut evm_env,
-            &mut tx_env,
+            evm_env,
+            tx_env,
             journaled_state,
             fork,
             &fork_id,
@@ -2029,9 +2027,8 @@ fn update_env_block<SPEC, BLOCK: FoundryBlock>(
 /// state, with an inspector.
 #[allow(clippy::too_many_arguments)]
 fn commit_transaction<N: Network>(
-    tx: &N::TransactionResponse,
-    evm_env: &mut EvmEnv,
-    tx_env: &mut TxEnv,
+    evm_env: EvmEnv,
+    tx_env: TxEnv,
     journaled_state: &mut JournaledState,
     fork: &mut Fork<N>,
     fork_id: &ForkId,
@@ -2041,8 +2038,6 @@ fn commit_transaction<N: Network>(
 where
     N::TransactionResponse: TryAnyToTxEnv<TxEnv>,
 {
-    *tx_env = tx.try_any_to_tx_env()?;
-
     let now = Instant::now();
     let res = {
         let fork = fork.clone();
@@ -2050,11 +2045,10 @@ where
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm =
-            crate::evm::new_eth_evm_with_inspector(&mut db as _, evm_env.to_owned(), inspector);
+        let mut evm = crate::evm::new_eth_evm_with_inspector(&mut db as _, evm_env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.journaled_state.depth = depth + 1;
-        evm.transact(tx_env.clone()).wrap_err("backend: failed committing transaction")?
+        evm.transact(tx_env).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
