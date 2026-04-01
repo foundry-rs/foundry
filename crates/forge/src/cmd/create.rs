@@ -63,7 +63,7 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    /// Broadcast the transaction.
+    /// Publish the prepared transaction to the network instead of running a simulation.
     #[arg(long)]
     pub broadcast: bool,
 
