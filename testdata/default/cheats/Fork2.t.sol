@@ -342,15 +342,16 @@ contract ForkTest is Test {
     }
 
     // Verify struct decoding for transaction objects (original issue #7858).
+    // Hardcode the DRPC URL to avoid provider-specific non-standard fields
+    // (e.g. `blockTimestamp` from PublicNode) that shift ABI decoding offsets.
     // <https://github.com/foundry-rs/foundry/issues/7858>
     function testRpcTransactionByHash() public {
         bytes memory data = vm.rpc(
-            "sepolia",
+            "https://sepolia.drpc.org",
             "eth_getTransactionByHash",
             '["0xe1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"]'
         );
         LegacyTransactionResult memory txn = abi.decode(data, (LegacyTransactionResult));
-        // Verify known transaction fields
         assertEq(
             bytes32(txn.hash),
             bytes32(hex"e1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"),
@@ -358,7 +359,6 @@ contract ForkTest is Test {
         );
         assertEq(address(bytes20(txn.from)), 0x8Be6209bC9BD1a8e6e015ADe090F6BE7BE6f032A, "tx from mismatch");
         assertEq(address(bytes20(txn.to)), 0xF04fd9a66DE511BC389D3b830C1F850a4A4A8c61, "tx to mismatch");
-        // Verify block number matches the block from testRpcBlockByNumberFullReturndata
         assertEq(txn.blockNumber, hex"588b24", "tx blockNumber mismatch");
     }
 }
