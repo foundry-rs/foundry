@@ -465,7 +465,7 @@ mod tests {
     // `apply_chain_and_block_specific_env_changes`. The fork block number returned
     // by `env()` must be the actual L2 block number, not the remapped L1 value.
     #[tokio::test(flavor = "multi_thread")]
-    async fn get_fork_uses_l2_block_number_on_arbitrum() {
+    async fn flaky_get_fork_uses_l2_block_number_on_arbitrum() {
         let endpoint =
             foundry_test_utils::rpc::next_rpc_endpoint(foundry_config::NamedChain::Arbitrum);
 
