@@ -514,8 +514,7 @@ mod tests {
         let fork_opts = evm_opts.get_fork(&Config::default(), &evm_env, Some(fork_block)).unwrap();
         let multi_fork =
             crate::fork::MultiFork::<alloy_network::AnyNetwork, SpecId, BlockEnv>::spawn();
-        let (fork_id, _, returned_env, returned_block) =
-            multi_fork.create_fork(fork_opts).unwrap();
+        let (fork_id, _, returned_env, returned_block) = multi_fork.create_fork(fork_opts).unwrap();
 
         // The returned fork block number should be the actual L2 block
         assert_eq!(
