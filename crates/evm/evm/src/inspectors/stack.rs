@@ -1,6 +1,6 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
-    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
+    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_evm::EvmEnv;
 use alloy_network::{Ethereum, Network};
@@ -265,6 +265,10 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.networks(networks);
         stack.set_create2_deployer(create2_deployer);
 
+        if networks.is_tempo() {
+            stack.inner.tempo_labels = Some(Box::default());
+        }
+
         // environment, must come after all of the inspectors
         if let Some(block) = block {
             stack.set_block(block);
@@ -359,6 +363,7 @@ pub struct InspectorStackInner {
     pub printer: Option<Box<CustomPrintTracer>>,
     pub revert_diag: Option<Box<RevertDiagnostic>>,
     pub script_execution_inspector: Option<Box<ScriptExecutionInspector>>,
+    pub tempo_labels: Option<Box<TempoLabels>>,
     pub tracer: Option<Box<TracingInspector>>,
 
     // FoundryInspectorExt and other internal data.
@@ -610,6 +615,7 @@ impl<SPEC, BLOCK, N: Network> InspectorStack<SPEC, BLOCK, N> {
                     line_coverage,
                     edge_coverage,
                     log_collector,
+                    tempo_labels,
                     tracer,
                     reverter,
                     ..
@@ -636,10 +642,13 @@ impl<SPEC, BLOCK, N: Network> InspectorStack<SPEC, BLOCK, N> {
 
         InspectorData {
             logs: log_collector.and_then(|logs| logs.into_captured_logs()).unwrap_or_default(),
-            labels: cheatcodes
-                .as_ref()
-                .map(|cheatcodes| cheatcodes.labels.clone())
-                .unwrap_or_default(),
+            labels: {
+                let mut labels = cheatcodes.as_ref().map(|c| c.labels.clone()).unwrap_or_default();
+                if let Some(tempo_labels) = tempo_labels {
+                    labels.extend(tempo_labels.labels);
+                }
+                labels
+            },
             traces,
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
             edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
@@ -1061,7 +1070,8 @@ impl<
                 &mut self.tracer,
                 &mut self.log_collector,
                 &mut self.printer,
-                &mut self.revert_diag
+                &mut self.revert_diag,
+                &mut self.tempo_labels
             ],
             |inspector| {
                 let mut out = None;
