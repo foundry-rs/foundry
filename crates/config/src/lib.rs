@@ -1172,7 +1172,8 @@ impl Config {
             }) {
                 let res: RestrictionsWithVersion<_> =
                     res.clone().try_into().map_err(SolcError::msg)?;
-                if let Some(value) = map.remove(source.as_path()) {
+                if map.contains_key(source) {
+                    let value = map.remove(source.as_path()).unwrap();
                     if let Some(merged) = value.clone().merge(res) {
                         map.insert(source.clone(), merged);
                     } else {
