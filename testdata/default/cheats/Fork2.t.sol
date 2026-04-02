@@ -247,24 +247,24 @@ contract ForkTest is Test {
         bytes extraData;
         bytes gasLimit;
         bytes gasUsed;
-        bytes hash;
+        bytes32 hash;
         bytes logsBloom;
-        bytes miner;
-        bytes mixHash;
+        address miner;
+        bytes32 mixHash;
         bytes nonce;
         bytes number;
-        bytes parentBeaconBlockRoot;
-        bytes parentHash;
-        bytes receiptsRoot;
-        bytes sha3Uncles;
+        bytes32 parentBeaconBlockRoot;
+        bytes32 parentHash;
+        bytes32 receiptsRoot;
+        bytes32 sha3Uncles;
         bytes size;
-        bytes stateRoot;
+        bytes32 stateRoot;
         bytes timestamp;
         bytes32[] transactions;
-        bytes transactionsRoot;
-        bytes[] uncles;
+        bytes32 transactionsRoot;
+        bytes32[] uncles;
         Withdrawal[] withdrawals;
-        bytes withdrawalsRoot;
+        bytes32 withdrawalsRoot;
     }
 
     function testRpcBlockByNumberFullReturndata() public {
@@ -272,13 +272,13 @@ contract ForkTest is Test {
         BlockResult memory blockResult = abi.decode(data, (BlockResult));
         // Verify block hash
         assertEq(
-            bytes32(blockResult.hash),
+            blockResult.hash,
             bytes32(hex"50b08560cfeef4a4005333a78bef1190f3d8708a074c549e0e5d834c6d7eab3f"),
             "hash mismatch"
         );
         // Verify parent hash
         assertEq(
-            bytes32(blockResult.parentHash),
+            blockResult.parentHash,
             bytes32(hex"ee012f100cea384420e993e4eab8c3cf0ed35a49f75769eb8a37c9e0c93ea235"),
             "parentHash mismatch"
         );
@@ -323,18 +323,18 @@ contract ForkTest is Test {
 
     // Struct matching a legacy (type 0) transaction fields sorted alphabetically.
     struct LegacyTransactionResult {
-        bytes blockHash;
+        bytes32 blockHash;
         bytes blockNumber;
         bytes chainId;
-        bytes from;
+        address from;
         bytes gas;
         bytes gasPrice;
-        bytes hash;
+        bytes32 hash;
         bytes input;
         bytes nonce;
-        bytes r;
-        bytes s;
-        bytes to;
+        bytes32 r;
+        bytes32 s;
+        address to;
         bytes transactionIndex;
         bytes type_;
         bytes v;
@@ -353,12 +353,10 @@ contract ForkTest is Test {
         );
         LegacyTransactionResult memory txn = abi.decode(data, (LegacyTransactionResult));
         assertEq(
-            bytes32(txn.hash),
-            bytes32(hex"e1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"),
-            "tx hash mismatch"
+            txn.hash, bytes32(hex"e1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"), "tx hash mismatch"
         );
-        assertEq(address(bytes20(txn.from)), 0x8Be6209bC9BD1a8e6e015ADe090F6BE7BE6f032A, "tx from mismatch");
-        assertEq(address(bytes20(txn.to)), 0xF04fd9a66DE511BC389D3b830C1F850a4A4A8c61, "tx to mismatch");
+        assertEq(txn.from, 0x8Be6209bC9BD1a8e6e015ADe090F6BE7BE6f032A, "tx from mismatch");
+        assertEq(txn.to, 0xF04fd9a66DE511BC389D3b830C1F850a4A4A8c61, "tx to mismatch");
         assertEq(txn.blockNumber, hex"588b24", "tx blockNumber mismatch");
     }
 }

@@ -10,6 +10,7 @@ extern crate tracing;
 
 pub mod executors;
 pub mod inspectors;
+pub mod tempo;
 
 pub use foundry_evm_core as core;
 pub use foundry_evm_core::{

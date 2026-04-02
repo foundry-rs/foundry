@@ -301,6 +301,9 @@ pub struct ExecutedPoolTransactions<T> {
     pub included: Vec<Arc<PoolTransaction<T>>>,
     /// Transactions that failed validation.
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
+    /// These remain in the pool and should be retried later.
+    pub not_yet_valid: Vec<Arc<PoolTransaction<T>>>,
     /// Per-transaction execution info.
     pub tx_info: Vec<TransactionInfo>,
     /// The raw pending transactions that were included (in order).
@@ -347,6 +350,7 @@ where
 
     let mut included = Vec::new();
     let mut invalid = Vec::new();
+    let mut not_yet_valid = Vec::new();
     let mut tx_info: Vec<TransactionInfo> = Vec::new();
     let mut transactions = Vec::new();
     let mut blob_gas_used = 0u64;
@@ -463,12 +467,21 @@ where
                 transactions.push(pending.transaction.clone());
             }
             Err(err) => {
-                trace!(target: "backend", ?err, "tx execution error, skipping {:?}", pool_tx.hash());
+                let err_str = err.to_string();
+                if err_str.contains("not valid yet") {
+                    trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
+                    not_yet_valid.push(pool_tx.clone());
+                } else if err.as_validation().is_some() {
+                    warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
+                    invalid.push(pool_tx.clone());
+                } else {
+                    trace!(target: "backend", ?err, "tx execution error, skipping {:?}", pool_tx.hash());
+                }
             }
         }
     }
 
-    ExecutedPoolTransactions { included, invalid, tx_info, txs: transactions }
+    ExecutedPoolTransactions { included, invalid, not_yet_valid, tx_info, txs: transactions }
 }
 
 /// Builds the EVM transaction env from a pending pool transaction.

@@ -110,7 +110,7 @@ use foundry_primitives::{
     FoundryTxReceipt, get_deposit_tx_parts,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
@@ -1138,7 +1138,7 @@ impl<N: Network> Backend<N> {
             + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        if matches!(tx, FoundryTxEnvelope::Tempo(_)) {
+        if tx.is_tempo() {
             let tx_env: TempoTxEnv =
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
             let base = tx_env.inner.clone();
@@ -2436,7 +2436,7 @@ where
                 self.states.write().insert(best_hash, db);
             }
 
-            let (block_info, included, invalid, block_hash) = {
+            let (block_info, included, invalid, not_yet_valid, block_hash) = {
                 let mut db = self.db.write().await;
 
                 // finally set the next block timestamp, this is done just before execution, because
@@ -2490,6 +2490,7 @@ where
 
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
+                let not_yet_valid = pool_result.not_yet_valid;
                 let transaction_infos = pool_result.tx_info;
                 let transactions = pool_result.txs;
 
@@ -2539,7 +2540,7 @@ where
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
 
-                (block_info, included, invalid, block_hash)
+                (block_info, included, invalid, not_yet_valid, block_hash)
             };
 
             // create the new block with the current timestamp
@@ -2616,7 +2617,7 @@ where
                 node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
             }
 
-            let outcome = MinedBlockOutcome { block_number, included, invalid };
+            let outcome = MinedBlockOutcome { block_number, included, invalid, not_yet_valid };
 
             (outcome, header, block_hash)
         };
@@ -2786,6 +2787,44 @@ where
             BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts };
 
         f(Box::new(cache_db), block_info)
+    }
+
+    /// Returns the ERC20/TIP20 token balance for an account.
+    ///
+    /// Calls `balanceOf(address)` on the token contract. Returns `U256::ZERO` if
+    /// the call fails (e.g. the token contract doesn't exist).
+    pub async fn get_fee_token_balance(
+        &self,
+        token: Address,
+        account: Address,
+    ) -> Result<U256, BlockchainError> {
+        // balanceOf(address) selector: 0x70a08231
+        let mut calldata = vec![0x70, 0xa0, 0x82, 0x31];
+        // ABI-encode the address (left-padded to 32 bytes)
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(account.as_slice());
+
+        let request = WithOtherFields::new(TransactionRequest {
+            from: Some(Address::ZERO),
+            to: Some(TxKind::Call(token)),
+            input: calldata.into(),
+            ..Default::default()
+        });
+
+        let fee_details = FeeDetails::zero();
+        let (exit, out, _, _) = self.call(request, fee_details, None, Default::default()).await?;
+
+        // Check if call succeeded
+        if exit != InstructionResult::Return && exit != InstructionResult::Stop {
+            // Return zero balance if call failed (token might not exist)
+            return Ok(U256::ZERO);
+        }
+
+        // Decode U256 from output
+        match out {
+            Some(Output::Call(data)) if data.len() >= 32 => Ok(U256::from_be_slice(&data[..32])),
+            _ => Ok(U256::ZERO),
+        }
     }
 
     /// Executes the [TransactionRequest] without writing to the DB
@@ -4049,7 +4088,60 @@ impl TransactionValidator<FoundryTxEnvelope> for Backend<FoundryNetwork> {
     ) -> Result<(), BlockchainError> {
         let address = *tx.sender();
         let account = self.get_account(address).await?;
-        Ok(self.validate_pool_transaction_for(tx, &account, &self.next_evm_env())?)
+        let evm_env = self.next_evm_env();
+
+        // Tempo AA: validate time bounds and fee token balance (async checks)
+        if let FoundryTxEnvelope::Tempo(aa_tx) = tx.transaction.as_ref() {
+            let tempo_tx = aa_tx.tx();
+            let current_time = evm_env.block_env.timestamp.saturating_to::<u64>();
+
+            // Reject if valid_before is expired or too close to current time (< 3 seconds)
+            const AA_VALID_BEFORE_MIN_SECS: u64 = 3;
+            if let Some(valid_before) = tempo_tx.valid_before {
+                let min_allowed = current_time.saturating_add(AA_VALID_BEFORE_MIN_SECS);
+                if valid_before <= min_allowed {
+                    return Err(InvalidTransactionError::TempoValidBeforeExpired {
+                        valid_before,
+                        min_allowed,
+                    }
+                    .into());
+                }
+            }
+
+            // Reject if valid_after is too far in the future (> 1 hour)
+            const AA_VALID_AFTER_MAX_SECS: u64 = 3600;
+            if let Some(valid_after) = tempo_tx.valid_after {
+                let max_allowed = current_time.saturating_add(AA_VALID_AFTER_MAX_SECS);
+                if valid_after > max_allowed {
+                    return Err(InvalidTransactionError::TempoValidAfterTooFar {
+                        valid_after,
+                        max_allowed,
+                    }
+                    .into());
+                }
+            }
+
+            // Fee token balance check
+            let fee_payer = tempo_tx.recover_fee_payer(address).unwrap_or(address);
+            let fee_token =
+                tempo_tx.fee_token.unwrap_or(foundry_evm::core::tempo::PATH_USD_ADDRESS);
+
+            // gas_limit * max_fee_per_gas in wei, scaled to 6-decimal token units
+            let required_wei =
+                U256::from(tempo_tx.gas_limit).saturating_mul(U256::from(tempo_tx.max_fee_per_gas));
+            let required = required_wei / U256::from(10u64.pow(12));
+
+            let balance = self.get_fee_token_balance(fee_token, fee_payer).await?;
+            if balance < required {
+                return Err(InvalidTransactionError::TempoInsufficientFeeTokenBalance {
+                    balance,
+                    required,
+                }
+                .into());
+            }
+        }
+
+        Ok(self.validate_pool_transaction_for(tx, &account, &evm_env)?)
     }
 
     fn validate_pool_transaction_for(
@@ -4076,10 +4168,30 @@ impl TransactionValidator<FoundryTxEnvelope> for Backend<FoundryNetwork> {
             }
         }
 
-        // Nonce validation
-        let is_deposit_tx = matches!(pending.transaction.as_ref(), FoundryTxEnvelope::Deposit(_));
+        // Reject native value transfers on Tempo networks
+        if self.is_tempo() && !tx.value().is_zero() {
+            warn!(target: "backend", "[{:?}] native value transfer not allowed in Tempo mode", tx.hash());
+            return Err(InvalidTransactionError::TempoNativeValueTransfer);
+        }
+
+        // Tempo AA: cap authorization list size
+        if let FoundryTxEnvelope::Tempo(aa_tx) = tx.as_ref() {
+            const MAX_TEMPO_AUTHORIZATIONS: usize = 16;
+            let auth_count = aa_tx.tx().tempo_authorization_list.len();
+            if auth_count > MAX_TEMPO_AUTHORIZATIONS {
+                warn!(target: "backend", "[{:?}] Tempo tx has too many authorizations: {}", tx.hash(), auth_count);
+                return Err(InvalidTransactionError::TempoTooManyAuthorizations {
+                    count: auth_count,
+                    max: MAX_TEMPO_AUTHORIZATIONS,
+                });
+            }
+        }
+
+        // Nonce validation — skip for deposits (L1→L2) and Tempo txs (2D nonce system)
+        let is_deposit_tx = pending.transaction.as_ref().is_deposit();
+        let is_tempo_tx = pending.transaction.as_ref().is_tempo();
         let nonce = tx.nonce();
-        if nonce < account.nonce && !is_deposit_tx {
+        if nonce < account.nonce && !is_deposit_tx && !is_tempo_tx {
             debug!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);
         }
@@ -4202,6 +4314,10 @@ impl TransactionValidator<FoundryTxEnvelope> for Backend<FoundryNetwork> {
                         debug!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
                         return Err(InvalidTransactionError::InsufficientFunds);
                     }
+                }
+                FoundryTxEnvelope::Tempo(_) => {
+                    // Tempo AA transactions pay gas with fee tokens, not ETH.
+                    // Fee token balance is validated in validate_pool_transaction (async).
                 }
                 _ => {
                     // check sufficient funds: `gas * price + value`

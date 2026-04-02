@@ -599,9 +599,6 @@ fn convert_to_bytes(token: &DynSolValue) -> DynSolValue {
             DynSolValue::Bytes(bytes.as_slice()[..*size].to_vec())
         }
         DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
-        //  Convert tuple values to prevent encoding issues.
-        // See: <https://github.com/foundry-rs/foundry/issues/7858>
-        DynSolValue::Tuple(vals) => DynSolValue::Tuple(vals.iter().map(convert_to_bytes).collect()),
         val => val.clone(),
     }
 }

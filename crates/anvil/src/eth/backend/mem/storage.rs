@@ -525,6 +525,9 @@ pub struct MinedBlockOutcome<T> {
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
+    /// These remain in the pool and should be retried later.
+    pub not_yet_valid: Vec<Arc<PoolTransaction<T>>>,
 }
 
 impl<T> Clone for MinedBlockOutcome<T> {
@@ -533,6 +536,7 @@ impl<T> Clone for MinedBlockOutcome<T> {
             block_number: self.block_number,
             included: self.included.clone(),
             invalid: self.invalid.clone(),
+            not_yet_valid: self.not_yet_valid.clone(),
         }
     }
 }
@@ -543,6 +547,7 @@ impl<T> fmt::Debug for MinedBlockOutcome<T> {
             .field("block_number", &self.block_number)
             .field("included", &self.included.len())
             .field("invalid", &self.invalid.len())
+            .field("not_yet_valid", &self.not_yet_valid.len())
             .finish()
     }
 }

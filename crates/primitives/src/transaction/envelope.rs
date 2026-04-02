@@ -106,6 +106,11 @@ impl FoundryTxEnvelope {
         }
     }
 
+    /// Returns `true` if this is a Tempo transaction.
+    pub fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo(_))
+    }
+
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, RecoveryError> {
         Ok(match self {

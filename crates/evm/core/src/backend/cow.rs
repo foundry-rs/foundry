@@ -2,25 +2,27 @@
 
 use super::BackendError;
 use crate::{
-    FoundryInspectorExt,
+    FoundryInspectorExt, TryAnyToTxEnv,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
+    evm::FoundryEvmFactory,
     fork::{CreateFork, ForkId},
 };
-use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext};
+use alloy_evm::{Evm, EvmEnv};
 use alloy_genesis::GenesisAccount;
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    Database, DatabaseCommit,
+    Context, Database, DatabaseCommit,
     bytecode::Bytecode,
-    context::TxEnv,
+    context::{CfgEnv, ContextTr, Transaction},
     context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{AddressMap, hardfork::SpecId},
+    primitives::AddressMap,
     state::{Account, AccountInfo, EvmState},
 };
 use std::{borrow::Cow, collections::BTreeMap};
@@ -42,19 +44,22 @@ use std::{borrow::Cow, collections::BTreeMap};
 /// which would add significant overhead for large fuzz sets even if the Database is not big after
 /// setup.
 #[derive(Clone, Debug)]
-pub struct CowBackend<'a> {
+pub struct CowBackend<'a, N: Network, F: FoundryEvmFactory> {
     /// The underlying `Backend`.
     ///
     /// No calls on the `CowBackend` will ever persistently modify the `backend`'s state.
-    pub backend: Cow<'a, Backend>,
+    pub backend: Cow<'a, Backend<N, F>>,
     /// Pending initialization params for the backend on first mutable access.
     /// `None` means the backend has already been initialized for the current call.
-    pending_init: Option<(SpecId, Address, TxKind)>,
+    pending_init: Option<(F::Spec, Address, TxKind)>,
 }
 
-impl<'a> CowBackend<'a> {
+impl<'a, N: Network, F: FoundryEvmFactory> CowBackend<'a, N, F>
+where
+    N::TransactionResponse: TryAnyToTxEnv<F::Tx>,
+{
     /// Creates a new `CowBackend` with the given `Backend`.
-    pub fn new_borrowed(backend: &'a Backend) -> Self {
+    pub fn new_borrowed(backend: &'a Backend<N, F>) -> Self {
         Self { backend: Cow::Borrowed(backend), pending_init: None }
     }
 
@@ -63,21 +68,22 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>>(
+    pub fn inspect<I: for<'db> FoundryInspectorExt<F::FoundryContext<'db>>>(
         &mut self,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &mut F::Tx,
         inspector: I,
-    ) -> eyre::Result<ResultAndState> {
+    ) -> eyre::Result<ResultAndState<F::HaltReason>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
-        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller, tx_env.kind));
+        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
-        let mut evm = crate::evm::new_eth_evm_with_inspector(self, evm_env.clone(), inspector);
+        let mut evm =
+            F::default().create_foundry_evm_with_inspector(self, evm_env.clone(), inspector);
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
-        *tx_env = evm.tx.clone();
+        *tx_env = evm.tx().clone();
         *evm_env = evm.finish().1;
 
         Ok(res)
@@ -93,7 +99,7 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend.
     ///
     /// If this is the first time this is called, the backed is cloned and initialized.
-    fn backend_mut(&mut self) -> &mut Backend {
+    fn backend_mut(&mut self) -> &mut Backend<N, F> {
         if let Some((spec_id, caller, tx_kind)) = self.pending_init.take() {
             let backend = self.backend.to_mut();
             backend.initialize(spec_id, caller, tx_kind);
@@ -103,7 +109,7 @@ impl<'a> CowBackend<'a> {
     }
 
     /// Returns a mutable instance of the Backend if it is initialized.
-    fn initialized_backend_mut(&mut self) -> Option<&mut Backend> {
+    fn initialized_backend_mut(&mut self) -> Option<&mut Backend<N, F>> {
         if self.pending_init.is_none() {
             return Some(self.backend.to_mut());
         }
@@ -111,8 +117,16 @@ impl<'a> CowBackend<'a> {
     }
 }
 
-impl DatabaseExt for CowBackend<'_> {
-    fn snapshot_state(&mut self, journaled_state: &JournaledState, evm_env: &EvmEnv) -> U256 {
+impl<N: Network, F: FoundryEvmFactory> DatabaseExt<F::BlockEnv, F::Tx, F::Spec>
+    for CowBackend<'_, N, F>
+where
+    N::TransactionResponse: TryAnyToTxEnv<F::Tx>,
+{
+    fn snapshot_state(
+        &mut self,
+        journaled_state: &JournaledState,
+        evm_env: &EvmEnv<F::Spec, F::BlockEnv>,
+    ) -> U256 {
         self.backend_mut().snapshot_state(journaled_state, evm_env)
     }
 
@@ -120,7 +134,7 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
-        evm_env: &mut EvmEnv,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         caller: Address,
         action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
@@ -156,8 +170,8 @@ impl DatabaseExt for CowBackend<'_> {
     fn select_fork(
         &mut self,
         id: LocalForkId,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &mut F::Tx,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)
@@ -167,7 +181,7 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        evm_env: &mut EvmEnv,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         self.backend_mut().roll_fork(id, block_number, evm_env, journaled_state)
@@ -177,7 +191,7 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        evm_env: &mut EvmEnv,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         self.backend_mut().roll_fork_to_transaction(id, transaction, evm_env, journaled_state)
@@ -187,19 +201,33 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        evm_env: EvmEnv,
+        evm_env: EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<
+            Context<
+                F::BlockEnv,
+                F::Tx,
+                CfgEnv<F::Spec>,
+                &'db mut dyn DatabaseExt<F::BlockEnv, F::Tx, F::Spec>,
+            >,
+        >,
     ) -> eyre::Result<()> {
         self.backend_mut().transact(id, transaction, evm_env, journaled_state, inspector)
     }
 
     fn transact_from_tx(
         &mut self,
-        tx_env: TxEnv,
-        evm_env: EvmEnv,
+        tx_env: F::Tx,
+        evm_env: EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<
+            Context<
+                F::BlockEnv,
+                F::Tx,
+                CfgEnv<F::Spec>,
+                &'db mut dyn DatabaseExt<F::BlockEnv, F::Tx, F::Spec>,
+            >,
+        >,
     ) -> eyre::Result<()> {
         self.backend_mut().transact_from_tx(tx_env, evm_env, journaled_state, inspector)
     }
@@ -270,7 +298,10 @@ impl DatabaseExt for CowBackend<'_> {
     }
 }
 
-impl DatabaseRef for CowBackend<'_> {
+impl<N: Network, F: FoundryEvmFactory> DatabaseRef for CowBackend<'_, N, F>
+where
+    N::TransactionResponse: TryAnyToTxEnv<F::Tx>,
+{
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -290,7 +321,10 @@ impl DatabaseRef for CowBackend<'_> {
     }
 }
 
-impl Database for CowBackend<'_> {
+impl<N: Network, F: FoundryEvmFactory> Database for CowBackend<'_, N, F>
+where
+    N::TransactionResponse: TryAnyToTxEnv<F::Tx>,
+{
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -310,7 +344,10 @@ impl Database for CowBackend<'_> {
     }
 }
 
-impl DatabaseCommit for CowBackend<'_> {
+impl<N: Network, F: FoundryEvmFactory> DatabaseCommit for CowBackend<'_, N, F>
+where
+    N::TransactionResponse: TryAnyToTxEnv<F::Tx>,
+{
     fn commit(&mut self, changes: AddressMap<Account>) {
         self.backend.to_mut().commit(changes)
     }

@@ -819,21 +819,25 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<u128> {
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
-        let to = request.to.as_ref().and_then(TxKind::to);
+        // Skip this optimization for Tempo mode since native ETH transfers are not allowed
+        // and Tempo AA transactions have higher intrinsic gas costs (~46k).
+        if !self.backend.is_tempo() {
+            let to = request.to.as_ref().and_then(TxKind::to);
 
-        // check certain fields to see if the request could be a simple transfer
-        let maybe_transfer = (request.input.input().is_none()
-            || request.input.input().is_some_and(|data| data.is_empty()))
-            && request.authorization_list.is_none()
-            && request.access_list.is_none()
-            && request.blob_versioned_hashes.is_none();
+            // check certain fields to see if the request could be a simple transfer
+            let maybe_transfer = (request.input.input().is_none()
+                || request.input.input().is_some_and(|data| data.is_empty()))
+                && request.authorization_list.is_none()
+                && request.access_list.is_none()
+                && request.blob_versioned_hashes.is_none();
 
-        if maybe_transfer
-            && let Some(to) = to
-            && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
-            && target_code.as_ref().is_empty()
-        {
-            return Ok(MIN_TRANSACTION_GAS);
+            if maybe_transfer
+                && let Some(to) = to
+                && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
+                && target_code.as_ref().is_empty()
+            {
+                return Ok(MIN_TRANSACTION_GAS);
+            }
         }
 
         let fees = FeeDetails::new(
@@ -848,9 +852,14 @@ impl EthApi<FoundryNetwork> {
         // configured gas limit
         let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
 
+        // Tempo AA transactions pay fees in ERC-20 tokens, not ETH
+        let is_tempo_tx = request.other.get("feeToken").is_some_and(|v| !v.is_null());
+
         let gas_price = fees.gas_price.unwrap_or_default();
-        // If we have non-zero gas price, cap gas limit by sender balance
+        // If we have non-zero gas price, cap gas limit by sender balance.
+        // Skip this check for Tempo transactions which pay with fee tokens, not ETH.
         if gas_price > 0
+            && !is_tempo_tx
             && let Some(from) = request.from
         {
             let mut available_funds = self.backend.get_balance_with_state(state, from)?;
@@ -1943,18 +1952,23 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await?;
         let from = *pending_transaction.sender();
-        let nonce = pending_transaction.transaction.nonce();
-        let requires = required_marker(nonce, on_chain_nonce, from);
-
         let priority = self.transaction_priority(&pending_transaction.transaction);
-        let pool_transaction = PoolTransaction {
-            requires,
-            provides: vec![to_marker(nonce, *pending_transaction.sender())],
-            pending_transaction,
-            priority,
+
+        // Tempo txs use a 2D nonce system — no sequential ordering by account nonce.
+        let (requires, provides) = if let FoundryTxEnvelope::Tempo(aa_tx) =
+            pending_transaction.transaction.as_ref()
+            && !aa_tx.tx().nonce_key.is_zero()
+        {
+            (vec![], vec![pending_transaction.hash().to_vec()])
+        } else {
+            let on_chain_nonce = self.backend.current_nonce(from).await?;
+            let nonce = pending_transaction.transaction.nonce();
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
         };
+
+        let pool_transaction =
+            PoolTransaction { requires, provides, pending_transaction, priority };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
@@ -3551,6 +3565,12 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
         match res {
             // Exceptional case: init used too much gas, treated as out of gas error
             Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) => {
+                Ok(Self::OutOfGas)
+            }
+            // Tempo intrinsic gas errors come through as Message variants
+            Err(BlockchainError::Message(ref msg))
+                if msg.contains("insufficient gas for intrinsic cost") =>
+            {
                 Ok(Self::OutOfGas)
             }
             Err(err) => Err(err),

@@ -78,7 +78,7 @@ pub struct MultiFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 
 impl<
     N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Clone + Unpin + Send + 'static,
+    SPEC: Into<SpecId> + Default + Copy + Unpin + Send + 'static,
     BLOCK: FoundryBlock + ForkBlockEnv + Default + Unpin,
 > MultiFork<N, SPEC, BLOCK>
 {
@@ -288,7 +288,7 @@ pub struct MultiForkHandler<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 
 impl<
     N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Clone + 'static,
+    SPEC: Into<SpecId> + Default + Copy + 'static,
     BLOCK: FoundryBlock + ForkBlockEnv + Default,
 > MultiForkHandler<N, SPEC, BLOCK>
 {
@@ -416,7 +416,7 @@ impl<
 // This future will finish once all underlying BackendHandler are completed.
 impl<
     N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Clone + Unpin + 'static,
+    SPEC: Into<SpecId> + Default + Copy + Unpin + 'static,
     BLOCK: FoundryBlock + ForkBlockEnv + Default + Unpin,
 > Future for MultiForkHandler<N, SPEC, BLOCK>
 {
