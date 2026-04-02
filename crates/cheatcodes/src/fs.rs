@@ -13,6 +13,7 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_evm_core::evm::FoundryEvmFactory;
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
@@ -30,7 +31,7 @@ use std::{
 use walkdir::WalkDir;
 
 impl Cheatcode for existsCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.exists().abi_encode())
@@ -38,7 +39,7 @@ impl Cheatcode for existsCall {
 }
 
 impl Cheatcode for fsMetadataCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -64,7 +65,7 @@ impl Cheatcode for fsMetadataCall {
 }
 
 impl Cheatcode for isDirCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.is_dir().abi_encode())
@@ -72,7 +73,7 @@ impl Cheatcode for isDirCall {
 }
 
 impl Cheatcode for isFileCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(path.is_file().abi_encode())
@@ -80,14 +81,14 @@ impl Cheatcode for isFileCall {
 }
 
 impl Cheatcode for projectRootCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self {} = self;
         Ok(state.config.root.display().to_string().abi_encode())
     }
 }
 
 impl Cheatcode for currentFilePathCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self {} = self;
         let artifact = state
             .config
@@ -100,7 +101,7 @@ impl Cheatcode for currentFilePathCall {
 }
 
 impl Cheatcode for unixTimeCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self {} = self;
         let difference = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -110,7 +111,7 @@ impl Cheatcode for unixTimeCall {
 }
 
 impl Cheatcode for closeFileCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -121,7 +122,7 @@ impl Cheatcode for closeFileCall {
 }
 
 impl Cheatcode for copyFileCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { from, to } = self;
         let from = state.config.ensure_path_allowed(from, FsAccessKind::Read)?;
         let to = state.config.ensure_path_allowed(to, FsAccessKind::Write)?;
@@ -133,7 +134,7 @@ impl Cheatcode for copyFileCall {
 }
 
 impl Cheatcode for createDirCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         if *recursive { fs::create_dir_all(path) } else { fs::create_dir(path) }?;
@@ -142,28 +143,28 @@ impl Cheatcode for createDirCall {
 }
 
 impl Cheatcode for readDir_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         read_dir(state, path.as_ref(), 1, false)
     }
 }
 
 impl Cheatcode for readDir_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path, maxDepth } = self;
         read_dir(state, path.as_ref(), *maxDepth, false)
     }
 }
 
 impl Cheatcode for readDir_2Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path, maxDepth, followLinks } = self;
         read_dir(state, path.as_ref(), *maxDepth, *followLinks)
     }
 }
 
 impl Cheatcode for readFileCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(fs::locked_read_to_string(path)?.abi_encode())
@@ -171,7 +172,7 @@ impl Cheatcode for readFileCall {
 }
 
 impl Cheatcode for readFileBinaryCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         Ok(fs::locked_read(path)?.abi_encode())
@@ -179,7 +180,7 @@ impl Cheatcode for readFileBinaryCall {
 }
 
 impl Cheatcode for readLineCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -205,7 +206,7 @@ impl Cheatcode for readLineCall {
 }
 
 impl Cheatcode for readLinkCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { linkPath: path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         let target = fs::read_link(path)?;
@@ -214,7 +215,7 @@ impl Cheatcode for readLinkCall {
 }
 
 impl Cheatcode for removeDirCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         if *recursive { fs::remove_dir_all(path) } else { fs::remove_dir(path) }?;
@@ -223,7 +224,7 @@ impl Cheatcode for removeDirCall {
 }
 
 impl Cheatcode for removeFileCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         state.config.ensure_not_foundry_toml(&path)?;
@@ -240,21 +241,21 @@ impl Cheatcode for removeFileCall {
 }
 
 impl Cheatcode for writeFileCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data.as_bytes())
     }
 }
 
 impl Cheatcode for writeFileBinaryCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path, data } = self;
         write_file(state, path.as_ref(), data)
     }
 }
 
 impl Cheatcode for writeLineCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { path, data: line } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         state.config.ensure_not_foundry_toml(&path)?;
@@ -268,7 +269,7 @@ impl Cheatcode for writeLineCall {
 }
 
 impl Cheatcode for getArtifactPathByCodeCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { code } = self;
         let (artifact_id, _) = state
             .config
@@ -282,7 +283,7 @@ impl Cheatcode for getArtifactPathByCodeCall {
 }
 
 impl Cheatcode for getArtifactPathByDeployedCodeCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { deployedCode } = self;
         let (artifact_id, _) = state
             .config
@@ -296,24 +297,24 @@ impl Cheatcode for getArtifactPathByDeployedCodeCall {
 }
 
 impl Cheatcode for getCodeCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, false)?.abi_encode())
     }
 }
 
 impl Cheatcode for getDeployedCodeCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, true)?.abi_encode())
     }
 }
 
 impl Cheatcode for deployCode_0Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path } = self;
         deploy_code(ccx, executor, path, None, None, None)
@@ -321,10 +322,10 @@ impl Cheatcode for deployCode_0Call {
 }
 
 impl Cheatcode for deployCode_1Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path, constructorArgs: args } = self;
         deploy_code(ccx, executor, path, Some(args), None, None)
@@ -332,10 +333,10 @@ impl Cheatcode for deployCode_1Call {
 }
 
 impl Cheatcode for deployCode_2Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path, value } = self;
         deploy_code(ccx, executor, path, None, Some(*value), None)
@@ -343,10 +344,10 @@ impl Cheatcode for deployCode_2Call {
 }
 
 impl Cheatcode for deployCode_3Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), None)
@@ -354,10 +355,10 @@ impl Cheatcode for deployCode_3Call {
 }
 
 impl Cheatcode for deployCode_4Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path, salt } = self;
         deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
@@ -365,10 +366,10 @@ impl Cheatcode for deployCode_4Call {
 }
 
 impl Cheatcode for deployCode_5Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, salt } = self;
         deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
@@ -376,10 +377,10 @@ impl Cheatcode for deployCode_5Call {
 }
 
 impl Cheatcode for deployCode_6Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path, value, salt } = self;
         deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
@@ -387,10 +388,10 @@ impl Cheatcode for deployCode_6Call {
 }
 
 impl Cheatcode for deployCode_7Call {
-    fn apply_full<CTX: ContextTr, N: Network>(
+    fn apply_full<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result {
         let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
         deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
@@ -399,9 +400,9 @@ impl Cheatcode for deployCode_7Call {
 
 /// Helper function to deploy contract from artifact code.
 /// Uses CREATE2 scheme if salt specified.
-fn deploy_code<CTX: ContextTr, N: Network>(
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
-    executor: &mut dyn CheatcodesExecutor<CTX, N>,
+fn deploy_code<N: Network, F: FoundryEvmFactory>(
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
+    executor: &mut dyn CheatcodesExecutor<N, F>,
     path: &str,
     constructor_args: Option<&Bytes>,
     value: Option<U256>,
@@ -460,8 +461,8 @@ fn deploy_code<CTX: ContextTr, N: Network>(
 /// This function is safe to use with contracts that have library dependencies.
 /// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
 /// reject artifacts with unlinked library placeholders.
-fn get_artifact_code<SPEC, BLOCK, N: Network>(
-    state: &Cheatcodes<SPEC, BLOCK, N>,
+fn get_artifact_code<N: Network, F: FoundryEvmFactory>(
+    state: &Cheatcodes<N, F>,
     path: &str,
     deployed: bool,
 ) -> Result<Bytes> {
@@ -602,7 +603,7 @@ fn get_artifact_code<SPEC, BLOCK, N: Network>(
 }
 
 impl Cheatcode for ffiCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { commandInput: input } = self;
 
         let output = ffi(state, input)?;
@@ -630,49 +631,49 @@ impl Cheatcode for ffiCall {
 }
 
 impl Cheatcode for tryFfiCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { commandInput: input } = self;
         ffi(state, input).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_input).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptSecretCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_password).map(|res| res.abi_encode())
     }
 }
 
 impl Cheatcode for promptSecretUintCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for promptAddressCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for promptUintCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { promptText: text } = self;
         parse(&prompt(state, text, prompt_input)?, &DynSolType::Uint(256))
     }
 }
 
-pub(super) fn write_file<SPEC, BLOCK, N: Network>(
-    state: &Cheatcodes<SPEC, BLOCK, N>,
+pub(super) fn write_file<N: Network, F: FoundryEvmFactory>(
+    state: &Cheatcodes<N, F>,
     path: &Path,
     contents: &[u8],
 ) -> Result {
@@ -687,8 +688,8 @@ pub(super) fn write_file<SPEC, BLOCK, N: Network>(
     Ok(Default::default())
 }
 
-fn read_dir<SPEC, BLOCK, N: Network>(
-    state: &Cheatcodes<SPEC, BLOCK, N>,
+fn read_dir<N: Network, F: FoundryEvmFactory>(
+    state: &Cheatcodes<N, F>,
     path: &Path,
     max_depth: u64,
     follow_links: bool,
@@ -722,8 +723,8 @@ fn read_dir<SPEC, BLOCK, N: Network>(
     Ok(paths.abi_encode())
 }
 
-fn ffi<SPEC, BLOCK, N: Network>(
-    state: &Cheatcodes<SPEC, BLOCK, N>,
+fn ffi<N: Network, F: FoundryEvmFactory>(
+    state: &Cheatcodes<N, F>,
     input: &[String],
 ) -> Result<FfiResult> {
     ensure!(
@@ -765,8 +766,8 @@ fn prompt_password(prompt_text: &str) -> Result<String, dialoguer::Error> {
     Password::new().with_prompt(prompt_text).interact()
 }
 
-fn prompt<SPEC, BLOCK, N: Network>(
-    state: &Cheatcodes<SPEC, BLOCK, N>,
+fn prompt<N: Network, F: FoundryEvmFactory>(
+    state: &Cheatcodes<N, F>,
     prompt_text: &str,
     input: fn(&str) -> Result<String, dialoguer::Error>,
 ) -> Result<String> {
@@ -791,7 +792,7 @@ fn prompt<SPEC, BLOCK, N: Network>(
 }
 
 impl Cheatcode for getBroadcastCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
         let latest_broadcast = latest_broadcast(
@@ -806,7 +807,7 @@ impl Cheatcode for getBroadcastCall {
 }
 
 impl Cheatcode for getBroadcasts_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
@@ -827,7 +828,7 @@ impl Cheatcode for getBroadcasts_0Call {
 }
 
 impl Cheatcode for getBroadcasts_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { contractName, chainId } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
@@ -847,9 +848,9 @@ impl Cheatcode for getBroadcasts_1Call {
 }
 
 impl Cheatcode for getDeployment_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { contractName } = self;
         let chain_id = ccx.ecx.cfg().chain_id();
@@ -866,7 +867,7 @@ impl Cheatcode for getDeployment_0Call {
 }
 
 impl Cheatcode for getDeployment_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { contractName, chainId } = self;
 
         let latest_broadcast = latest_broadcast(
@@ -881,7 +882,7 @@ impl Cheatcode for getDeployment_1Call {
 }
 
 impl Cheatcode for getDeploymentsCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { contractName, chainId } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?

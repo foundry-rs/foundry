@@ -26,6 +26,7 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    evm::FoundryEvmFactory,
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
@@ -879,7 +880,7 @@ impl From<DeployResult> for RawCallResult {
 
 /// The result of a raw call.
 #[derive(Debug)]
-pub struct RawCallResult<SPEC = SpecId, BLOCK = BlockEnv, TX = TxEnv, N: Network = Ethereum> {
+pub struct RawCallResult<N: Network = Ethereum, F: FoundryEvmFactory = EthEvmFactory> {
     /// The status of the call
     pub exit_reason: Option<InstructionResult>,
     /// Whether the call reverted or not
@@ -912,11 +913,11 @@ pub struct RawCallResult<SPEC = SpecId, BLOCK = BlockEnv, TX = TxEnv, N: Network
     /// The changeset of the state.
     pub state_changeset: StateChangeset,
     /// The `EvmEnv` after the call
-    pub evm_env: EvmEnv<SPEC, BLOCK>,
+    pub evm_env: EvmEnv<F::Spec, F::BlockEnv>,
     /// The `TxEnv` after the call
-    pub tx_env: TX,
+    pub tx_env: F::Tx,
     /// The cheatcode states after execution
-    pub cheatcodes: Option<Box<Cheatcodes<SPEC, BLOCK, N>>>,
+    pub cheatcodes: Option<Box<Cheatcodes<N, F>>>,
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
@@ -924,9 +925,7 @@ pub struct RawCallResult<SPEC = SpecId, BLOCK = BlockEnv, TX = TxEnv, N: Network
     pub reverter: Option<Address>,
 }
 
-impl<SPEC: Default + Into<SpecId> + Clone, BLOCK: Default, TX: Default, N: Network> Default
-    for RawCallResult<SPEC, BLOCK, TX, N>
-{
+impl<N: Network, F: FoundryEvmFactory> Default for RawCallResult<N, F> {
     fn default() -> Self {
         Self {
             exit_reason: None,
@@ -944,7 +943,7 @@ impl<SPEC: Default + Into<SpecId> + Clone, BLOCK: Default, TX: Default, N: Netwo
             transactions: None,
             state_changeset: HashMap::default(),
             evm_env: EvmEnv::default(),
-            tx_env: TX::default(),
+            tx_env: F::Tx::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -1007,7 +1006,7 @@ impl RawCallResult {
     }
 }
 
-impl<SPEC, BLOCK, TX, N: Network> RawCallResult<SPEC, BLOCK, TX, N> {
+impl<N: Network, F: FoundryEvmFactory> RawCallResult<N, F> {
     /// Update provided history map with edge coverage info collected during this call.
     /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
     pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {

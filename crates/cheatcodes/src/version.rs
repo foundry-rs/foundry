@@ -2,18 +2,19 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_network::Network;
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
+use foundry_evm_core::evm::FoundryEvmFactory;
 use semver::Version;
 use std::cmp::Ordering;
 
 impl Cheatcode for foundryVersionCmpCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { version } = self;
         foundry_version_cmp(version).map(|cmp| (cmp as i8).abi_encode())
     }
 }
 
 impl Cheatcode for foundryVersionAtLeastCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { version } = self;
         foundry_version_cmp(version).map(|cmp| cmp.is_ge().abi_encode())
     }

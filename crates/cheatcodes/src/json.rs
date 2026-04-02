@@ -7,6 +7,7 @@ use alloy_primitives::{Address, B256, I256, U256, hex};
 use alloy_sol_types::SolValue;
 use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_evm_core::evm::FoundryEvmFactory;
 use serde_json::{Map, Value};
 use std::{
     borrow::Cow,
@@ -14,133 +15,133 @@ use std::{
 };
 
 impl Cheatcode for keyExistsCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         check_json_key_exists(json, key)
     }
 }
 
 impl Cheatcode for keyExistsJsonCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         check_json_key_exists(json, key)
     }
 }
 
 impl Cheatcode for parseJson_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json } = self;
         parse_json(json, "$", state.struct_defs())
     }
 }
 
 impl Cheatcode for parseJson_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json(json, key, state.struct_defs())
     }
 }
 
 impl Cheatcode for parseJsonUintCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseJsonUintArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
 impl Cheatcode for parseJsonIntCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseJsonIntArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
 impl Cheatcode for parseJsonBoolCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseJsonBoolArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
 impl Cheatcode for parseJsonAddressCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseJsonAddressArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
 impl Cheatcode for parseJsonStringCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseJsonStringArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
 impl Cheatcode for parseJsonBytesCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseJsonBytesArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
 impl Cheatcode for parseJsonBytes32Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseJsonBytes32ArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
     }
 }
 
 impl Cheatcode for parseJsonType_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, typeDescription } = self;
         parse_json_coerce(json, "$", &resolve_type(typeDescription, state.struct_defs())?)
             .map(|v| v.abi_encode())
@@ -148,7 +149,7 @@ impl Cheatcode for parseJsonType_0Call {
 }
 
 impl Cheatcode for parseJsonType_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key, typeDescription } = self;
         parse_json_coerce(json, key, &resolve_type(typeDescription, state.struct_defs())?)
             .map(|v| v.abi_encode())
@@ -156,7 +157,7 @@ impl Cheatcode for parseJsonType_1Call {
 }
 
 impl Cheatcode for parseJsonTypeArrayCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key, typeDescription } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
@@ -164,14 +165,14 @@ impl Cheatcode for parseJsonTypeArrayCall {
 }
 
 impl Cheatcode for parseJsonKeysCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, key } = self;
         parse_json_keys(json, key)
     }
 }
 
 impl Cheatcode for serializeJsonCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, value } = self;
         *state.serialized_jsons.entry(objectKey.into()).or_default() = serde_json::from_str(value)?;
         Ok(value.abi_encode())
@@ -179,56 +180,56 @@ impl Cheatcode for serializeJsonCall {
 }
 
 impl Cheatcode for serializeBool_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeUint_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeInt_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeAddress_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeBytes32_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, DynSolValue::FixedBytes(*value, 32))
     }
 }
 
 impl Cheatcode for serializeString_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, value.clone().into())
     }
 }
 
 impl Cheatcode for serializeBytes_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         serialize_json(state, objectKey, valueKey, value.to_vec().into())
     }
 }
 
 impl Cheatcode for serializeBool_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -240,7 +241,7 @@ impl Cheatcode for serializeBool_1Call {
 }
 
 impl Cheatcode for serializeUint_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -252,7 +253,7 @@ impl Cheatcode for serializeUint_1Call {
 }
 
 impl Cheatcode for serializeInt_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -264,7 +265,7 @@ impl Cheatcode for serializeInt_1Call {
 }
 
 impl Cheatcode for serializeAddress_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -276,7 +277,7 @@ impl Cheatcode for serializeAddress_1Call {
 }
 
 impl Cheatcode for serializeBytes32_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -288,7 +289,7 @@ impl Cheatcode for serializeBytes32_1Call {
 }
 
 impl Cheatcode for serializeString_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -300,7 +301,7 @@ impl Cheatcode for serializeString_1Call {
 }
 
 impl Cheatcode for serializeBytes_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, values } = self;
         serialize_json(
             state,
@@ -314,7 +315,7 @@ impl Cheatcode for serializeBytes_1Call {
 }
 
 impl Cheatcode for serializeJsonType_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
@@ -324,7 +325,7 @@ impl Cheatcode for serializeJsonType_0Call {
 }
 
 impl Cheatcode for serializeJsonType_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
@@ -333,7 +334,7 @@ impl Cheatcode for serializeJsonType_1Call {
 }
 
 impl Cheatcode for serializeUintToHexCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         let hex = format!("0x{value:x}");
         serialize_json(state, objectKey, valueKey, hex.into())
@@ -341,7 +342,7 @@ impl Cheatcode for serializeUintToHexCall {
 }
 
 impl Cheatcode for writeJson_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json, path } = self;
         let json = serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.to_owned()));
         let json_string = serde_json::to_string_pretty(&json)?;
@@ -350,7 +351,7 @@ impl Cheatcode for writeJson_0Call {
 }
 
 impl Cheatcode for writeJson_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { json: value, path, valueKey } = self;
 
         // Read, parse, and update the JSON object.
@@ -653,8 +654,8 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
 /// object, so that the user can use that as a value to a new invocation of the same function with a
 /// new object key. This enables the user to reuse the same function to crate arbitrarily complex
 /// object structures (JSON).
-fn serialize_json<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn serialize_json<N: Network, F: FoundryEvmFactory>(
+    state: &mut Cheatcodes<N, F>,
     object_key: &str,
     value_key: &str,
     value: DynSolValue,

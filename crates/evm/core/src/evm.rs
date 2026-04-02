@@ -6,14 +6,14 @@ use std::{
 
 use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
-    backend::{DatabaseExt, JournaledState},
+    backend::{DatabaseExt, JournaledState, LocalForkId},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use revm::{
@@ -44,11 +44,12 @@ pub trait FoundryEvmFactory:
     EvmFactory<
         Spec: Into<SpecId> + FromEvmVersion + Default + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
-        Tx: Clone + FoundryTransaction,
+        Tx: Clone + FoundryTransaction + Default,
         Precompiles = PrecompilesMap,
     > + Clone
     + Debug
     + Default
+    + 'static
 {
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
@@ -103,6 +104,35 @@ pub trait FoundryEvmFactory:
         depth: usize,
         tx_env: Self::Tx,
     ) -> eyre::Result<ResultAndState<Self::HaltReason>>;
+
+    /// Adapter that forwards to [`DatabaseExt::transact`] with a context-typed inspector.
+    ///
+    /// Generic code only knows `FoundryInspectorExt<Self::FoundryContext<'db>>`, but
+    /// `DatabaseExt::transact` expects the hardcoded `revm::Context<…>`. Each concrete
+    /// factory resolves the type equality and forwards directly.
+    #[allow(clippy::type_complexity)]
+    fn db_transact(
+        &self,
+        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        id: Option<LocalForkId>,
+        transaction: B256,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> eyre::Result<()>;
+
+    /// Adapter that forwards to [`DatabaseExt::transact_from_tx`] with a context-typed inspector.
+    ///
+    /// See [`Self::db_transact`] for rationale.
+    #[allow(clippy::type_complexity)]
+    fn db_transact_from_tx(
+        &self,
+        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        tx_env: Self::Tx,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> eyre::Result<()>;
 }
 
 impl FoundryEvmFactory for EthEvmFactory {
@@ -130,6 +160,29 @@ impl FoundryEvmFactory for EthEvmFactory {
         let mut evm = new_eth_evm_with_inspector(db, evm_env, inspector);
         evm.journaled_state.depth = depth;
         Ok(evm.transact_raw(tx_env)?)
+    }
+
+    fn db_transact(
+        &self,
+        db: &mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>,
+        id: Option<LocalForkId>,
+        transaction: B256,
+        evm_env: EvmEnv,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> eyre::Result<()> {
+        db.transact(id, transaction, evm_env, journaled_state, inspector)
+    }
+
+    fn db_transact_from_tx(
+        &self,
+        db: &mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>,
+        tx_env: TxEnv,
+        evm_env: EvmEnv,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> eyre::Result<()> {
+        db.transact_from_tx(tx_env, evm_env, journaled_state, inspector)
     }
 }
 
@@ -648,6 +701,29 @@ impl FoundryEvmFactory for TempoEvmFactory {
         let mut evm = new_tempo_evm_with_inspector(db, evm_env, inspector);
         evm.journaled_state.depth = depth;
         Ok(evm.transact_raw(tx_env)?)
+    }
+
+    fn db_transact(
+        &self,
+        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        id: Option<LocalForkId>,
+        transaction: B256,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> eyre::Result<()> {
+        db.transact(id, transaction, evm_env, journaled_state, inspector)
+    }
+
+    fn db_transact_from_tx(
+        &self,
+        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        tx_env: Self::Tx,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> eyre::Result<()> {
+        db.transact_from_tx(tx_env, evm_env, journaled_state, inspector)
     }
 }
 

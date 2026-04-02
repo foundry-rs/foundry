@@ -8,26 +8,21 @@ use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
-use foundry_evm_core::backend::DatabaseError;
+use foundry_evm_core::evm::FoundryEvmFactory;
 use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
-    Database,
     bytecode::Bytecode,
     context::{Cfg, ContextTr, JournalTr, Transaction},
     context_interface::transaction::SignedAuthorization,
-    inspector::JournalExt,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
-    fn apply_stateful<
-        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
-        N: Network,
-    >(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self {} = self;
         broadcast(ccx, None, true)
@@ -35,12 +30,9 @@ impl Cheatcode for broadcast_0Call {
 }
 
 impl Cheatcode for broadcast_1Call {
-    fn apply_stateful<
-        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
-        N: Network,
-    >(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), true)
@@ -48,12 +40,9 @@ impl Cheatcode for broadcast_1Call {
 }
 
 impl Cheatcode for broadcast_2Call {
-    fn apply_stateful<
-        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
-        N: Network,
-    >(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, true)
@@ -61,9 +50,9 @@ impl Cheatcode for broadcast_2Call {
 }
 
 impl Cheatcode for attachDelegation_0Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { signedDelegation } = self;
         attach_delegation(ccx, signedDelegation, false)
@@ -71,9 +60,9 @@ impl Cheatcode for attachDelegation_0Call {
 }
 
 impl Cheatcode for attachDelegation_1Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { signedDelegation, crossChain } = self;
         attach_delegation(ccx, signedDelegation, *crossChain)
@@ -81,9 +70,9 @@ impl Cheatcode for attachDelegation_1Call {
 }
 
 impl Cheatcode for signDelegation_0Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { implementation, privateKey } = *self;
         sign_delegation(ccx, privateKey, implementation, None, false, false)
@@ -91,9 +80,9 @@ impl Cheatcode for signDelegation_0Call {
 }
 
 impl Cheatcode for signDelegation_1Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { implementation, privateKey, nonce } = *self;
         sign_delegation(ccx, privateKey, implementation, Some(nonce), false, false)
@@ -101,9 +90,9 @@ impl Cheatcode for signDelegation_1Call {
 }
 
 impl Cheatcode for signDelegation_2Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { implementation, privateKey, crossChain } = *self;
         sign_delegation(ccx, privateKey, implementation, None, crossChain, false)
@@ -111,9 +100,9 @@ impl Cheatcode for signDelegation_2Call {
 }
 
 impl Cheatcode for signAndAttachDelegation_0Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { implementation, privateKey } = *self;
         sign_delegation(ccx, privateKey, implementation, None, false, true)
@@ -121,9 +110,9 @@ impl Cheatcode for signAndAttachDelegation_0Call {
 }
 
 impl Cheatcode for signAndAttachDelegation_1Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { implementation, privateKey, nonce } = *self;
         sign_delegation(ccx, privateKey, implementation, Some(nonce), false, true)
@@ -131,9 +120,9 @@ impl Cheatcode for signAndAttachDelegation_1Call {
 }
 
 impl Cheatcode for signAndAttachDelegation_2Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { implementation, privateKey, crossChain } = *self;
         sign_delegation(ccx, privateKey, implementation, None, crossChain, true)
@@ -141,8 +130,8 @@ impl Cheatcode for signAndAttachDelegation_2Call {
 }
 
 /// Helper function to attach an EIP-7702 delegation.
-fn attach_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
+fn attach_delegation<N: Network, F: FoundryEvmFactory>(
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
     delegation: &SignedDelegation,
     cross_chain: bool,
 ) -> Result {
@@ -165,8 +154,8 @@ fn attach_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Net
 
 /// Helper function to sign and attach (if needed) an EIP-7702 delegation.
 /// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
-fn sign_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
+fn sign_delegation<N: Network, F: FoundryEvmFactory>(
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
     private_key: Uint<256, 4>,
     implementation: Address,
     nonce: Option<u64>,
@@ -238,8 +227,8 @@ fn next_delegation_nonce(
     }
 }
 
-fn write_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Network>(
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
+fn write_delegation<N: Network, F: FoundryEvmFactory>(
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
     auth: SignedAuthorization,
 ) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
@@ -275,18 +264,18 @@ fn write_delegation<CTX: ContextTr<Db: Database<Error = DatabaseError>>, N: Netw
 }
 
 impl Cheatcode for attachBlobCall {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { blob } = self;
         ensure!(
-            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
+            (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
             "`attachBlob` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(blob);
-        let sidecar_variant = if ccx.ecx.cfg().spec().into() < SpecId::OSAKA {
+        let sidecar_variant = if (*ccx.ecx.cfg().spec()).into() < SpecId::OSAKA {
             sidecar.build_4844().map_err(|e| format!("{e}"))?.into()
         } else {
             sidecar.build_7594().map_err(|e| format!("{e}"))?.into()
@@ -297,12 +286,9 @@ impl Cheatcode for attachBlobCall {
 }
 
 impl Cheatcode for startBroadcast_0Call {
-    fn apply_stateful<
-        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
-        N: Network,
-    >(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self {} = self;
         broadcast(ccx, None, false)
@@ -310,12 +296,9 @@ impl Cheatcode for startBroadcast_0Call {
 }
 
 impl Cheatcode for startBroadcast_1Call {
-    fn apply_stateful<
-        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
-        N: Network,
-    >(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), false)
@@ -323,12 +306,9 @@ impl Cheatcode for startBroadcast_1Call {
 }
 
 impl Cheatcode for startBroadcast_2Call {
-    fn apply_stateful<
-        CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
-        N: Network,
-    >(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, false)
@@ -336,9 +316,9 @@ impl Cheatcode for startBroadcast_2Call {
 }
 
 impl Cheatcode for stopBroadcastCall {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self {} = self;
         let Some(broadcast) = ccx.state.broadcast.take() else {
@@ -350,9 +330,9 @@ impl Cheatcode for stopBroadcastCall {
 }
 
 impl Cheatcode for getWalletsCall {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let wallets = ccx.state.wallets().signers().unwrap_or_default();
         Ok(wallets.abi_encode())
@@ -429,11 +409,8 @@ impl Wallets {
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
-fn broadcast<
-    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
-    N: Network,
->(
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
+fn broadcast<N: Network, F: FoundryEvmFactory>(
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
     new_origin: Option<&Address>,
     single_call: bool,
 ) -> Result {
@@ -478,11 +455,8 @@ fn broadcast<
 /// Sets up broadcasting from a script with the sender derived from `private_key`.
 /// Adds this private key to `state`'s `wallets` vector to later be used for signing
 /// if broadcast is successful.
-fn broadcast_key<
-    CTX: ContextTr<Journal: JournalExt, Db: Database<Error = DatabaseError>>,
-    N: Network,
->(
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
+fn broadcast_key<N: Network, F: FoundryEvmFactory>(
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
     private_key: &U256,
     single_call: bool,
 ) -> Result {

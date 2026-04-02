@@ -6,7 +6,7 @@ use alloy_network::Network;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
-use foundry_evm_core::constants::MAGIC_SKIP;
+use foundry_evm_core::{constants::MAGIC_SKIP, evm::FoundryEvmFactory};
 use revm::context::{ContextTr, JournalTr};
 use std::str::FromStr;
 
@@ -16,9 +16,9 @@ pub(crate) mod expect;
 pub(crate) mod revert_handlers;
 
 impl Cheatcode for breakpoint_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { char } = self;
         breakpoint(ccx.state, &ccx.caller, char, true)
@@ -26,9 +26,9 @@ impl Cheatcode for breakpoint_0Call {
 }
 
 impl Cheatcode for breakpoint_1Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { char, value } = self;
         breakpoint(ccx.state, &ccx.caller, char, *value)
@@ -36,14 +36,14 @@ impl Cheatcode for breakpoint_1Call {
 }
 
 impl Cheatcode for getFoundryVersionCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self {} = self;
         Ok(SEMVER_VERSION.abi_encode())
     }
 }
 
 impl Cheatcode for rpcUrlCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { rpcAlias } = self;
         let url = state.config.rpc_endpoint(rpcAlias)?.url()?.abi_encode();
         Ok(url)
@@ -51,21 +51,21 @@ impl Cheatcode for rpcUrlCall {
 }
 
 impl Cheatcode for rpcUrlsCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
 impl Cheatcode for rpcUrlStructsCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self {} = self;
         state.config.rpc_urls().map(|urls| urls.abi_encode())
     }
 }
 
 impl Cheatcode for sleepCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, _state: &mut Cheatcodes<N, F>) -> Result {
         let Self { duration } = self;
         let sleep_duration = std::time::Duration::from_millis(duration.saturating_to());
         std::thread::sleep(sleep_duration);
@@ -74,9 +74,9 @@ impl Cheatcode for sleepCall {
 }
 
 impl Cheatcode for skip_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { skipTest } = *self;
         if skipTest {
@@ -91,9 +91,9 @@ impl Cheatcode for skip_0Call {
 }
 
 impl Cheatcode for skip_1Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
+    fn apply_stateful<N: Network, F: FoundryEvmFactory>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
+        ccx: &mut CheatsCtxt<'_, '_, N, F>,
     ) -> Result {
         let Self { skipTest, reason } = self;
         if *skipTest {
@@ -108,14 +108,14 @@ impl Cheatcode for skip_1Call {
 }
 
 impl Cheatcode for getChain_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { chainAlias } = self;
         get_chain(state, chainAlias)
     }
 }
 
 impl Cheatcode for getChain_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<N: Network, F: FoundryEvmFactory>(&self, state: &mut Cheatcodes<N, F>) -> Result {
         let Self { chainId } = self;
         // Convert the chainId to a string and use the existing get_chain function
         let chain_id_str = chainId.to_string();
@@ -124,8 +124,8 @@ impl Cheatcode for getChain_1Call {
 }
 
 /// Adds or removes the given breakpoint to the state.
-fn breakpoint<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn breakpoint<N: Network, F: FoundryEvmFactory>(
+    state: &mut Cheatcodes<N, F>,
     caller: &Address,
     s: &str,
     add: bool,
@@ -146,8 +146,8 @@ fn breakpoint<SPEC, BLOCK, N: Network>(
 }
 
 /// Gets chain information for the given alias.
-fn get_chain<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn get_chain<N: Network, F: FoundryEvmFactory>(
+    state: &mut Cheatcodes<N, F>,
     chain_alias: &str,
 ) -> Result {
     // Parse the chain alias - works for both chain names and IDs

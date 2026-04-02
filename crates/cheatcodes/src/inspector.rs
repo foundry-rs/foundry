@@ -21,7 +21,7 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::{BlobTransactionSidecarVariant, transaction::SignerRecoverable};
-use alloy_evm::FromRecoveredTx;
+use alloy_evm::{EthEvmFactory, FromRecoveredTx};
 use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, hex,
@@ -41,9 +41,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
-    evm::{
-        IntoNestedEvm, NestedEvm, NestedEvmClosure, new_eth_evm_with_inspector, with_cloned_context,
-    },
+    evm::{FoundryEvmFactory, IntoNestedEvm, NestedEvm, NestedEvmClosure, with_cloned_context},
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -56,11 +54,9 @@ use rand::Rng;
 use revm::{
     Inspector,
     bytecode::opcode as op,
-    context::{
-        BlockEnv, Cfg, ContextTr, JournalTr, Transaction, TransactionType, TxEnv, result::EVMError,
-    },
+    context::{Cfg, ContextTr, Host, JournalTr, Transaction, TransactionType, result::EVMError},
     context_interface::{CreateScheme, transaction::SignedAuthorization},
-    handler::{EvmTr, FrameResult},
+    handler::FrameResult,
     inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
@@ -87,21 +83,21 @@ pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
-pub trait CheatcodesExecutor<CTX: ContextTr, N: Network> {
+pub trait CheatcodesExecutor<N: Network, F: FoundryEvmFactory> {
     /// Runs a closure with a nested EVM built from the current context.
     /// The inspector is assembled internally — never exposed to the caller.
     fn with_nested_evm(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
-        f: NestedEvmClosure<'_, <CTX::Cfg as Cfg>::Spec, CTX::Block, CTX::Tx>,
+        cheats: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
+        f: NestedEvmClosure<'_, F::Spec, F::BlockEnv, F::Tx>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
     fn transact_on_db(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
+        cheats: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()>;
@@ -109,9 +105,9 @@ pub trait CheatcodesExecutor<CTX: ContextTr, N: Network> {
     /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
     fn transact_from_tx_on_db(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
-        tx: CTX::Tx,
+        cheats: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
+        tx: F::Tx,
     ) -> eyre::Result<()>;
 
     /// Runs a closure with a fresh nested EVM built from a raw database and environment.
@@ -121,11 +117,11 @@ pub trait CheatcodesExecutor<CTX: ContextTr, N: Network> {
     #[allow(clippy::type_complexity)]
     fn with_fresh_nested_evm(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        db: &mut CTX::Db,
-        evm_env: EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>,
-        f: NestedEvmClosure<'_, <CTX::Cfg as Cfg>::Spec, CTX::Block, CTX::Tx>,
-    ) -> Result<EvmEnv<<CTX::Cfg as Cfg>::Spec, CTX::Block>, EVMError<DatabaseError>>;
+        cheats: &mut Cheatcodes<N, F>,
+        db: &mut <F::FoundryContext<'_> as ContextTr>::Db,
+        evm_env: EvmEnv<F::Spec, F::BlockEnv>,
+        f: NestedEvmClosure<'_, F::Spec, F::BlockEnv, F::Tx>,
+    ) -> Result<EvmEnv<F::Spec, F::BlockEnv>, EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
     fn console_log(&mut self, msg: &str);
@@ -142,10 +138,10 @@ pub trait CheatcodesExecutor<CTX: ContextTr, N: Network> {
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
-pub(crate) fn exec_create<CTX: ContextTr, N: Network>(
-    executor: &mut dyn CheatcodesExecutor<CTX, N>,
+pub(crate) fn exec_create<N: Network, F: FoundryEvmFactory>(
+    executor: &mut dyn CheatcodesExecutor<N, F>,
     inputs: CreateInputs,
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
     let mut inputs = Some(inputs);
     let mut outcome = None;
@@ -174,69 +170,67 @@ pub(crate) fn exec_create<CTX: ContextTr, N: Network>(
 struct TransparentCheatcodesExecutor;
 
 impl<
-    CTX: FoundryContextExt<
-            Spec = SpecId,
-            Block = BlockEnv,
-            Tx = TxEnv,
-            Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>,
-        >,
     N: Network<
             TxEnvelope: Decodable + SignerRecoverable,
             TransactionRequest: FoundryTransactionBuilder<N>,
         >,
-> CheatcodesExecutor<CTX, N> for TransparentCheatcodesExecutor
+    F: FoundryEvmFactory<Tx: FromRecoveredTx<N::TxEnvelope>>,
+> CheatcodesExecutor<N, F> for TransparentCheatcodesExecutor
 where
-    CTX::Tx: FromRecoveredTx<N::TxEnvelope>,
+    F::Tx: FromRecoveredTx<N::TxEnvelope>,
 {
     fn with_nested_evm(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
-        f: NestedEvmClosure<'_, <CTX::Cfg as Cfg>::Spec, CTX::Block, CTX::Tx>,
+        cheats: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
+        f: NestedEvmClosure<'_, F::Spec, F::BlockEnv, F::Tx>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = new_eth_evm_with_inspector(db, evm_env, cheats).into_nested_evm();
+            let mut evm = F::default()
+                .create_foundry_evm_with_inspector(db, evm_env, cheats)
+                .into_nested_evm();
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
-            let sub_inner = evm.journaled_state.inner.clone();
-            let sub_evm_env = evm.ctx_ref().evm_clone();
+            let sub_inner = evm.journal_inner_mut().clone();
+            let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
         })
     }
 
     fn with_fresh_nested_evm(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        db: &mut CTX::Db,
-        evm_env: EvmEnv<CTX::Spec, CTX::Block>,
-        f: NestedEvmClosure<'_, <CTX::Cfg as Cfg>::Spec, CTX::Block, CTX::Tx>,
-    ) -> Result<EvmEnv<CTX::Spec, CTX::Block>, EVMError<DatabaseError>> {
-        let mut evm = new_eth_evm_with_inspector(db, evm_env, cheats).into_nested_evm();
+        cheats: &mut Cheatcodes<N, F>,
+        db: &mut <F::FoundryContext<'_> as ContextTr>::Db,
+        evm_env: EvmEnv<F::Spec, F::BlockEnv>,
+        f: NestedEvmClosure<'_, F::Spec, F::BlockEnv, F::Tx>,
+    ) -> Result<EvmEnv<F::Spec, F::BlockEnv>, EVMError<DatabaseError>> {
+        let mut evm =
+            F::default().create_foundry_evm_with_inspector(db, evm_env, cheats).into_nested_evm();
         f(&mut evm)?;
-        Ok(evm.ctx_ref().evm_clone())
+        Ok(evm.to_evm_env())
     }
 
     fn transact_on_db(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
+        cheats: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, inner, cheats)
+        F::default().db_transact(db, fork_id, transaction, evm_env, inner, cheats)
     }
 
     fn transact_from_tx_on_db(
         &mut self,
-        cheats: &mut Cheatcodes<<CTX::Cfg as Cfg>::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
-        tx: CTX::Tx,
+        cheats: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
+        tx: F::Tx,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact_from_tx(tx, evm_env, inner, cheats)
+        F::default().db_transact_from_tx(db, tx, evm_env, inner, cheats)
     }
 
     fn console_log(&mut self, _msg: &str) {}
@@ -451,7 +445,7 @@ pub type BroadcastableTransactions<N> = VecDeque<BroadcastableTransaction<N>>;
 ///   cheatcode address: by default, the caller, test contract and newly deployed contracts are
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
-pub struct Cheatcodes<SPEC = SpecId, BLOCK = BlockEnv, N: Network = Ethereum> {
+pub struct Cheatcodes<N: Network = Ethereum, F: FoundryEvmFactory = EthEvmFactory> {
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
     pub analysis: Option<CheatcodeAnalysis>,
 
@@ -459,7 +453,7 @@ pub struct Cheatcodes<SPEC = SpecId, BLOCK = BlockEnv, N: Network = Ethereum> {
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
-    pub block: Option<BLOCK>,
+    pub block: Option<F::BlockEnv>,
 
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
@@ -590,7 +584,7 @@ pub struct Cheatcodes<SPEC = SpecId, BLOCK = BlockEnv, N: Network = Ethereum> {
     /// Used to determine whether the broadcasted call has dynamic gas limit.
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
-    pub execution_evm_version: Option<SPEC>,
+    pub execution_evm_version: Option<F::Spec>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -602,7 +596,7 @@ impl Default for Cheatcodes {
     }
 }
 
-impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
+impl<N: Network, F: FoundryEvmFactory> Cheatcodes<N, F> {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         Self {
@@ -685,21 +679,15 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     }
 
     /// Decodes the input data and applies the cheatcode.
-    fn apply_cheatcode<
-        CTX: FoundryContextExt<
-                Spec = SPEC,
-                Block = BLOCK,
-                Tx: FromRecoveredTx<N::TxEnvelope>,
-                Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>,
-            >,
-    >(
+    fn apply_cheatcode(
         &mut self,
-        ecx: &mut CTX,
+        ecx: &mut F::FoundryContext<'_>,
         call: &CallInputs,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Result
     where
-        SPEC: FromEvmVersion + Into<SpecId> + Clone,
+        F::Spec: FromEvmVersion + Into<SpecId> + Clone,
+        F::Tx: FromRecoveredTx<N::TxEnvelope>,
         N: Network<TxEnvelope: Decodable + SignerRecoverable>,
     {
         // decode the cheatcode call
@@ -788,21 +776,15 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
         }
     }
 
-    pub fn call_with_executor<
-        CTX: FoundryContextExt<
-                Spec = SPEC,
-                Block = BLOCK,
-                Tx: FromRecoveredTx<N::TxEnvelope>,
-                Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>,
-            >,
-    >(
+    pub fn call_with_executor(
         &mut self,
-        ecx: &mut CTX,
+        ecx: &mut F::FoundryContext<'_>,
         call: &mut CallInputs,
-        executor: &mut dyn CheatcodesExecutor<CTX, N>,
+        executor: &mut dyn CheatcodesExecutor<N, F>,
     ) -> Option<CallOutcome>
     where
-        SPEC: FromEvmVersion + Into<SpecId> + Copy,
+        F::Spec: FromEvmVersion + Into<SpecId> + Copy,
+        F::Tx: FromRecoveredTx<N::TxEnvelope>,
         N::TxEnvelope: Decodable + SignerRecoverable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
@@ -1220,21 +1202,20 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
 }
 
 impl<
-    CTX: FoundryContextExt<
-            Spec = SpecId,
-            Block = BlockEnv,
-            Tx = TxEnv,
-            Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>,
-        >,
     N: Network<
             TxEnvelope: Decodable + SignerRecoverable,
             TransactionRequest: FoundryTransactionBuilder<N>,
         >,
-> Inspector<CTX> for Cheatcodes<CTX::Spec, CTX::Block, N>
+    F: FoundryEvmFactory,
+> Inspector<F::FoundryContext<'_>> for Cheatcodes<N, F>
 where
-    CTX::Tx: FromRecoveredTx<N::TxEnvelope>,
+    F::Tx: FromRecoveredTx<N::TxEnvelope>,
 {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
+    fn initialize_interp(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut F::FoundryContext<'_>,
+    ) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -1255,7 +1236,7 @@ where
         }
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut F::FoundryContext<'_>) {
         self.pc = interpreter.bytecode.pc();
 
         if self.broadcast.is_some() {
@@ -1301,7 +1282,7 @@ where
         }
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut F::FoundryContext<'_>) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1316,7 +1297,7 @@ where
         }
     }
 
-    fn log(&mut self, _ecx: &mut CTX, log: Log) {
+    fn log(&mut self, _ecx: &mut F::FoundryContext<'_>, log: Log) {
         if !self.expected_emits.is_empty()
             && let Some(err) = expect::handle_expect_emit(self, &log, None)
         {
@@ -1330,7 +1311,12 @@ where
         record_logs(&mut self.recorded_logs, &log);
     }
 
-    fn log_full(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX, log: Log) {
+    fn log_full(
+        &mut self,
+        interpreter: &mut Interpreter,
+        _ecx: &mut F::FoundryContext<'_>,
+        log: Log,
+    ) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, &log, Some(interpreter));
         }
@@ -1339,11 +1325,20 @@ where
         record_logs(&mut self.recorded_logs, &log);
     }
 
-    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(
+        &mut self,
+        ecx: &mut F::FoundryContext<'_>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
-    fn call_end(&mut self, ecx: &mut CTX, call: &CallInputs, outcome: &mut CallOutcome) {
+    fn call_end(
+        &mut self,
+        ecx: &mut F::FoundryContext<'_>,
+        call: &CallInputs,
+        outcome: &mut CallOutcome,
+    ) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
@@ -1744,7 +1739,11 @@ where
         }
     }
 
-    fn create(&mut self, ecx: &mut CTX, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
+    fn create(
+        &mut self,
+        ecx: &mut F::FoundryContext<'_>,
+        mut input: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
             ecx.cfg_mut().set_spec(spec_id);
@@ -1870,7 +1869,12 @@ where
         None
     }
 
-    fn create_end(&mut self, ecx: &mut CTX, call: &CreateInputs, outcome: &mut CreateOutcome) {
+    fn create_end(
+        &mut self,
+        ecx: &mut F::FoundryContext<'_>,
+        call: &CreateInputs,
+        outcome: &mut CreateOutcome,
+    ) {
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -2006,7 +2010,7 @@ where
     }
 }
 
-impl<SPEC, BLOCK, N: Network> InspectorExt for Cheatcodes<SPEC, BLOCK, N> {
+impl<N: Network, F: FoundryEvmFactory> InspectorExt for Cheatcodes<N, F> {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme() {
             let target_depth = if let Some(prank) = &self.get_prank(depth) {
@@ -2029,7 +2033,7 @@ impl<SPEC, BLOCK, N: Network> InspectorExt for Cheatcodes<SPEC, BLOCK, N> {
     }
 }
 
-impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
+impl<N: Network, F: FoundryEvmFactory> Cheatcodes<N, F> {
     #[cold]
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
@@ -2046,7 +2050,7 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     }
 
     #[cold]
-    fn meter_gas_record<CTX: ContextTr>(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
+    fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: &mut F::FoundryContext<'_>) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 let curr_depth = ecx.journal().depth();
@@ -2110,10 +2114,10 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end<CTX: ContextTr>(
+    fn arbitrary_storage_end(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut CTX,
+        ecx: &mut F::FoundryContext<'_>,
     ) {
         let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
@@ -2166,12 +2170,10 @@ impl<SPEC, BLOCK, N: Network> Cheatcodes<SPEC, BLOCK, N> {
     }
 
     #[cold]
-    fn record_state_diffs<
-        CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>,
-    >(
+    fn record_state_diffs(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut CTX,
+        ecx: &mut F::FoundryContext<'_>,
     ) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         match interpreter.bytecode.opcode() {
@@ -2641,16 +2643,12 @@ fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
 
 /// Dispatches the cheatcode call to the appropriate function.
 fn apply_dispatch<
-    CTX: FoundryContextExt<
-            Spec: FromEvmVersion,
-            Tx: FromRecoveredTx<N::TxEnvelope>,
-            Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>,
-        >,
     N: Network<TxEnvelope: Decodable + SignerRecoverable>,
+    F: FoundryEvmFactory<Spec: FromEvmVersion, Tx: FromRecoveredTx<N::TxEnvelope>>,
 >(
     calls: &Vm::VmCalls,
-    ccx: &mut CheatsCtxt<'_, CTX, N>,
-    executor: &mut dyn CheatcodesExecutor<CTX, N>,
+    ccx: &mut CheatsCtxt<'_, '_, N, F>,
+    executor: &mut dyn CheatcodesExecutor<N, F>,
 ) -> Result {
     // Extract metadata for logging/deprecation via CheatcodeDef.
     macro_rules! get_cheatcode {

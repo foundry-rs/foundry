@@ -1,7 +1,7 @@
 use crate::inspector::Cheatcodes;
 use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, U256};
-use foundry_evm_core::{FoundryContextExt, backend::DatabaseExt};
+use foundry_evm_core::evm::FoundryEvmFactory;
 use revm::{
     context::ContextTr,
     inspector::JournalExt,
@@ -16,18 +16,15 @@ pub(crate) trait CommonCreateInput {
     fn init_code(&self) -> Bytes;
     fn scheme(&self) -> Option<CreateScheme>;
     fn set_caller(&mut self, caller: Address);
-    fn log_debug<SPEC, BLOCK, N: Network>(
+    fn log_debug<N: Network, F: FoundryEvmFactory>(
         &self,
-        cheatcode: &mut Cheatcodes<SPEC, BLOCK, N>,
+        cheatcode: &mut Cheatcodes<N, F>,
         scheme: &CreateScheme,
     );
-    fn allow_cheatcodes<
-        CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>,
-        N: Network,
-    >(
+    fn allow_cheatcodes<N: Network, F: FoundryEvmFactory>(
         &self,
-        cheatcodes: &mut Cheatcodes<CTX::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
+        cheatcodes: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
     ) -> Address;
 }
 
@@ -50,9 +47,9 @@ impl CommonCreateInput for &mut CreateInputs {
     fn set_caller(&mut self, caller: Address) {
         CreateInputs::set_call(self, caller);
     }
-    fn log_debug<SPEC, BLOCK, N: Network>(
+    fn log_debug<N: Network, F: FoundryEvmFactory>(
         &self,
-        cheatcode: &mut Cheatcodes<SPEC, BLOCK, N>,
+        cheatcode: &mut Cheatcodes<N, F>,
         scheme: &CreateScheme,
     ) {
         let kind = match scheme {
@@ -62,13 +59,10 @@ impl CommonCreateInput for &mut CreateInputs {
         };
         debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
     }
-    fn allow_cheatcodes<
-        CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>,
-        N: Network,
-    >(
+    fn allow_cheatcodes<N: Network, F: FoundryEvmFactory>(
         &self,
-        cheatcodes: &mut Cheatcodes<CTX::Spec, CTX::Block, N>,
-        ecx: &mut CTX,
+        cheatcodes: &mut Cheatcodes<N, F>,
+        ecx: &mut F::FoundryContext<'_>,
     ) -> Address {
         let caller = CreateInputs::caller(self);
         let old_nonce =
