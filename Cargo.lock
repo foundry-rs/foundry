@@ -5155,6 +5155,7 @@ dependencies = [
 name = "foundry-evm"
 version = "1.6.0"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-evm",
