@@ -290,11 +290,11 @@ impl TUIContext<'_> {
                 lines.push(u_num, line, u_text);
             }
 
-            let first = if !last_has_nl {
+            let first = if last_has_nl {
+                0
+            } else {
                 lines.push_raw(h_num, &[Span::raw(last), Span::styled(actual[0], h_text)]);
                 1
-            } else {
-                0
             };
 
             // Skip the first line if it has already been handled above.

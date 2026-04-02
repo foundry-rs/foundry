@@ -107,15 +107,15 @@ pub fn print_result(
     config: &Config,
 ) {
     if let Some(res) = res {
-        if !shell::is_json() {
+        if shell::is_json() {
+            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
+            json_results.push(json_res);
+        } else {
             let _ = sh_println!(
                 "{} with status {}",
                 format!("{bytecode_type:?} code matched").green().bold(),
                 res.green().bold()
             );
-        } else {
-            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
-            json_results.push(json_res);
         }
     } else if !shell::is_json() {
         let _ = sh_err!(
@@ -397,10 +397,10 @@ pub fn is_host_only(url: &Url) -> bool {
 /// assert_ne!(version.build, BuildMetadata::EMPTY);
 /// ```
 pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
-    if version.build != BuildMetadata::EMPTY {
-        Ok(version)
-    } else {
+    if version.build == BuildMetadata::EMPTY {
         Ok(lookup_compiler_version(&version).await?)
+    } else {
+        Ok(version)
     }
 }
 

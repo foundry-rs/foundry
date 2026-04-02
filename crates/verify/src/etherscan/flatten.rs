@@ -111,9 +111,9 @@ Diagnostics: {diags}",
 /// sanitized variant of the specific version so that it can be installed. This is merely
 /// intended to ensure the flattened code can be compiled without errors.
 fn strip_build_meta(version: Version) -> Version {
-    if version.build != BuildMetadata::EMPTY {
-        Version::new(version.major, version.minor, version.patch)
-    } else {
+    if version.build == BuildMetadata::EMPTY {
         version
+    } else {
+        Version::new(version.major, version.minor, version.patch)
     }
 }

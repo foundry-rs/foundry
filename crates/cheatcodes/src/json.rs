@@ -503,7 +503,7 @@ fn encode(values: Vec<DynSolValue>) -> Vec<u8> {
 /// Canonicalize a json path key to always start from the root of the document.
 /// Read more about json path syntax: <https://goessner.net/articles/JsonPath/>
 pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
-    if !path.starts_with('$') { format!("${path}").into() } else { path.into() }
+    if path.starts_with('$') { path.into() } else { format!("${path}").into() }
 }
 
 /// Converts a JSON [`Value`] to a [`DynSolValue`] by trying to guess encoded type. For safer

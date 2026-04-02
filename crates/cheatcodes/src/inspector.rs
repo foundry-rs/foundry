@@ -1583,7 +1583,7 @@ where
                         },
                     };
 
-                    if count != expected.count { Some((expected, count)) } else { None }
+                    if count == expected.count { None } else { Some((expected, count)) }
                 })
                 .collect::<Vec<_>>();
 

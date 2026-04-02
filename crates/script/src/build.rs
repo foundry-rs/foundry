@@ -289,7 +289,15 @@ impl CompiledState {
         };
 
         let (args, build_data, script_wallets, browser_wallet, script_config) =
-            if !self.args.unlocked {
+            if self.args.unlocked {
+                (
+                    self.args,
+                    self.build_data,
+                    self.script_wallets,
+                    self.browser_wallet,
+                    self.script_config,
+                )
+            } else {
                 let mut froms = sequence.sequences().iter().flat_map(|s| {
                     s.transactions
                         .iter()
@@ -302,7 +310,15 @@ impl CompiledState {
                     .signers()
                     .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
 
-                if !froms.all(|from| available_signers.contains(&from)) {
+                if froms.all(|from| available_signers.contains(&from)) {
+                    (
+                        self.args,
+                        self.build_data,
+                        self.script_wallets,
+                        self.browser_wallet,
+                        self.script_config,
+                    )
+                } else {
                     // IF we are missing required signers, execute script as we might need to
                     // collect private keys from the execution.
                     let executed = self.link().await?.prepare_execution().await?.execute().await?;
@@ -313,23 +329,7 @@ impl CompiledState {
                         executed.browser_wallet,
                         executed.script_config,
                     )
-                } else {
-                    (
-                        self.args,
-                        self.build_data,
-                        self.script_wallets,
-                        self.browser_wallet,
-                        self.script_config,
-                    )
                 }
-            } else {
-                (
-                    self.args,
-                    self.build_data,
-                    self.script_wallets,
-                    self.browser_wallet,
-                    self.script_config,
-                )
             };
 
         // Collect libraries from sequence and link contracts with them.

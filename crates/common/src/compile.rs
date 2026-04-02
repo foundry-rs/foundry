@@ -163,10 +163,10 @@ impl ProjectCompiler {
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
         self.compile_with(|| {
-            let sources = if !files.is_empty() {
-                Source::read_all(files)?
-            } else {
+            let sources = if files.is_empty() {
                 project.paths.read_input_files()?
+            } else {
+                Source::read_all(files)?
             };
 
             let mut compiler =
