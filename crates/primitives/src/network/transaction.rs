@@ -5,6 +5,7 @@ use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Signature, U256};
 use alloy_rpc_types::SignedAuthorization;
 use tempo_alloy::TempoNetwork;
+use tempo_primitives::transaction::SignedKeyAuthorization;
 
 /// Composite transaction builder trait for Foundry transactions.
 ///
@@ -226,6 +227,12 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     fn compute_sponsor_hash(&self, _from: Address) -> Option<B256> {
         None
     }
+
+    /// Set the key authorization for a Tempo transaction.
+    ///
+    /// Embeds a [`SignedKeyAuthorization`] in the transaction body, provisioning the access key
+    /// on-chain as part of this transaction.
+    fn set_key_authorization(&mut self, _key_authorization: SignedKeyAuthorization) {}
 }
 
 impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionRequest {
@@ -370,5 +377,9 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
     fn compute_sponsor_hash(&self, from: Address) -> Option<B256> {
         let tx = self.clone().build_aa().ok()?;
         Some(tx.fee_payer_signature_hash(from))
+    }
+
+    fn set_key_authorization(&mut self, key_authorization: SignedKeyAuthorization) {
+        self.key_authorization = Some(key_authorization);
     }
 }

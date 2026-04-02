@@ -2,6 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, Error, Result, Vm::*, string};
 use alloy_dyn_abi::DynSolType;
+use alloy_network::Network;
 use alloy_sol_types::SolValue;
 use std::{env, sync::OnceLock};
 
@@ -9,7 +10,7 @@ use std::{env, sync::OnceLock};
 pub static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
 impl Cheatcode for setEnvCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name: key, value } = self;
         if key.is_empty() {
             Err(fmt_err!("environment variable key can't be empty"))
@@ -29,7 +30,7 @@ impl Cheatcode for setEnvCall {
 }
 
 impl Cheatcode for resolveEnvCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { input } = self;
         let resolved = foundry_config::resolve::interpolate(input)
             .map_err(|e| fmt_err!("failed to resolve env var: {e}"))?;
@@ -38,105 +39,105 @@ impl Cheatcode for resolveEnvCall {
 }
 
 impl Cheatcode for envExistsCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         Ok(env::var(name).is_ok().abi_encode())
     }
 }
 
 impl Cheatcode for envBool_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for envUint_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for envInt_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for envAddress_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for envBytes32_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for envString_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::String)
     }
 }
 
 impl Cheatcode for envBytes_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for envBool_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for envUint_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for envInt_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for envAddress_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for envBytes32_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for envString_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::String)
     }
 }
 
 impl Cheatcode for envBytes_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bytes)
     }
@@ -144,7 +145,7 @@ impl Cheatcode for envBytes_1Call {
 
 // bool
 impl Cheatcode for envOr_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bool)
     }
@@ -152,7 +153,7 @@ impl Cheatcode for envOr_0Call {
 
 // uint256
 impl Cheatcode for envOr_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Uint(256))
     }
@@ -160,7 +161,7 @@ impl Cheatcode for envOr_1Call {
 
 // int256
 impl Cheatcode for envOr_2Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Int(256))
     }
@@ -168,7 +169,7 @@ impl Cheatcode for envOr_2Call {
 
 // address
 impl Cheatcode for envOr_3Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Address)
     }
@@ -176,7 +177,7 @@ impl Cheatcode for envOr_3Call {
 
 // bytes32
 impl Cheatcode for envOr_4Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::FixedBytes(32))
     }
@@ -184,7 +185,7 @@ impl Cheatcode for envOr_4Call {
 
 // string
 impl Cheatcode for envOr_5Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::String)
     }
@@ -192,7 +193,7 @@ impl Cheatcode for envOr_5Call {
 
 // bytes
 impl Cheatcode for envOr_6Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bytes)
     }
@@ -200,7 +201,7 @@ impl Cheatcode for envOr_6Call {
 
 // bool[]
 impl Cheatcode for envOr_7Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Bool)
     }
@@ -208,7 +209,7 @@ impl Cheatcode for envOr_7Call {
 
 // uint256[]
 impl Cheatcode for envOr_8Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Uint(256))
     }
@@ -216,7 +217,7 @@ impl Cheatcode for envOr_8Call {
 
 // int256[]
 impl Cheatcode for envOr_9Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Int(256))
     }
@@ -224,7 +225,7 @@ impl Cheatcode for envOr_9Call {
 
 // address[]
 impl Cheatcode for envOr_10Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Address)
     }
@@ -232,7 +233,7 @@ impl Cheatcode for envOr_10Call {
 
 // bytes32[]
 impl Cheatcode for envOr_11Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::FixedBytes(32))
     }
@@ -240,7 +241,7 @@ impl Cheatcode for envOr_11Call {
 
 // string[]
 impl Cheatcode for envOr_12Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::String)
     }
@@ -248,7 +249,7 @@ impl Cheatcode for envOr_12Call {
 
 // bytes[]
 impl Cheatcode for envOr_13Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { name, delim, defaultValue } = self;
         let default = defaultValue.to_vec();
         env_array_default(name, delim, &default, &DynSolType::Bytes)
@@ -256,7 +257,7 @@ impl Cheatcode for envOr_13Call {
 }
 
 impl Cheatcode for isContextCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<SPEC, BLOCK, N: Network>(&self, _state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
         let Self { context } = self;
         Ok((FORGE_CONTEXT.get() == Some(context)).abi_encode())
     }

@@ -9,10 +9,10 @@ use crate::wallet_browser::signer::BrowserSigner;
 
 /// Browser wallet options
 #[derive(Clone, Debug, Default, Serialize, Parser)]
-#[command(next_help_heading = "Browser wallet options")]
+#[command(next_help_heading = "Wallet options - browser wallet")]
 pub struct BrowserWalletOpts {
     /// Use a browser wallet.
-    #[arg(long, help_heading = "")]
+    #[arg(long)]
     pub browser: bool,
 
     /// Port for the browser wallet server.

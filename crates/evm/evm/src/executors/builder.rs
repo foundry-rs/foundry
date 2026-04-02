@@ -1,6 +1,9 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
 use foundry_evm_core::{EvmEnv, backend::Backend};
-use revm::{context::TxEnv, primitives::hardfork::SpecId};
+use revm::{
+    context::{BlockEnv, TxEnv},
+    primitives::hardfork::SpecId,
+};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
@@ -13,7 +16,7 @@ use revm::{context::TxEnv, primitives::hardfork::SpecId};
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct ExecutorBuilder {
     /// The configuration used to build an `InspectorStack`.
-    stack: InspectorStackBuilder,
+    stack: InspectorStackBuilder<BlockEnv>,
     /// The gas limit.
     gas_limit: Option<u64>,
     /// The spec ID.
@@ -44,7 +47,7 @@ impl ExecutorBuilder {
     #[inline]
     pub fn inspectors(
         mut self,
-        f: impl FnOnce(InspectorStackBuilder) -> InspectorStackBuilder,
+        f: impl FnOnce(InspectorStackBuilder<BlockEnv>) -> InspectorStackBuilder<BlockEnv>,
     ) -> Self {
         self.stack = f(self.stack);
         self

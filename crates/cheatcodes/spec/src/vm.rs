@@ -2968,16 +2968,16 @@ interface Vm {
     function resumeTracing() external view;
 
     /// Utility cheatcode to copy storage of `from` contract to another `to` contract.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function copyStorage(address from, address to) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address and overwrite
     /// any storage slots that have been previously set.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target, bool overwrite) external;
 
     /// Sorts an array in ascending order.

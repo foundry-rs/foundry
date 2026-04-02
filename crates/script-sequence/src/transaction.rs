@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
-    pub opcode: CallKind,
+    pub call_kind: CallKind,
     pub contract_name: Option<String>,
     pub address: Address,
     pub init_code: Bytes,
@@ -25,7 +25,7 @@ pub struct AdditionalContract {
 pub struct TransactionWithMetadata<N: Network> {
     pub hash: Option<B256>,
     #[serde(rename = "transactionType")]
-    pub opcode: CallKind,
+    pub call_kind: CallKind,
     #[serde(default = "default_string")]
     pub contract_name: Option<String>,
     #[serde(default = "default_address")]
@@ -60,7 +60,7 @@ impl<N: Network> TransactionWithMetadata<N> {
         Self {
             transaction,
             hash: Default::default(),
-            opcode: Default::default(),
+            call_kind: Default::default(),
             contract_name: Default::default(),
             contract_address: Default::default(),
             function: Default::default(),
@@ -80,6 +80,6 @@ impl<N: Network> TransactionWithMetadata<N> {
     }
 
     pub fn is_create2(&self) -> bool {
-        self.opcode == CallKind::Create2
+        self.call_kind == CallKind::Create2
     }
 }

@@ -5,13 +5,13 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        env::Env,
         mem::cache::DiskStateCache,
     },
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_evm::EvmEnv;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -32,7 +32,9 @@ use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
+#[cfg(test)]
+use foundry_primitives::FoundryNetwork;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -283,25 +285,24 @@ pub struct BlockchainStorage<N: Network> {
 impl<N: Network> BlockchainStorage<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
-        env: &Env,
-        spec_id: SpecId,
+        evm_env: &EvmEnv,
         base_fee: Option<u64>,
         timestamp: u64,
         genesis_number: u64,
     ) -> Self {
-        let is_shanghai = spec_id >= SpecId::SHANGHAI;
-        let is_cancun = spec_id >= SpecId::CANCUN;
-        let is_prague = spec_id >= SpecId::PRAGUE;
+        let is_shanghai = *evm_env.spec_id() >= SpecId::SHANGHAI;
+        let is_cancun = *evm_env.spec_id() >= SpecId::CANCUN;
+        let is_prague = *evm_env.spec_id() >= SpecId::PRAGUE;
 
         // create a dummy genesis block
         let header = Header {
             timestamp,
             base_fee_per_gas: base_fee,
-            gas_limit: env.evm_env.block_env.gas_limit,
-            beneficiary: env.evm_env.block_env.beneficiary,
-            difficulty: env.evm_env.block_env.difficulty,
-            blob_gas_used: env.evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: env.evm_env.block_env.blob_excess_gas(),
+            gas_limit: evm_env.block_env.gas_limit,
+            beneficiary: evm_env.block_env.beneficiary,
+            difficulty: evm_env.block_env.difficulty,
+            blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+            excess_blob_gas: evm_env.block_env.blob_excess_gas(),
             number: genesis_number,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
@@ -447,19 +448,15 @@ impl<N: Network> BlockchainStorage<N> {
     }
 }
 
-impl BlockchainStorage<FoundryNetwork> {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> {
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
-        self.transactions
-            .values()
-            .map(|tx: &MinedTransaction<FoundryNetwork>| tx.clone().into())
-            .collect()
+        self.transactions.values().map(|tx: &MinedTransaction<N>| tx.clone().into()).collect()
     }
 
     /// Deserialize and add all transactions data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
         for serializable_transaction in &serializable_transactions {
-            let transaction: MinedTransaction<FoundryNetwork> =
-                serializable_transaction.clone().into();
+            let transaction: MinedTransaction<N> = serializable_transaction.clone().into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }
@@ -475,16 +472,14 @@ pub struct Blockchain<N: Network> {
 impl<N: Network> Blockchain<N> {
     /// Creates a new storage with a genesis block
     pub fn new(
-        env: &Env,
-        spec_id: SpecId,
+        evm_env: &EvmEnv,
         base_fee: Option<u64>,
         timestamp: u64,
         genesis_number: u64,
     ) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                env,
-                spec_id,
+                evm_env,
                 base_fee,
                 timestamp,
                 genesis_number,
@@ -533,6 +528,9 @@ pub struct MinedBlockOutcome<T> {
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
+    /// These remain in the pool and should be retried later.
+    pub not_yet_valid: Vec<Arc<PoolTransaction<T>>>,
 }
 
 impl<T> Clone for MinedBlockOutcome<T> {
@@ -541,6 +539,7 @@ impl<T> Clone for MinedBlockOutcome<T> {
             block_number: self.block_number,
             included: self.included.clone(),
             invalid: self.invalid.clone(),
+            not_yet_valid: self.not_yet_valid.clone(),
         }
     }
 }
@@ -551,6 +550,7 @@ impl<T> fmt::Debug for MinedBlockOutcome<T> {
             .field("block_number", &self.block_number)
             .field("included", &self.included.len())
             .field("invalid", &self.invalid.len())
+            .field("not_yet_valid", &self.not_yet_valid.len())
             .finish()
     }
 }

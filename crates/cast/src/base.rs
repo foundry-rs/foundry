@@ -120,27 +120,11 @@ impl Base {
             // anyway;
             // strip prefix when using u128::from_str_radix because it does not recognize it as
             // valid.
-            _ if s.starts_with("0b") => match u64::from_str_radix(&s[2..], 2) {
-                Ok(_) => Ok(Self::Binary),
-                Err(e) => match e.kind() {
-                    IntErrorKind::PosOverflow => Ok(Self::Binary),
-                    _ => Err(eyre::eyre!("could not parse binary value: {}", e)),
-                },
-            },
-            _ if s.starts_with("0o") => match u64::from_str_radix(&s[2..], 8) {
-                Ok(_) => Ok(Self::Octal),
-                Err(e) => match e.kind() {
-                    IntErrorKind::PosOverflow => Ok(Self::Octal),
-                    _ => Err(eyre::eyre!("could not parse octal value: {e}")),
-                },
-            },
-            _ if s.starts_with("0x") => match u64::from_str_radix(&s[2..], 16) {
-                Ok(_) => Ok(Self::Hexadecimal),
-                Err(e) => match e.kind() {
-                    IntErrorKind::PosOverflow => Ok(Self::Hexadecimal),
-                    _ => Err(eyre::eyre!("could not parse hexadecimal value: {e}")),
-                },
-            },
+            _ if s.starts_with("0b") => Self::detect_prefixed(s, 2, Self::Binary, "binary"),
+            _ if s.starts_with("0o") => Self::detect_prefixed(s, 8, Self::Octal, "octal"),
+            _ if s.starts_with("0x") => {
+                Self::detect_prefixed(s, 16, Self::Hexadecimal, "hexadecimal")
+            }
             // No prefix => first try parsing as decimal
             _ => match U256::from_str_radix(s, 10) {
                 // Can be both, ambiguous but default to Decimal
@@ -151,6 +135,18 @@ impl Base {
                         "could not autodetect base as neither decimal or hexadecimal: {e}"
                     )),
                 },
+            },
+        }
+    }
+
+    /// Detects a prefixed base by stripping the 2-char prefix and parsing the remainder.
+    /// `PosOverflow` is treated as a valid match since the digits are correct for the base.
+    fn detect_prefixed(s: &str, radix: u32, base: Self, label: &str) -> Result<Self> {
+        match u64::from_str_radix(&s[2..], radix) {
+            Ok(_) => Ok(base),
+            Err(e) => match e.kind() {
+                IntErrorKind::PosOverflow => Ok(base),
+                _ => Err(eyre::eyre!("could not parse {label} value: {e}")),
             },
         }
     }

@@ -10,7 +10,9 @@ use crate::inspectors::{
     Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_evm::EthEvmFactory;
 use alloy_json_abi::Function;
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
@@ -101,7 +103,7 @@ pub struct Executor {
     /// The transaction environment.
     tx_env: TxEnv,
     /// The Revm inspector stack.
-    inspector: InspectorStack,
+    inspector: InspectorStack<Ethereum, EthEvmFactory>,
     /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
@@ -115,7 +117,7 @@ impl Executor {
         mut backend: Backend,
         evm_env: EvmEnv,
         tx_env: TxEnv,
-        inspector: InspectorStack,
+        inspector: InspectorStack<Ethereum, EthEvmFactory>,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
@@ -143,8 +145,7 @@ impl Executor {
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
-        let mut evm_env = self.evm_env.clone();
-        evm_env.cfg_env.spec = self.spec_id();
+        let evm_env = self.evm_env.clone();
         Self {
             backend: Arc::new(backend),
             evm_env,
@@ -189,12 +190,12 @@ impl Executor {
     }
 
     /// Returns a reference to the EVM inspector.
-    pub fn inspector(&self) -> &InspectorStack {
+    pub fn inspector(&self) -> &InspectorStack<Ethereum, EthEvmFactory> {
         &self.inspector
     }
 
     /// Returns a mutable reference to the EVM inspector.
-    pub fn inspector_mut(&mut self) -> &mut InspectorStack {
+    pub fn inspector_mut(&mut self) -> &mut InspectorStack<Ethereum, EthEvmFactory> {
         &mut self.inspector
     }
 
@@ -596,7 +597,8 @@ impl Executor {
         }
 
         // Persist the changed environment.
-        self.inspector_mut().set_env(&result.evm_env, &result.tx_env);
+        self.inspector_mut().set_block(result.evm_env.block_env.clone());
+        self.inspector_mut().set_gas_price(result.tx_env.gas_price);
     }
 
     /// Returns `true` if a test can be considered successful.
@@ -877,7 +879,7 @@ impl From<DeployResult> for RawCallResult {
 
 /// The result of a raw call.
 #[derive(Debug)]
-pub struct RawCallResult {
+pub struct RawCallResult<SPEC = SpecId, BLOCK = BlockEnv, TX = TxEnv, N: Network = Ethereum> {
     /// The status of the call
     pub exit_reason: Option<InstructionResult>,
     /// Whether the call reverted or not
@@ -906,15 +908,15 @@ pub struct RawCallResult {
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<BroadcastableTransactions>,
+    pub transactions: Option<BroadcastableTransactions<N>>,
     /// The changeset of the state.
     pub state_changeset: StateChangeset,
     /// The `EvmEnv` after the call
-    pub evm_env: EvmEnv,
+    pub evm_env: EvmEnv<SPEC, BLOCK>,
     /// The `TxEnv` after the call
-    pub tx_env: TxEnv,
+    pub tx_env: TX,
     /// The cheatcode states after execution
-    pub cheatcodes: Option<Box<Cheatcodes>>,
+    pub cheatcodes: Option<Box<Cheatcodes<SPEC, BLOCK, N>>>,
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
@@ -922,7 +924,9 @@ pub struct RawCallResult {
     pub reverter: Option<Address>,
 }
 
-impl Default for RawCallResult {
+impl<SPEC: Default + Into<SpecId> + Clone, BLOCK: Default, TX: Default, N: Network> Default
+    for RawCallResult<SPEC, BLOCK, TX, N>
+{
     fn default() -> Self {
         Self {
             exit_reason: None,
@@ -940,7 +944,7 @@ impl Default for RawCallResult {
             transactions: None,
             state_changeset: HashMap::default(),
             evm_env: EvmEnv::default(),
-            tx_env: TxEnv::default(),
+            tx_env: TX::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -992,20 +996,18 @@ impl RawCallResult {
     ) -> Result<CallResult, EvmError> {
         self = self.into_result(rd)?;
         let mut result = func.abi_decode_output(&self.result)?;
-        let decoded_result = if result.len() == 1 {
-            result.pop().unwrap()
-        } else {
-            // combine results into a tuple
-            DynSolValue::Tuple(result)
-        };
+        let decoded_result =
+            if result.len() == 1 { result.pop().unwrap() } else { DynSolValue::Tuple(result) };
         Ok(CallResult { raw: self, decoded_result })
     }
 
     /// Returns the transactions generated from this call.
-    pub fn transactions(&self) -> Option<&BroadcastableTransactions> {
+    pub fn transactions(&self) -> Option<&BroadcastableTransactions<Ethereum>> {
         self.cheatcodes.as_ref().map(|c| &c.broadcastable_transactions)
     }
+}
 
+impl<SPEC, BLOCK, TX, N: Network> RawCallResult<SPEC, BLOCK, TX, N> {
     /// Update provided history map with edge coverage info collected during this call.
     /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
     pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
@@ -1077,20 +1079,19 @@ impl std::ops::DerefMut for CallResult {
 fn convert_executed_result(
     evm_env: EvmEnv,
     tx_env: TxEnv,
-    inspector: InspectorStack,
+    inspector: InspectorStack<Ethereum, EthEvmFactory>,
     ResultAndState { result, state: state_changeset }: ResultAndState,
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
-        ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
-            (reason.into(), gas_refunded, gas_used, Some(output), logs)
+        ExecutionResult::Success { reason, gas, output, logs } => {
+            (reason.into(), gas.final_refunded(), gas.used(), Some(output), logs)
         }
-        ExecutionResult::Revert { gas_used, output } => {
-            // Need to fetch the unused gas
-            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)), vec![])
+        ExecutionResult::Revert { gas, output, logs } => {
+            (InstructionResult::Revert, 0_u64, gas.used(), Some(Output::Call(output)), logs)
         }
-        ExecutionResult::Halt { reason, gas_used } => {
-            (reason.into(), 0_u64, gas_used, None, vec![])
+        ExecutionResult::Halt { reason, gas, logs } => {
+            (reason.into(), 0_u64, gas.used(), None, logs)
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas(

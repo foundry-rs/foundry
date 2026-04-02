@@ -99,8 +99,8 @@ impl From<MaybeImpersonatedTransaction<Self>> for FoundryTxEnvelope {
     }
 }
 
-impl From<FoundryTxEnvelope> for MaybeImpersonatedTransaction<FoundryTxEnvelope> {
-    fn from(value: FoundryTxEnvelope) -> Self {
+impl<T> From<T> for MaybeImpersonatedTransaction<T> {
+    fn from(value: T) -> Self {
         Self::new(value)
     }
 }

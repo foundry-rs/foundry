@@ -195,7 +195,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Prague);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork>(
+            apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
                 &mut evm_env,
                 block,
                 config.networks,

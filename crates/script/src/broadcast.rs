@@ -22,10 +22,11 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_primitives::FoundryTransactionBuilder;
-use foundry_wallets::wallet_browser::signer::BrowserSigner;
+use foundry_wallets::{TempoAccessKeyConfig, WalletSigner, wallet_browser::signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use tempo_alloy::provider::TempoProviderExt;
 
 use crate::{
     ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
@@ -71,13 +72,15 @@ pub enum SendTransactionKind<'a, N: Network> {
     Raw(N::TransactionRequest, &'a EthereumWallet),
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
     Signed(N::TxEnvelope),
+    AccessKey(N::TransactionRequest, &'a WalletSigner, &'a TempoAccessKeyConfig, String),
 }
 
 impl<'a, N: Network> SendTransactionKind<'a, N>
 where
     N::TxEnvelope: From<Signed<N::UnsignedTx>>,
     N::UnsignedTx: SignableTransaction<Signature>,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::TransactionRequest:
+        FoundryTransactionBuilder<N> + Into<tempo_alloy::rpc::TempoTransactionRequest>,
 {
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
     ///
@@ -93,7 +96,11 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
     ) -> Result<()> {
-        if let Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) = self {
+        if let Self::Raw(tx, _)
+        | Self::Unlocked(tx)
+        | Self::Browser(tx, _)
+        | Self::AccessKey(tx, _, _, _) = self
+        {
             if sequential_broadcast {
                 let from = tx.from().expect("no sender");
 
@@ -169,6 +176,35 @@ where
                 // Sign and send the transaction via the browser wallet
                 Ok(signer.send_transaction_via_browser(tx).await?)
             }
+            Self::AccessKey(mut tx, signer, access_key, rpc_url) => {
+                debug!("sending transaction via tempo access key: {:?}", tx);
+
+                // Check if the key needs on-chain provisioning.
+                if let Some(auth) = &access_key.key_authorization {
+                    let tempo_provider = foundry_common::provider::ProviderBuilder::<
+                        tempo_alloy::TempoNetwork,
+                    >::new(&rpc_url)
+                    .build()?;
+                    if !tempo_provider
+                        .get_keychain_key(access_key.wallet_address, access_key.key_address)
+                        .await
+                        .map(|info| info.keyId != Address::ZERO)
+                        .unwrap_or(false)
+                    {
+                        tx.set_key_authorization(auth.clone());
+                    }
+                }
+
+                let raw_tx = foundry_wallets::tempo::sign_with_access_key(
+                    tx,
+                    signer,
+                    access_key.wallet_address,
+                )
+                .await?;
+
+                let pending = provider.send_raw_transaction(&raw_tx).await?;
+                Ok(*pending.tx_hash())
+            }
         }
     }
 
@@ -202,7 +238,11 @@ pub enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(AddressHashSet),
     /// Send a signed transaction via `eth_sendRawTransaction`, or via browser
-    Raw { eth_wallets: AddressHashMap<EthereumWallet>, browser: Option<BrowserSigner<N>> },
+    Raw {
+        eth_wallets: AddressHashMap<EthereumWallet>,
+        browser: Option<BrowserSigner<N>>,
+        access_keys: AddressHashMap<(WalletSigner, TempoAccessKeyConfig)>,
+    },
 }
 
 impl<N: Network> SendTransactionsKind<N> {
@@ -213,6 +253,7 @@ impl<N: Network> SendTransactionsKind<N> {
         &self,
         addr: &Address,
         tx: N::TransactionRequest,
+        rpc_url: &str,
     ) -> Result<SendTransactionKind<'_, N>> {
         match self {
             Self::Unlocked(unlocked) => {
@@ -221,8 +262,10 @@ impl<N: Network> SendTransactionsKind<N> {
                 }
                 Ok(SendTransactionKind::Unlocked(tx))
             }
-            Self::Raw { eth_wallets, browser } => {
-                if let Some(wallet) = eth_wallets.get(addr) {
+            Self::Raw { eth_wallets, browser, access_keys } => {
+                if let Some((signer, config)) = access_keys.get(addr) {
+                    Ok(SendTransactionKind::AccessKey(tx, signer, config, rpc_url.to_string()))
+                } else if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
                 } else if let Some(b) = browser
                     && b.address() == *addr
@@ -295,7 +338,8 @@ where
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::TransactionRequest:
+            FoundryTransactionBuilder<N> + Into<tempo_alloy::rpc::TempoTransactionRequest>,
     {
         let required_addresses = self
             .sequence
@@ -325,11 +369,22 @@ where
                 .into_iter()
                 .chain(self.browser_wallet.as_ref().map(|b| b.address()))
                 .collect();
+
+            // For addresses without an explicit signer, try Tempo access key lookup.
+            let mut access_keys: AddressHashMap<(WalletSigner, TempoAccessKeyConfig)> =
+                AddressHashMap::default();
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
                 if !signers.contains(addr) {
-                    missing_addresses.push(addr);
+                    match foundry_wallets::tempo::lookup_signer(*addr) {
+                        Ok(foundry_wallets::tempo::TempoLookup::Keychain(signer, config)) => {
+                            access_keys.insert(*addr, (signer, *config));
+                        }
+                        _ => {
+                            missing_addresses.push(addr);
+                        }
+                    }
                 }
             }
 
@@ -345,7 +400,7 @@ where
             let eth_wallets =
                 signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
 
-            SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet }
+            SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
         };
 
         let progress = ScriptProgress::default();
@@ -368,15 +423,39 @@ where
                 ) {
                     (true, Some(gas_price), _) => (Some(gas_price.to()), None),
                     (true, None, _) => (Some(provider.get_gas_price().await?), None),
-                    (false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => (
-                        None,
-                        Some(Eip1559Estimation {
-                            max_fee_per_gas: max_fee_per_gas.to(),
-                            max_priority_fee_per_gas: max_priority_fee_per_gas.to(),
-                        }),
-                    ),
+                    (false, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
+                        let max_fee: u128 = max_fee_per_gas.to();
+                        let max_priority: u128 = max_priority_fee_per_gas.to();
+                        if max_priority > max_fee {
+                            eyre::bail!(
+                                "--priority-gas-price ({max_priority}) cannot be higher than --with-gas-price ({max_fee})"
+                            );
+                        }
+                        (
+                            None,
+                            Some(Eip1559Estimation {
+                                max_fee_per_gas: max_fee,
+                                max_priority_fee_per_gas: max_priority,
+                            }),
+                        )
+                    }
                     (false, _, _) => {
                         let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+
+                        // When using --browser, the browser wallet may override the
+                        // priority fee with its own estimate (from
+                        // eth_maxPriorityFeePerGas) without adjusting maxFeePerGas,
+                        // leading to maxPriorityFeePerGas > maxFeePerGas.
+                        // This is common on OP Stack chains (e.g. Base) where
+                        // eth_feeHistory returns empty reward arrays, causing the
+                        // estimator to fall back to a 1 wei priority fee.
+                        if matches!(&send_kind, SendTransactionsKind::Raw { browser: Some(_), .. })
+                            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+                            && suggested_tip > fees.max_priority_fee_per_gas
+                        {
+                            fees.max_fee_per_gas += suggested_tip - fees.max_priority_fee_per_gas;
+                            fees.max_priority_fee_per_gas = suggested_tip;
+                        }
 
                         if let Some(gas_price) = self.args.with_gas_price {
                             fees.max_fee_per_gas = gas_price.to();
@@ -424,7 +503,7 @@ where
                                     tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
                                 }
 
-                                send_kind.for_sender(&from, tx)?
+                                send_kind.for_sender(&from, tx, sequence.rpc_url())?
                             }
                         };
 
