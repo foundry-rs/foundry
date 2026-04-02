@@ -396,9 +396,8 @@ impl<T: Transaction> PoolInner<T> {
                         debug!(target: "txpool", "[{:?}] Failed to add tx: {:?}", current_hash,
         err);
                         return Err(err);
-                    } else {
-                        ready.discarded.push(current_hash);
                     }
+                    ready.discarded.push(current_hash);
                 }
             }
             is_new_tx = false;

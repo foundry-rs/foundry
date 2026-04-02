@@ -1411,10 +1411,9 @@ where
                             outcome.result.output = error.abi_encode().into();
                         }
                     };
-                } else {
-                    // Call didn't revert, reset `assume_no_revert` state.
-                    self.assume_no_revert = None;
                 }
+                // Call didn't revert, reset `assume_no_revert` state.
+                self.assume_no_revert = None;
             }
         }
 

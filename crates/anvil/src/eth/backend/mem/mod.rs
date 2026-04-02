@@ -3050,11 +3050,11 @@ where
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
                     return Ok(f(Box::new(state_db), block_env_from_header(&block.header)));
-                } else {
-                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                    if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                        return Ok(f(Box::new(state), block_env_from_header(&block.header)));
-                    }
+                }
+
+                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                    return Ok(f(Box::new(state), block_env_from_header(&block.header)));
                 }
             }
 

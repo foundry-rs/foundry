@@ -565,14 +565,13 @@ fn uint_assert_approx_eq_rel(
     if right.is_zero() {
         if left.is_zero() {
             return Ok(());
-        } else {
-            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-                left,
-                right,
-                max_delta,
-                real_delta: EqRelDelta::Undefined,
-            })));
-        };
+        }
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })));
     }
 
     let delta = calc_delta_full::<U256>(left.abs_diff(right), right)?;
@@ -597,14 +596,13 @@ fn int_assert_approx_eq_rel(
     if right.is_zero() {
         if left.is_zero() {
             return Ok(());
-        } else {
-            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-                left,
-                right,
-                max_delta,
-                real_delta: EqRelDelta::Undefined,
-            })));
         }
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })));
     }
 
     let delta = calc_delta_full::<I256>(get_delta_int(left, right), right.unsigned_abs())?;

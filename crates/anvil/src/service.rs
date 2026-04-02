@@ -179,9 +179,8 @@ where
                         panic!("miner task failed: {err}");
                     }
                 };
-            } else {
-                pin.block_mining = Some(mining)
             }
+            pin.block_mining = Some(mining)
         }
 
         Poll::Pending
