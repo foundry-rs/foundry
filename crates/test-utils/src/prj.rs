@@ -41,9 +41,7 @@ pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
-    if !status.success() {
-        panic!("git clone failed: {status}");
-    }
+    assert!(status.success(), "git clone failed: {status}")
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -365,9 +363,7 @@ impl TestProject {
     /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
-        if !path.is_relative() {
-            panic!("create_file(): file path is absolute");
-        }
+        assert!(path.is_relative(), "create_file(): file path is absolute");
         let path = self.root().join(path);
         if let Some(parent) = path.parent() {
             pretty_err(parent, std::fs::create_dir_all(parent));

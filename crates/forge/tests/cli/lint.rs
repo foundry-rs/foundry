@@ -1134,12 +1134,11 @@ async fn ensure_lint_rule_docs() {
     // Fetch the content of the lint reference
     let content = match reqwest::get(FOUNDRY_BOOK_LINT_PAGE_URL).await {
         Ok(resp) => {
-            if !resp.status().is_success() {
-                panic!(
-                    "Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}). Status: {status}",
-                    status = resp.status()
-                );
-            }
+            assert!(
+                resp.status().is_success(),
+                "Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}). Status: {status}",
+                status = resp.status()
+            );
             match resp.text().await {
                 Ok(text) => text,
                 Err(e) => {
