@@ -568,8 +568,7 @@ impl MultiContractRunnerBuilder {
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
 
         // Populate solar's global context by parsing and lowering the sources.
-        let files: Vec<_> =
-            output.output().sources.as_ref().keys().cloned().collect();
+        let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
 
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
