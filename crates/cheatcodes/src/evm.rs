@@ -1705,7 +1705,7 @@ fn inner_stop_gas_snapshot<CTX: ContextTr, N: Network>(
         ccx.state
             .gas_metering
             .gas_records
-            .retain(|record| record.group != group && record.name != name);
+            .retain(|record| record.group != group || record.name != name);
 
         // Clear last snapshot cache if we have an exact match.
         if let Some((snapshot_group, snapshot_name)) = &ccx.state.gas_metering.active_gas_snapshot
