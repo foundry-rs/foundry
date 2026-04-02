@@ -6,7 +6,8 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, Network, TransactionBuilder};
+use alloy_evm::EthEvmFactory;
+use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -299,7 +300,11 @@ impl CallArgs {
 
             let create2_deployer = evm_opts.create2_deployer;
             let (mut evm_env, tx_env, fork, chain, networks) =
-                TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
+                TracingExecutor::<Ethereum, EthEvmFactory>::get_fork_material(
+                    &mut config,
+                    evm_opts,
+                )
+                .await?;
 
             // modify settings that usually set in eth_call
             evm_env.cfg_env.disable_block_gas_limit = true;
@@ -324,7 +329,7 @@ impl CallArgs {
                     InternalTraceMode::None
                 })
                 .with_state_changes(shell::verbosity() > 4);
-            let mut executor = TracingExecutor::new(
+            let mut executor = TracingExecutor::<Ethereum, EthEvmFactory>::new(
                 (evm_env, tx_env),
                 fork,
                 evm_version,
