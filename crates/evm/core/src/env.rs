@@ -197,6 +197,11 @@ pub trait FoundryTransaction: Transaction {
     /// Sets the max fee per blob gas.
     fn set_max_fee_per_blob_gas(&mut self, max_fee_per_blob_gas: u128);
 
+    /// Sets the EIP-7702 signed authorization list.
+    fn set_signed_authorization(&mut self, auth: Vec<SignedAuthorization>) {
+        *self.authorization_list_mut() = auth.into_iter().map(Either::Left).collect();
+    }
+
     // `OpTransaction` methods
 
     /// Enveloped transaction bytes.

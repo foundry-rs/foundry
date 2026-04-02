@@ -74,7 +74,7 @@ pub trait FoundryEvmFactory:
     EvmFactory<
         Spec: Into<SpecId> + FromEvmVersion + Default + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
-        Tx: Clone + FoundryTransaction + Default,
+        Tx: Clone + Debug + FoundryTransaction + Default + Send + Sync,
         HaltReason: IntoInstructionResult,
         Precompiles = PrecompilesMap,
     > + Clone

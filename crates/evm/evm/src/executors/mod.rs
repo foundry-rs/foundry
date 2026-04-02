@@ -9,14 +9,16 @@
 use crate::inspectors::{
     Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_evm::EthEvmFactory;
+use alloy_evm::{EthEvmFactory, FromRecoveredTx};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction, Ethereum, Network};
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
+use alloy_rlp::Decodable;
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
     EvmEnv, FoundryBlock, FoundryTransaction, TryAnyToTxEnv,
@@ -26,20 +28,22 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
-    evm::FoundryEvmFactory,
+    evm::{FoundryEvmFactory, IntoInstructionResult},
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_primitives::FoundryTransactionBuilder;
 use revm::{
     bytecode::Bytecode,
-    context::{Transaction, TxEnv},
+    context::Transaction,
     context_interface::{
         result::{ExecutionResult, Output, ResultAndState},
         transaction::SignedAuthorization,
     },
     database::{DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
+    primitives::hardfork::SpecId,
 };
 use std::{
     borrow::Cow,
@@ -110,8 +114,13 @@ pub struct Executor<N: Network, F: FoundryEvmFactory> {
     legacy_assertions: bool,
 }
 
-impl<N: Network, F: FoundryEvmFactory> Executor<N, F>
+impl<N, F> Executor<N, F>
 where
+    N: Network<
+            TxEnvelope: Decodable + SignerRecoverable,
+            TransactionRequest: FoundryTransactionBuilder<N>,
+        >,
+    F: FoundryEvmFactory<Tx: FromRecoveredTx<N::TxEnvelope>, Spec: From<SpecId>>,
     AnyRpcTransaction: TryAnyToTxEnv<F::Tx>,
 {
     /// Creates a new `Executor` with the given arguments.
@@ -236,10 +245,7 @@ where
     pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
         self.legacy_assertions = legacy_assertions;
     }
-}
 
-/// Concrete execution methods pinned to Ethereum types.
-impl Executor<Ethereum, EthEvmFactory> {
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
@@ -360,7 +366,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         code: Bytes,
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<DeployResult, EvmError> {
+    ) -> Result<DeployResult<N, F>, EvmError<N, F>> {
         let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
         self.deploy_with_env(evm_env, tx_env, rd)
     }
@@ -374,10 +380,10 @@ impl Executor<Ethereum, EthEvmFactory> {
     #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
-        evm_env: EvmEnv,
-        tx_env: TxEnv,
+        evm_env: EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: F::Tx,
         rd: Option<&RevertDecoder>,
-    ) -> Result<DeployResult, EvmError> {
+    ) -> Result<DeployResult<N, F>, EvmError<N, F>> {
         assert!(
             matches!(tx_env.kind(), TxKind::Create),
             "Expected create transaction, got {:?}",
@@ -412,7 +418,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         from: Option<Address>,
         to: Address,
         rd: Option<&RevertDecoder>,
-    ) -> Result<RawCallResult, EvmError> {
+    ) -> Result<RawCallResult<N, F>, EvmError<N, F>> {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
@@ -444,7 +450,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         args: &[DynSolValue],
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
+    ) -> Result<CallResult<DynSolValue, N, F>, EvmError<N, F>> {
         let calldata = Bytes::from(func.abi_encode_input(args)?);
         let result = self.call_raw(from, to, calldata, value)?;
         result.into_decoded_result(func, rd)
@@ -458,7 +464,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         args: &C,
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult<C::Return>, EvmError> {
+    ) -> Result<CallResult<C::Return, N, F>, EvmError<N, F>> {
         let calldata = Bytes::from(args.abi_encode());
         let mut raw = self.call_raw(from, to, calldata, value)?;
         raw = raw.into_result(rd)?;
@@ -474,7 +480,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         args: &[DynSolValue],
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
+    ) -> Result<CallResult<DynSolValue, N, F>, EvmError<N, F>> {
         let calldata = Bytes::from(func.abi_encode_input(args)?);
         let result = self.transact_raw(from, to, calldata, value)?;
         result.into_decoded_result(func, rd)
@@ -487,7 +493,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         to: Address,
         calldata: Bytes,
         value: U256,
-    ) -> eyre::Result<RawCallResult> {
+    ) -> eyre::Result<RawCallResult<N, F>> {
         let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.call_with_env(evm_env, tx_env)
     }
@@ -501,7 +507,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         calldata: Bytes,
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
-    ) -> eyre::Result<RawCallResult> {
+    ) -> eyre::Result<RawCallResult<N, F>> {
         let (evm_env, mut tx_env) = self.build_test_env(from, to.into(), calldata, value);
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
@@ -515,7 +521,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         to: Address,
         calldata: Bytes,
         value: U256,
-    ) -> eyre::Result<RawCallResult> {
+    ) -> eyre::Result<RawCallResult<N, F>> {
         let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(evm_env, tx_env)
     }
@@ -529,7 +535,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         calldata: Bytes,
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
-    ) -> eyre::Result<RawCallResult> {
+    ) -> eyre::Result<RawCallResult<N, F>> {
         let (evm_env, mut tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
@@ -542,9 +548,9 @@ impl Executor<Ethereum, EthEvmFactory> {
     #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env(
         &self,
-        mut evm_env: EvmEnv,
-        mut tx_env: TxEnv,
-    ) -> eyre::Result<RawCallResult> {
+        mut evm_env: EvmEnv<F::Spec, F::BlockEnv>,
+        mut tx_env: F::Tx,
+    ) -> eyre::Result<RawCallResult<N, F>> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
@@ -561,13 +567,12 @@ impl Executor<Ethereum, EthEvmFactory> {
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(
         &mut self,
-        mut evm_env: EvmEnv,
-        mut tx_env: TxEnv,
-    ) -> eyre::Result<RawCallResult> {
+        mut evm_env: EvmEnv<F::Spec, F::BlockEnv>,
+        mut tx_env: F::Tx,
+    ) -> eyre::Result<RawCallResult<N, F>> {
         let mut stack = self.inspector().clone();
         let backend = self.backend_mut();
-        let result: revm::context::result::ExecResultAndState<ExecutionResult> =
-            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
+        let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -584,7 +589,7 @@ impl Executor<Ethereum, EthEvmFactory> {
     ///
     /// This should not be exposed to the user, as it should be called only by `transact*`.
     #[instrument(name = "commit", level = "debug", skip_all)]
-    fn commit(&mut self, result: &mut RawCallResult) {
+    fn commit(&mut self, result: &mut RawCallResult<N, F>) {
         // Persist changes to db.
         self.backend_mut().commit(result.state_changeset.clone());
 
@@ -614,7 +619,7 @@ impl Executor<Ethereum, EthEvmFactory> {
     pub fn is_raw_call_mut_success(
         &self,
         address: Address,
-        call_result: &mut RawCallResult,
+        call_result: &mut RawCallResult<N, F>,
         should_fail: bool,
     ) -> bool {
         self.is_raw_call_success(
@@ -632,7 +637,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         &self,
         address: Address,
         state_changeset: Cow<'_, StateChangeset>,
-        call_result: &RawCallResult,
+        call_result: &RawCallResult<N, F>,
         should_fail: bool,
     ) -> bool {
         if call_result.has_state_snapshot_failure {
@@ -752,7 +757,7 @@ impl Executor<Ethereum, EthEvmFactory> {
         kind: TxKind,
         data: Bytes,
         value: U256,
-    ) -> (EvmEnv, TxEnv) {
+    ) -> (EvmEnv<F::Spec, F::BlockEnv>, F::Tx) {
         let mut cfg_env = self.evm_env.cfg_env.clone();
         cfg_env.spec = self.spec_id();
 
@@ -791,15 +796,15 @@ impl Executor<Ethereum, EthEvmFactory> {
 /// Represents the context after an execution error occurred.
 #[derive(Debug, thiserror::Error)]
 #[error("execution reverted: {reason} (gas: {})", raw.gas_used)]
-pub struct ExecutionErr {
+pub struct ExecutionErr<N: Network = Ethereum, F: FoundryEvmFactory = EthEvmFactory> {
     /// The raw result of the call.
-    pub raw: RawCallResult,
+    pub raw: RawCallResult<N, F>,
     /// The revert reason.
     pub reason: String,
 }
 
-impl std::ops::Deref for ExecutionErr {
-    type Target = RawCallResult;
+impl<N: Network, F: FoundryEvmFactory> std::ops::Deref for ExecutionErr<N, F> {
+    type Target = RawCallResult<N, F>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -807,7 +812,7 @@ impl std::ops::Deref for ExecutionErr {
     }
 }
 
-impl std::ops::DerefMut for ExecutionErr {
+impl<N: Network, F: FoundryEvmFactory> std::ops::DerefMut for ExecutionErr<N, F> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.raw
@@ -815,10 +820,10 @@ impl std::ops::DerefMut for ExecutionErr {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EvmError {
+pub enum EvmError<N: Network = Ethereum, F: FoundryEvmFactory = EthEvmFactory> {
     /// Error which occurred during execution of a transaction.
     #[error(transparent)]
-    Execution(#[from] Box<ExecutionErr>),
+    Execution(Box<ExecutionErr<N, F>>),
     /// Error which occurred during ABI encoding/decoding.
     #[error(transparent)]
     Abi(#[from] alloy_dyn_abi::Error),
@@ -834,13 +839,13 @@ pub enum EvmError {
     ),
 }
 
-impl From<ExecutionErr> for EvmError {
-    fn from(err: ExecutionErr) -> Self {
+impl<N: Network, F: FoundryEvmFactory> From<ExecutionErr<N, F>> for EvmError<N, F> {
+    fn from(err: ExecutionErr<N, F>) -> Self {
         Self::Execution(Box::new(err))
     }
 }
 
-impl From<alloy_sol_types::Error> for EvmError {
+impl<N: Network, F: FoundryEvmFactory> From<alloy_sol_types::Error> for EvmError<N, F> {
     fn from(err: alloy_sol_types::Error) -> Self {
         Self::Abi(err.into())
     }
@@ -848,15 +853,15 @@ impl From<alloy_sol_types::Error> for EvmError {
 
 /// The result of a deployment.
 #[derive(Debug)]
-pub struct DeployResult {
+pub struct DeployResult<N: Network = Ethereum, F: FoundryEvmFactory = EthEvmFactory> {
     /// The raw result of the deployment.
-    pub raw: RawCallResult,
+    pub raw: RawCallResult<N, F>,
     /// The address of the deployed contract
     pub address: Address,
 }
 
-impl std::ops::Deref for DeployResult {
-    type Target = RawCallResult;
+impl<N: Network, F: FoundryEvmFactory> std::ops::Deref for DeployResult<N, F> {
+    type Target = RawCallResult<N, F>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -864,15 +869,15 @@ impl std::ops::Deref for DeployResult {
     }
 }
 
-impl std::ops::DerefMut for DeployResult {
+impl<N: Network, F: FoundryEvmFactory> std::ops::DerefMut for DeployResult<N, F> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.raw
     }
 }
 
-impl From<DeployResult> for RawCallResult {
-    fn from(d: DeployResult) -> Self {
+impl<N: Network, F: FoundryEvmFactory> From<DeployResult<N, F>> for RawCallResult<N, F> {
+    fn from(d: DeployResult<N, F>) -> Self {
         d.raw
     }
 }
@@ -951,9 +956,11 @@ impl<N: Network, F: FoundryEvmFactory> Default for RawCallResult<N, F> {
     }
 }
 
-impl RawCallResult {
+impl<N: Network, F: FoundryEvmFactory> RawCallResult<N, F> {
     /// Unpacks an EVM result.
-    pub fn from_evm_result(r: Result<Self, EvmError>) -> eyre::Result<(Self, Option<String>)> {
+    pub fn from_evm_result(
+        r: Result<Self, EvmError<N, F>>,
+    ) -> eyre::Result<(Self, Option<String>)> {
         match r {
             Ok(r) => Ok((r, None)),
             Err(EvmError::Execution(e)) => Ok((e.raw, Some(e.reason))),
@@ -962,7 +969,7 @@ impl RawCallResult {
     }
 
     /// Converts the result of the call into an `EvmError`.
-    pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
+    pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError<N, F> {
         if let Some(reason) = SkipReason::decode(&self.result) {
             return EvmError::Skip(reason);
         }
@@ -971,12 +978,12 @@ impl RawCallResult {
     }
 
     /// Converts the result of the call into an `ExecutionErr`.
-    pub fn into_execution_error(self, reason: String) -> ExecutionErr {
+    pub fn into_execution_error(self, reason: String) -> ExecutionErr<N, F> {
         ExecutionErr { raw: self, reason }
     }
 
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
-    pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError> {
+    pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError<N, F>> {
         if let Some(reason) = self.exit_reason
             && reason.is_ok()
         {
@@ -991,7 +998,7 @@ impl RawCallResult {
         mut self,
         func: &Function,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
+    ) -> Result<CallResult<DynSolValue, N, F>, EvmError<N, F>> {
         self = self.into_result(rd)?;
         let mut result = func.abi_decode_output(&self.result)?;
         let decoded_result =
@@ -1000,12 +1007,10 @@ impl RawCallResult {
     }
 
     /// Returns the transactions generated from this call.
-    pub fn transactions(&self) -> Option<&BroadcastableTransactions<Ethereum>> {
+    pub fn transactions(&self) -> Option<&BroadcastableTransactions<N>> {
         self.cheatcodes.as_ref().map(|c| &c.broadcastable_transactions)
     }
-}
 
-impl<N: Network, F: FoundryEvmFactory> RawCallResult<N, F> {
     /// Update provided history map with edge coverage info collected during this call.
     /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
     pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
@@ -1050,15 +1055,16 @@ impl<N: Network, F: FoundryEvmFactory> RawCallResult<N, F> {
 }
 
 /// The result of a call.
-pub struct CallResult<T = DynSolValue> {
+pub struct CallResult<T = DynSolValue, N: Network = Ethereum, F: FoundryEvmFactory = EthEvmFactory>
+{
     /// The raw result of the call.
-    pub raw: RawCallResult,
+    pub raw: RawCallResult<N, F>,
     /// The decoded result of the call.
     pub decoded_result: T,
 }
 
-impl std::ops::Deref for CallResult {
-    type Target = RawCallResult;
+impl<T, N: Network, F: FoundryEvmFactory> std::ops::Deref for CallResult<T, N, F> {
+    type Target = RawCallResult<N, F>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -1066,7 +1072,7 @@ impl std::ops::Deref for CallResult {
     }
 }
 
-impl std::ops::DerefMut for CallResult {
+impl<T, N: Network, F: FoundryEvmFactory> std::ops::DerefMut for CallResult<T, N, F> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.raw
@@ -1074,13 +1080,21 @@ impl std::ops::DerefMut for CallResult {
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
-fn convert_executed_result(
-    evm_env: EvmEnv,
-    tx_env: TxEnv,
-    inspector: InspectorStack<Ethereum, EthEvmFactory>,
-    ResultAndState { result, state: state_changeset }: ResultAndState,
+fn convert_executed_result<N, F>(
+    evm_env: EvmEnv<F::Spec, F::BlockEnv>,
+    tx_env: F::Tx,
+    inspector: InspectorStack<N, F>,
+    ResultAndState { result, state: state_changeset }: ResultAndState<F::HaltReason>,
     has_state_snapshot_failure: bool,
-) -> eyre::Result<RawCallResult> {
+) -> eyre::Result<RawCallResult<N, F>>
+where
+    N: Network<
+            TxEnvelope: Decodable + SignerRecoverable,
+            TransactionRequest: FoundryTransactionBuilder<N>,
+        >,
+    F: FoundryEvmFactory<Tx: FromRecoveredTx<N::TxEnvelope>>,
+    AnyRpcTransaction: TryAnyToTxEnv<F::Tx>,
+{
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {
             (reason.into(), gas.final_refunded(), gas.used(), Some(output), logs)
@@ -1089,16 +1103,12 @@ fn convert_executed_result(
             (InstructionResult::Revert, 0_u64, gas.used(), Some(Output::Call(output)), logs)
         }
         ExecutionResult::Halt { reason, gas, logs } => {
-            (reason.into(), 0_u64, gas.used(), None, logs)
+            (reason.into_instruction_result(), 0_u64, gas.used(), None, logs)
         }
     };
-    let gas = revm::interpreter::gas::calculate_initial_tx_gas(
-        evm_env.cfg_env.spec,
-        &tx_env.data,
-        tx_env.kind.is_create(),
-        tx_env.access_list.len().try_into()?,
-        0,
-        0,
+    let gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
+        &tx_env,
+        evm_env.cfg_env.spec.into(),
     );
 
     let result = match &out {
