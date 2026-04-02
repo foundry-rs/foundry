@@ -112,7 +112,7 @@ impl BindJsonArgs {
                     &sess,
                     &arena,
                     FileName::Real(path.clone()),
-                    content.to_string(),
+                    content.clone(),
                 )?;
                 let ast = parser.parse_file().map_err(|e| e.emit())?;
 

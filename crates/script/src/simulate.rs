@@ -291,7 +291,7 @@ impl FilledTransactionsState {
         let mut txes_iter = mem::take(&mut self.transactions).into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = tx.rpc.to_owned();
+            let tx_rpc = tx.rpc.clone();
             let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {

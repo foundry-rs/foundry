@@ -1128,7 +1128,7 @@ where
             format!("0x{}", hex::encode(encoded))
         } else if let Some(ref field) = field {
             get_pretty_tx_attr::<N>(&tx, field.as_str())
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
+                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()

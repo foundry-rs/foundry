@@ -2165,7 +2165,7 @@ impl EthApi<FoundryNetwork> {
         let typed_tx = self.build_tx_request(request, nonce).await?;
         let tx = build_impersonated(typed_tx);
 
-        let raw = tx.encoded_2718().to_vec().into();
+        let raw = tx.encoded_2718().into();
 
         let mut tx =
             transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
@@ -3097,7 +3097,7 @@ impl EthApi<FoundryNetwork> {
                         );
                     }
                 }
-                block.transactions = BlockTransactions::Full(block_txs.to_vec());
+                block.transactions = BlockTransactions::Full(block_txs.clone());
                 blocks.push(block);
             }
         }

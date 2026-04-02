@@ -116,7 +116,7 @@ impl FmtArgs {
                         );
                     } else if path.is_sol() {
                         // Explicit file paths are always included, even if in a lib
-                        inputs.push(path.to_path_buf());
+                        inputs.push(path.clone());
                     } else {
                         warn!("Cannot process path {}", path.display());
                     }

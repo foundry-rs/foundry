@@ -88,7 +88,7 @@ impl AsDoc for CommentsRef<'_> {
 
 impl AsDoc for Base {
     fn as_doc(&self) -> AsDocResult {
-        Ok(self.name.identifiers.iter().map(|ident| ident.name.to_owned()).join("."))
+        Ok(self.name.identifiers.iter().map(|ident| ident.name.clone()).join("."))
     }
 }
 
@@ -320,7 +320,7 @@ impl Document {
         code: &str,
     ) -> Result<(), std::fmt::Error> {
         let func_sign = function_signature(func);
-        let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
+        let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.clone());
         let comments =
             comments.merge_inheritdoc(&func_sign, read_context!(self, INHERITDOC_ID, Inheritdoc));
 
