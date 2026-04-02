@@ -1,4 +1,6 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
+use alloy_evm::EthEvmFactory;
+use alloy_network::Ethereum;
 use foundry_evm_core::{EvmEnv, backend::Backend};
 use revm::{
     context::{BlockEnv, TxEnv},
@@ -76,7 +78,12 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     #[inline]
-    pub fn build(self, mut evm_env: EvmEnv, tx_env: TxEnv, db: Backend) -> Executor {
+    pub fn build(
+        self,
+        mut evm_env: EvmEnv,
+        tx_env: TxEnv,
+        db: Backend,
+    ) -> Executor<Ethereum, EthEvmFactory> {
         let Self { mut stack, gas_limit, spec_id, legacy_assertions } = self;
         if stack.block.is_none() {
             stack.block = Some(evm_env.block_env.clone());

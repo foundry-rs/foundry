@@ -5,6 +5,8 @@ use crate::{
     },
     inspectors::Fuzzer,
 };
+use alloy_evm::EthEvmFactory;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -266,7 +268,7 @@ struct InvariantTestRun {
     // Invariant run call sequence.
     inputs: Vec<BasicTxDetails>,
     // Current invariant run executor.
-    executor: Executor,
+    executor: Executor<Ethereum, EthEvmFactory>,
     // Invariant run stat reports (eg. gas usage).
     fuzz_runs: Vec<FuzzCase>,
     // Contracts created during current invariant run.
@@ -283,7 +285,11 @@ struct InvariantTestRun {
 
 impl InvariantTestRun {
     /// Instantiates an invariant test run.
-    fn new(first_input: BasicTxDetails, executor: Executor, depth: usize) -> Self {
+    fn new(
+        first_input: BasicTxDetails,
+        executor: Executor<Ethereum, EthEvmFactory>,
+        depth: usize,
+    ) -> Self {
         Self {
             inputs: vec![first_input],
             executor,
@@ -304,7 +310,7 @@ impl InvariantTestRun {
 /// contains all the configuration which can be overridden via [environment
 /// variables](proptest::test_runner::Config)
 pub struct InvariantExecutor<'a> {
-    pub executor: Executor,
+    pub executor: Executor<Ethereum, EthEvmFactory>,
     /// Proptest runner.
     runner: TestRunner,
     /// The invariant configuration
@@ -321,7 +327,7 @@ pub struct InvariantExecutor<'a> {
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
-        executor: Executor,
+        executor: Executor<Ethereum, EthEvmFactory>,
         runner: TestRunner,
         config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
@@ -1074,7 +1080,7 @@ fn collect_data(
 /// Returns call result and if call succeeded.
 /// The state after the call is not persisted.
 pub(crate) fn call_after_invariant_function(
-    executor: &Executor,
+    executor: &Executor<Ethereum, EthEvmFactory>,
     to: Address,
 ) -> Result<(RawCallResult, bool), EvmError> {
     let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
@@ -1085,7 +1091,7 @@ pub(crate) fn call_after_invariant_function(
 
 /// Calls the invariant function and returns call result and if succeeded.
 pub(crate) fn call_invariant_function(
-    executor: &Executor,
+    executor: &Executor<Ethereum, EthEvmFactory>,
     address: Address,
     calldata: Bytes,
 ) -> Result<(RawCallResult, bool)> {
@@ -1096,7 +1102,10 @@ pub(crate) fn call_invariant_function(
 
 /// Executes a fuzz call and returns the result.
 /// Applies any block timestamp (warp) and block number (roll) adjustments before the call.
-pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result<RawCallResult> {
+pub(crate) fn execute_tx(
+    executor: &mut Executor<Ethereum, EthEvmFactory>,
+    tx: &BasicTxDetails,
+) -> Result<RawCallResult> {
     let warp = tx.warp.unwrap_or_default();
     let roll = tx.roll.unwrap_or_default();
 

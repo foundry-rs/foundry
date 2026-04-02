@@ -1,5 +1,6 @@
 use crate::executors::{Executor, ExecutorBuilder};
-use alloy_evm::EvmEnv;
+use alloy_evm::{EthEvmFactory, EvmEnv};
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
@@ -17,7 +18,7 @@ use std::ops::{Deref, DerefMut};
 
 /// A default executor with tracing enabled
 pub struct TracingExecutor {
-    executor: Executor,
+    executor: Executor<Ethereum, EthEvmFactory>,
 }
 
 impl TracingExecutor {
@@ -97,7 +98,7 @@ impl TracingExecutor {
 }
 
 impl Deref for TracingExecutor {
-    type Target = Executor;
+    type Target = Executor<Ethereum, EthEvmFactory>;
 
     fn deref(&self) -> &Self::Target {
         &self.executor

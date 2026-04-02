@@ -88,7 +88,7 @@ sol! {
 ///   deployment
 /// - `setup`: a special case of `transact`, used to set up the environment for a test
 #[derive(Clone, Debug)]
-pub struct Executor<F: FoundryEvmFactory = EthEvmFactory> {
+pub struct Executor<N: Network, F: FoundryEvmFactory> {
     /// The underlying `revm::Database` that contains the EVM storage.
     ///
     /// Wrapped in `Arc` for efficient cloning during parallel fuzzing. Use [`Arc::make_mut`]
@@ -103,14 +103,14 @@ pub struct Executor<F: FoundryEvmFactory = EthEvmFactory> {
     /// The transaction environment.
     tx_env: F::Tx,
     /// The Revm inspector stack.
-    inspector: InspectorStack<Ethereum, F>,
+    inspector: InspectorStack<N, F>,
     /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
 }
 
-impl<F: FoundryEvmFactory> Executor<F>
+impl<N: Network, F: FoundryEvmFactory> Executor<N, F>
 where
     AnyRpcTransaction: TryAnyToTxEnv<F::Tx>,
 {
@@ -120,7 +120,7 @@ where
         mut backend: Backend<AnyNetwork, F>,
         evm_env: EvmEnv<F::Spec, F::BlockEnv>,
         tx_env: F::Tx,
-        inspector: InspectorStack<Ethereum, F>,
+        inspector: InspectorStack<N, F>,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
@@ -193,12 +193,12 @@ where
     }
 
     /// Returns a reference to the EVM inspector.
-    pub fn inspector(&self) -> &InspectorStack<Ethereum, F> {
+    pub fn inspector(&self) -> &InspectorStack<N, F> {
         &self.inspector
     }
 
     /// Returns a mutable reference to the EVM inspector.
-    pub fn inspector_mut(&mut self) -> &mut InspectorStack<Ethereum, F> {
+    pub fn inspector_mut(&mut self) -> &mut InspectorStack<N, F> {
         &mut self.inspector
     }
 
@@ -239,7 +239,7 @@ where
 }
 
 /// Concrete execution methods pinned to Ethereum types.
-impl Executor {
+impl Executor<Ethereum, EthEvmFactory> {
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");

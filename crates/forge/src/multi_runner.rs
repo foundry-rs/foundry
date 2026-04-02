@@ -4,7 +4,9 @@ use crate::{
     ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
     runner::LIBRARY_DEPLOYER,
 };
+use alloy_evm::EthEvmFactory;
 use alloy_json_abi::{Function, JsonAbi};
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
@@ -340,7 +342,7 @@ impl TestRunnerConfig {
     }
 
     /// Configures the given executor with this configuration.
-    pub fn configure_executor(&self, executor: &mut Executor) {
+    pub fn configure_executor(&self, executor: &mut Executor<Ethereum, EthEvmFactory>) {
         // TODO: See above
 
         let inspector = executor.inspector_mut();
@@ -368,7 +370,7 @@ impl TestRunnerConfig {
         analysis: Arc<solar::sema::Compiler>,
         artifact_id: &ArtifactId,
         db: Backend,
-    ) -> Executor {
+    ) -> Executor<Ethereum, EthEvmFactory> {
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),

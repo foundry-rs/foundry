@@ -36,7 +36,9 @@
 
 use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
+use alloy_evm::EthEvmFactory;
 use alloy_json_abi::Function;
+use alloy_network::Ethereum;
 use alloy_primitives::Bytes;
 use eyre::{Result, eyre};
 use foundry_config::FuzzCorpusConfig;
@@ -276,7 +278,7 @@ impl WorkerCorpus {
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         // Only required by master worker (id = 0) to replay existing corpus.
-        executor: Option<&Executor>,
+        executor: Option<&Executor<Ethereum, EthEvmFactory>>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> Result<Self> {
@@ -761,7 +763,7 @@ impl WorkerCorpus {
     #[instrument(skip_all)]
     fn calibrate(
         &mut self,
-        executor: &Executor,
+        executor: &Executor<Ethereum, EthEvmFactory>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> Result<()> {
@@ -975,7 +977,7 @@ impl WorkerCorpus {
     pub fn sync(
         &mut self,
         num_workers: usize,
-        executor: &Executor,
+        executor: &Executor<Ethereum, EthEvmFactory>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
         global_corpus_metrics: &GlobalCorpusMetrics,

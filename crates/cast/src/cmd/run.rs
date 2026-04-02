@@ -3,8 +3,9 @@ use crate::{
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_evm::FromRecoveredTx;
-use alloy_network::{AnyNetwork, TransactionResponse};
+
+use alloy_evm::{EthEvmFactory, FromRecoveredTx};
+use alloy_network::{AnyNetwork, Ethereum, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
@@ -335,7 +336,7 @@ impl RunArgs {
 }
 
 pub fn fetch_contracts_bytecode_from_trace(
-    executor: &Executor,
+    executor: &Executor<Ethereum, EthEvmFactory>,
     result: &TraceResult,
 ) -> Result<HashMap<Address, Bytes>> {
     let mut contracts_bytecode = HashMap::default();

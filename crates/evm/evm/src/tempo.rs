@@ -1,4 +1,6 @@
 use alloy_chains::NamedChain;
+use alloy_evm::EthEvmFactory;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::{
     backend::DatabaseError,
@@ -22,7 +24,7 @@ use crate::executors::Executor;
 ///
 /// Ref: <https://github.com/tempoxyz/tempo/blob/main/xtask/src/genesis_args.rs>
 pub fn initialize_tempo_precompiles_and_contracts(
-    executor: &mut Executor,
+    executor: &mut Executor<Ethereum, EthEvmFactory>,
     hardfork: Option<FoundryHardfork>,
 ) -> Result<(), TempoPrecompileError> {
     let sender = CALLER;
@@ -59,7 +61,9 @@ pub fn initialize_tempo_precompiles_and_contracts(
 /// known precompile addresses, preventing repeated RPC round-trips.
 ///
 /// Only applies when the fork target is a known Tempo chain (by chain ID).
-pub fn warm_tempo_precompile_accounts(executor: &mut Executor) -> Result<(), DatabaseError> {
+pub fn warm_tempo_precompile_accounts(
+    executor: &mut Executor<Ethereum, EthEvmFactory>,
+) -> Result<(), DatabaseError> {
     let chain_id = executor.evm_env().cfg_env.chain_id;
     if !NamedChain::try_from(chain_id).is_ok_and(|c| c.is_tempo()) {
         return Ok(());

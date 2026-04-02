@@ -2794,7 +2794,9 @@ name = "chisel"
 version = "1.6.0"
 dependencies = [
  "alloy-dyn-abi",
+ "alloy-evm",
  "alloy-json-abi",
+ "alloy-network",
  "alloy-primitives",
  "clap",
  "dirs",
@@ -4496,6 +4498,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-evm",
  "alloy-hardforks",
  "alloy-json-abi",
  "alloy-network",
@@ -4632,6 +4635,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips 2.0.0-rc.0",
+ "alloy-evm",
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",

@@ -1,6 +1,8 @@
 use super::{ScriptConfig, ScriptResult};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
+use alloy_evm::EthEvmFactory;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;
 use eyre::Result;
@@ -19,12 +21,12 @@ use std::collections::VecDeque;
 /// Drives script execution
 #[derive(Debug)]
 pub struct ScriptRunner {
-    pub executor: Executor,
+    pub executor: Executor<Ethereum, EthEvmFactory>,
     pub evm_opts: EvmOpts,
 }
 
 impl ScriptRunner {
-    pub fn new(executor: Executor, evm_opts: EvmOpts) -> Self {
+    pub fn new(executor: Executor<Ethereum, EthEvmFactory>, evm_opts: EvmOpts) -> Self {
         Self { executor, evm_opts }
     }
 

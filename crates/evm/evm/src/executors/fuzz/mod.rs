@@ -3,7 +3,9 @@ use crate::executors::{
     corpus::{GlobalCorpusMetrics, WorkerCorpus},
 };
 use alloy_dyn_abi::JsonAbiExt;
+use alloy_evm::EthEvmFactory;
 use alloy_json_abi::Function;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_common::sh_println;
@@ -160,7 +162,7 @@ impl SharedFuzzState {
 /// configuration which can be overridden via [environment variables](proptest::test_runner::Config)
 pub struct FuzzedExecutor {
     /// The EVM executor.
-    executor_f: Executor,
+    executor_f: Executor<Ethereum, EthEvmFactory>,
     /// The fuzzer
     runner: TestRunner,
     /// The account that calls tests.
@@ -176,7 +178,7 @@ pub struct FuzzedExecutor {
 impl FuzzedExecutor {
     /// Instantiates a fuzzed executor given a testrunner
     pub fn new(
-        executor: Executor,
+        executor: Executor<Ethereum, EthEvmFactory>,
         runner: TestRunner,
         sender: Address,
         config: FuzzConfig,
@@ -237,7 +239,7 @@ impl FuzzedExecutor {
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
         &self,
-        executor: &Executor,
+        executor: &Executor<Ethereum, EthEvmFactory>,
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
