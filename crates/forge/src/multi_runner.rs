@@ -569,7 +569,7 @@ impl MultiContractRunnerBuilder {
 
         // Populate solar's global context by parsing and lowering the sources.
         let files: Vec<_> =
-            output.output().sources.as_ref().keys().map(|path| path.to_path_buf()).collect();
+            output.output().sources.as_ref().keys().cloned().collect();
 
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();

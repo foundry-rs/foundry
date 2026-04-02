@@ -1966,7 +1966,7 @@ impl<N: Network> Backend<N> {
         if self.networks.is_tempo() && !self.is_fork() {
             let chain_id = self.evm_env.read().cfg_env.chain_id;
             let timestamp = self.genesis.timestamp;
-            let test_accounts: Vec<Address> = self.genesis.accounts.to_vec();
+            let test_accounts: Vec<Address> = self.genesis.accounts.clone();
             let hardfork = tempo_chainspec::hardfork::TempoHardfork::default();
             let mut db = self.db.write().await;
             crate::eth::backend::tempo::initialize_tempo_precompiles(

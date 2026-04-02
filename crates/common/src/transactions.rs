@@ -238,7 +238,7 @@ impl<N: Network> TransactionMaybeSigned<N> {
     {
         match self {
             Self::Signed { tx, .. } => tx.authorization_list().map(|auths| auths.to_vec()),
-            Self::Unsigned(tx) => tx.authorization_list().map(|auths| auths.to_vec()),
+            Self::Unsigned(tx) => tx.authorization_list().cloned(),
         }
         .filter(|auths| !auths.is_empty())
     }

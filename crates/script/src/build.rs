@@ -185,12 +185,11 @@ impl PreprocessedState {
             }
         };
 
-        #[expect(clippy::redundant_clone)]
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
         )
-        .chain([target_path.to_path_buf()]);
+        .chain([target_path.clone()]);
 
         let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
 

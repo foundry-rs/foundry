@@ -915,7 +915,7 @@ impl<'a> InvariantExecutor<'a> {
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {
                             let mut contract =
-                                TargetedContract::new(identifier.to_string(), abi.clone());
+                                TargetedContract::new(identifier.clone(), abi.clone());
                             contract.storage_layout =
                                 contract_data.storage_layout.as_ref().map(Arc::clone);
                             contract

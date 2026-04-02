@@ -521,7 +521,7 @@ fn print_linearization(
         headers,
         |table| {
             for (order, source, contract) in &chain {
-                table.add_row([order.to_string(), source.to_string(), contract.to_string()]);
+                table.add_row([order.to_string(), source.clone(), contract.clone()]);
             }
         },
         should_wrap,

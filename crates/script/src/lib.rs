@@ -517,12 +517,12 @@ impl Provider for ScriptArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
 
-        if let Some(ref etherscan_api_key) =
+        if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
             dict.insert(
                 "etherscan_api_key".to_string(),
-                figment::value::Value::from(etherscan_api_key.to_string()),
+                figment::value::Value::from(etherscan_api_key.clone()),
             );
         }
 

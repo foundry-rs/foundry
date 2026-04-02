@@ -373,7 +373,7 @@ impl ExecutedState {
                         });
 
                     let label = if !output.name.is_empty() {
-                        output.name.to_string()
+                        output.name.clone()
                     } else {
                         index.to_string()
                     };
@@ -471,7 +471,7 @@ impl PreSimulationState {
                             });
 
                         let label = if !output.name.is_empty() {
-                            output.name.to_string()
+                            output.name.clone()
                         } else {
                             index.to_string()
                         };
