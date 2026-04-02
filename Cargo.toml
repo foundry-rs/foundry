@@ -42,8 +42,6 @@ repository = "https://github.com/foundry-rs/foundry"
 exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [workspace.lints.clippy]
-# These lints have no findings in the codebase and serve as guardrails
-# to prevent future problems.
 borrow_as_ptr = "warn"
 branches_sharing_code = "warn"
 clear_with_drain = "warn"
@@ -90,7 +88,7 @@ significant_drop_in_scrutinee = "allow"
 significant_drop_tightening = "allow"
 too_long_first_doc_paragraph = "allow"
 
-# Foundry-specific allows.
+# Specific allows.
 octal_escapes = "allow"
 # until <https://github.com/rust-lang/rust-clippy/issues/13885> is fixed
 literal_string_with_formatting_args = "allow"
