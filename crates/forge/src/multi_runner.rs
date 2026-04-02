@@ -377,7 +377,7 @@ impl TestRunnerConfig {
             Some(known_contracts),
             Some(artifact_id.clone()),
         ));
-        ExecutorBuilder::new()
+        ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)

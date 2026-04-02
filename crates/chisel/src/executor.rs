@@ -215,7 +215,7 @@ impl SessionSource {
             }
         };
 
-        let executor = ExecutorBuilder::new()
+        let executor = ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.foundry_config.live_logs)

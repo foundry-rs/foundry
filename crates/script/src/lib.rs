@@ -658,7 +658,7 @@ impl ScriptConfig {
         };
 
         // We need to enable tracing to decode contract names: local or external.
-        let mut builder = ExecutorBuilder::new()
+        let mut builder = ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)

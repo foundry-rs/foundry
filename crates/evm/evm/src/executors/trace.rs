@@ -34,7 +34,7 @@ impl TracingExecutor {
         let db = Backend::spawn(Some(fork))?;
         // configures a bare version of the evm executor: no cheatcode and log_collector inspector
         // is enabled, tracing will be enabled only for the targeted transaction
-        let mut executor = ExecutorBuilder::new()
+        let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
