@@ -274,17 +274,6 @@ impl From<RawCallResult> for TraceResult {
     }
 }
 
-impl TryFrom<Result<RawCallResult>> for TraceResult {
-    type Error = EvmError;
-
-    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
-        match value {
-            Ok(result) => Ok(Self::from(result)),
-            Err(err) => Err(EvmError::from(err)),
-        }
-    }
-}
-
 pub async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,

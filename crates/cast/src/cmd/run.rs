@@ -310,7 +310,7 @@ impl RunArgs {
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::try_from(executor.transact_with_env(evm_env, tx_env))?
+                TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
                 TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
