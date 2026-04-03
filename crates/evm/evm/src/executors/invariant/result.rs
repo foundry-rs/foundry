@@ -7,7 +7,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::I256;
 use eyre::Result;
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{evm::EthEvmNetwork, utils::StateChangeset};
+use foundry_evm_core::{evm::FoundryEvmNetwork, utils::StateChangeset};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzedCases,
@@ -45,13 +45,13 @@ pub struct InvariantFuzzTestResult {
 /// Enriched results of an invariant run check.
 ///
 /// Contains the success condition and call results of the last run
-pub(crate) struct RichInvariantResults {
+pub(crate) struct RichInvariantResults<FEN: FoundryEvmNetwork> {
     pub(crate) can_continue: bool,
-    pub(crate) call_result: Option<RawCallResult>,
+    pub(crate) call_result: Option<RawCallResult<FEN>>,
 }
 
-impl RichInvariantResults {
-    pub(crate) fn new(can_continue: bool, call_result: Option<RawCallResult>) -> Self {
+impl<FEN: FoundryEvmNetwork> RichInvariantResults<FEN> {
+    pub(crate) fn new(can_continue: bool, call_result: Option<RawCallResult<FEN>>) -> Self {
         Self { can_continue, call_result }
     }
 }
@@ -59,14 +59,14 @@ impl RichInvariantResults {
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 /// Either returns the call result if successful, or nothing if there was an error.
-pub(crate) fn assert_invariants(
+pub(crate) fn assert_invariants<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
     invariant_config: &InvariantConfig,
     targeted_contracts: &FuzzRunIdentifiedContracts,
-    executor: &Executor<EthEvmNetwork>,
+    executor: &Executor<FEN>,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
-) -> Result<Option<RawCallResult>> {
+) -> Result<Option<RawCallResult<FEN>>> {
     let mut inner_sequence = vec![];
 
     if let Some(fuzzer) = &executor.inspector().fuzzer
@@ -104,14 +104,14 @@ pub(crate) fn assert_invariants(
 ///
 /// For optimization mode (int256 return), tracks the max value but never fails on invariant.
 /// For check mode, asserts the invariant and fails if broken.
-pub(crate) fn can_continue(
+pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
-    invariant_test: &mut InvariantTest,
-    invariant_run: &mut InvariantTestRun,
+    invariant_test: &mut InvariantTest<FEN>,
+    invariant_run: &mut InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
-    call_result: RawCallResult,
+    call_result: RawCallResult<FEN>,
     state_changeset: &StateChangeset,
-) -> Result<RichInvariantResults> {
+) -> Result<RichInvariantResults<FEN>> {
     let mut call_results = None;
     let is_optimization = invariant_contract.is_optimization();
 
@@ -189,10 +189,10 @@ pub(crate) fn can_continue(
 
 /// Given the executor state, asserts conditions within `afterInvariant` function.
 /// If call fails then the invariant test is considered failed.
-pub(crate) fn assert_after_invariant(
+pub(crate) fn assert_after_invariant<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
-    invariant_test: &mut InvariantTest,
-    invariant_run: &InvariantTestRun,
+    invariant_test: &mut InvariantTest<FEN>,
+    invariant_run: &InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
 ) -> Result<bool> {
     let (call_result, success) =
