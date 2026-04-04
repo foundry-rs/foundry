@@ -787,7 +787,7 @@ impl<'a> FunctionRunner<'a> {
                     }
                 })
                 .collect::<Vec<BasicTxDetails>>();
-            if let Ok((success, replayed_entirely)) = check_sequence(
+            if let Ok((success, replayed_entirely, replay_reason)) = check_sequence(
                 self.clone_executor(),
                 &txes,
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
@@ -845,6 +845,7 @@ impl<'a> FunctionRunner<'a> {
                 self.result.invariant_replay_fail(
                     replayed_entirely,
                     &invariant_contract.invariant_function.name,
+                    replay_reason,
                     call_sequence,
                 );
                 return self.result;

@@ -474,7 +474,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
-[FAIL: invariant_increment replay failure]
+[FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
 		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
@@ -542,7 +542,7 @@ contract OwnableTest is Test {
     // Should replay failure if same test.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: invariant_never_owner replay failure]
+[FAIL: never owner]
 ...
 "#]]);
 

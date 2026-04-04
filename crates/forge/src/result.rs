@@ -681,6 +681,7 @@ impl TestResult {
         &mut self,
         replayed_entirely: bool,
         invariant_name: &String,
+        replay_reason: Option<String>,
         call_sequence: Vec<BaseCounterExample>,
     ) {
         self.kind = TestKind::Invariant {
@@ -692,11 +693,13 @@ impl TestResult {
             optimization_best_value: None,
         };
         self.status = TestStatus::Failure;
-        self.reason = if replayed_entirely {
-            Some(format!("{invariant_name} replay failure"))
-        } else {
-            Some(format!("{invariant_name} persisted failure revert"))
-        };
+        self.reason = replay_reason.or_else(|| {
+            if replayed_entirely {
+                Some(format!("{invariant_name} replay failure"))
+            } else {
+                Some(format!("{invariant_name} persisted failure revert"))
+            }
+        });
         self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
     }
 

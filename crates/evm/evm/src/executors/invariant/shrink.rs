@@ -1,5 +1,5 @@
 use crate::executors::{
-    EarlyExit, Executor,
+    EarlyExit, EvmError, Executor, RawCallResult,
     invariant::{call_after_invariant_function, call_invariant_function, execute_tx},
 };
 use alloy_primitives::{Address, Bytes, I256, U256};
@@ -126,9 +126,9 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             invariant_contract.call_after_invariant,
         ) {
             // If candidate sequence still fails, shrink until shortest possible.
-            Ok((false, _)) if shrinker.included_calls.count() == 1 => break,
+            Ok((false, _, _)) if shrinker.included_calls.count() == 1 => break,
             // Restore last removed call as it caused sequence to pass invariant.
-            Ok((true, _)) => shrinker.included_calls.set(call_idx),
+            Ok((true, _, _)) => shrinker.included_calls.set(call_idx),
             _ => {}
         }
 
@@ -156,7 +156,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     fail_on_revert: bool,
     call_after_invariant: bool,
-) -> eyre::Result<(bool, bool)> {
+) -> eyre::Result<(bool, bool, Option<String>)> {
     // Apply the call sequence.
     for call_index in sequence {
         let tx = &calls[call_index];
@@ -168,19 +168,36 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
-            return Ok((false, false));
+            return Ok((false, false, call_failure_reason(call_result)));
         }
     }
 
     // Check the invariant for call sequence.
-    let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
+    let (invariant_result, mut success) =
+        call_invariant_function(&executor, test_address, calldata)?;
+    if !success {
+        return Ok((false, true, call_failure_reason(invariant_result)));
+    }
+
     // Check after invariant result if invariant is success and `afterInvariant` function is
     // declared.
     if success && call_after_invariant {
-        (_, success) = call_after_invariant_function(&executor, test_address)?;
+        let (after_invariant_result, after_invariant_success) =
+            call_after_invariant_function(&executor, test_address)?;
+        success = after_invariant_success;
+        if !success {
+            return Ok((false, true, call_failure_reason(after_invariant_result)));
+        }
     }
 
-    Ok((success, true))
+    Ok((success, true, None))
+}
+
+fn call_failure_reason<FEN: FoundryEvmNetwork>(call_result: RawCallResult<FEN>) -> Option<String> {
+    match call_result.into_evm_error(None) {
+        EvmError::Execution(err) => Some(err.reason),
+        _ => None,
+    }
 }
 
 /// Shrinks a call sequence to the shortest sequence that still produces the target optimization

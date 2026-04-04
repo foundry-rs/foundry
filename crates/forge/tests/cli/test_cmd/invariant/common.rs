@@ -1426,7 +1426,7 @@ Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
         cmd.assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
-[FAIL: invariant_shrink_big_sequence replay failure]
+[FAIL: condition met]
 	[Sequence] (original: [..], shrunk: 77)
 ...
 "#]]);
