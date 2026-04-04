@@ -582,6 +582,104 @@ Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner
 "#]]);
 });
 
+forgetest_init!(invariant_replay_preserves_fail_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "InvariantReplayFailReason.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantReplayFailReason is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function callTarget(uint256) external {}
+
+    function invariant_fail_reason() public {
+        fail();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_fail_reason"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01)]
+...
+"#]]);
+
+    // Replay should preserve failure reason instead of generic replay message.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01)]
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_preserves_custom_error_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test(
+        "InvariantReplayCustomError.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CustomErrorTarget {
+    error InvariantCustomError(uint256, string);
+
+    function breakInvariant() external {
+        revert InvariantCustomError(111, "custom");
+    }
+}
+
+contract CustomErrorHandler is Test {
+    CustomErrorTarget target;
+
+    constructor() {
+        target = new CustomErrorTarget();
+    }
+
+    function callTarget() external {
+        target.breakInvariant();
+    }
+}
+
+contract InvariantReplayCustomError is Test {
+    CustomErrorHandler handler;
+
+    function setUp() public {
+        handler = new CustomErrorHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_custom_error_reason() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_custom_error_reason"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: InvariantCustomError(111, "custom")]
+...
+"#
+    ]]);
+
+    // Replay should preserve custom error string too.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: InvariantCustomError(111, "custom")]
+...
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10253>
 forgetest_init!(invariant_test_target, |prj, cmd| {
     prj.update_config(|config| {
