@@ -48,6 +48,16 @@ pub fn is_markdown() -> bool {
     Shell::get().is_markdown()
 }
 
+/// Returns whether `FOUNDRY_MACHINE_MODE` is set in the environment.
+///
+/// When set, foundry disables ANSI color codes, progress spinners, and decorative
+/// output to produce clean, token-efficient output suitable for consumption by
+/// AI agents and non-interactive tooling. Equivalent to passing `--color never`
+/// plus disabling all progress indicators.
+pub fn is_machine_mode() -> bool {
+    std::env::var_os("FOUNDRY_MACHINE_MODE").is_some()
+}
+
 /// The global shell instance.
 static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 

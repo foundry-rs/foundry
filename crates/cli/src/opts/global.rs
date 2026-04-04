@@ -72,6 +72,11 @@ impl GlobalArgs {
             ColorChoice::Always => yansi::enable(),
             ColorChoice::Never => yansi::disable(),
         }
+        // FOUNDRY_MACHINE_MODE disables all ANSI color codes and decorative output,
+        // making forge/cast output suitable for AI agent and non-interactive consumption.
+        if foundry_common::shell::is_machine_mode() {
+            yansi::disable();
+        }
         shell.set();
 
         // Initialize the thread pool only if `threads` was requested to avoid unnecessary overhead.
@@ -96,7 +101,13 @@ impl GlobalArgs {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,
         };
-        let color = self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default();
+        // FOUNDRY_MACHINE_MODE forces no-color output for agent-friendly consumption.
+        let machine_mode = foundry_common::shell::is_machine_mode();
+        let color = if machine_mode {
+            ColorChoice::Never
+        } else {
+            self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default()
+        };
         let format = if self.json {
             OutputFormat::Json
         } else if self.md {

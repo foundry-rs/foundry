@@ -40,7 +40,11 @@ pub struct TermSettings {
 impl TermSettings {
     /// Returns a new [`TermSettings`], configured from the current environment.
     pub fn from_env() -> Self {
-        Self { indicate_progress: std::io::stdout().is_terminal() }
+        // Disable progress indicators when stdout is not a terminal or when
+        // FOUNDRY_MACHINE_MODE is set (agent-friendly output mode).
+        let indicate_progress =
+            std::io::stdout().is_terminal() && !crate::shell::is_machine_mode();
+        Self { indicate_progress }
     }
 }
 
