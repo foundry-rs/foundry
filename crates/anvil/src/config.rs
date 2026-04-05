@@ -63,6 +63,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tempo_chainspec::hardfork::TempoHardfork;
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
@@ -517,16 +518,31 @@ impl NodeConfig {
         self.memory_limit = mems_value;
         self
     }
-    /// Returns the base fee to use
+
+    /// Returns the base fee to use.
+    ///
+    /// In Tempo mode, uses the hardfork-specific base fee (10 gwei pre-T1, 20 gwei T1+).
     pub fn get_base_fee(&self) -> u64 {
+        let default = if self.networks.is_tempo() {
+            TempoHardfork::from(self.get_hardfork()).base_fee()
+        } else {
+            INITIAL_BASE_FEE
+        };
         self.base_fee
             .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas.map(|g| g as u64)))
-            .unwrap_or(INITIAL_BASE_FEE)
+            .unwrap_or(default)
     }
 
-    /// Returns the base fee to use
+    /// Returns the gas price to use.
+    ///
+    /// In Tempo mode, defaults to the hardfork-specific base fee.
     pub fn get_gas_price(&self) -> u128 {
-        self.gas_price.unwrap_or(INITIAL_GAS_PRICE)
+        let default = if self.networks.is_tempo() {
+            TempoHardfork::from(self.get_hardfork()).base_fee() as u128
+        } else {
+            INITIAL_GAS_PRICE
+        };
+        self.gas_price.unwrap_or(default)
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
@@ -557,6 +573,9 @@ impl NodeConfig {
         }
         if self.networks.is_optimism() {
             return OpHardfork::default().into();
+        }
+        if self.networks.is_tempo() {
+            return TempoHardfork::default().into();
         }
         EthereumHardfork::default().into()
     }

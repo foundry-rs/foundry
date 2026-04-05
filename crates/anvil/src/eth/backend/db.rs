@@ -8,7 +8,7 @@ use std::{
 
 use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip4895::Withdrawals;
-use alloy_evm::block::StateDB;
+use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{AddressMap, HashMap},
@@ -22,7 +22,7 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
-use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -95,18 +95,7 @@ pub trait MaybeForkedDatabase {
 /// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
 impl alloy_evm::Database for dyn Db {}
 
-impl StateDB for dyn Db {
-    fn set_state_clear_flag(&mut self, _has_state_clear: bool) {
-        // Anvil does not use the revm State wrapper, so this is a no-op.
-    }
-}
-
-/// A wrapper around [`CacheDB`] that implements [`StateDB`].
-///
-/// `StateDB` is a foreign trait with an orphan-rule constraint, so we cannot
-/// implement it directly for `CacheDB<T>`.  This newtype sidesteps the orphan
-/// rule while delegating all [`Database`], [`DatabaseCommit`] and
-/// [`DatabaseRef`] calls to the inner `CacheDB`.
+/// A wrapper around [`CacheDB`].
 #[derive(Debug)]
 pub struct AnvilCacheDB<T>(pub CacheDB<T>);
 
@@ -172,12 +161,6 @@ impl<T: DatabaseRef<Error = DatabaseError>> DatabaseRef for AnvilCacheDB<T> {
 impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for AnvilCacheDB<T> {
     fn commit(&mut self, changes: revm::state::EvmState) {
         self.0.commit(changes)
-    }
-}
-
-impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> StateDB for AnvilCacheDB<T> {
-    fn set_state_clear_flag(&mut self, _has_state_clear: bool) {
-        // Anvil does not use the revm State wrapper, so this is a no-op.
     }
 }
 
@@ -521,6 +504,7 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             basefee: legacy.basefee.and_then(|v| v.to_u64()).unwrap_or(0),
             difficulty: legacy.difficulty.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
             prevrandao: legacy.prevrandao.or(Some(B256::ZERO)),
+            slot_num: 0,
             blob_excess_gas_and_price: legacy
                 .blob_excess_gas_and_price
                 .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
@@ -722,8 +706,10 @@ pub struct SerializableTransaction {
     pub block_number: u64,
 }
 
-impl From<MinedTransaction<FoundryNetwork>> for SerializableTransaction {
-    fn from(transaction: MinedTransaction<FoundryNetwork>) -> Self {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> From<MinedTransaction<N>>
+    for SerializableTransaction
+{
+    fn from(transaction: MinedTransaction<N>) -> Self {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
@@ -733,7 +719,9 @@ impl From<MinedTransaction<FoundryNetwork>> for SerializableTransaction {
     }
 }
 
-impl From<SerializableTransaction> for MinedTransaction<FoundryNetwork> {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> From<SerializableTransaction>
+    for MinedTransaction<N>
+{
     fn from(transaction: SerializableTransaction) -> Self {
         Self {
             info: transaction.info,

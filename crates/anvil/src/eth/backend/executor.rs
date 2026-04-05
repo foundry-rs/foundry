@@ -1,34 +1,44 @@
-use crate::eth::backend::cheats::CheatsManager;
-use alloy_consensus::{Eip658Value, Transaction, TransactionEnvelope, transaction::Either};
+use crate::{
+    eth::{
+        backend::cheats::CheatsManager, error::InvalidTransactionError,
+        pool::transactions::PoolTransaction,
+    },
+    mem::inspector::{AnvilInspector, InspectorTxConfig},
+};
+use alloy_consensus::{
+    Eip658Value, Transaction, TransactionEnvelope, TxReceipt,
+    transaction::{Either, Recovered},
+};
 use alloy_eips::{
     Encodable2718, eip2935, eip4788,
     eip7702::{RecoveredAuthority, RecoveredAuthorization},
 };
 use alloy_evm::{
-    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
+    Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, OnStateHook, StateChangeSource, StateDB, TxResult,
+        ExecutableTx, OnStateHook, StateChangePreBlockSource, StateChangeSource, StateDB, TxResult,
     },
     eth::{
-        EthEvmContext, EthTxResult,
+        EthTxResult,
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
     },
-    precompiles::PrecompilesMap,
 };
-use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, B256, Bytes};
-use anvil_core::eth::transaction::PendingTransaction;
-use foundry_evm::{backend::DatabaseError, core::either_evm::EitherEvm};
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
-use op_revm::{OpContext, OpTransaction};
-use revm::{
-    Database, DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, TxEnv},
-    context_interface::result::ResultAndState,
-    primitives::hardfork::SpecId,
+use anvil_core::eth::transaction::{
+    MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
-use std::{fmt, fmt::Debug};
+use foundry_evm::core::{env::FoundryTransaction, evm::IntoInstructionResult};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
+use revm::{
+    Database, DatabaseCommit,
+    context::Block as RevmBlock,
+    context_interface::result::{ExecutionResult, Output, ResultAndState},
+    interpreter::InstructionResult,
+    primitives::hardfork::SpecId,
+    state::AccountInfo,
+};
+use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
 /// Receipt builder for Foundry/Anvil that handles all transaction types
 #[derive(Debug, Default, Clone, Copy)]
@@ -160,9 +170,7 @@ where
 
             if let Some(hook) = &mut self.state_hook {
                 hook.on_state(
-                    StateChangeSource::PreBlock(
-                        alloy_evm::block::StateChangePreBlockSource::BlockHashesContract,
-                    ),
+                    StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
                     &result.state,
                 );
             }
@@ -284,24 +292,212 @@ where
     }
 }
 
-/// Builds the per-tx `OpTransaction<TxEnv>` from a pending transaction, replicating the logic
-/// from `TransactionExecutor::env_for`.
-pub fn build_tx_env_for_pending(
-    tx: &PendingTransaction<FoundryTxEnvelope>,
-    cheats: &CheatsManager,
-    is_optimism: bool,
-) -> OpTransaction<TxEnv> {
-    let mut tx_env: OpTransaction<TxEnv> =
-        FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
+/// Result of executing pool transactions against a block executor.
+pub struct ExecutedPoolTransactions<T> {
+    /// Successfully included transactions.
+    pub included: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions that failed validation.
+    pub invalid: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
+    /// These remain in the pool and should be retried later.
+    pub not_yet_valid: Vec<Arc<PoolTransaction<T>>>,
+    /// Per-transaction execution info.
+    pub tx_info: Vec<TransactionInfo>,
+    /// The raw pending transactions that were included (in order).
+    pub txs: Vec<MaybeImpersonatedTransaction<T>>,
+}
 
-    if let FoundryTxEnvelope::Eip7702(tx_7702) = tx.transaction.as_ref()
+/// Gas-related configuration for pool transaction execution.
+///
+/// Bundles parameters that cannot be derived from the generic `Evm` trait
+/// (which doesn't expose `cfg()`), so callers construct this from `EvmEnv`
+/// before calling [`execute_pool_transactions`].
+pub struct PoolTxGasConfig {
+    pub disable_block_gas_limit: bool,
+    pub tx_gas_limit_cap: Option<u64>,
+    pub tx_gas_limit_cap_resolved: u64,
+    pub max_blob_gas_per_block: u64,
+    pub is_cancun: bool,
+}
+
+/// Executes pool transactions against a block executor, handling validation,
+/// execution, commit, inspector drain, and result collection.
+///
+/// This is the shared core of `do_mine_block` and `with_pending_block`.
+#[allow(clippy::type_complexity)]
+pub fn execute_pool_transactions<B>(
+    executor: &mut B,
+    pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
+    gas_config: &PoolTxGasConfig,
+    inspector_config: &InspectorTxConfig,
+    cheats: &CheatsManager,
+    validator: &dyn Fn(
+        &PendingTransaction<B::Transaction>,
+        &AccountInfo,
+    ) -> Result<(), InvalidTransactionError>,
+) -> ExecutedPoolTransactions<B::Transaction>
+where
+    B: BlockExecutor<Evm: Evm<DB: Database + Debug, Inspector = AnvilInspector>>,
+    B::Transaction: Transaction + Encodable2718 + Clone,
+    B::Receipt: TxReceipt,
+    <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
+    <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
+{
+    let gas_limit = executor.evm().block().gas_limit();
+
+    let mut included = Vec::new();
+    let mut invalid = Vec::new();
+    let mut not_yet_valid = Vec::new();
+    let mut tx_info: Vec<TransactionInfo> = Vec::new();
+    let mut transactions = Vec::new();
+    let mut blob_gas_used = 0u64;
+
+    for pool_tx in pool_transactions {
+        let pending = &pool_tx.pending_transaction;
+        let sender = *pending.sender();
+
+        let account = match executor.evm_mut().db_mut().basic(sender).map(|a| a.unwrap_or_default())
+        {
+            Ok(acc) => acc,
+            Err(err) => {
+                trace!(target: "backend", ?err, "db error for tx {:?}, skipping", pool_tx.hash());
+                continue;
+            }
+        };
+
+        let tx_env =
+            build_tx_env_for_pending::<B::Transaction, <B::Evm as Evm>::Tx>(pending, cheats);
+
+        // Gas limit checks
+        let cumulative_gas =
+            executor.receipts().last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
+        let max_block_gas = cumulative_gas.saturating_add(pending.transaction.gas_limit());
+        if !gas_config.disable_block_gas_limit && max_block_gas > gas_limit {
+            trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "block gas limit exhausting, skipping transaction");
+            continue;
+        }
+
+        // Osaka EIP-7825 tx gas limit cap check
+        if gas_config.tx_gas_limit_cap.is_none()
+            && pending.transaction.gas_limit() > gas_config.tx_gas_limit_cap_resolved
+        {
+            trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
+            continue;
+        }
+
+        // Blob gas check
+        let tx_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
+        if blob_gas_used.saturating_add(tx_blob_gas) > gas_config.max_blob_gas_per_block {
+            trace!(target: "backend", blob_gas = %tx_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+            continue;
+        }
+
+        // Validate
+        if let Err(err) = validator(pending, &account) {
+            warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", pool_tx.hash(), err);
+            invalid.push(pool_tx.clone());
+            continue;
+        }
+
+        let nonce = account.nonce;
+
+        let recovered = Recovered::new_unchecked(pending.transaction.as_ref().clone(), sender);
+        trace!(target: "backend", "[{:?}] executing", pool_tx.hash());
+        match executor.execute_transaction_without_commit((tx_env, recovered)) {
+            Ok(result) => {
+                let exec_result = result.result().result.clone();
+                let gas_used = result.result().result.gas_used();
+
+                executor.commit_transaction(result).expect("commit failed");
+
+                let traces =
+                    executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
+
+                if gas_config.is_cancun {
+                    blob_gas_used = blob_gas_used.saturating_add(tx_blob_gas);
+                }
+
+                let (exit_reason, out, _logs) = match exec_result {
+                    ExecutionResult::Success { reason, logs, output, .. } => {
+                        (reason.into(), Some(output), logs)
+                    }
+                    ExecutionResult::Revert { output, .. } => {
+                        (InstructionResult::Revert, Some(Output::Call(output)), Vec::new())
+                    }
+                    ExecutionResult::Halt { reason, .. } => {
+                        (reason.into_instruction_result(), None, Vec::new())
+                    }
+                };
+
+                if exit_reason == InstructionResult::OutOfGas {
+                    warn!(target: "backend", "[{:?}] executed with out of gas", pool_tx.hash());
+                }
+
+                trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", pool_tx.hash(), out);
+                trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", pool_tx.hash(), exit_reason, gas_used);
+
+                let contract_address = if pending.transaction.to().is_none() {
+                    let addr = sender.create(nonce);
+                    trace!(target: "backend", "Contract creation tx: computed address {:?}", addr);
+                    Some(addr)
+                } else {
+                    None
+                };
+
+                // TODO: replace `TransactionInfo` with alloy receipt/transaction types
+                let transaction_index = tx_info.len() as u64;
+                let info = TransactionInfo {
+                    transaction_hash: pool_tx.hash(),
+                    transaction_index,
+                    from: sender,
+                    to: pending.transaction.to(),
+                    contract_address,
+                    traces,
+                    exit: exit_reason,
+                    out: out.map(Output::into_data),
+                    nonce,
+                    gas_used,
+                };
+
+                included.push(pool_tx.clone());
+                tx_info.push(info);
+                transactions.push(pending.transaction.clone());
+            }
+            Err(err) => {
+                let err_str = err.to_string();
+                if err_str.contains("not valid yet") {
+                    trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
+                    not_yet_valid.push(pool_tx.clone());
+                } else if err.as_validation().is_some() {
+                    warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
+                    invalid.push(pool_tx.clone());
+                } else {
+                    trace!(target: "backend", ?err, "tx execution error, skipping {:?}", pool_tx.hash());
+                }
+            }
+        }
+    }
+
+    ExecutedPoolTransactions { included, invalid, not_yet_valid, tx_info, txs: transactions }
+}
+
+/// Builds the EVM transaction env from a pending pool transaction.
+pub fn build_tx_env_for_pending<Tx, T>(tx: &PendingTransaction<Tx>, cheats: &CheatsManager) -> T
+where
+    Tx: Transaction + Encodable2718,
+    T: FromTxWithEncoded<Tx> + FoundryTransaction,
+{
+    let encoded = tx.transaction.encoded_2718().into();
+    let mut tx_env: T =
+        FromTxWithEncoded::from_encoded_tx(tx.transaction.as_ref(), *tx.sender(), encoded);
+
+    if let Some(signed_auths) = tx.transaction.authorization_list()
         && cheats.has_recover_overrides()
     {
-        let cheated_auths = tx_7702
-            .tx()
-            .authorization_list
+        let auth_list = tx_env.authorization_list_mut();
+        let cheated_auths = signed_auths
             .iter()
-            .zip(tx_env.base.authorization_list)
+            .zip(take(auth_list))
             .map(|(signed_auth, either_auth)| {
                 either_auth.right_and_then(|recovered_auth| {
                     if recovered_auth.authority().is_none()
@@ -319,38 +515,8 @@ pub fn build_tx_env_for_pending(
                 })
             })
             .collect();
-        tx_env.base.authorization_list = cheated_auths;
-    }
-
-    if is_optimism {
-        tx_env.enveloped_tx = Some(tx.transaction.encoded_2718().into());
+        *tx_env.authorization_list_mut() = cheated_auths;
     }
 
     tx_env
-}
-
-/// Creates a database with given database and inspector.
-pub fn new_eth_evm_with_inspector<DB, I>(
-    db: DB,
-    evm_env: &EvmEnv,
-    inspector: I,
-    is_optimism: bool,
-) -> EitherEvm<DB, I, PrecompilesMap>
-where
-    DB: Database<Error = DatabaseError> + Debug,
-    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
-{
-    if is_optimism {
-        let evm_env = EvmEnv::new(
-            evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS),
-            evm_env.block_env.clone(),
-        );
-        EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
-    } else {
-        EitherEvm::Eth(EthEvmFactory::default().create_evm_with_inspector(
-            db,
-            evm_env.clone(),
-            inspector,
-        ))
-    }
 }

@@ -5,7 +5,7 @@ use toml::{Value, value::Table};
 /// Generates a function signature with parameter types (e.g., "functionName(type1,type2)").
 /// Returns the function name without parameters if the function has no parameters.
 pub fn function_signature(func: &FunctionDefinition) -> String {
-    let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
+    let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.clone());
     if func.params.is_empty() {
         return func_name;
     }

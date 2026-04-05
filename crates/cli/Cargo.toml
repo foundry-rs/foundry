@@ -18,7 +18,6 @@ foundry-cli-markdown.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-primitives.workspace = true
 foundry-wallets.workspace = true
 
 foundry-compilers.workspace = true

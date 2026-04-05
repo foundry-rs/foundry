@@ -20,6 +20,7 @@ use foundry_cli::{
     utils::{LoadConfig, TraceResult, parse_ether_value},
 };
 use foundry_common::{
+    FoundryTransactionBuilder,
     abi::{encode_function_args, get_func},
     provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
@@ -33,11 +34,11 @@ use foundry_config::{
     },
 };
 use foundry_evm::{
+    core::{FoundryBlock, evm::EthEvmNetwork},
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::WalletOpts;
 use itertools::Either;
 use regex::Regex;
@@ -299,20 +300,20 @@ impl CallArgs {
 
             let create2_deployer = evm_opts.create2_deployer;
             let (mut evm_env, tx_env, fork, chain, networks) =
-                TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
+                TracingExecutor::<EthEvmNetwork>::get_fork_material(&mut config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
             evm_env.cfg_env.disable_block_gas_limit = true;
             evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-            evm_env.block_env.gas_limit = u64::MAX;
+            evm_env.block_env.set_gas_limit(u64::MAX);
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    evm_env.block_env.number = number.to();
+                    evm_env.block_env.set_number(number.to());
                 }
                 if let Some(time) = block_overrides.time {
-                    evm_env.block_env.timestamp = U256::from(time);
+                    evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
 
@@ -324,7 +325,7 @@ impl CallArgs {
                     InternalTraceMode::None
                 })
                 .with_state_changes(shell::verbosity() > 4);
-            let mut executor = TracingExecutor::new(
+            let mut executor = TracingExecutor::<EthEvmNetwork>::new(
                 (evm_env, tx_env),
                 fork,
                 evm_version,

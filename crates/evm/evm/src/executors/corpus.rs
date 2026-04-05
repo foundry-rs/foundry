@@ -40,6 +40,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::Bytes;
 use eyre::{Result, eyre};
 use foundry_config::FuzzCorpusConfig;
+use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::FuzzRunIdentifiedContracts,
@@ -271,12 +272,12 @@ pub struct WorkerCorpus {
 }
 
 impl WorkerCorpus {
-    pub fn new(
+    pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         // Only required by master worker (id = 0) to replay existing corpus.
-        executor: Option<&Executor>,
+        executor: Option<&Executor<FEN>>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> Result<Self> {
@@ -441,7 +442,10 @@ impl WorkerCorpus {
     }
 
     /// Collects coverage from call result and updates metrics.
-    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
+    pub fn merge_edge_coverage<FEN: FoundryEvmNetwork>(
+        &mut self,
+        call_result: &mut RawCallResult<FEN>,
+    ) -> bool {
         if !self.config.collect_edge_coverage() {
             return false;
         }
@@ -759,9 +763,9 @@ impl WorkerCorpus {
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
     /// found from the corpus findings of other workers.
     #[instrument(skip_all)]
-    fn calibrate(
+    fn calibrate<FEN: FoundryEvmNetwork>(
         &mut self,
-        executor: &Executor,
+        executor: &Executor<FEN>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> Result<()> {
@@ -817,7 +821,7 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_existing(tx_seq.to_vec(), entry.path.clone())?;
+                let corpus_entry = CorpusEntry::new_existing(tx_seq.clone(), entry.path.clone())?;
                 self.in_memory_corpus.push(corpus_entry);
             } else {
                 // Remove the file as it did not generate new coverage.
@@ -972,10 +976,10 @@ impl WorkerCorpus {
 
     /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
     #[instrument(skip_all)]
-    pub fn sync(
+    pub fn sync<FEN: FoundryEvmNetwork>(
         &mut self,
         num_workers: usize,
-        executor: &Executor,
+        executor: &Executor<FEN>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
         global_corpus_metrics: &GlobalCorpusMetrics,

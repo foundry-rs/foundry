@@ -7,10 +7,7 @@ use foundry_evm_core::{
 use revm::{
     Inspector,
     context::ContextTr,
-    interpreter::{
-        CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult,
-        interpreter::EthInterpreter,
-    },
+    interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
 };
 
 /// An inspector that collects logs during execution.
@@ -33,10 +30,11 @@ impl LogCollector {
     }
 
     #[cold]
-    fn do_hardhat_log<CTX>(&mut self, context: &mut CTX, inputs: &CallInputs) -> Option<CallOutcome>
-    where
-        CTX: ContextTr,
-    {
+    fn do_hardhat_log<CTX: ContextTr>(
+        &mut self,
+        context: &mut CTX,
+        inputs: &CallInputs,
+    ) -> Option<CallOutcome> {
         if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
             let result = InstructionResult::Revert;
             let output = err.abi_encode_revert();
@@ -80,10 +78,7 @@ impl LogCollector {
     }
 }
 
-impl<CTX> Inspector<CTX, EthInterpreter> for LogCollector
-where
-    CTX: ContextTr,
-{
+impl<CTX: ContextTr> Inspector<CTX> for LogCollector {
     fn log(&mut self, _context: &mut CTX, log: Log) {
         self.push_raw_log(log);
     }

@@ -166,16 +166,11 @@ impl InspectArgs {
                     .collect();
                 if shell::is_json() {
                     return print_json(&all_libs);
-                } else {
-                    sh_println!(
-                        "Dynamically linked libraries:\n{}",
-                        all_libs
-                            .iter()
-                            .map(|v| format!("  {v}"))
-                            .collect::<Vec<String>>()
-                            .join("\n")
-                    )?;
                 }
+                sh_println!(
+                    "Dynamically linked libraries:\n{}",
+                    all_libs.iter().map(|v| format!("  {v}")).collect::<Vec<String>>().join("\n")
+                )?;
             }
             ContractArtifactField::Linearization => {
                 print_linearization(
@@ -521,7 +516,7 @@ fn print_linearization(
         headers,
         |table| {
             for (order, source, contract) in &chain {
-                table.add_row([order.to_string(), source.to_string(), contract.to_string()]);
+                table.add_row([order.to_string(), source.clone(), contract.clone()]);
             }
         },
         should_wrap,

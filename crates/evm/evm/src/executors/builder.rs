@@ -1,6 +1,10 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
-use foundry_evm_core::{EvmEnv, backend::Backend};
-use revm::{context::TxEnv, primitives::hardfork::SpecId};
+use foundry_evm_core::{
+    backend::Backend,
+    evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+};
+use revm::context::{Block, Transaction};
+use std::marker::PhantomData;
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
@@ -11,40 +15,38 @@ use revm::{context::TxEnv, primitives::hardfork::SpecId};
 /// [`InspectorStack`]: super::InspectorStack
 #[derive(Debug, Clone)]
 #[must_use = "builders do nothing unless you call `build` on them"]
-pub struct ExecutorBuilder {
+pub struct ExecutorBuilder<FEN: FoundryEvmNetwork> {
     /// The configuration used to build an `InspectorStack`.
-    stack: InspectorStackBuilder,
+    stack: InspectorStackBuilder<BlockEnvFor<FEN>>,
     /// The gas limit.
     gas_limit: Option<u64>,
-    /// The spec ID.
-    spec_id: SpecId,
+    /// The spec.
+    spec: SpecFor<FEN>,
     legacy_assertions: bool,
+    _network: PhantomData<FEN>,
 }
 
-impl Default for ExecutorBuilder {
+impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
     #[inline]
     fn default() -> Self {
         Self {
             stack: InspectorStackBuilder::new(),
             gas_limit: None,
-            spec_id: SpecId::default(),
+            spec: Default::default(),
             legacy_assertions: false,
+            _network: PhantomData,
         }
     }
 }
 
-impl ExecutorBuilder {
-    /// Create a new executor builder.
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
     /// Modify the inspector stack.
     #[inline]
     pub fn inspectors(
         mut self,
-        f: impl FnOnce(InspectorStackBuilder) -> InspectorStackBuilder,
+        f: impl FnOnce(
+            InspectorStackBuilder<BlockEnvFor<FEN>>,
+        ) -> InspectorStackBuilder<BlockEnvFor<FEN>>,
     ) -> Self {
         self.stack = f(self.stack);
         self
@@ -52,8 +54,8 @@ impl ExecutorBuilder {
 
     /// Sets the EVM spec to use.
     #[inline]
-    pub fn spec_id(mut self, spec: SpecId) -> Self {
-        self.spec_id = spec;
+    pub fn spec_id(mut self, spec: SpecFor<FEN>) -> Self {
+        self.spec = spec;
         self
     }
 
@@ -73,16 +75,21 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     #[inline]
-    pub fn build(self, mut evm_env: EvmEnv, tx_env: TxEnv, db: Backend) -> Executor {
-        let Self { mut stack, gas_limit, spec_id, legacy_assertions } = self;
+    pub fn build(
+        self,
+        mut evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+        db: Backend<FEN>,
+    ) -> Executor<FEN> {
+        let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
         if stack.block.is_none() {
             stack.block = Some(evm_env.block_env.clone());
         }
         if stack.gas_price.is_none() {
-            stack.gas_price = Some(tx_env.gas_price);
+            stack.gas_price = Some(tx_env.gas_price());
         }
-        let gas_limit = gas_limit.unwrap_or(evm_env.block_env.gas_limit);
-        evm_env.cfg_env.set_spec(spec_id);
+        let gas_limit = gas_limit.unwrap_or(evm_env.block_env.gas_limit());
+        evm_env.cfg_env.set_spec(spec);
         Executor::new(db, evm_env, tx_env, stack.build(), gas_limit, legacy_assertions)
     }
 }

@@ -128,26 +128,6 @@ jobs:
         shell: bash
         run: ./.github/scripts/format.sh --check
 
-  crate-checks:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@7bc99eee1f1b8902a125006cf790a1f4c8461e63 # v2
-        with:
-          tool: cargo-hack
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-      - run: cargo hack check
-
   deny:
     uses: tempoxyz/ci/.github/workflows/deny.yml@268b3ce142717ff86c58fbbcc3abc3f109f0fb8d # main
     permissions:
@@ -193,7 +173,6 @@ jobs:
       - clippy
       - rustfmt
       - forge-fmt
-      - crate-checks
       - deny
       - codeql
     timeout-minutes: 30

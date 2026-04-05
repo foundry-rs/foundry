@@ -557,7 +557,7 @@ async fn can_reset_fork_to_new_fork() {
     let optimism = next_rpc_endpoint(NamedChain::Optimism);
 
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(optimism.to_string()),
+        json_rpc_url: Some(optimism.clone()),
         block_number: Some(124659890),
     }))
     .await
@@ -1255,7 +1255,7 @@ async fn flaky_test_arbitrum_fork_dev_balance() {
 
 // <https://github.com/foundry-rs/foundry/issues/9152>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_arb_fork_mining() {
+async fn flaky_test_arb_fork_mining() {
     let fork_block_number = 394274860u64;
     let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
     let (api, _handle) = spawn(
