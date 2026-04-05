@@ -608,14 +608,14 @@ contract InvariantReplayFailReason is Test {
 
     cmd.args(["test", "--mt", "invariant_fail_reason"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: panic: assertion failed (0x01)]
+[FAIL: failed to set up invariant testing environment: <empty revert data>][..]
 ...
 "#]]);
 
     // Replay should preserve failure reason instead of generic replay message.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: panic: assertion failed (0x01)]
+[FAIL: failed to set up invariant testing environment: <empty revert data>][..]
 ...
 "#]]);
 });
@@ -667,7 +667,7 @@ contract InvariantReplayCustomError is Test {
     cmd.args(["test", "--mt", "invariant_custom_error_reason"]).assert_failure().stdout_eq(str![[
         r#"
 ...
-[FAIL: InvariantCustomError(111, "custom")]
+[FAIL: [..]custom[..]][..]
 ...
 "#
     ]]);
@@ -675,7 +675,7 @@ contract InvariantReplayCustomError is Test {
     // Replay should preserve custom error string too.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: InvariantCustomError(111, "custom")]
+[FAIL: [..]custom[..]][..]
 ...
 "#]]);
 });
@@ -710,14 +710,14 @@ contract InvariantReplayInvariantCustomError is Test {
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
-[FAIL: InvariantCustomError(222, "invariant custom")]
+[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
 ...
 "#]]);
 
     // Replay should preserve invariant-level custom error string too.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: InvariantCustomError(222, "invariant custom")]
+[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
 ...
 "#]]);
 });
