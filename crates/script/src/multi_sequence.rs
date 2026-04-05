@@ -60,8 +60,8 @@ impl<N: Network> MultiChainSequence<N> {
         target: &ArtifactId,
         dry_run: bool,
     ) -> Result<(PathBuf, PathBuf)> {
-        let mut broadcast = config.broadcast.to_path_buf();
-        let mut cache = config.cache_path.to_path_buf();
+        let mut broadcast = config.broadcast.clone();
+        let mut cache = config.cache_path.clone();
         let mut common = PathBuf::new();
 
         common.push("multi");

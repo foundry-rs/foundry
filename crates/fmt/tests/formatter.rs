@@ -138,11 +138,10 @@ fn test_all_dirs_are_declared(dirs: &[&str]) {
             undeclared.push(actual_dir_name.to_string());
         }
     }
-    if !undeclared.is_empty() {
-        panic!(
-            "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
-        );
-    }
+    assert!(
+        undeclared.is_empty(),
+        "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
+    )
 }
 
 macro_rules! fmt_tests {

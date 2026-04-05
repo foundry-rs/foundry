@@ -38,6 +38,7 @@ pub mod ic;
 pub mod opts;
 pub mod precompiles;
 pub mod state_snapshot;
+pub mod tempo;
 pub mod utils;
 
 /// Foundry-specific inspector methods, decoupled from any particular EVM context type.

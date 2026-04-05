@@ -20,8 +20,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, LoadConfig, parse_function_args},
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::Call;
 

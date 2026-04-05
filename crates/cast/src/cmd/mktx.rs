@@ -12,8 +12,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::LoadConfig,
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 

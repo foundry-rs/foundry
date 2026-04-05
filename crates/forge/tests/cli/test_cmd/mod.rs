@@ -20,8 +20,9 @@ mod spec;
 mod table;
 mod trace;
 
-// Run `forge test` on `/testdata`.
-forgetest!(testdata, |_prj, cmd| {
+/// Sets up a [`TestCommand`] to run `forge test` on the `/testdata` directory with RPC
+/// endpoints written to a `.env` file.
+fn setup_testdata_cmd(cmd: &mut TestCommand) {
     let testdata =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata").canonicalize().unwrap();
     cmd.current_dir(&testdata);
@@ -30,17 +31,30 @@ forgetest!(testdata, |_prj, cmd| {
     for (name, endpoint) in rpc_endpoints().iter() {
         if let Some(url) = endpoint.endpoint.as_url() {
             let key = format!("RPC_{}", name.to_uppercase());
-            // cmd.env(&key, url);
             writeln!(dotenv, "{key}={url}").unwrap();
         }
     }
     drop(dotenv);
+}
+
+/// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
+/// These are run separately by the `flaky_testdata` test below.
+/// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
+const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test";
+
+// Run `forge test` on `/testdata`.
+forgetest!(testdata, |_prj, cmd| {
+    setup_testdata_cmd(&mut cmd);
 
     let mut args = vec!["test"];
+    let nmc_isolate = format!(
+        "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount|{FLAKY_TESTDATA_CONTRACTS})",
+    );
+    let nmc_default = format!("--nmc=({FLAKY_TESTDATA_CONTRACTS})");
     if cfg!(feature = "isolate-by-default") {
-        args.push(
-            "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount)",
-        );
+        args.push(&nmc_isolate);
+    } else {
+        args.push(&nmc_default);
     }
 
     let orig_assert = cmd.args(args).assert();
@@ -64,6 +78,14 @@ forgetest!(testdata, |_prj, cmd| {
     }
 
     orig_assert.success();
+});
+
+// Run flaky testdata contracts excluded from the main `testdata` test above.
+// Picked up by the nightly `test-flaky` workflow via `cargo nextest run --profile flaky`.
+forgetest!(flaky_testdata, |_prj, cmd| {
+    setup_testdata_cmd(&mut cmd);
+    let mc = format!("--mc=({FLAKY_TESTDATA_CONTRACTS})");
+    cmd.args(["test", &mc]).assert_success();
 });
 
 // tests that test filters are handled correctly

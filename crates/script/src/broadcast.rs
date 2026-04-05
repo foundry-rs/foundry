@@ -16,12 +16,12 @@ use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
-    TransactionMaybeSigned,
+    FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{ProviderBuilder, try_get_http_provider},
     shell,
 };
 use foundry_config::Config;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_evm::core::evm::EthEvmNetwork;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner, wallet_browser::signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
@@ -288,7 +288,7 @@ where
     N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<EthEvmNetwork>,
     pub script_wallets: Wallets,
     pub browser_wallet: Option<BrowserSigner<N>>,
     pub build_data: LinkedBuildData,

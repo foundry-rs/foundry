@@ -95,10 +95,9 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
                     break;
-                } else {
-                    sh_println!("(To exit, press Ctrl+C again)")?;
-                    interrupt = true;
                 }
+                sh_println!("(To exit, press Ctrl+C again)")?;
+                interrupt = true;
             }
             Err(ReadlineError::Eof) => break,
             Err(err) => {

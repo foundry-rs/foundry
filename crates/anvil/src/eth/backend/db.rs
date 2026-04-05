@@ -8,6 +8,7 @@ use std::{
 
 use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip4895::Withdrawals;
+use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{AddressMap, HashMap},
@@ -21,7 +22,7 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
-use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -705,8 +706,10 @@ pub struct SerializableTransaction {
     pub block_number: u64,
 }
 
-impl From<MinedTransaction<FoundryNetwork>> for SerializableTransaction {
-    fn from(transaction: MinedTransaction<FoundryNetwork>) -> Self {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> From<MinedTransaction<N>>
+    for SerializableTransaction
+{
+    fn from(transaction: MinedTransaction<N>) -> Self {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
@@ -716,7 +719,9 @@ impl From<MinedTransaction<FoundryNetwork>> for SerializableTransaction {
     }
 }
 
-impl From<SerializableTransaction> for MinedTransaction<FoundryNetwork> {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> From<SerializableTransaction>
+    for MinedTransaction<N>
+{
     fn from(transaction: SerializableTransaction) -> Self {
         Self {
             info: transaction.info,

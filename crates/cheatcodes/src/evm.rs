@@ -4,10 +4,10 @@ use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*, inspector::RecordDebugStepInfo,
 };
-use alloy_consensus::{TxEnvelope, transaction::SignerRecoverable};
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
+use alloy_network::{Network, eip2718::EIP4844_TX_TYPE_ID};
 use alloy_primitives::{
     Address, B256, U256, hex, keccak256,
     map::{B256Map, HashMap},
@@ -28,6 +28,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
+    evm::{FoundryEvmNetwork, TxEnvFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceMode;
@@ -36,7 +37,7 @@ use rand::Rng;
 use revm::{
     Database,
     bytecode::Bytecode,
-    context::{Block, Cfg, ContextTr, JournalTr, Transaction, TxEnv, result::ExecutionResult},
+    context::{Block, Cfg, ContextTr, Host, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountStatus},
@@ -246,7 +247,7 @@ impl Display for AccountStateDiffs {
 }
 
 impl Cheatcode for addrCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         let wallet = super::crypto::parse_wallet(privateKey)?;
         Ok(wallet.address().abi_encode())
@@ -254,30 +255,21 @@ impl Cheatcode for addrCall {
 }
 
 impl Cheatcode for getNonce_0Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account } = self;
         get_nonce(ccx, account)
     }
 }
 
 impl Cheatcode for getNonce_1Call {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { wallet } = self;
         get_nonce(ccx, &wallet.addr)
     }
 }
 
 impl Cheatcode for loadCall {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
         ccx.ensure_not_precompile(&target)?;
 
@@ -319,10 +311,7 @@ impl Cheatcode for loadCall {
 }
 
 impl Cheatcode for loadAllocsCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { pathToAllocsJson } = self;
 
         let path = Path::new(pathToAllocsJson);
@@ -347,10 +336,7 @@ impl Cheatcode for loadAllocsCall {
 }
 
 impl Cheatcode for cloneAccountCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { source, target } = self;
 
         let account = ccx.ecx.journal_mut().load_account(*source)?;
@@ -364,10 +350,7 @@ impl Cheatcode for cloneAccountCall {
 }
 
 impl Cheatcode for dumpStateCall {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { pathToStateJson } = self;
         let path = Path::new(pathToStateJson);
 
@@ -397,7 +380,7 @@ impl Cheatcode for dumpStateCall {
 }
 
 impl Cheatcode for recordCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.recording_accesses = true;
         state.accesses.clear();
@@ -406,14 +389,14 @@ impl Cheatcode for recordCall {
 }
 
 impl Cheatcode for stopRecordCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         state.recording_accesses = false;
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for accessesCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { target } = *self;
         let result = (
             state.accesses.reads.entry(target).or_default().as_slice(),
@@ -424,7 +407,7 @@ impl Cheatcode for accessesCall {
 }
 
 impl Cheatcode for recordLogsCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.recorded_logs = Some(Default::default());
         Ok(Default::default())
@@ -432,14 +415,14 @@ impl Cheatcode for recordLogsCall {
 }
 
 impl Cheatcode for getRecordedLogsCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         Ok(state.recorded_logs.replace(Default::default()).unwrap_or_default().abi_encode())
     }
 }
 
 impl Cheatcode for getRecordedLogsJsonCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         let logs = state.recorded_logs.replace(Default::default()).unwrap_or_default();
         let json_logs: Vec<_> = logs
@@ -455,7 +438,7 @@ impl Cheatcode for getRecordedLogsJsonCall {
 }
 
 impl Cheatcode for pauseGasMeteringCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.gas_metering.paused = true;
         Ok(Default::default())
@@ -463,7 +446,7 @@ impl Cheatcode for pauseGasMeteringCall {
 }
 
 impl Cheatcode for resumeGasMeteringCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.gas_metering.resume();
         Ok(Default::default())
@@ -471,7 +454,7 @@ impl Cheatcode for resumeGasMeteringCall {
 }
 
 impl Cheatcode for resetGasMeteringCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.gas_metering.reset();
         Ok(Default::default())
@@ -479,7 +462,7 @@ impl Cheatcode for resetGasMeteringCall {
 }
 
 impl Cheatcode for lastCallGasCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         let Some(last_call_gas) = &state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -489,14 +472,14 @@ impl Cheatcode for lastCallGasCall {
 }
 
 impl Cheatcode for getChainIdCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         Ok(U256::from(ccx.ecx.cfg().chain_id()).abi_encode())
     }
 }
 
 impl Cheatcode for chainIdCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
         ccx.ecx.cfg_mut().chain_id = newChainId.to();
@@ -505,7 +488,7 @@ impl Cheatcode for chainIdCall {
 }
 
 impl Cheatcode for coinbaseCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newCoinbase } = self;
         ccx.ecx.block_mut().set_beneficiary(*newCoinbase);
         Ok(Default::default())
@@ -513,7 +496,7 @@ impl Cheatcode for coinbaseCall {
 }
 
 impl Cheatcode for difficultyCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
             (*ccx.ecx.cfg().spec()).into() < SpecId::MERGE,
@@ -526,7 +509,7 @@ impl Cheatcode for difficultyCall {
 }
 
 impl Cheatcode for feeCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newBasefee } = self;
         ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
         ccx.ecx.block_mut().set_basefee(newBasefee.saturating_to());
@@ -535,7 +518,7 @@ impl Cheatcode for feeCall {
 }
 
 impl Cheatcode for prevrandao_0Call {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
             (*ccx.ecx.cfg().spec()).into() >= SpecId::MERGE,
@@ -548,7 +531,7 @@ impl Cheatcode for prevrandao_0Call {
 }
 
 impl Cheatcode for prevrandao_1Call {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
             (*ccx.ecx.cfg().spec()).into() >= SpecId::MERGE,
@@ -561,7 +544,7 @@ impl Cheatcode for prevrandao_1Call {
 }
 
 impl Cheatcode for blobhashesCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { hashes } = self;
         ensure!(
             (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
@@ -576,7 +559,7 @@ impl Cheatcode for blobhashesCall {
 }
 
 impl Cheatcode for getBlobhashesCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ensure!(
             (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
@@ -588,7 +571,7 @@ impl Cheatcode for getBlobhashesCall {
 }
 
 impl Cheatcode for rollCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newHeight } = self;
         ccx.ecx.block_mut().set_number(*newHeight);
         Ok(Default::default())
@@ -596,14 +579,14 @@ impl Cheatcode for rollCall {
 }
 
 impl Cheatcode for getBlockNumberCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().number().abi_encode())
     }
 }
 
 impl Cheatcode for txGasPriceCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newGasPrice } = self;
         ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
         ccx.ecx.tx_mut().set_gas_price(newGasPrice.saturating_to());
@@ -612,7 +595,7 @@ impl Cheatcode for txGasPriceCall {
 }
 
 impl Cheatcode for warpCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newTimestamp } = self;
         ccx.ecx.block_mut().set_timestamp(*newTimestamp);
         Ok(Default::default())
@@ -620,14 +603,14 @@ impl Cheatcode for warpCall {
 }
 
 impl Cheatcode for getBlockTimestampCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().timestamp().abi_encode())
     }
 }
 
 impl Cheatcode for blobBaseFeeCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
             (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
@@ -645,17 +628,14 @@ impl Cheatcode for blobBaseFeeCall {
 }
 
 impl Cheatcode for getBlobBaseFeeCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         Ok(ccx.ecx.block().blob_excess_gas().unwrap_or(0).abi_encode())
     }
 }
 
 impl Cheatcode for dealCall {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
         let account = journaled_account(ccx.ecx, address)?;
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
@@ -666,10 +646,7 @@ impl Cheatcode for dealCall {
 }
 
 impl Cheatcode for etchCall {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ccx.ensure_not_precompile(target)?;
         ccx.ecx.journal_mut().load_account(*target)?;
@@ -681,10 +658,7 @@ impl Cheatcode for etchCall {
 }
 
 impl Cheatcode for resetNonceCall {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account } = self;
         let account = journaled_account(ccx.ecx, *account)?;
         // Per EIP-161, EOA nonces start at 0, but contract nonces
@@ -699,10 +673,7 @@ impl Cheatcode for resetNonceCall {
 }
 
 impl Cheatcode for setNonceCall {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
         let account = journaled_account(ccx.ecx, account)?;
         // nonce must increment only
@@ -718,10 +689,7 @@ impl Cheatcode for setNonceCall {
 }
 
 impl Cheatcode for setNonceUnsafeCall {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newNonce } = *self;
         let account = journaled_account(ccx.ecx, account)?;
         account.info.nonce = newNonce;
@@ -730,10 +698,7 @@ impl Cheatcode for setNonceUnsafeCall {
 }
 
 impl Cheatcode for storeCall {
-    fn apply_stateful<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot, value } = *self;
         ccx.ensure_not_precompile(&target)?;
         ensure_loaded_account(ccx.ecx, target)?;
@@ -746,10 +711,7 @@ impl Cheatcode for storeCall {
 }
 
 impl Cheatcode for coolCall {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
         if let Some(account) = ccx.ecx.journal_mut().evm_state_mut().get_mut(target) {
             account.unmark_touch();
@@ -760,7 +722,7 @@ impl Cheatcode for coolCall {
 }
 
 impl Cheatcode for accessListCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { access } = self;
         let access_list = access
             .iter()
@@ -775,7 +737,7 @@ impl Cheatcode for accessListCall {
 }
 
 impl Cheatcode for noAccessListCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         // Set to empty option in order to override previous applied access list.
         if state.access_list.is_some() {
@@ -786,10 +748,7 @@ impl Cheatcode for noAccessListCall {
 }
 
 impl Cheatcode for warmSlotCall {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), false);
         Ok(Default::default())
@@ -797,10 +756,7 @@ impl Cheatcode for warmSlotCall {
 }
 
 impl Cheatcode for coolSlotCall {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), true);
         Ok(Default::default())
@@ -808,28 +764,28 @@ impl Cheatcode for coolSlotCall {
 }
 
 impl Cheatcode for readCallersCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         read_callers(ccx.state, &ccx.ecx.tx().caller(), ccx.ecx.journal().depth())
     }
 }
 
 impl Cheatcode for snapshotValue_0Call {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name, value } = self;
         inner_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { group, name, value } = self;
         inner_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotGasLastCall_0Call {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -839,7 +795,7 @@ impl Cheatcode for snapshotGasLastCall_0Call {
 }
 
 impl Cheatcode for snapshotGasLastCall_1Call {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name, group } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -854,35 +810,35 @@ impl Cheatcode for snapshotGasLastCall_1Call {
 }
 
 impl Cheatcode for startSnapshotGas_0Call {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name } = self;
         inner_start_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for startSnapshotGas_1Call {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { group, name } = self;
         inner_start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_0Call {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         inner_stop_gas_snapshot(ccx, None, None)
     }
 }
 
 impl Cheatcode for stopSnapshotGas_1Call {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name } = self;
         inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_2Call {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { group, name } = self;
         inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
@@ -890,20 +846,14 @@ impl Cheatcode for stopSnapshotGas_2Call {
 
 // Deprecated in favor of `snapshotStateCall`
 impl Cheatcode for snapshotCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
 }
 
 impl Cheatcode for snapshotStateCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
@@ -911,20 +861,14 @@ impl Cheatcode for snapshotStateCall {
 
 // Deprecated in favor of `revertToStateCall`
 impl Cheatcode for revertToCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
@@ -932,20 +876,14 @@ impl Cheatcode for revertToStateCall {
 
 // Deprecated in favor of `revertToStateAndDeleteCall`
 impl Cheatcode for revertToAndDeleteCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateAndDeleteCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
@@ -953,10 +891,7 @@ impl Cheatcode for revertToStateAndDeleteCall {
 
 // Deprecated in favor of `deleteStateSnapshotCall`
 impl Cheatcode for deleteSnapshotCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         Ok(result.abi_encode())
@@ -964,10 +899,7 @@ impl Cheatcode for deleteSnapshotCall {
 }
 
 impl Cheatcode for deleteStateSnapshotCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         Ok(result.abi_encode())
@@ -976,10 +908,7 @@ impl Cheatcode for deleteStateSnapshotCall {
 
 // Deprecated in favor of `deleteStateSnapshotsCall`
 impl Cheatcode for deleteSnapshotsCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         Ok(Default::default())
@@ -987,10 +916,7 @@ impl Cheatcode for deleteSnapshotsCall {
 }
 
 impl Cheatcode for deleteStateSnapshotsCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         Ok(Default::default())
@@ -998,7 +924,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
 }
 
 impl Cheatcode for startStateDiffRecordingCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.recorded_account_diffs_stack = Some(Default::default());
         // Enable mapping recording to track mapping slot accesses
@@ -1008,14 +934,14 @@ impl Cheatcode for startStateDiffRecordingCall {
 }
 
 impl Cheatcode for stopAndReturnStateDiffCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         get_state_diff(state)
     }
 }
 
 impl Cheatcode for getStateDiffCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let mut diffs = String::new();
         let state_diffs = get_recorded_state_diffs(ccx);
         for (address, state_diffs) in state_diffs {
@@ -1027,14 +953,14 @@ impl Cheatcode for getStateDiffCall {
 }
 
 impl Cheatcode for getStateDiffJsonCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
     }
 }
 
 impl Cheatcode for getStorageSlotsCall {
-    fn apply_stateful<CTX: ContextTr>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, variableName } = self;
 
         let storage_layout = get_contract_data(ccx, *target)
@@ -1112,7 +1038,7 @@ impl Cheatcode for getStorageSlotsCall {
 }
 
 impl Cheatcode for getStorageAccessesCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let mut storage_accesses = Vec::new();
 
         if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
@@ -1126,18 +1052,18 @@ impl Cheatcode for getStorageAccessesCall {
 }
 
 impl Cheatcode for broadcastRawTransactionCall {
-    fn apply_full<
-        CTX: FoundryContextExt<Tx = TxEnv, Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>,
-    >(
+    fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor<CTX>,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        let tx = TxEnvelope::decode(&mut self.data.as_ref())
+        let tx = <FEN::Network as Network>::TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        let from = tx.recover_signer()?;
-        let tx_env = FromRecoveredTx::from_recovered_tx(&tx, from);
+        let sender =
+            tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
+        let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
+        let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
 
@@ -1153,10 +1079,7 @@ impl Cheatcode for broadcastRawTransactionCall {
 }
 
 impl Cheatcode for setBlockhashCall {
-    fn apply_stateful<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blockNumber, blockHash } = *self;
         ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
         ensure!(
@@ -1171,10 +1094,10 @@ impl Cheatcode for setBlockhashCall {
 }
 
 impl Cheatcode for executeTransactionCall {
-    fn apply_full<CTX: FoundryContextExt<Tx = TxEnv>>(
+    fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor<CTX>,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
         use crate::env::FORGE_CONTEXT;
 
@@ -1186,15 +1109,13 @@ impl Cheatcode for executeTransactionCall {
         }
 
         // Decode the RLP-encoded signed transaction.
-        let tx = TxEnvelope::decode(&mut self.rawTx.as_ref())
+        let tx = <FEN::Network as Network>::TxEnvelope::decode(&mut self.rawTx.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        // Recover signer from the transaction signature.
+        // Build TxEnv from the recovered transaction.
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
-
-        // Build TxEnv from the recovered transaction.
-        let tx_env = FromRecoveredTx::from_recovered_tx(&tx, sender);
+        let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
 
         // Save current env for restoration after execution.
         let cached_evm_env = ccx.ecx.evm_clone();
@@ -1310,10 +1231,10 @@ impl Cheatcode for executeTransactionCall {
 }
 
 impl Cheatcode for startDebugTraceRecordingCall {
-    fn apply_full<CTX: ContextTr>(
+    fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor<CTX>,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
@@ -1340,10 +1261,10 @@ impl Cheatcode for startDebugTraceRecordingCall {
 }
 
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
-    fn apply_full<CTX: ContextTr>(
+    fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor<CTX>,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
@@ -1379,7 +1300,7 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 }
 
 impl Cheatcode for setEvmVersionCall {
-    fn apply_stateful<CTX>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { evm } = self;
         let spec_id = evm_spec_id(
             EvmVersion::from_str(evm)
@@ -1391,33 +1312,29 @@ impl Cheatcode for setEvmVersionCall {
 }
 
 impl Cheatcode for getEvmVersionCall {
-    fn apply_stateful<CTX: FoundryContextExt>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let spec = (*ccx.ecx.cfg().spec()).into();
         Ok(spec.to_string().to_lowercase().abi_encode())
     }
 }
 
-pub(super) fn get_nonce<CTX: ContextTr<Db: Database<Error = DatabaseError>>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+pub(super) fn get_nonce<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     address: &Address,
 ) -> Result {
     let account = ccx.ecx.journal_mut().load_account(*address)?;
     Ok(account.data.info.nonce.abi_encode())
 }
 
-fn inner_snapshot_state<CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
-) -> Result {
+fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
     let evm_env = ccx.ecx.evm_clone();
     let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
     Ok(id.abi_encode())
 }
 
-fn inner_revert_to_state<
-    CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>,
->(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
@@ -1438,10 +1355,8 @@ fn inner_revert_to_state<
     }
 }
 
-fn inner_revert_to_state_and_delete<
-    CTX: FoundryContextExt<Db: DatabaseExt<CTX::Block, CTX::Tx, CTX::Spec>>,
->(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
@@ -1462,8 +1377,8 @@ fn inner_revert_to_state_and_delete<
     }
 }
 
-fn inner_value_snapshot<CTX>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn inner_value_snapshot<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
     value: String,
@@ -1475,8 +1390,8 @@ fn inner_value_snapshot<CTX>(
     Ok(Default::default())
 }
 
-fn inner_last_gas_snapshot<CTX>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
     value: u64,
@@ -1488,8 +1403,8 @@ fn inner_last_gas_snapshot<CTX>(
     Ok(value.abi_encode())
 }
 
-fn inner_start_gas_snapshot<CTX: ContextTr>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn inner_start_gas_snapshot<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
@@ -1514,8 +1429,8 @@ fn inner_start_gas_snapshot<CTX: ContextTr>(
     Ok(Default::default())
 }
 
-fn inner_stop_gas_snapshot<CTX>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn inner_stop_gas_snapshot<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
@@ -1566,8 +1481,8 @@ fn inner_stop_gas_snapshot<CTX>(
 }
 
 // Derives the snapshot group and name from the provided group and name or the running contract.
-fn derive_snapshot_name<CTX>(
-    ccx: &CheatsCtxt<'_, CTX>,
+fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
+    ccx: &CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
 ) -> (String, String) {
@@ -1601,7 +1516,11 @@ fn derive_snapshot_name<CTX>(
 /// - If no caller modification is active:
 ///     - caller_mode will be equal to [CallerMode::None],
 ///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
-fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: usize) -> Result {
+fn read_callers<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    default_sender: &Address,
+    call_depth: usize,
+) -> Result {
     let mut mode = CallerMode::None;
     let mut new_caller = default_sender;
     let mut new_origin = default_sender;
@@ -1651,7 +1570,7 @@ pub(super) fn ensure_loaded_account<CTX: ContextTr<Db: Database<Error = Database
 /// In the case where `stopAndReturnStateDiff` is called at a lower
 /// depth than `startStateDiffRecording`, multiple `Vec<RecordedAccountAccesses>`
 /// will be flattened, preserving the order of the accesses.
-fn get_state_diff(state: &mut Cheatcodes) -> Result {
+fn get_state_diff<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>) -> Result {
     let res = state
         .recorded_account_diffs_stack
         .replace(Default::default())
@@ -1680,8 +1599,8 @@ fn genesis_account(account: &Account) -> GenesisAccount {
 }
 
 /// Helper function to returns state diffs recorded for each changed account.
-fn get_recorded_state_diffs<CTX: ContextTr>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> BTreeMap<Address, AccountStateDiffs> {
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
 
@@ -1859,8 +1778,8 @@ const EIP1822_PROXIABLE_SLOT: &str =
     "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
 
 /// Helper function to get the contract data from the deployed code at an address.
-fn get_contract_data<'a, CTX: ContextTr>(
-    ccx: &'a mut CheatsCtxt<'_, CTX>,
+fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
+    ccx: &'a mut CheatsCtxt<'_, '_, FEN>,
     address: Address,
 ) -> Option<(&'a foundry_compilers::ArtifactId, &'a foundry_common::contracts::ContractData)> {
     // Check if we have available artifacts to match against
@@ -1902,8 +1821,8 @@ fn get_contract_data<'a, CTX: ContextTr>(
 }
 
 /// Helper function to set / unset cold storage slot of the target address.
-fn set_cold_slot<CTX: ContextTr<Journal: JournalExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn set_cold_slot<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     target: Address,
     slot: U256,
     cold: bool,

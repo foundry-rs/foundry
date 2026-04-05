@@ -2,7 +2,7 @@ use super::InvariantContract;
 use crate::executors::RawCallResult;
 use alloy_primitives::{Address, Bytes};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::decode::RevertDecoder;
+use foundry_evm_core::{decode::RevertDecoder, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
 
@@ -68,12 +68,12 @@ pub struct FailedInvariantCaseData {
 }
 
 impl FailedInvariantCaseData {
-    pub fn new(
+    pub fn new<FEN: FoundryEvmNetwork>(
         invariant_contract: &InvariantContract<'_>,
         invariant_config: &InvariantConfig,
         targeted_contracts: &FuzzRunIdentifiedContracts,
         calldata: &[BasicTxDetails],
-        call_result: RawCallResult,
+        call_result: RawCallResult<FEN>,
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         // Collect abis of fuzzed and invariant contracts to decode custom error.
