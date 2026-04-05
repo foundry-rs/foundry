@@ -18,7 +18,7 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::source_files_iter,
 };
-use foundry_evm::traces::debug::ContractSources;
+use foundry_evm::{core::evm::EthEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
@@ -41,7 +41,10 @@ impl BuildData {
 
     /// Links contracts. Uses CREATE2 linking when possible, otherwise falls back to
     /// default linking with sender nonce and address.
-    pub async fn link(self, script_config: &ScriptConfig) -> Result<LinkedBuildData> {
+    pub async fn link(
+        self,
+        script_config: &ScriptConfig<EthEvmNetwork>,
+    ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
             let provider = ProviderBuilder::<AnyNetwork>::new(fork_url).build()?;
@@ -156,7 +159,7 @@ impl LinkedBuildData {
 /// First state basically containing only inputs of the user.
 pub struct PreprocessedState {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<EthEvmNetwork>,
     pub script_wallets: Wallets,
     pub browser_wallet: Option<BrowserSigner<Ethereum>>,
 }
@@ -185,12 +188,11 @@ impl PreprocessedState {
             }
         };
 
-        #[expect(clippy::redundant_clone)]
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
         )
-        .chain([target_path.to_path_buf()]);
+        .chain([target_path.clone()]);
 
         let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
 
@@ -243,7 +245,7 @@ impl PreprocessedState {
 /// State after we have determined and compiled target contract to be executed.
 pub struct CompiledState {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<EthEvmNetwork>,
     pub script_wallets: Wallets,
     pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: BuildData,

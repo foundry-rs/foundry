@@ -29,7 +29,11 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-primitives.workspace = true
+tempo-chainspec.workspace = true
 tempo-primitives.workspace = true
+tempo-precompiles.workspace = true
+tempo-evm.workspace = true
+tempo-revm.workspace = true
 
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
@@ -117,6 +121,7 @@ foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 op-alloy-rpc-types.workspace = true
+tempo-alloy.workspace = true
 
 [features]
 default = ["cli", "jemalloc"]

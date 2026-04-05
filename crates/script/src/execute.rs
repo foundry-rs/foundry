@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_network::{AnyNetwork, Ethereum};
+use alloy_network::{AnyNetwork, Ethereum, Network};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
@@ -24,6 +24,7 @@ use foundry_common::{
 use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
 use foundry_evm::{
+    core::evm::EthEvmNetwork,
     decode::decode_console_logs,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
@@ -42,7 +43,7 @@ use yansi::Paint;
 /// array of libraries that need to be predeployed.
 pub struct LinkedState {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<EthEvmNetwork>,
     pub script_wallets: Wallets,
     pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
@@ -95,7 +96,7 @@ impl LinkedState {
 #[derive(Debug)]
 pub struct PreExecutionState {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<EthEvmNetwork>,
     pub script_wallets: Wallets,
     pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
@@ -146,7 +147,10 @@ impl PreExecutionState {
     }
 
     /// Executes the script using the provided runner and returns the [ScriptResult].
-    pub async fn execute_with_runner(&self, runner: &mut ScriptRunner) -> Result<ScriptResult> {
+    pub async fn execute_with_runner(
+        &self,
+        runner: &mut ScriptRunner<EthEvmNetwork>,
+    ) -> Result<ScriptResult<Ethereum>> {
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
@@ -280,17 +284,17 @@ pub struct ExecutionArtifacts {
 /// State after the script has been executed.
 pub struct ExecutedState {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<EthEvmNetwork>,
     pub script_wallets: Wallets,
     pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
-    pub execution_result: ScriptResult,
+    pub execution_result: ScriptResult<Ethereum>,
 }
 
 impl ExecutedState {
     /// Collects the data we need for simulation and various post-execution tasks.
-    pub async fn prepare_simulation(self) -> Result<PreSimulationState> {
+    pub async fn prepare_simulation(self) -> Result<PreSimulationState<Ethereum>> {
         let returns = self.get_returns()?;
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
@@ -373,7 +377,7 @@ impl ExecutedState {
                         });
 
                     let label = if !output.name.is_empty() {
-                        output.name.to_string()
+                        output.name.clone()
                     } else {
                         index.to_string()
                     };
@@ -396,7 +400,7 @@ impl ExecutedState {
     }
 }
 
-impl PreSimulationState {
+impl<N: Network> PreSimulationState<N> {
     pub async fn show_json(&self) -> Result<()> {
         let mut result = self.execution_result.clone();
 
@@ -471,7 +475,7 @@ impl PreSimulationState {
                             });
 
                         let label = if !output.name.is_empty() {
-                            output.name.to_string()
+                            output.name.clone()
                         } else {
                             index.to_string()
                         };

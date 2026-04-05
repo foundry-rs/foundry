@@ -17,7 +17,6 @@ foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-primitives.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
@@ -52,7 +51,9 @@ solar.workspace = true
 tower.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+alloy-rlp.workspace = true
 comfy-table.workspace = true
+dirs.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 itertools.workspace = true
@@ -66,6 +67,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
@@ -76,6 +78,8 @@ anstyle.workspace = true
 ciborium.workspace = true
 
 flate2.workspace = true
+tempo-alloy.workspace = true
+tempo-primitives.workspace = true
 
 [build-dependencies]
 chrono.workspace = true

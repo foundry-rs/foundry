@@ -3,11 +3,7 @@
 use crate::Config;
 use alloy_primitives::U256;
 use figment::value::Value;
-use foundry_compilers::artifacts::{
-    EvmVersion,
-    remappings::{Remapping, RemappingError},
-};
-use revm::primitives::hardfork::SpecId;
+use foundry_compilers::artifacts::remappings::{Remapping, RemappingError};
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
     io,
@@ -299,25 +295,5 @@ impl FromStr for Numeric {
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
         }
-    }
-}
-
-/// Returns the [SpecId] derived from [EvmVersion]
-pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
-    match evm_version {
-        EvmVersion::Homestead => SpecId::HOMESTEAD,
-        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
-        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-        EvmVersion::Byzantium => SpecId::BYZANTIUM,
-        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
-        EvmVersion::Petersburg => SpecId::PETERSBURG,
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
-        EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::PRAGUE,
-        EvmVersion::Osaka => SpecId::OSAKA,
     }
 }

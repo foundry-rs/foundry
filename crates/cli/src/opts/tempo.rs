@@ -2,7 +2,7 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, ruint::aliases::U256};
 use alloy_signer::Signature;
 use clap::Parser;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::FoundryTransactionBuilder;
 use std::str::FromStr;
 
 /// CLI options for Tempo transactions.

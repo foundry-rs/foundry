@@ -438,9 +438,8 @@ impl Future for NodeHandle {
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
                 return Poll::Ready(res.map(|()| Ok(())));
-            } else {
-                pin.ipc_task = Some(ipc);
             }
+            pin.ipc_task = Some(ipc);
         }
 
         // poll the node service task

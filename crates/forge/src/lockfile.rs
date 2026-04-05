@@ -77,16 +77,16 @@ impl<'a> Lockfile<'a> {
                 let rel_path = sub.path();
                 let rev = sub.rev();
 
-                let entry = self.deps.entry(rel_path.to_path_buf());
+                let entry = self.deps.entry(rel_path.clone());
 
                 match entry {
                     Entry::Occupied(e) if e.get().rev() != rev => {
-                        out_of_sync.insert(rel_path.to_path_buf(), e.get().clone());
+                        out_of_sync.insert(rel_path.clone(), e.get().clone());
                     }
                     Entry::Vacant(e) => {
                         // Check if there is branch specified for the submodule at rel_path in
                         // .gitmodules
-                        let maybe_branch = modules_with_branch.get(rel_path).map(|b| b.to_string());
+                        let maybe_branch = modules_with_branch.get(rel_path).cloned();
 
                         trace!(?maybe_branch, submodule = ?rel_path, "submodule branch");
                         if let Some(branch) = maybe_branch {
@@ -96,14 +96,14 @@ impl<'a> Lockfile<'a> {
                                 r#override: false,
                             };
                             e.insert(dep_id.clone());
-                            out_of_sync.insert(rel_path.to_path_buf(), dep_id);
+                            out_of_sync.insert(rel_path.clone(), dep_id);
                             continue;
                         }
 
                         let dep_id = DepIdentifier::Rev { rev: rev.to_string(), r#override: false };
                         trace!(submodule=?rel_path, ?dep_id, "submodule dep_id");
                         e.insert(dep_id.clone());
-                        out_of_sync.insert(rel_path.to_path_buf(), dep_id);
+                        out_of_sync.insert(rel_path.clone(), dep_id);
                     }
                     _ => {}
                 }

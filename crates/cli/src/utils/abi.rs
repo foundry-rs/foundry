@@ -15,13 +15,13 @@ async fn resolve_name_args<N: Network, P: Provider<N>>(
 ) -> Vec<String> {
     join_all(args.iter().map(|arg| async {
         if arg.contains('.') {
-            let addr = NameOrAddress::Name(arg.to_string()).resolve(provider).await;
+            let addr = NameOrAddress::Name(arg.clone()).resolve(provider).await;
             match addr {
                 Ok(addr) => addr.to_string(),
-                Err(_) => arg.to_string(),
+                Err(_) => arg.clone(),
             }
         } else {
-            arg.to_string()
+            arg.clone()
         }
     }))
     .await

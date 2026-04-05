@@ -123,8 +123,11 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::EtherlinkShadownet
                     | NamedChain::Karura
                     | NamedChain::KaruraTestnet
+                    | NamedChain::Kusama
                     | NamedChain::Mantle
                     | NamedChain::MantleSepolia
+                    | NamedChain::MegaEth
+                    | NamedChain::MegaEthTestnet
                     | NamedChain::Metis
                     | NamedChain::Monad
                     | NamedChain::MonadTestnet
@@ -132,9 +135,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::Moonbeam
                     | NamedChain::MoonbeamDev
                     | NamedChain::Moonriver
-                    | NamedChain::PolkadotTestnet
-                    | NamedChain::Kusama
                     | NamedChain::Polkadot
+                    | NamedChain::PolkadotTestnet
             );
     }
     false
@@ -269,17 +271,6 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
 impl From<RawCallResult> for TraceResult {
     fn from(result: RawCallResult) -> Self {
         Self::from_raw(result, TraceKind::Execution)
-    }
-}
-
-impl TryFrom<Result<RawCallResult>> for TraceResult {
-    type Error = EvmError;
-
-    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
-        match value {
-            Ok(result) => Ok(Self::from(result)),
-            Err(err) => Err(EvmError::from(err)),
-        }
     }
 }
 

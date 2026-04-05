@@ -3,6 +3,7 @@ use crate::{
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
 use alloy_consensus::{BlockHeader, Transaction};
+
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
@@ -27,12 +28,16 @@ use foundry_config::{
     },
 };
 use foundry_evm::{
+    core::{FoundryBlock, evm::EthEvmNetwork},
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
 };
 use futures::TryFutureExt;
-use revm::{DatabaseRef, context::TxEnv};
+use revm::{
+    DatabaseRef,
+    context::{Block, TxEnv},
+};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -168,7 +173,7 @@ impl RunArgs {
         let (block, (mut evm_env, tx_env, fork, chain, networks)) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
-            TracingExecutor::get_fork_material(&mut config, evm_opts)
+            TracingExecutor::<EthEvmNetwork>::get_fork_material(&mut config, evm_opts)
         )?;
 
         let mut evm_version = self.evm_version;
@@ -182,7 +187,7 @@ impl RunArgs {
         }
 
         evm_env.cfg_env.limit_contract_code_size = None;
-        evm_env.block_env.number = U256::from(tx_block_number);
+        evm_env.block_env.set_number(U256::from(tx_block_number));
 
         if let Some(block) = &block {
             evm_env.block_env = block_env_from_header(&block.header);
@@ -195,7 +200,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Prague);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork>(
+            apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
                 &mut evm_env,
                 block,
                 config.networks,
@@ -210,7 +215,7 @@ impl RunArgs {
                 InternalTraceMode::None
             })
             .with_state_changes(shell::verbosity() > 4);
-        let mut executor = TracingExecutor::new(
+        let mut executor = TracingExecutor::<EthEvmNetwork>::new(
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
@@ -264,7 +269,7 @@ impl RunArgs {
                                 format!(
                                     "Failed to execute transaction: {:?} in block {}",
                                     tx.tx_hash(),
-                                    evm_env.block_env.number
+                                    evm_env.block_env.number()
                                 )
                             },
                         )?;
@@ -281,7 +286,7 @@ impl RunArgs {
                                         format!(
                                             "Failed to deploy transaction: {:?} in block {}",
                                             tx.tx_hash(),
-                                            evm_env.block_env.number
+                                            evm_env.block_env.number()
                                         )
                                     });
                                 }
@@ -308,7 +313,7 @@ impl RunArgs {
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::try_from(executor.transact_with_env(evm_env, tx_env))?
+                TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
                 TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
@@ -335,7 +340,7 @@ impl RunArgs {
 }
 
 pub fn fetch_contracts_bytecode_from_trace(
-    executor: &Executor,
+    executor: &Executor<EthEvmNetwork>,
     result: &TraceResult,
 ) -> Result<HashMap<Address, Bytes>> {
     let mut contracts_bytecode = HashMap::default();

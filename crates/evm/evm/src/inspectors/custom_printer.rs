@@ -2,15 +2,13 @@
 //! It is a great tool if some debugging is needed.
 
 use foundry_common::sh_println;
-use foundry_evm_core::backend::DatabaseError;
 use revm::{
-    Database, Inspector,
+    Inspector,
     bytecode::opcode::OpCode,
     context::{ContextTr, JournalTr},
-    inspector::{JournalExt, inspectors::GasInspector},
+    inspector::inspectors::GasInspector,
     interpreter::{
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
-        interpreter::EthInterpreter,
         interpreter_types::{Jumps, MemoryTr},
     },
     primitives::{Address, U256},
@@ -24,12 +22,7 @@ pub struct CustomPrintTracer {
     gas_inspector: GasInspector,
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for CustomPrintTracer
-where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
-{
+impl<CTX: ContextTr> Inspector<CTX> for CustomPrintTracer {
     fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         self.gas_inspector.initialize_interp(&interp.gas);
     }
