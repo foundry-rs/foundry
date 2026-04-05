@@ -23,7 +23,8 @@ use foundry_evm::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            InvariantExecutor, InvariantFuzzError, check_sequence, replay_error, replay_run,
+            CheckSequenceOptions, InvariantExecutor, InvariantFuzzError, check_sequence,
+            replay_error, replay_run,
         },
     },
     fuzz::{
@@ -793,9 +794,11 @@ impl<'a> FunctionRunner<'a> {
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
-                invariant_config.fail_on_revert,
-                invariant_contract.call_after_invariant,
-                Some(self.revert_decoder()),
+                CheckSequenceOptions {
+                    fail_on_revert: invariant_config.fail_on_revert,
+                    call_after_invariant: invariant_contract.call_after_invariant,
+                    rd: Some(self.revert_decoder()),
+                },
             ) && !success
             {
                 let warn = format!(

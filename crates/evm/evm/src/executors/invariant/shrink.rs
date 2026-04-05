@@ -124,9 +124,11 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             shrinker.current().collect(),
             target_address,
             calldata.clone(),
-            config.fail_on_revert,
-            invariant_contract.call_after_invariant,
-            None,
+            CheckSequenceOptions {
+                fail_on_revert: config.fail_on_revert,
+                call_after_invariant: invariant_contract.call_after_invariant,
+                rd: None,
+            },
         ) {
             // If candidate sequence still fails, shrink until shortest possible.
             Ok((false, _, _)) if shrinker.included_calls.count() == 1 => break,
@@ -157,9 +159,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     sequence: Vec<usize>,
     test_address: Address,
     calldata: Bytes,
-    fail_on_revert: bool,
-    call_after_invariant: bool,
-    rd: Option<&RevertDecoder>,
+    options: CheckSequenceOptions<'_>,
 ) -> eyre::Result<(bool, bool, Option<String>)> {
     // Apply the call sequence.
     for call_index in sequence {
@@ -169,10 +169,13 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
         // are replayed with a modified version of test driver (that use new `vm.assume`
         // cheatcodes).
-        if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
+        if call_result.reverted
+            && options.fail_on_revert
+            && call_result.result.as_ref() != MAGIC_ASSUME
+        {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
-            return Ok((false, false, call_failure_reason(call_result, rd)));
+            return Ok((false, false, call_failure_reason(call_result, options.rd)));
         }
     }
 
@@ -180,21 +183,27 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     let (invariant_result, mut success) =
         call_invariant_function(&executor, test_address, calldata)?;
     if !success {
-        return Ok((false, true, call_failure_reason(invariant_result, rd)));
+        return Ok((false, true, call_failure_reason(invariant_result, options.rd)));
     }
 
     // Check after invariant result if invariant is success and `afterInvariant` function is
     // declared.
-    if success && call_after_invariant {
+    if success && options.call_after_invariant {
         let (after_invariant_result, after_invariant_success) =
             call_after_invariant_function(&executor, test_address)?;
         success = after_invariant_success;
         if !success {
-            return Ok((false, true, call_failure_reason(after_invariant_result, rd)));
+            return Ok((false, true, call_failure_reason(after_invariant_result, options.rd)));
         }
     }
 
     Ok((success, true, None))
+}
+
+pub struct CheckSequenceOptions<'a> {
+    pub fail_on_revert: bool,
+    pub call_after_invariant: bool,
+    pub rd: Option<&'a RevertDecoder>,
 }
 
 fn call_failure_reason<FEN: FoundryEvmNetwork>(
