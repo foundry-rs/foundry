@@ -1,9 +1,9 @@
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Signature, U256};
-use alloy_rpc_types::SignedAuthorization;
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::SignedKeyAuthorization;
 

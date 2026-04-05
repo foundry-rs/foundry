@@ -31,7 +31,6 @@ pub mod buffer;
 pub mod bytecode;
 pub mod constants;
 pub mod decode;
-pub mod either_evm;
 pub mod evm;
 pub mod fork;
 pub mod hardfork;
@@ -39,6 +38,7 @@ pub mod ic;
 pub mod opts;
 pub mod precompiles;
 pub mod state_snapshot;
+pub mod tempo;
 pub mod utils;
 
 /// Foundry-specific inspector methods, decoupled from any particular EVM context type.

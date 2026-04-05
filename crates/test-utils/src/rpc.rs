@@ -276,8 +276,6 @@ mod tests {
                 first_abi = Some(abi);
             }
         }
-        if !failed.is_empty() {
-            panic!("failed keys: {failed:#?}");
-        }
+        assert!(failed.is_empty(), "failed keys: {failed:#?}")
     }
 }

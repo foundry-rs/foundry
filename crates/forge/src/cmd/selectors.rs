@@ -356,7 +356,7 @@ impl SelectorsSubcommands {
                                     selector_type.to_string(),
                                     sig,
                                     selector,
-                                    contract.to_string(),
+                                    contract.clone(),
                                 ]);
                             }
                         }

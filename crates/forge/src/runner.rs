@@ -17,6 +17,7 @@ use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, FuzzCorpusConfig};
 use foundry_evm::{
     constants::CALLER,
+    core::evm::EthEvmNetwork,
     decode::RevertDecoder,
     executors::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
@@ -60,7 +61,7 @@ pub struct ContractRunner<'a> {
     /// The data of the contract.
     contract: &'a TestContract,
     /// The EVM executor.
-    executor: Executor,
+    executor: Executor<EthEvmNetwork>,
     /// Overall test run progress.
     progress: Option<&'a TestsProgress>,
     /// The handle to the tokio runtime.
@@ -86,7 +87,7 @@ impl<'a> ContractRunner<'a> {
     pub fn new(
         name: &'a str,
         contract: &'a TestContract,
-        executor: Executor,
+        executor: Executor<EthEvmNetwork>,
         progress: Option<&'a TestsProgress>,
         tokio_handle: &'a tokio::runtime::Handle,
         span: Span,
@@ -461,7 +462,7 @@ struct FunctionRunner<'a> {
     /// The function-level configuration.
     tcfg: Cow<'a, TestRunnerConfig>,
     /// The EVM executor.
-    executor: Cow<'a, Executor>,
+    executor: Cow<'a, Executor<EthEvmNetwork>>,
     /// The parent runner.
     cr: &'a ContractRunner<'a>,
     /// The address of the test contract.
@@ -1126,7 +1127,7 @@ impl<'a> FunctionRunner<'a> {
         fuzzer_with_cases(self.config.fuzz.seed, config.runs, config.max_assume_rejects)
     }
 
-    fn clone_executor(&self) -> Executor {
+    fn clone_executor(&self) -> Executor<EthEvmNetwork> {
         self.executor.clone().into_owned()
     }
 

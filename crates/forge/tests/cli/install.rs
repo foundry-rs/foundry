@@ -623,9 +623,11 @@ forgetest!(flaky_install_no_git_cleans_nested_submodules, |prj, cmd| {
         for entry in fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
-            if path.file_name() == Some(".git".as_ref()) {
-                panic!("found leftover .git at {}", path.display());
-            }
+            assert!(
+                path.file_name() != Some(".git".as_ref()),
+                "found leftover .git at {}",
+                path.display()
+            );
             if path.is_dir() {
                 assert_no_git(&path);
             }

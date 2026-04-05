@@ -140,11 +140,10 @@ impl<N: Network> BrowserWalletServer<N> {
                         operation: "Transaction",
                         reason: error,
                     });
-                } else {
-                    return Err(BrowserWalletError::ServerError(
-                        "Transaction response missing both hash and error".to_string(),
-                    ));
                 }
+                return Err(BrowserWalletError::ServerError(
+                    "Transaction response missing both hash and error".to_string(),
+                ));
             }
 
             if start.elapsed() > self.timeout {
@@ -180,11 +179,10 @@ impl<N: Network> BrowserWalletServer<N> {
                         operation: "Signing",
                         reason: error,
                     });
-                } else {
-                    return Err(BrowserWalletError::ServerError(
-                        "Signing response missing both signature and error".to_string(),
-                    ));
                 }
+                return Err(BrowserWalletError::ServerError(
+                    "Signing response missing both signature and error".to_string(),
+                ));
             }
 
             if start.elapsed() > self.timeout {

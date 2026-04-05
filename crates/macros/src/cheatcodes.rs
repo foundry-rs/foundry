@@ -206,9 +206,7 @@ fn derive_struct(
                 let ty = &def[..ty_end];
                 let ty_start = ty.rfind(';').or_else(|| ty.find('{')).expect("bad struct def") + 1;
                 let ty = ty[ty_start..].trim();
-                if ty.is_empty() {
-                    panic!("bad struct def: {def:?}")
-                }
+                assert!(!ty.is_empty(), "bad struct def: {def:?}");
 
                 let doc = get_docstring(&f.attrs);
                 let doc = doc.trim();

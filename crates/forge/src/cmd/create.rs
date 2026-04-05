@@ -16,6 +16,7 @@ use foundry_cli::{
     utils::{LoadConfig, find_contract_artifacts, read_constructor_args_file},
 };
 use foundry_common::{
+    FoundryTransactionBuilder,
     compile::{self},
     fmt::parse_tokens,
     provider::ProviderBuilder,
@@ -32,7 +33,6 @@ use foundry_config::{
     },
     merge_impl_figment_convert,
 };
-use foundry_primitives::FoundryTransactionBuilder;
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
 use tempo_alloy::TempoNetwork;
@@ -265,7 +265,7 @@ impl CreateArgs {
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
-            compilation_profile: Some(id.profile.to_string()),
+            compilation_profile: Some(id.profile.clone()),
             language: None,
             creation_transaction_hash: None,
         };
@@ -455,7 +455,7 @@ impl CreateArgs {
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
-            compilation_profile: Some(id.profile.to_string()),
+            compilation_profile: Some(id.profile.clone()),
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };

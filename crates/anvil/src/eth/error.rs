@@ -2,7 +2,7 @@
 
 use alloy_consensus::crypto::RecoveryError;
 use alloy_evm::overrides::StateOverrideError;
-use alloy_primitives::{B256, Bytes, SignatureError, TxHash};
+use alloy_primitives::{B256, Bytes, SignatureError, TxHash, U256};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
@@ -18,6 +18,7 @@ use revm::{
     interpreter::InstructionResult,
 };
 use serde::Serialize;
+use tempo_revm::TempoInvalidTransaction;
 use tokio::time::Duration;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
@@ -107,6 +108,10 @@ pub enum BlockchainError {
         "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
     )]
     DepositTransactionUnsupported,
+    #[error(
+        "tempo transaction received but is not supported.\n\nYou can use it by running anvil with '--tempo'."
+    )]
+    TempoTransactionUnsupported,
     #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
     #[error("Excess blob gas not set.")]
@@ -170,6 +175,28 @@ where
                     Self::DepositTransactionUnsupported
                 }
                 OpTransactionError::MissingEnvelopedTx => Self::InvalidTransaction(err.into()),
+            },
+            EVMError::Header(err) => match err {
+                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
+                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
+            },
+            EVMError::Database(err) => err.into(),
+            EVMError::Custom(err) => Self::Message(err),
+        }
+    }
+}
+
+impl<T> From<EVMError<T, TempoInvalidTransaction>> for BlockchainError
+where
+    T: Into<Self>,
+{
+    fn from(err: EVMError<T, TempoInvalidTransaction>) -> Self {
+        match err {
+            EVMError::Transaction(err) => match err {
+                TempoInvalidTransaction::EthInvalidTransaction(err) => {
+                    InvalidTransactionError::from(err).into()
+                }
+                err => Self::Message(format!("tempo transaction error: {err}")),
             },
             EVMError::Header(err) => match err {
                 InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
@@ -328,6 +355,21 @@ pub enum InvalidTransactionError {
     /// Missing enveloped transaction
     #[error("missing enveloped transaction")]
     MissingEnvelopedTx,
+    /// Native ETH value transfers are not allowed in Tempo mode
+    #[error("native value transfer not allowed in Tempo mode")]
+    TempoNativeValueTransfer,
+    /// Tempo transaction valid_before is expired or too close to current time
+    #[error("Tempo tx valid_before ({valid_before}) must be > current time + 3s ({min_allowed})")]
+    TempoValidBeforeExpired { valid_before: u64, min_allowed: u64 },
+    /// Tempo transaction valid_after is too far in the future
+    #[error("Tempo tx valid_after ({valid_after}) must be <= current time + 1h ({max_allowed})")]
+    TempoValidAfterTooFar { valid_after: u64, max_allowed: u64 },
+    /// Tempo transaction has too many authorizations
+    #[error("Tempo tx has too many authorizations ({count}), max allowed is {max}")]
+    TempoTooManyAuthorizations { count: usize, max: usize },
+    /// Tempo transaction fee payer has insufficient fee token balance
+    #[error("insufficient fee token balance: have {balance}, need {required}")]
+    TempoInsufficientFeeTokenBalance { balance: U256, required: U256 },
 }
 
 impl From<InvalidTransaction> for InvalidTransactionError {
@@ -563,6 +605,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::DepositTransactionUnsupported => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::TempoTransactionUnsupported => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::ExcessBlobGasNotSet => {

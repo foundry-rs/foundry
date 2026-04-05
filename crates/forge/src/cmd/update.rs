@@ -189,7 +189,7 @@ impl UpdateArgs {
             .iter()
             .filter_map(|(path, dep_id)| {
                 if dep_id.overridden() {
-                    return Some(path.to_path_buf());
+                    return Some(path.clone());
                 }
                 None
             })
@@ -247,7 +247,7 @@ pub fn dependencies_paths(
             .wrap_err("Library directory is not relative to the repository root")?;
 
         if let Some(tag) = &dep.tag {
-            overrides.insert(dep_path.to_owned(), tag.to_owned());
+            overrides.insert(dep_path.clone(), tag.to_owned());
         }
         paths.push(rel_path.to_owned());
     }

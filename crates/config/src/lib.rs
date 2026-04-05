@@ -40,7 +40,6 @@ use foundry_compilers::{
     solc::{CliSettings, SolcLanguage, SolcSettings},
 };
 use regex::Regex;
-use revm::primitives::hardfork::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
@@ -54,6 +53,7 @@ use std::{
 mod macros;
 
 pub mod utils;
+pub use foundry_evm_hardforks::{FromEvmVersion, evm_spec_id};
 pub use utils::*;
 
 mod endpoints;
@@ -1326,8 +1326,8 @@ impl Config {
         Ok(None)
     }
 
-    /// Returns the [SpecId] derived from the configured [EvmVersion]
-    pub fn evm_spec_id(&self) -> SpecId {
+    /// Returns the Spec derived from the configured [EvmVersion]
+    pub fn evm_spec_id<SPEC: FromEvmVersion>(&self) -> SPEC {
         evm_spec_id(self.evm_version)
     }
 

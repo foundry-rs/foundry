@@ -206,7 +206,7 @@ impl<'gcx> Resolver<'gcx> {
             TyKind::Struct(id) => {
                 let def = self.hir().strukt(id);
                 let name = match subtypes.iter().find(|(_, cached_id)| id == **cached_id) {
-                    Some((name, _)) => name.to_string(),
+                    Some((name, _)) => name.clone(),
                     None => {
                         // Otherwise, assign new name
                         let mut i = 0;

@@ -15,13 +15,13 @@ use foundry_cli::{
     utils::{LoadConfig, get_chain, get_provider},
 };
 use foundry_common::{
+    FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
 

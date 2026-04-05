@@ -9,10 +9,10 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{opts::TransactionOpts, utils::LoadConfig};
 use foundry_common::{
+    FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
 };
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
 

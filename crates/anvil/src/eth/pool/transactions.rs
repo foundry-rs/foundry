@@ -1,12 +1,16 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
-use alloy_consensus::{Transaction, Typed2718};
+use alloy_consensus::{
+    Transaction, Typed2718,
+    crypto::RecoveryError,
+    transaction::{SignerRecoverable, TxHashRef},
+};
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
     Address, TxHash,
     map::{HashMap, HashSet},
 };
+use alloy_rlp::Encodable;
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_primitives::FoundryTxEnvelope;
 use parking_lot::RwLock;
 use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
 
@@ -128,10 +132,15 @@ impl<T: fmt::Debug> fmt::Debug for PoolTransaction<T> {
     }
 }
 
-impl TryFrom<AnyRpcTransaction> for PoolTransaction<FoundryTxEnvelope> {
+impl<T> TryFrom<AnyRpcTransaction> for PoolTransaction<T>
+where
+    T: SignerRecoverable + TxHashRef + Encodable + TryFrom<AnyRpcTransaction>,
+    <T as TryFrom<AnyRpcTransaction>>::Error: Into<eyre::Error>,
+    RecoveryError: Into<eyre::Error>,
+{
     type Error = eyre::Error;
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let typed_transaction = FoundryTxEnvelope::try_from(value)?;
+        let typed_transaction = T::try_from(value).map_err(Into::into)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {
             pending_transaction,
@@ -684,9 +693,8 @@ impl<T: Transaction> ReadyTransactions<T> {
                     {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(tx.hash()));
-                    } else {
-                        trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                     }
+                    trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                 }
 
                 unlocked_tx.extend(to_remove.unlocks.iter().copied())

@@ -13,6 +13,7 @@ use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
+use foundry_evm::core::evm::EthEvmNetwork;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +26,7 @@ where
     N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<EthEvmNetwork>,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind<N>,
 }
@@ -176,7 +177,7 @@ impl VerifyBundle {
                     evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
-                    compilation_profile: Some(artifact.profile.to_string()),
+                    compilation_profile: Some(artifact.profile.clone()),
                     language: None,
                     creation_transaction_hash: None,
                 };
