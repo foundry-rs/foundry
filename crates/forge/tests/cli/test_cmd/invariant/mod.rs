@@ -680,6 +680,48 @@ contract InvariantReplayCustomError is Test {
 "#]]);
 });
 
+forgetest_init!(invariant_replay_preserves_invariant_custom_error_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "InvariantReplayInvariantCustomError.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantReplayInvariantCustomError is Test {
+    error InvariantCustomError(uint256, string);
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function touch(uint256) external {}
+
+    function invariant_custom_error_reason_from_invariant() public pure {
+        revert InvariantCustomError(222, "invariant custom");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_custom_error_reason_from_invariant"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: InvariantCustomError(222, "invariant custom")]
+...
+"#]]);
+
+    // Replay should preserve invariant-level custom error string too.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: InvariantCustomError(222, "invariant custom")]
+...
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10253>
 forgetest_init!(invariant_test_target, |prj, cmd| {
     prj.update_config(|config| {
