@@ -18,7 +18,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
-    EvmEnv,
+    EvmEnv, FoundryBlock, FoundryTransaction,
     backend::{Backend, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
