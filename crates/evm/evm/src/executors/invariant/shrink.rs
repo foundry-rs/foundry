@@ -4,7 +4,9 @@ use crate::executors::{
 };
 use alloy_primitives::{Address, Bytes, I256, U256};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{FoundryBlock, constants::MAGIC_ASSUME, evm::FoundryEvmNetwork};
+use foundry_evm_core::{
+    FoundryBlock, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
+};
 use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
@@ -124,6 +126,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             calldata.clone(),
             config.fail_on_revert,
             invariant_contract.call_after_invariant,
+            None,
         ) {
             // If candidate sequence still fails, shrink until shortest possible.
             Ok((false, _, _)) if shrinker.included_calls.count() == 1 => break,
@@ -156,6 +159,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     fail_on_revert: bool,
     call_after_invariant: bool,
+    rd: Option<&RevertDecoder>,
 ) -> eyre::Result<(bool, bool, Option<String>)> {
     // Apply the call sequence.
     for call_index in sequence {
@@ -168,7 +172,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
-            return Ok((false, false, call_failure_reason(call_result)));
+            return Ok((false, false, call_failure_reason(call_result, rd)));
         }
     }
 
@@ -176,7 +180,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     let (invariant_result, mut success) =
         call_invariant_function(&executor, test_address, calldata)?;
     if !success {
-        return Ok((false, true, call_failure_reason(invariant_result)));
+        return Ok((false, true, call_failure_reason(invariant_result, rd)));
     }
 
     // Check after invariant result if invariant is success and `afterInvariant` function is
@@ -186,15 +190,18 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
             call_after_invariant_function(&executor, test_address)?;
         success = after_invariant_success;
         if !success {
-            return Ok((false, true, call_failure_reason(after_invariant_result)));
+            return Ok((false, true, call_failure_reason(after_invariant_result, rd)));
         }
     }
 
     Ok((success, true, None))
 }
 
-fn call_failure_reason<FEN: FoundryEvmNetwork>(call_result: RawCallResult<FEN>) -> Option<String> {
-    match call_result.into_evm_error(None) {
+fn call_failure_reason<FEN: FoundryEvmNetwork>(
+    call_result: RawCallResult<FEN>,
+    rd: Option<&RevertDecoder>,
+) -> Option<String> {
+    match call_result.into_evm_error(rd) {
         EvmError::Execution(err) => Some(err.reason),
         _ => None,
     }
