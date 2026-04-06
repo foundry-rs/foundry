@@ -572,7 +572,7 @@ contract OwnableTest is Test {
     );
     cmd.assert_success().stderr_eq(str![[r#"
 ...
-Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
+Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because invariant test settings have changed: target selectors changed
 ...
 "#]])
     .stdout_eq(str![[r#"
