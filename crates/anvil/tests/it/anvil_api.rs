@@ -1190,3 +1190,116 @@ async fn test_anvil_reset_fork_to_non_fork() {
     let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(new_block.header.number, 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_tempo_t0() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: 0_u64,
+        current_block_timestamp: 1,
+        current_block_hash: block.header.hash,
+        hard_fork: "T0".to_string(),
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: 10_000_000_000,
+            chain_id: 31337,
+            gas_limit: 30_000_000,
+            gas_price: 11_000_000_000,
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+        network: Some("tempo".to_string()),
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_tempo_t1() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()));
+    let (api, handle) = spawn(config).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: 0_u64,
+        current_block_timestamp: 1,
+        current_block_hash: block.header.hash,
+        hard_fork: "T1".to_string(),
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: 20_000_000_000,
+            chain_id: 31337,
+            gas_limit: 30_000_000,
+            gas_price: 21_000_000_000,
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+        network: Some("tempo".to_string()),
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deal_erc20_tempo() {
+    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
+
+    let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
+
+    let target = Address::random();
+
+    // TIP20 tokens are precompile-backed — anvil_dealERC20 uses access-list slot probing
+    // which doesn't discover precompile storage slots. Verify this fails gracefully.
+    for token_addr in [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS] {
+        let amount = U256::from(5_000_000); // 5 tokens (6 decimals)
+
+        let result = api.anvil_deal_erc20(target, token_addr, amount).await;
+        assert!(
+            result.is_err(),
+            "anvil_dealERC20 should fail for precompile-based TIP20 {token_addr}"
+        );
+
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no slot found"),
+            "Error should mention slot discovery failure, got: {err}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_default_base_fee_tempo() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    assert_eq!(
+        block.header.base_fee_per_gas,
+        Some(10_000_000_000),
+        "T0 base fee should be 10 billion attodollars"
+    );
+}
