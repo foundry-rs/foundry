@@ -281,6 +281,10 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     rejects: u32,
     // Whether new coverage was discovered during this run.
     new_coverage: bool,
+    // For optimization mode: the best value found during this run (if any).
+    optimization_value: Option<I256>,
+    // For optimization mode: the call sequence prefix that produced the best value in this run.
+    optimization_sequence: Vec<BasicTxDetails>,
 }
 
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
@@ -295,6 +299,8 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             depth: 0,
             rejects: 0,
             new_coverage: false,
+            optimization_value: None,
+            optimization_sequence: vec![],
         }
     }
 }
@@ -549,7 +555,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // Extend corpus with current run data.
-            corpus_manager.process_inputs(&current_run.inputs, current_run.new_coverage);
+            let optimization = current_run
+                .optimization_value
+                .map(|v| (v, std::mem::take(&mut current_run.optimization_sequence)));
+            corpus_manager.process_inputs(
+                &current_run.inputs,
+                current_run.new_coverage,
+                optimization,
+            );
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
@@ -704,13 +717,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&targeted_contracts),
         )?;
 
-        let invariant_test = InvariantTest::new(
+        let mut invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,
             failures,
             last_call_results,
             self.runner.clone(),
         );
+
+        // Seed invariant test with previously persisted optimization state,
+        // but only if the current invariant is in optimization mode.
+        if invariant_contract.is_optimization() {
+            let (opt_best_value, opt_best_sequence) = worker.optimization_initial_state();
+            invariant_test.test_data.optimization_best_value = opt_best_value;
+            invariant_test.test_data.optimization_best_sequence = opt_best_sequence;
+        }
 
         Ok((invariant_test, worker))
     }
