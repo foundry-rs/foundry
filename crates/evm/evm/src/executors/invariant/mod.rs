@@ -283,8 +283,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     new_coverage: bool,
     // For optimization mode: the best value found during this run (if any).
     optimization_value: Option<I256>,
-    // For optimization mode: the call sequence prefix that produced the best value in this run.
-    optimization_sequence: Vec<BasicTxDetails>,
+    // For optimization mode: the length of the input prefix that produced the best value.
+    optimization_prefix_len: usize,
 }
 
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
@@ -300,7 +300,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             rejects: 0,
             new_coverage: false,
             optimization_value: None,
-            optimization_sequence: vec![],
+            optimization_prefix_len: 0,
         }
     }
 }
@@ -485,13 +485,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     // - check_interval=1 (default): assert after every call
                     // - check_interval=N: assert every N calls AND always on the last call
                     let is_last_call = current_run.depth == self.config.depth - 1;
-                    let should_check_invariant = if self.config.check_interval == 0 {
-                        is_last_call
-                    } else {
-                        self.config.check_interval == 1
-                            || (current_run.depth + 1).is_multiple_of(self.config.check_interval)
-                            || is_last_call
-                    };
+                    // In optimization mode, always evaluate the invariant to track
+                    // the best value at every prefix — check_interval only gates
+                    // boolean invariant assertions.
+                    let is_optimization = invariant_contract.is_optimization();
+                    let should_check_invariant = is_optimization
+                        || if self.config.check_interval == 0 {
+                            is_last_call
+                        } else {
+                            self.config.check_interval == 1
+                                || (current_run.depth + 1)
+                                    .is_multiple_of(self.config.check_interval)
+                                || is_last_call
+                        };
 
                     let result = if should_check_invariant {
                         can_continue(
@@ -555,9 +561,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // Extend corpus with current run data.
-            let optimization = current_run
-                .optimization_value
-                .map(|v| (v, std::mem::take(&mut current_run.optimization_sequence)));
+            // Materialize the optimization best prefix once at run end (avoids
+            // cloning inputs on every new in-run max).
+            let optimization = current_run.optimization_value.map(|v| {
+                let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
+                (v, prefix)
+            });
             corpus_manager.process_inputs(
                 &current_run.inputs,
                 current_run.new_coverage,

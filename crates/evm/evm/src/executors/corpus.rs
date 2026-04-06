@@ -39,6 +39,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Bytes, I256};
 use eyre::{Result, eyre};
+use foundry_common::sh_warn;
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{
@@ -340,10 +341,21 @@ impl WorkerCorpus {
                         optimization_best_sequence = state.best_sequence;
                     }
                     Err(err) => {
-                        debug!(target: "corpus", %err, "failed to load optimization state");
+                        let _ = sh_warn!(
+                            "failed to load optimization state from {}: {err}; starting without persisted optimization seed",
+                            opt_path.display()
+                        );
                     }
                 }
             }
+
+            // Seed in-memory corpus with the persisted optimization best sequence
+            // so the mutation engine can build on it in future runs.
+            if !optimization_best_sequence.is_empty() {
+                in_memory_corpus.push(CorpusEntry::new(optimization_best_sequence.clone()));
+                metrics.corpus_count += 1;
+            }
+
             // Master worker loads the initial corpus, if it exists.
             // Then, [distribute]s it to workers.
             let executor = executor.expect("Executor required for master worker");
@@ -457,11 +469,11 @@ impl WorkerCorpus {
         }
 
         // Persist optimization state to disk if improved.
-        if let Some((value, ref best_seq)) = optimization
+        if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
             self.optimization_best_value = Some(value);
-            self.optimization_best_sequence = best_seq.clone();
+            self.optimization_best_sequence = best_seq;
             self.persist_optimization_state();
         }
 
@@ -470,8 +482,16 @@ impl WorkerCorpus {
             return;
         }
 
+        // When the run is interesting only because of optimization (no new coverage),
+        // add the best prefix to the corpus instead of the full run — the prefix is
+        // the sequence that actually achieved the best value.
         assert!(!inputs.is_empty());
-        let corpus = CorpusEntry::new(inputs.to_vec());
+        let corpus_inputs = if improved_optimization && !new_coverage {
+            self.optimization_best_sequence.clone()
+        } else {
+            inputs.to_vec()
+        };
+        let corpus = CorpusEntry::new(corpus_inputs);
 
         // Persist to disk.
         let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
