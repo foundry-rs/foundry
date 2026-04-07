@@ -1,5 +1,9 @@
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
+use crate::{
+    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
+    sequence::ScriptSequenceKind, verify::BroadcastedState,
+};
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
@@ -21,17 +25,10 @@ use foundry_common::{
     shell,
 };
 use foundry_config::Config;
-use foundry_evm::core::evm::EthEvmNetwork;
+use foundry_evm::core::evm::FoundryEvmNetwork;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner, wallet_browser::signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
-use tempo_alloy::provider::TempoProviderExt;
-
-use crate::{
-    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
-};
 
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
@@ -72,15 +69,14 @@ pub enum SendTransactionKind<'a, N: Network> {
     Raw(N::TransactionRequest, &'a EthereumWallet),
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
     Signed(N::TxEnvelope),
-    AccessKey(N::TransactionRequest, &'a WalletSigner, &'a TempoAccessKeyConfig, String),
+    AccessKey(N::TransactionRequest, &'a WalletSigner, &'a TempoAccessKeyConfig),
 }
 
 impl<'a, N: Network> SendTransactionKind<'a, N>
 where
     N::TxEnvelope: From<Signed<N::UnsignedTx>>,
     N::UnsignedTx: SignableTransaction<Signature>,
-    N::TransactionRequest:
-        FoundryTransactionBuilder<N> + Into<tempo_alloy::rpc::TempoTransactionRequest>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
     ///
@@ -99,7 +95,7 @@ where
         if let Self::Raw(tx, _)
         | Self::Unlocked(tx)
         | Self::Browser(tx, _)
-        | Self::AccessKey(tx, _, _, _) = self
+        | Self::AccessKey(tx, _, _) = self
         {
             if sequential_broadcast {
                 let from = tx.from().expect("no sender");
@@ -176,31 +172,18 @@ where
                 // Sign and send the transaction via the browser wallet
                 Ok(signer.send_transaction_via_browser(tx).await?)
             }
-            Self::AccessKey(mut tx, signer, access_key, rpc_url) => {
+            Self::AccessKey(tx, signer, access_key) => {
                 debug!("sending transaction via tempo access key: {:?}", tx);
 
-                // Check if the key needs on-chain provisioning.
-                if let Some(auth) = &access_key.key_authorization {
-                    let tempo_provider = foundry_common::provider::ProviderBuilder::<
-                        tempo_alloy::TempoNetwork,
-                    >::new(&rpc_url)
-                    .build()?;
-                    if !tempo_provider
-                        .get_keychain_key(access_key.wallet_address, access_key.key_address)
-                        .await
-                        .map(|info| info.keyId != Address::ZERO)
-                        .unwrap_or(false)
-                    {
-                        tx.set_key_authorization(auth.clone());
-                    }
-                }
-
-                let raw_tx = foundry_wallets::tempo::sign_with_access_key(
-                    tx,
-                    signer,
-                    access_key.wallet_address,
-                )
-                .await?;
+                let raw_tx = tx
+                    .sign_with_access_key_provisioning(
+                        provider.as_ref(),
+                        signer,
+                        access_key.wallet_address,
+                        access_key.key_address,
+                        access_key.key_authorization.as_ref(),
+                    )
+                    .await?;
 
                 let pending = provider.send_raw_transaction(&raw_tx).await?;
                 Ok(*pending.tx_hash())
@@ -253,7 +236,6 @@ impl<N: Network> SendTransactionsKind<N> {
         &self,
         addr: &Address,
         tx: N::TransactionRequest,
-        rpc_url: &str,
     ) -> Result<SendTransactionKind<'_, N>> {
         match self {
             Self::Unlocked(unlocked) => {
@@ -264,7 +246,7 @@ impl<N: Network> SendTransactionsKind<N> {
             }
             Self::Raw { eth_wallets, browser, access_keys } => {
                 if let Some((signer, config)) = access_keys.get(addr) {
-                    Ok(SendTransactionKind::AccessKey(tx, signer, config, rpc_url.to_string()))
+                    Ok(SendTransactionKind::AccessKey(tx, signer, config))
                 } else if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
                 } else if let Some(b) = browser
@@ -282,24 +264,16 @@ impl<N: Network> SendTransactionsKind<N> {
 /// State after we have bundled all
 /// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
 /// single [`ScriptSequenceKind`] object containing one or more script sequences.
-pub struct BundledState<N: Network>
-where
-    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
-{
+pub struct BundledState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig<EthEvmNetwork>,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<N>>,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
-    pub sequence: ScriptSequenceKind<N>,
+    pub sequence: ScriptSequenceKind<FEN::Network>,
 }
 
-impl<N: Network> BundledState<N>
-where
-    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
-{
+impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
@@ -334,13 +308,7 @@ where
     }
 
     /// Broadcasts transactions from all sequences.
-    pub async fn broadcast(mut self) -> Result<BroadcastedState<N>>
-    where
-        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
-        N::UnsignedTx: SignableTransaction<Signature>,
-        N::TransactionRequest:
-            FoundryTransactionBuilder<N> + Into<tempo_alloy::rpc::TempoTransactionRequest>,
-    {
+    pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
         let required_addresses = self
             .sequence
             .sequences()
@@ -503,7 +471,7 @@ where
                                     tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
                                 }
 
-                                send_kind.for_sender(&from, tx, sequence.rpc_url())?
+                                send_kind.for_sender(&from, tx)?
                             }
                         };
 

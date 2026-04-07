@@ -7,18 +7,21 @@ use crate::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
     },
-    evm::{BlockEnvFor, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    evm::{
+        EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor,
+        TxEnvFor,
+    },
     fork::{CreateFork, ForkId},
 };
-use alloy_evm::{Evm, EvmFactory};
+use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    Context, Database, DatabaseCommit,
+    Database, DatabaseCommit,
     bytecode::Bytecode,
-    context::{CfgEnv, ContextTr, Transaction},
+    context::{ContextTr, Transaction},
     context_interface::result::ResultAndState,
     database::DatabaseRef,
     primitives::AddressMap,
@@ -78,14 +81,12 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<
-        I: for<'db> FoundryInspectorExt<<FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>>,
-    >(
+    pub fn inspect<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
-    ) -> eyre::Result<ResultAndState<<FEN::EvmFactory as EvmFactory>::HaltReason>> {
+    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
@@ -132,9 +133,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
     }
 }
 
-impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>
-    for CowBackend<'_, FEN>
-{
+impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN> {
     fn snapshot_state(
         &mut self,
         journaled_state: &JournaledState,
@@ -217,12 +216,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFo
         evm_env: EvmEnvFor<FEN>,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<
-            Context<
-                BlockEnvFor<FEN>,
-                TxEnvFor<FEN>,
-                CfgEnv<SpecFor<FEN>>,
-                &'db mut dyn DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>,
-            >,
+            <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
     ) -> eyre::Result<()> {
         self.backend_mut().transact(id, transaction, evm_env, journaled_state, inspector)
@@ -234,12 +228,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFo
         evm_env: EvmEnvFor<FEN>,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<
-            Context<
-                BlockEnvFor<FEN>,
-                TxEnvFor<FEN>,
-                CfgEnv<SpecFor<FEN>>,
-                &'db mut dyn DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>,
-            >,
+            <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
     ) -> eyre::Result<()> {
         self.backend_mut().transact_from_tx(tx_env, evm_env, journaled_state, inspector)

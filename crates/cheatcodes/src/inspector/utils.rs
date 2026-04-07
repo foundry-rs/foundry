@@ -1,6 +1,6 @@
 use crate::inspector::Cheatcodes;
 use alloy_primitives::{Address, Bytes, U256};
-use foundry_evm_core::evm::{FoundryEvmFactory, FoundryEvmNetwork};
+use foundry_evm_core::evm::{FoundryContextFor, FoundryEvmNetwork};
 use revm::{
     context::ContextTr,
     inspector::JournalExt,
@@ -23,7 +23,7 @@ pub(crate) trait CommonCreateInput {
     fn allow_cheatcodes<FEN: FoundryEvmNetwork>(
         &self,
         cheatcodes: &mut Cheatcodes<FEN>,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
     ) -> Address;
 }
 
@@ -61,7 +61,7 @@ impl CommonCreateInput for &mut CreateInputs {
     fn allow_cheatcodes<FEN: FoundryEvmNetwork>(
         &self,
         cheatcodes: &mut Cheatcodes<FEN>,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
     ) -> Address {
         let caller = CreateInputs::caller(self);
         let old_nonce =

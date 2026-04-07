@@ -4,7 +4,6 @@ use foundry_evm_core::{
     evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
 };
 use revm::context::{Block, Transaction};
-use std::marker::PhantomData;
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
@@ -23,7 +22,6 @@ pub struct ExecutorBuilder<FEN: FoundryEvmNetwork> {
     /// The spec.
     spec: SpecFor<FEN>,
     legacy_assertions: bool,
-    _network: PhantomData<FEN>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
@@ -34,7 +32,6 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
             gas_limit: None,
             spec: Default::default(),
             legacy_assertions: false,
-            _network: PhantomData,
         }
     }
 }

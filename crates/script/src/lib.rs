@@ -2,6 +2,7 @@
 //!
 //! Smart contract scripting.
 
+#![recursion_limit = "256"]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -13,7 +14,7 @@ extern crate tracing;
 
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::{Ethereum, Network};
+use alloy_network::Network;
 use alloy_primitives::{
     Address, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -45,7 +46,10 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
-    core::{Breakpoints, evm::FoundryEvmNetwork},
+    core::{
+        Breakpoints,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    },
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
@@ -227,9 +231,9 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    pub async fn preprocess(self) -> Result<PreprocessedState> {
+    pub async fn preprocess<FEN: FoundryEvmNetwork>(self) -> Result<PreprocessedState<FEN>> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
-        let browser_wallet = self.wallets.browser_signer::<Ethereum>().await?;
+        let browser_wallet = self.wallets.browser_signer::<FEN::Network>().await?;
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -257,7 +261,15 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let state = self.preprocess().await?;
+        if self.load_config_and_evm_opts()?.1.networks.is_tempo() {
+            self.run_generic_script::<TempoEvmNetwork>().await
+        } else {
+            self.run_generic_script::<EthEvmNetwork>().await
+        }
+    }
+
+    async fn run_generic_script<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+        let state = self.preprocess::<FEN>().await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
@@ -415,9 +427,9 @@ impl ScriptArgs {
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.
-    fn check_contract_sizes(
+    fn check_contract_sizes<N: Network>(
         &self,
-        result: &ScriptResult<Ethereum>,
+        result: &ScriptResult<N>,
         known_contracts: &ContractsByArtifact,
         create2_deployer: Address,
     ) -> Result<()> {
@@ -713,6 +725,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::Ethereum;
     use foundry_config::{NamedChain, UnresolvedEnvVarError};
     use std::fs;
     use tempfile::tempdir;
@@ -766,7 +779,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--disable-code-size-limit"]);
         assert!(args.disable_code_size_limit);
 
-        let result = ScriptResult::default();
+        let result = ScriptResult::<Ethereum>::default();
         let contracts = ContractsByArtifact::default();
         let create = Address::ZERO;
         assert!(args.check_contract_sizes(&result, &contracts, create).is_ok());

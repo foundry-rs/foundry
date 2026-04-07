@@ -594,8 +594,7 @@ async fn send_tempo_keychain<P: Provider<TempoNetwork>>(
         tx.set_key_authorization(auth.clone());
     }
 
-    let raw_tx =
-        foundry_wallets::tempo::sign_with_access_key(tx, signer, access_key.wallet_address).await?;
+    let raw_tx = tx.sign_with_access_key(signer, access_key.wallet_address).await?;
 
     let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
 

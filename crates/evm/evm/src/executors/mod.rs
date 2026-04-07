@@ -10,7 +10,6 @@ use crate::inspectors::{
     Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_evm::EvmFactory;
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -25,7 +24,10 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
-    evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, IntoInstructionResult, SpecFor, TxEnvFor},
+    evm::{
+        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor,
+        TxEnvFor,
+    },
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
@@ -1068,9 +1070,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
     inspector: InspectorStack<FEN>,
-    ResultAndState { result, state: state_changeset }: ResultAndState<
-        <FEN::EvmFactory as EvmFactory>::HaltReason,
-    >,
+    ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult<FEN>> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {

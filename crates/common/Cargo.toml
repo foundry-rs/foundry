@@ -30,6 +30,7 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-provider.workspace = true
+alloy-signer.workspace = true
 alloy-pubsub.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }

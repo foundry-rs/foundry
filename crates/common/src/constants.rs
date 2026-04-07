@@ -42,6 +42,13 @@ pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("0xdeaddeaddeaddeaddeaddea
 /// The system address, the sender of the first transaction in every block:
 pub const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
 
+/// MegaETH system address for `Set Slots` in the MegaETH oracle.
+///
+/// Transactions from this sender are submitted with gas price 0.
+///
+/// See: <https://mega.etherscan.io/address/0xa887dcb9d5f39ef79272801d05abdf707cfbbd1d>
+pub const MEGA_SYSTEM_ADDRESS: Address = address!("0xa887dcb9d5f39ef79272801d05abdf707cfbbd1d");
+
 /// Transaction identifier of System transaction types
 pub const SYSTEM_TRANSACTION_TYPE: u8 = 126;
 
@@ -55,10 +62,17 @@ pub const TYPE_BINDING_PREFIX: &str = "string constant schema_";
 ///
 /// Transactions from these senders usually don't have a any fee information OR set absurdly high fees that exceed the gas limit (See: <https://github.com/foundry-rs/foundry/pull/10608>)
 ///
-/// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS], [MONAD_SYSTEM_ADDRESS] and [Address::ZERO]
+/// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS], [MONAD_SYSTEM_ADDRESS], [MEGA_SYSTEM_ADDRESS]
+/// and [Address::ZERO]
 pub fn is_known_system_sender(sender: Address) -> bool {
-    [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, MONAD_SYSTEM_ADDRESS, Address::ZERO]
-        .contains(&sender)
+    [
+        ARBITRUM_SENDER,
+        OPTIMISM_SYSTEM_ADDRESS,
+        MONAD_SYSTEM_ADDRESS,
+        MEGA_SYSTEM_ADDRESS,
+        Address::ZERO,
+    ]
+    .contains(&sender)
 }
 
 pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {

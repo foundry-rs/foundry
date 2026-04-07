@@ -7,7 +7,6 @@
 use crate::{
     call_spec::CallSpec,
     cmd::send::cast_send,
-    tempo::sign_with_access_key,
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -160,7 +159,7 @@ impl BatchSendArgs {
 
             if let Some(ref access_key) = tempo_access_key {
                 let raw_tx =
-                    sign_with_access_key(tx_request, &signer, access_key.wallet_address).await?;
+                    tx_request.sign_with_access_key(&signer, access_key.wallet_address).await?;
 
                 let cast = CastTxSender::new(&provider);
                 let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();

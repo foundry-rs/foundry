@@ -2721,6 +2721,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tempo-alloy",
+ "tempo-contracts",
  "tempo-primitives",
  "tokio",
  "tracing",
@@ -4690,7 +4691,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4949,6 +4949,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types",
+ "alloy-signer",
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-http",
@@ -5180,9 +5181,7 @@ dependencies = [
 name = "foundry-evm"
 version = "1.6.0"
 dependencies = [
- "alloy-chains",
  "alloy-dyn-abi",
- "alloy-evm",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-rpc-types",
@@ -5493,7 +5492,6 @@ version = "1.6.0"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
- "alloy-eips 2.0.0-rc.0",
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
@@ -5519,7 +5517,6 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
- "tempo-alloy",
  "tempo-primitives",
  "thiserror 2.0.18",
  "tokio",

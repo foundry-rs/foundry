@@ -1,12 +1,32 @@
 use alloy_network::{AnyNetwork, AnyTransactionReceipt, Network, TransactionResponse};
+use alloy_primitives::Address;
 use alloy_provider::{
     Provider,
     network::{ReceiptResponse, TransactionBuilder},
 };
-use alloy_rpc_types::BlockId;
+use alloy_rpc_types::{BlockId, TransactionReceipt};
 use eyre::Result;
 use foundry_common_fmt::{UIfmt, UIfmtReceiptExt, get_pretty_receipt_attr};
 use serde::{Deserialize, Serialize};
+use tempo_alloy::rpc::TempoTransactionReceipt;
+
+/// Helper trait providing `contract_address` setter for generic `ReceiptResponse`
+pub trait FoundryReceiptResponse {
+    /// Sets address of the created contract, or `None` if the transaction was not a deployment.
+    fn set_contract_address(&mut self, contract_address: Address);
+}
+
+impl FoundryReceiptResponse for TransactionReceipt {
+    fn set_contract_address(&mut self, contract_address: Address) {
+        self.contract_address = Some(contract_address);
+    }
+}
+
+impl FoundryReceiptResponse for TempoTransactionReceipt {
+    fn set_contract_address(&mut self, contract_address: Address) {
+        self.contract_address = Some(contract_address);
+    }
+}
 
 /// Helper type to carry a transaction along with an optional revert reason
 #[derive(Clone, Debug, Serialize, Deserialize)]

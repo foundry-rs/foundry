@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_network::{Network, eip2718::EIP4844_TX_TYPE_ID};
+use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
     Address, B256, U256, hex, keccak256,
     map::{B256Map, HashMap},
@@ -28,7 +28,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor},
+    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceMode;
@@ -1057,7 +1057,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         ccx: &mut CheatsCtxt<'_, '_, FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        let tx = <FEN::Network as Network>::TxEnvelope::decode(&mut self.data.as_ref())
+        let tx = TxEnvelopeFor::<FEN>::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         let sender =
@@ -1109,7 +1109,7 @@ impl Cheatcode for executeTransactionCall {
         }
 
         // Decode the RLP-encoded signed transaction.
-        let tx = <FEN::Network as Network>::TxEnvelope::decode(&mut self.rawTx.as_ref())
+        let tx = TxEnvelopeFor::<FEN>::decode(&mut self.rawTx.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         // Build TxEnv from the recovered transaction.

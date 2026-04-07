@@ -6,18 +6,20 @@ use std::{
 
 use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
-    backend::{DatabaseExt, JournaledState, LocalForkId},
+    backend::{DatabaseExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
-use alloy_consensus::{constants::KECCAK_EMPTY, transaction::SignerRecoverable};
+use alloy_consensus::{
+    SignableTransaction, Signed, constants::KECCAK_EMPTY, transaction::SignerRecoverable,
+};
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, eth::EthEvmContext,
     precompiles::PrecompilesMap,
 };
 use alloy_network::{Ethereum, Network};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, Bytes, Signature, U256};
 use alloy_rlp::Decodable;
-use foundry_common::FoundryTransactionBuilder;
+use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use op_revm::OpHaltReason;
@@ -38,6 +40,7 @@ use revm::{
     },
     primitives::hardfork::SpecId,
 };
+use serde::{Deserialize, Serialize};
 use tempo_alloy::TempoNetwork;
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
@@ -78,8 +81,17 @@ impl IntoInstructionResult for TempoHaltReason {
 /// Foundry's supertrait associating [Network] with [FoundryEvmFactory]
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     type Network: Network<
-            TxEnvelope: Decodable + SignerRecoverable,
-            TransactionRequest: FoundryTransactionBuilder<Self::Network>,
+            TxEnvelope: Decodable
+                            + SignerRecoverable
+                            + From<Signed<<Self::Network as Network>::UnsignedTx>>
+                            + for<'d> Deserialize<'d>
+                            + Serialize
+                            + UIfmt,
+            UnsignedTx: SignableTransaction<Signature>,
+            TransactionRequest: FoundryTransactionBuilder<Self::Network>
+                                    + for<'d> Deserialize<'d>
+                                    + Serialize,
+            ReceiptResponse: FoundryReceiptResponse,
         >;
     type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
 }
@@ -99,10 +111,21 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
-pub type SpecFor<FEN> = <<FEN as FoundryEvmNetwork>::EvmFactory as EvmFactory>::Spec;
-pub type TxEnvFor<FEN> = <<FEN as FoundryEvmNetwork>::EvmFactory as EvmFactory>::Tx;
-pub type BlockEnvFor<FEN> = <<FEN as FoundryEvmNetwork>::EvmFactory as EvmFactory>::BlockEnv;
+pub type EvmFactoryFor<FEN> = <FEN as FoundryEvmNetwork>::EvmFactory;
+pub type FoundryContextFor<'db, FEN> =
+    <EvmFactoryFor<FEN> as FoundryEvmFactory>::FoundryContext<'db>;
+pub type TxEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Tx;
+pub type HaltReasonFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::HaltReason;
+pub type SpecFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Spec;
+pub type BlockEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::BlockEnv;
+pub type PrecompilesFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Precompiles;
 pub type EvmEnvFor<FEN> = EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>;
+
+pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
+pub type TxEnvelopeFor<FEN> = <NetworkFor<FEN> as Network>::TxEnvelope;
+pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionRequest;
+pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
+pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
 pub trait FoundryEvmFactory:
     EvmFactory<
@@ -121,14 +144,14 @@ pub trait FoundryEvmFactory:
             Block = Self::BlockEnv,
             Tx = Self::Tx,
             Spec = Self::Spec,
-            Db: DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+            Db: DatabaseExt<Self>,
         >
     where
         Self: 'db;
 
     /// The Foundry-wrapped EVM type produced by this factory.
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>: Evm<
-            DB = &'db mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+            DB = &'db mut dyn DatabaseExt<Self>,
             Tx = Self::Tx,
             BlockEnv = Self::BlockEnv,
             Spec = Self::Spec,
@@ -141,73 +164,33 @@ pub trait FoundryEvmFactory:
     /// Creates a Foundry-wrapped EVM with the given inspector.
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
-        db: &'db mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
-    /// Creates a Foundry-wrapped EVM with a dynamic inspector, sets the journal depth, executes
-    /// a raw transaction and returns the resulting state.
+    /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
     ///
     /// This helper exists because `&mut dyn FoundryInspectorExt<FoundryContext>` cannot satisfy
     /// the generic `I: FoundryInspectorExt<Self::FoundryContext<'db>>` bound when the context
     /// type is only known through an associated type.  Each concrete factory implements this
     /// directly, side-stepping the higher-kinded lifetime issue.
-    #[allow(clippy::type_complexity)]
-    fn transact_with_dyn_inspector(
+    fn create_foundry_nested_evm<'db>(
         &self,
-        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<
-            revm::Context<
-                Self::BlockEnv,
-                Self::Tx,
-                revm::context::CfgEnv<Self::Spec>,
-                &'db mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
-            >,
-        >,
-        depth: usize,
-        tx_env: Self::Tx,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>>;
-
-    /// Adapter that forwards to [`DatabaseExt::transact`] with a context-typed inspector.
-    ///
-    /// Generic code only knows `FoundryInspectorExt<Self::FoundryContext<'db>>`, but
-    /// `DatabaseExt::transact` expects the hardcoded `revm::Context<…>`. Each concrete
-    /// factory resolves the type equality and forwards directly.
-    #[allow(clippy::type_complexity)]
-    fn db_transact(
-        &self,
-        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
-        id: Option<LocalForkId>,
-        transaction: B256,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> eyre::Result<()>;
-
-    /// Adapter that forwards to [`DatabaseExt::transact_from_tx`] with a context-typed inspector.
-    ///
-    /// See [`Self::db_transact`] for rationale.
-    #[allow(clippy::type_complexity)]
-    fn db_transact_from_tx(
-        &self,
-        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
-        tx_env: Self::Tx,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> eyre::Result<()>;
+        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> Box<dyn NestedEvm<Spec = Self::Spec, Block = Self::BlockEnv, Tx = Self::Tx> + 'db>;
 }
 
 impl FoundryEvmFactory for EthEvmFactory {
-    type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>;
+    type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> = EthFoundryEvm<'db, I>;
 
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
-        db: &'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>,
+        db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
@@ -220,40 +203,13 @@ impl FoundryEvmFactory for EthEvmFactory {
         evm
     }
 
-    fn transact_with_dyn_inspector(
+    fn create_foundry_nested_evm<'db>(
         &self,
-        db: &mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>,
+        db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-        depth: usize,
-        tx_env: TxEnv,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>> {
-        let mut evm = self.create_foundry_evm_with_inspector(db, evm_env, inspector);
-        evm.journaled_state.depth = depth;
-        Ok(evm.transact_raw(tx_env)?)
-    }
-
-    fn db_transact(
-        &self,
-        db: &mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>,
-        id: Option<LocalForkId>,
-        transaction: B256,
-        evm_env: EvmEnv,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> eyre::Result<()> {
-        db.transact(id, transaction, evm_env, journaled_state, inspector)
-    }
-
-    fn db_transact_from_tx(
-        &self,
-        db: &mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>,
-        tx_env: TxEnv,
-        evm_env: EvmEnv,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> eyre::Result<()> {
-        db.transact_from_tx(tx_env, evm_env, journaled_state, inspector)
+        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> Box<dyn NestedEvm<Spec = SpecId, Block = BlockEnv, Tx = TxEnv> + 'db> {
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
     }
 }
 
@@ -279,29 +235,26 @@ fn get_create2_factory_call_inputs(
 }
 
 type EthRevmEvm<'db, I> = RevmEvm<
-    EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>,
+    EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>,
     I,
-    EthInstructions<
-        EthInterpreter,
-        EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>,
-    >,
+    EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>,
     PrecompilesMap,
     EthFrame<EthInterpreter>,
 >;
 
 pub struct EthFoundryEvm<
     'db,
-    I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>,
+    I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>,
 > {
     pub inner: EthRevmEvm<'db, I>,
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
-    Evm for EthFoundryEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> Evm
+    for EthFoundryEvm<'db, I>
 {
     type Precompiles = PrecompilesMap;
     type Inspector = I;
-    type DB = &'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>;
+    type DB = &'db mut dyn DatabaseExt<EthEvmFactory>;
     type Error = EVMError<DatabaseError>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
@@ -363,18 +316,18 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv
     }
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
-    Deref for EthFoundryEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> Deref
+    for EthFoundryEvm<'db, I>
 {
-    type Target = EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>;
+    type Target = EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.ctx
     }
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
-    DerefMut for EthFoundryEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> DerefMut
+    for EthFoundryEvm<'db, I>
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.ctx
@@ -393,7 +346,7 @@ pub trait IntoNestedEvm<SPEC, BLOCK, TX> {
     fn into_nested_evm(self) -> Self::Inner;
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>>
     IntoNestedEvm<SpecId, BlockEnv, TxEnv> for EthFoundryEvm<'db, I>
 {
     type Inner = EthRevmEvm<'db, I>;
@@ -430,8 +383,8 @@ pub trait NestedEvm {
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
-    NestedEvm for EthRevmEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> NestedEvm
+    for EthRevmEvm<'db, I>
 {
     type Spec = SpecId;
     type Block = BlockEnv;
@@ -510,14 +463,14 @@ pub fn with_cloned_context<CTX: FoundryContextExt>(
 
 pub struct EthFoundryHandler<
     'db,
-    I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>,
+    I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>,
 > {
     create2_overrides: Vec<(usize, CallInputs)>,
-    _phantom: PhantomData<(&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>, I)>,
+    _phantom: PhantomData<(&'db mut dyn DatabaseExt<EthEvmFactory>, I)>,
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
-    Default for EthFoundryHandler<'db, I>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> Default
+    for EthFoundryHandler<'db, I>
 {
     fn default() -> Self {
         Self { create2_overrides: Vec::new(), _phantom: PhantomData }
@@ -526,16 +479,13 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv
 
 // Blanket Handler implementation for FoundryHandler, needed for implementing the InspectorHandler
 // trait.
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
-    Handler for EthFoundryHandler<'db, I>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> Handler
+    for EthFoundryHandler<'db, I>
 {
     type Evm = RevmEvm<
-        EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>,
+        EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>,
         I,
-        EthInstructions<
-            EthInterpreter,
-            EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>,
-        >,
+        EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>,
         PrecompilesMap,
         EthFrame<EthInterpreter>,
     >;
@@ -543,7 +493,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv
     type HaltReason = HaltReason;
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>>
     EthFoundryHandler<'db, I>
 {
     /// Handles CREATE2 frame initialization, potentially transforming it to use the CREATE2
@@ -639,7 +589,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv
     }
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv, TxEnv, SpecId>>>>
+impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>>
     InspectorHandler for EthFoundryHandler<'db, I>
 {
     type IT = EthInterpreter;
@@ -684,8 +634,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<BlockEnv
 }
 
 // Will be removed when the next revm release includes bluealloy/revm#3518.
-type TempoRevmEvm<'db, I> =
-    tempo_revm::TempoEvm<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>, I>;
+type TempoRevmEvm<'db, I> = tempo_revm::TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>;
 
 /// Tempo counterpart of [`EthFoundryEvm`]. Wraps `tempo_revm::TempoEvm` and routes execution
 /// through [`TempoFoundryHandler`] which composes [`TempoEvmHandler`] with CREATE2 factory
@@ -695,23 +644,20 @@ type TempoRevmEvm<'db, I> =
 /// raw revm EVM via `into_inner()` since the handler operates at the revm level.
 pub struct TempoFoundryEvm<
     'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
+    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
 > {
     pub inner: TempoRevmEvm<'db, I>,
 }
 
 impl FoundryEvmFactory for TempoEvmFactory {
-    type FoundryContext<'db> =
-        TempoContext<&'db mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>>;
+    type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         TempoFoundryEvm<'db, I>;
 
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
-        db: &'db mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
@@ -727,53 +673,23 @@ impl FoundryEvmFactory for TempoEvmFactory {
         evm
     }
 
-    fn transact_with_dyn_inspector(
+    fn create_foundry_nested_evm<'db>(
         &self,
-        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
+        db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-        depth: usize,
-        tx_env: TempoTxEnv,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>> {
-        let mut evm = self.create_foundry_evm_with_inspector(db, evm_env, inspector);
-        evm.journaled_state.depth = depth;
-        Ok(evm.transact_raw(tx_env)?)
-    }
-
-    fn db_transact(
-        &self,
-        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
-        id: Option<LocalForkId>,
-        transaction: B256,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> eyre::Result<()> {
-        db.transact(id, transaction, evm_env, journaled_state, inspector)
-    }
-
-    fn db_transact_from_tx(
-        &self,
-        db: &mut dyn DatabaseExt<Self::BlockEnv, Self::Tx, Self::Spec>,
-        tx_env: Self::Tx,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> eyre::Result<()> {
-        db.transact_from_tx(tx_env, evm_env, journaled_state, inspector)
+        inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
+    ) -> Box<dyn NestedEvm<Spec = TempoHardfork, Block = TempoBlockEnv, Tx = TempoTxEnv> + 'db>
+    {
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
     }
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> Evm for TempoFoundryEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> Evm
+    for TempoFoundryEvm<'db, I>
 {
     type Precompiles = PrecompilesMap;
     type Inspector = I;
-    type DB = &'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>;
+    type DB = &'db mut dyn DatabaseExt<TempoEvmFactory>;
     type Error = EVMError<DatabaseError, TempoInvalidTransaction>;
     type HaltReason = TempoHaltReason;
     type Spec = TempoHardfork;
@@ -833,38 +749,26 @@ impl<
     }
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> Deref for TempoFoundryEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> Deref
+    for TempoFoundryEvm<'db, I>
 {
-    type Target = TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>;
+    type Target = TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.ctx
     }
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> DerefMut for TempoFoundryEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> DerefMut
+    for TempoFoundryEvm<'db, I>
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.ctx
     }
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> IntoNestedEvm<TempoHardfork, TempoBlockEnv, TempoTxEnv> for TempoFoundryEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>>
+    IntoNestedEvm<TempoHardfork, TempoBlockEnv, TempoTxEnv> for TempoFoundryEvm<'db, I>
 {
     type Inner = TempoRevmEvm<'db, I>;
 
@@ -889,12 +793,8 @@ fn map_tempo_error(e: EVMError<DatabaseError, TempoInvalidTransaction>) -> EVMEr
     }
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> NestedEvm for TempoRevmEvm<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> NestedEvm
+    for TempoRevmEvm<'db, I>
 {
     type Spec = TempoHardfork;
     type Block = TempoBlockEnv;
@@ -949,32 +849,22 @@ impl<
 /// Will be removed when the next revm release includes bluealloy/revm#3518.
 pub struct TempoFoundryHandler<
     'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
+    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
 > {
-    inner: TempoEvmHandler<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>, I>,
+    inner: TempoEvmHandler<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>,
     create2_overrides: Vec<(usize, CallInputs)>,
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> Default for TempoFoundryHandler<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> Default
+    for TempoFoundryHandler<'db, I>
 {
     fn default() -> Self {
         Self { inner: TempoEvmHandler::new(), create2_overrides: Vec::new() }
     }
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> Handler for TempoFoundryHandler<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> Handler
+    for TempoFoundryHandler<'db, I>
 {
     type Evm = TempoRevmEvm<'db, I>;
     type Error = EVMError<DatabaseError, TempoInvalidTransaction>;
@@ -1059,9 +949,7 @@ impl<
 /// CREATE2 factory redirect execution loop for Tempo.
 fn create2_exec_loop<
     'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
+    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
 >(
     create2_overrides: &mut Vec<(usize, CallInputs)>,
     evm: &mut TempoRevmEvm<'db, I>,
@@ -1102,9 +990,7 @@ fn create2_exec_loop<
 /// Handles CREATE2 frame initialization, potentially transforming it to use the CREATE2 factory.
 fn handle_create2_frame<
     'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
+    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
 >(
     create2_overrides: &mut Vec<(usize, CallInputs)>,
     evm: &mut TempoRevmEvm<'db, I>,
@@ -1158,9 +1044,7 @@ fn handle_create2_frame<
 /// Transforms CREATE2 factory call results back into CREATE outcomes.
 fn handle_create2_result<
     'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
+    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
 >(
     create2_overrides: &mut Vec<(usize, CallInputs)>,
     evm: &mut TempoRevmEvm<'db, I>,
@@ -1191,12 +1075,8 @@ fn handle_create2_result<
     }
 }
 
-impl<
-    'db,
-    I: FoundryInspectorExt<
-        TempoContext<&'db mut dyn DatabaseExt<TempoBlockEnv, TempoTxEnv, TempoHardfork>>,
-    >,
-> InspectorHandler for TempoFoundryHandler<'db, I>
+impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>>
+    InspectorHandler for TempoFoundryHandler<'db, I>
 {
     type IT = EthInterpreter;
 

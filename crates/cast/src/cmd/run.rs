@@ -2,10 +2,10 @@ use crate::{
     debug::handle_traces,
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
-use alloy_consensus::{BlockHeader, Transaction};
+use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{AnyNetwork, TransactionResponse};
+use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
@@ -18,7 +18,9 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{TraceResult, init_progress},
 };
-use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_impersonated_tx, is_known_system_sender, shell};
+use foundry_common::{
+    SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder, shell,
+};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     Config,
@@ -28,16 +30,16 @@ use foundry_config::{
     },
 };
 use foundry_evm::{
-    core::{FoundryBlock, evm::EthEvmNetwork},
+    core::{
+        FoundryBlock as _,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+    },
     executors::{EvmError, Executor, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
 };
 use futures::TryFutureExt;
-use revm::{
-    DatabaseRef,
-    context::{Block, TxEnv},
-};
+use revm::{DatabaseRef, context::Block};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -131,6 +133,16 @@ impl RunArgs {
     pub async fn run(self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
+        if evm_opts.networks.is_tempo() {
+            self.run_with_evm::<TempoEvmNetwork>().await
+        } else {
+            self.run_with_evm::<EthEvmNetwork>().await
+        }
+    }
+
+    async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+        let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
 
         let label = self.label;
@@ -141,7 +153,7 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_cli::utils::get_provider_builder(&config)?
+        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
             .build()?;
 
@@ -163,8 +175,9 @@ impl RunArgs {
             ));
         }
 
-        let tx_block_number =
-            tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+        let tx_block_number = tx
+            .block_number()
+            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
@@ -173,7 +186,7 @@ impl RunArgs {
         let (block, (mut evm_env, tx_env, fork, chain, networks)) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
-            TracingExecutor::<EthEvmNetwork>::get_fork_material(&mut config, evm_opts)
+            TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts)
         )?;
 
         let mut evm_version = self.evm_version;
@@ -190,17 +203,17 @@ impl RunArgs {
         evm_env.block_env.set_number(U256::from(tx_block_number));
 
         if let Some(block) = &block {
-            evm_env.block_env = block_env_from_header(&block.header);
+            evm_env.block_env = block_env_from_header(block.header());
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains
             if evm_version.is_none() {
                 // if the block has the excess_blob_gas field, we assume it's a Cancun block
-                if block.header.excess_blob_gas().is_some() {
+                if block.header().excess_blob_gas().is_some() {
                     evm_version = Some(EvmVersion::Prague);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
+            apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
                 &mut evm_env,
                 block,
                 config.networks,
@@ -215,7 +228,7 @@ impl RunArgs {
                 InternalTraceMode::None
             })
             .with_state_changes(shell::verbosity() > 4);
-        let mut executor = TracingExecutor::<EthEvmNetwork>::new(
+        let mut executor = TracingExecutor::<FEN>::new(
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
@@ -234,10 +247,10 @@ impl RunArgs {
             }
 
             if let Some(block) = block {
-                let pb = init_progress(block.transactions.len() as u64, "tx");
+                let pb = init_progress(block.transactions().len() as u64, "tx");
                 pb.set_position(0);
 
-                let BlockTransactions::Full(ref txs) = block.transactions else {
+                let BlockTransactions::Full(ref txs) = *block.transactions() else {
                     return Err(eyre::eyre!("Could not get block txs"));
                 };
 
@@ -256,9 +269,7 @@ impl RunArgs {
                         break;
                     }
 
-                    let tx_env = tx.as_envelope().map_or(Default::default(), |tx_envelope| {
-                        TxEnv::from_recovered_tx(tx_envelope, tx.from())
-                    });
+                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
 
                     evm_env.cfg_env.disable_balance_check = true;
 
@@ -303,11 +314,9 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let tx_env = tx.as_envelope().map_or(Default::default(), |tx_envelope| {
-                TxEnv::from_recovered_tx(tx_envelope, tx.from())
-            });
+            let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
 
-            if is_impersonated_tx(tx.as_ref()) {
+            if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
                 evm_env.cfg_env.disable_balance_check = true;
             }
 
@@ -339,8 +348,8 @@ impl RunArgs {
     }
 }
 
-pub fn fetch_contracts_bytecode_from_trace(
-    executor: &Executor<EthEvmNetwork>,
+pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
     result: &TraceResult,
 ) -> Result<HashMap<Address, Bytes>> {
     let mut contracts_bytecode = HashMap::default();

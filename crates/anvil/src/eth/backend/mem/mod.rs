@@ -4399,6 +4399,15 @@ where
     }
 }
 
+/// Replaces the cached hash of a [`Signed`] transaction, preserving the inner tx and signature.
+fn rehash<T>(signed: Signed<T>, hash: B256) -> Signed<T>
+where
+    T: alloy_consensus::transaction::RlpEcdsaEncodableTx,
+{
+    let (t, sig, _) = signed.into_parts();
+    Signed::new_unchecked(t, sig, hash)
+}
+
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     tx_hash: Option<B256>,
@@ -4502,31 +4511,11 @@ pub fn transaction_build(
         .expect("non-standard transactions are handled above");
 
     let envelope = match eth_envelope {
-        TxEnvelope::Legacy(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
-        }
-        TxEnvelope::Eip1559(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
-        }
-        TxEnvelope::Eip2930(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
-        }
-        TxEnvelope::Eip4844(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
-        }
-        TxEnvelope::Eip7702(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
-        }
+        TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
+        TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
+        TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
+        TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
+        TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 
     let tx = Transaction {

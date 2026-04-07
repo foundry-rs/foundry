@@ -44,8 +44,6 @@ alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
 alloy-signer-turnkey = { workspace = true, features = ["eip712"], optional = true }
 
 tempo-primitives.workspace = true
-tempo-alloy.workspace = true
-alloy-eips.workspace = true
 alloy-rlp.workspace = true
 
 async-trait.workspace = true

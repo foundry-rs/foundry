@@ -87,93 +87,17 @@ impl SendTxArgs {
         // Resolve the signer early so we know if it's a Tempo access key.
         let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
 
-        if let Some(tempo_access_key) = tempo_access_key {
-            // Tempo keychain mode: always uses TempoNetwork.
-            self.run_tempo_keychain(
-                signer.expect("signer required for access key"),
-                tempo_access_key,
-            )
-            .await
-        } else if self.tx.tempo.is_tempo() {
-            self.run_generic::<TempoNetwork>(signer).await
+        if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
-            self.run_generic::<AnyNetwork>(signer).await
+            self.run_generic::<AnyNetwork>(signer, None).await
         }
-    }
-
-    /// Handles Tempo access key (keychain mode) transactions.
-    ///
-    /// Bypasses `EthereumWallet` and manually constructs a `KeychainSignature`,
-    /// then sends the raw transaction.
-    async fn run_tempo_keychain(
-        self,
-        signer: WalletSigner,
-        access_key: TempoAccessKeyConfig,
-    ) -> Result<()> {
-        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked: _, path } =
-            self;
-
-        let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
-
-        if let Some(data) = data {
-            sig = Some(data);
-        }
-
-        let code = if let Some(SendTxSubcommands::Create {
-            code,
-            sig: constructor_sig,
-            args: constructor_args,
-        }) = command
-        {
-            sig = constructor_sig;
-            args = constructor_args;
-            Some(code)
-        } else {
-            None
-        };
-
-        // Inject access key ID into TempoOpts so it's set before gas estimation.
-        tx.tempo.key_id = Some(access_key.key_address);
-
-        let config = send_tx.eth.load_config()?;
-        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
-        if let Some(interval) = send_tx.poll_interval {
-            provider.client().set_poll_interval(Duration::from_secs(interval))
-        }
-
-        let builder = CastTxBuilder::new(&provider, tx, &config)
-            .await?
-            .with_to(to)
-            .await?
-            .with_code_sig_and_args(code, sig, args)
-            .await?
-            .with_blob_data(blob_data)?;
-
-        let from = access_key.wallet_address;
-
-        // Build using wallet address for correct nonce/gas estimation.
-        let (mut tx_request, _) = builder.build(from).await?;
-
-        // Only include key_authorization if the key is not yet provisioned on-chain.
-        if let Some(auth) = access_key.key_authorization
-            && !crate::tempo::is_key_provisioned(&provider, from, access_key.key_address).await
-        {
-            tx_request.set_key_authorization(auth);
-        }
-
-        let raw_tx = crate::tempo::sign_with_access_key(tx_request, &signer, from).await?;
-
-        let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-        let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-
-        let cast = CastTxSender::new(&provider);
-        cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
     }
 
     pub async fn run_generic<N: Network>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
+        access_key: Option<TempoAccessKeyConfig>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -181,7 +105,7 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        let Self { to, mut sig, mut args, data, send_tx, tx, command, unlocked, path } = self;
+        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, path } = self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
@@ -224,6 +148,11 @@ impl SendTxArgs {
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
+        }
+
+        // Inject access key ID into TempoOpts so it's set before gas estimation.
+        if let Some(ref ak) = access_key {
+            tx.tempo.key_id = Some(ak.key_address);
         }
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
@@ -294,6 +223,32 @@ impl SendTxArgs {
             let cast = CastTxSender::new(&provider);
             cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
         // Case 3:
+        // Tempo access key (keychain) signing. Uses `sign_with_access_key_provisioning` which
+        // handles the provisioning check and embeds `key_authorization` when needed.
+        } else if let Some(ak) = access_key {
+            let signer = match pre_resolved_signer {
+                Some(s) => s,
+                None => send_tx.eth.wallet.signer().await?,
+            };
+            let from = ak.wallet_address;
+
+            let (tx_request, _) = builder.build(from).await?;
+
+            let raw_tx = tx_request
+                .sign_with_access_key_provisioning(
+                    &provider,
+                    &signer,
+                    ak.wallet_address,
+                    ak.key_address,
+                    ak.key_authorization.as_ref(),
+                )
+                .await?;
+
+            let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
+
+            let cast = CastTxSender::new(&provider);
+            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+        // Case 4:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.

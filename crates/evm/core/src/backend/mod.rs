@@ -4,8 +4,9 @@ use crate::{
     FoundryBlock, FoundryInspectorExt, FoundryTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor,
-        TxEnvFor,
+        BlockEnvFor, BlockResponseFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
+        FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, PrecompilesFor, SpecFor,
+        TransactionResponseFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
@@ -79,7 +80,7 @@ pub type JournaledState = JournalInner<JournalEntry>;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
-pub trait DatabaseExt<BLOCK, TX, SPEC>:
+pub trait DatabaseExt<F: FoundryEvmFactory>:
     Database<Error = DatabaseError> + DatabaseCommit + Debug
 {
     /// Creates a new state snapshot at the current point of execution.
@@ -90,7 +91,7 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
     fn snapshot_state(
         &mut self,
         journaled_state: &JournaledState,
-        evm_env: &EvmEnv<SPEC, BLOCK>,
+        evm_env: &EvmEnv<F::Spec, F::BlockEnv>,
     ) -> U256;
 
     /// Reverts the snapshot if it exists
@@ -109,7 +110,7 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
-        evm_env: &mut EvmEnv<SPEC, BLOCK>,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         caller: Address,
         action: RevertStateSnapshotAction,
     ) -> Option<JournaledState>;
@@ -129,8 +130,8 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
     fn create_select_fork(
         &mut self,
         fork: CreateFork,
-        evm_env: &mut EvmEnv<SPEC, BLOCK>,
-        tx_env: &mut TX,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &mut F::Tx,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork(fork)?;
@@ -144,8 +145,8 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
     fn create_select_fork_at_transaction(
         &mut self,
         fork: CreateFork,
-        evm_env: &mut EvmEnv<SPEC, BLOCK>,
-        tx_env: &mut TX,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &mut F::Tx,
         journaled_state: &mut JournaledState,
         transaction: B256,
     ) -> eyre::Result<LocalForkId> {
@@ -176,8 +177,8 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
     fn select_fork(
         &mut self,
         id: LocalForkId,
-        evm_env: &mut EvmEnv<SPEC, BLOCK>,
-        tx_env: &mut TX,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &mut F::Tx,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
@@ -192,7 +193,7 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        evm_env: &mut EvmEnv<SPEC, BLOCK>,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
@@ -208,33 +209,27 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        evm_env: &mut EvmEnv<SPEC, BLOCK>,
+        evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
-    #[allow(clippy::type_complexity)]
     fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        evm_env: EvmEnv<SPEC, BLOCK>,
+        evm_env: EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<
-            revm::Context<BLOCK, TX, CfgEnv<SPEC>, &'db mut dyn DatabaseExt<BLOCK, TX, SPEC>>,
-        >,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
-    #[allow(clippy::type_complexity)]
     fn transact_from_tx(
         &mut self,
-        tx_env: TX,
-        evm_env: EvmEnv<SPEC, BLOCK>,
+        tx_env: F::Tx,
+        evm_env: EvmEnv<F::Spec, F::BlockEnv>,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn for<'db> FoundryInspectorExt<
-            revm::Context<BLOCK, TX, CfgEnv<SPEC>, &'db mut dyn DatabaseExt<BLOCK, TX, SPEC>>,
-        >,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -390,8 +385,6 @@ pub trait DatabaseExt<BLOCK, TX, SPEC>:
     /// - Setting a blockhash for blocks older than `block.number - 256` has no effect
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256);
 }
-
-struct _ObjectSafe(dyn DatabaseExt<(), (), ()>);
 
 /// Provides the underlying `revm::Database` implementation.
 ///
@@ -816,16 +809,14 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<
-        I: for<'db> FoundryInspectorExt<<FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>>,
-    >(
+    pub fn inspect<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
-    ) -> eyre::Result<ResultAndState<<FEN::EvmFactory as EvmFactory>::HaltReason>>
+    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>>
     where
-        Self: DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>,
+        Self: DatabaseExt<FEN::EvmFactory>,
     {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind());
         let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
@@ -906,7 +897,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, <FEN::Network as Network>::BlockResponse)> {
+    ) -> eyre::Result<(u64, BlockResponseFor<FEN>)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.backend().get_transaction(transaction)?;
 
@@ -936,7 +927,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<Option<<FEN::Network as Network>::TransactionResponse>> {
+    ) -> eyre::Result<Option<TransactionResponseFor<FEN>>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -971,9 +962,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let mut evm = FEN::EvmFactory::default().create_evm(replay_db, evm_env);
 
             for tx in &txs_to_replay {
-                let tx_env = <TxEnvFor<FEN> as FromRecoveredTx<
-                    <FEN::Network as Network>::TxEnvelope,
-                >>::from_recovered_tx(tx.as_ref(), tx.from());
+                let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
                 trace!(tx=?tx.tx_hash(), "committing transaction");
                 evm.transact_commit(tx_env).wrap_err("backend: failed committing transaction")?;
             }
@@ -992,9 +981,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 }
 
-impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>
-    for Backend<FEN>
-{
+impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn snapshot_state(
         &mut self,
         journaled_state: &JournaledState,
@@ -1356,12 +1343,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFo
         mut evm_env: EvmEnvFor<FEN>,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<
-            revm::Context<
-                BlockEnvFor<FEN>,
-                TxEnvFor<FEN>,
-                CfgEnv<SpecFor<FEN>>,
-                &'db mut dyn DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>,
-            >,
+            <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
@@ -1373,7 +1355,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFo
             let fork = self.inner.get_fork_by_id_mut(id)?;
             fork.backend().get_transaction(transaction)?
         };
-        let tx_env = <TxEnvFor<FEN> as FromRecoveredTx<<FEN::Network as Network>::TxEnvelope>>::from_recovered_tx(tx.as_ref(), tx.from());
+        let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
         // the current context, but we're assuming the user wants to transact the transaction as it
@@ -1403,12 +1385,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFo
         evm_env: EvmEnvFor<FEN>,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<
-            revm::Context<
-                BlockEnvFor<FEN>,
-                TxEnvFor<FEN>,
-                CfgEnv<SpecFor<FEN>>,
-                &'db mut dyn DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>,
-            >,
+            <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
     ) -> eyre::Result<()> {
         trace!("execute signed transaction");
@@ -1417,13 +1394,11 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFo
 
         let res = {
             let mut db = self.clone();
-            FEN::EvmFactory::default().transact_with_dyn_inspector(
-                &mut db,
-                evm_env,
-                inspector,
-                journaled_state.depth + 1,
-                tx_env,
-            )?
+            let depth = journaled_state.depth + 1;
+            let mut evm =
+                FEN::EvmFactory::default().create_foundry_nested_evm(&mut db, evm_env, inspector);
+            evm.journal_inner_mut().depth = depth;
+            evm.transact_raw(tx_env)?
         };
 
         self.commit(res.state);
@@ -1982,7 +1957,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.is_empty()
     }
 
-    pub fn precompiles(&self) -> <FEN::EvmFactory as EvmFactory>::Precompiles {
+    pub fn precompiles(&self) -> PrecompilesFor<FEN> {
         let evm = FEN::EvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(self.spec_id), Default::default()),
@@ -2126,7 +2101,6 @@ fn update_env_block<SPEC, BLOCK: FoundryBlock>(
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
-#[allow(clippy::type_complexity)]
 fn commit_transaction<FEN: FoundryEvmNetwork>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
@@ -2135,12 +2109,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
     inspector: &mut dyn for<'db> FoundryInspectorExt<
-        revm::Context<
-            BlockEnvFor<FEN>,
-            TxEnvFor<FEN>,
-            CfgEnv<SpecFor<FEN>>,
-            &'db mut dyn DatabaseExt<BlockEnvFor<FEN>, TxEnvFor<FEN>, SpecFor<FEN>>,
-        >,
+        <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
     >,
 ) -> eyre::Result<()> {
     let now = Instant::now();
@@ -2150,9 +2119,10 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
         let depth = journaled_state.depth;
         let mut db: Backend<FEN> = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        FEN::EvmFactory::default()
-            .transact_with_dyn_inspector(&mut db, evm_env, inspector, depth + 1, tx_env)
-            .wrap_err("backend: failed committing transaction")?
+        let mut evm =
+            FEN::EvmFactory::default().create_foundry_nested_evm(&mut db, evm_env, inspector);
+        evm.journal_inner_mut().depth = depth + 1;
+        evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
