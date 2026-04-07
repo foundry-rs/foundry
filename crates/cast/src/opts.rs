@@ -4,8 +4,8 @@ use crate::cmd::{
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
     da_estimate::DAEstimateArgs, erc20::Erc20Subcommand, estimate::EstimateArgs,
     find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs,
-    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, trace::TraceArgs,
-    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, tip20::Tip20Subcommand,
+    trace::TraceArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1162,6 +1162,13 @@ pub enum CastSubcommand {
     Erc20Token {
         #[command(subcommand)]
         command: Erc20Subcommand,
+    },
+
+    /// TIP-20 token operations (Tempo).
+    #[command(visible_alias = "tip20")]
+    Tip20Token {
+        #[command(subcommand)]
+        command: Tip20Subcommand,
     },
     #[command(name = "trace")]
     Trace(TraceArgs),

@@ -26,6 +26,7 @@ pub mod rpc;
 pub mod run;
 pub mod send;
 pub mod storage;
+pub mod tip20;
 pub mod trace;
 pub mod txpool;
 pub mod wallet;
