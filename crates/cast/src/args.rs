@@ -805,6 +805,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
+        CastSubcommand::Keychain { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }
