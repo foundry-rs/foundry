@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/update-flake-lock@e80a657d7603606be0c69b117cfdc240f1e6af88 # main
+      - uses: DeterminateSystems/update-flake-lock@c92eec5a0027bf5ab1523eee093a49c57b4ff388 # main
         with:
           pr-title: "Update flake.lock"
           pr-labels: |
