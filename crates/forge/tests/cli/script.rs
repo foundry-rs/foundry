@@ -136,6 +136,21 @@ contract FailingScript is Script {
 }
 "#;
 
+static OUT_OF_GAS_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract OutOfGasScript is Script {
+    function run() external {
+        uint256 i;
+        while (true) {
+            unchecked {
+                ++i;
+            }
+        }
+    }
+}
+"#;
+
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -163,6 +178,32 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: failed
+
+"#]]);
+});
+
+// Tests that script failures surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    cmd.arg("script").arg(script);
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
+
+"#]]);
+});
+
+// Tests that --json script failures also surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script_with_json, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    cmd.arg("script").arg(script).arg("--json");
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
 
 "#]]);
 });
