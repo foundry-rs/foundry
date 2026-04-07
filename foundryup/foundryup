@@ -5,8 +5,7 @@ set -eo pipefail
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
 FOUNDRYUP_INSTALLER_VERSION="1.6.1"
 
-BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
-FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
+FOUNDRY_DIR=${FOUNDRY_DIR:-"$HOME/.foundry"}
 FOUNDRY_VERSIONS_DIR="$FOUNDRY_DIR/versions"
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
