@@ -258,7 +258,7 @@ impl SendTxArgs {
             let cast = CastTxSender::new(&provider);
             cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
         // Case 3:
-        // Tempo access key (keychain) signing. Uses `sign_with_access_key_provisioning` which
+        // Tempo access key (keychain) signing. Uses `sign_with_access_key` which
         // handles the provisioning check and embeds `key_authorization` when needed.
         } else if let Some(ak) = access_key {
             let signer = match pre_resolved_signer {
@@ -270,7 +270,7 @@ impl SendTxArgs {
             let (tx_request, _) = builder.build(from).await?;
 
             let raw_tx = tx_request
-                .sign_with_access_key_provisioning(
+                .sign_with_access_key(
                     &provider,
                     &signer,
                     ak.wallet_address,

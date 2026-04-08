@@ -163,7 +163,15 @@ impl BatchMakeTxArgs {
         };
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
-            let raw_tx = tx.sign_with_access_key(&signer, access_key.wallet_address).await?;
+            let raw_tx = tx
+                .sign_with_access_key(
+                    &provider,
+                    &signer,
+                    access_key.wallet_address,
+                    access_key.key_address,
+                    access_key.key_authorization.as_ref(),
+                )
+                .await?;
             alloy_primitives::hex::encode(raw_tx)
         } else {
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;

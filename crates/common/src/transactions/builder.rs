@@ -249,25 +249,11 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
 
     /// Signs the transaction using an access key (keychain mode).
     ///
-    /// Builds the transaction, computes the keychain signing hash, signs with the access
-    /// key, and returns the EIP-2718 encoded raw transaction bytes.
-    ///
-    /// The default implementation returns an error. Only `TempoNetwork` supports this.
-    fn sign_with_access_key(
-        self,
-        _signer: &(impl Signer + Sync),
-        _wallet_address: Address,
-    ) -> impl Future<Output = Result<Vec<u8>>> + Send {
-        async { eyre::bail!("access key signing is not supported for this network") }
-    }
-
-    /// Signs the transaction using an access key, checking on-chain provisioning first.
-    ///
     /// If `key_authorization` is provided and the key is not yet provisioned on-chain,
     /// embeds the authorization in the transaction before signing.
     ///
     /// The default implementation returns an error. Only `TempoNetwork` supports this.
-    fn sign_with_access_key_provisioning(
+    fn sign_with_access_key(
         self,
         _provider: &impl Provider<N>,
         _signer: &(impl Signer + Sync),
@@ -438,29 +424,7 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         }
     }
 
-    async fn sign_with_access_key(
-        self,
-        signer: &(impl Signer + Sync),
-        wallet_address: Address,
-    ) -> Result<Vec<u8>> {
-        let tempo_tx = self
-            .build_aa()
-            .map_err(|e| eyre::eyre!("failed to build Tempo AA transaction: {e}"))?;
-
-        let sig_hash = tempo_tx.signature_hash();
-        let signing_hash = KeychainSignature::signing_hash(sig_hash, wallet_address);
-        let raw_sig = signer.sign_hash(&signing_hash).await?;
-
-        let keychain_sig =
-            KeychainSignature::new(wallet_address, PrimitiveSignature::Secp256k1(raw_sig));
-        let aa_signed = tempo_tx.into_signed(TempoSignature::Keychain(keychain_sig));
-
-        let mut buf = Vec::new();
-        aa_signed.encode_2718(&mut buf);
-        Ok(buf)
-    }
-
-    fn sign_with_access_key_provisioning(
+    fn sign_with_access_key(
         mut self,
         provider: &impl Provider<TempoNetwork>,
         signer: &(impl Signer + Sync),
@@ -481,7 +445,21 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
                 }
             }
 
-            self.sign_with_access_key(signer, wallet_address).await
+            let tempo_tx = self
+                .build_aa()
+                .map_err(|e| eyre::eyre!("failed to build Tempo AA transaction: {e}"))?;
+
+            let sig_hash = tempo_tx.signature_hash();
+            let signing_hash = KeychainSignature::signing_hash(sig_hash, wallet_address);
+            let raw_sig = signer.sign_hash(&signing_hash).await?;
+
+            let keychain_sig =
+                KeychainSignature::new(wallet_address, PrimitiveSignature::Secp256k1(raw_sig));
+            let aa_signed = tempo_tx.into_signed(TempoSignature::Keychain(keychain_sig));
+
+            let mut buf = Vec::new();
+            aa_signed.encode_2718(&mut buf);
+            Ok(buf)
         }
     }
 }

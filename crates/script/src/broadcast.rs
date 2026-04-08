@@ -183,7 +183,7 @@ where
                 debug!("sending transaction via tempo access key: {:?}", tx);
 
                 let raw_tx = tx
-                    .sign_with_access_key_provisioning(
+                    .sign_with_access_key(
                         provider.as_ref(),
                         signer,
                         access_key.wallet_address,
@@ -807,23 +807,15 @@ impl BundledState<TempoEvmNetwork> {
             BatchSigner::TempoKeychain(signer, access_key) => {
                 batch_tx.key_id = Some(access_key.key_address);
 
-                if let Some(ref auth) = access_key.key_authorization {
-                    batch_tx.key_authorization = Some(auth.clone());
-                }
-
-                // Strip key_authorization if the key is already provisioned (saves gas)
-                if batch_tx.key_authorization.is_some() {
-                    use tempo_alloy::provider::TempoProviderExt;
-                    let key_info = provider
-                        .get_keychain_key(access_key.wallet_address, access_key.key_address)
-                        .await;
-                    if key_info.map(|info| info.keyId != Address::ZERO).unwrap_or(false) {
-                        batch_tx.key_authorization = None;
-                    }
-                }
-
-                let raw_tx =
-                    batch_tx.sign_with_access_key(&*signer, access_key.wallet_address).await?;
+                let raw_tx = batch_tx
+                    .sign_with_access_key(
+                        provider.as_ref(),
+                        &*signer,
+                        access_key.wallet_address,
+                        access_key.key_address,
+                        access_key.key_authorization.as_ref(),
+                    )
+                    .await?;
 
                 let pending = provider.send_raw_transaction(&raw_tx).await?;
                 *pending.tx_hash()

@@ -270,7 +270,7 @@ async fn run_authorize(
         tx.set_key_id(access_key.key_address);
 
         let raw_tx = tx
-            .sign_with_access_key_provisioning(
+            .sign_with_access_key(
                 &provider,
                 signer,
                 access_key.wallet_address,
@@ -309,7 +309,7 @@ async fn run_revoke(key_address: Address, send_tx: SendTxOpts) -> Result<()> {
         tx.set_key_id(access_key.key_address);
 
         let raw_tx = tx
-            .sign_with_access_key_provisioning(
+            .sign_with_access_key(
                 &provider,
                 signer,
                 access_key.wallet_address,

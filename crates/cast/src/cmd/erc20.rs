@@ -23,7 +23,7 @@ use foundry_common::{
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
-use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
+use tempo_alloy::TempoNetwork;
 
 sol! {
     #[sol(rpc)]
@@ -575,36 +575,25 @@ fn apply_tempo_access_key<N: Network>(
 /// provisioned on-chain.
 async fn send_tempo_keychain<P: Provider<TempoNetwork>>(
     provider: &P,
-    mut tx: <TempoNetwork as Network>::TransactionRequest,
+    tx: <TempoNetwork as Network>::TransactionRequest,
     signer: &WalletSigner,
     access_key: &TempoAccessKeyConfig,
     cast_async: bool,
     confirmations: u64,
     timeout: u64,
 ) -> eyre::Result<()> {
-    // Only include key_authorization if the key is not yet provisioned on-chain.
-    if let Some(ref auth) = access_key.key_authorization
-        && !is_key_provisioned(provider, access_key.wallet_address, access_key.key_address).await
-    {
-        tx.set_key_authorization(auth.clone());
-    }
-
-    let raw_tx = tx.sign_with_access_key(signer, access_key.wallet_address).await?;
+    let raw_tx = tx
+        .sign_with_access_key(
+            provider,
+            signer,
+            access_key.wallet_address,
+            access_key.key_address,
+            access_key.key_authorization.as_ref(),
+        )
+        .await?;
 
     let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
 
     let cast = crate::tx::CastTxSender::new(provider);
     cast.print_tx_result(tx_hash, cast_async, confirmations, timeout).await
-}
-
-/// Checks whether an access key is already provisioned on-chain.
-async fn is_key_provisioned<P: Provider<TempoNetwork>>(
-    provider: &P,
-    wallet_address: Address,
-    key_address: Address,
-) -> bool {
-    match provider.get_keychain_key(wallet_address, key_address).await {
-        Ok(info) => info.keyId != Address::ZERO,
-        Err(_) => false,
-    }
 }

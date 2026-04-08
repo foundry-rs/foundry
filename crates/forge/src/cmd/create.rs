@@ -456,7 +456,7 @@ impl CreateArgs {
             // Tempo keychain mode: sign with access key provisioning and send raw
             let raw_tx = deployer
                 .tx
-                .sign_with_access_key_provisioning(
+                .sign_with_access_key(
                     &provider,
                     &signer,
                     ak.wallet_address,

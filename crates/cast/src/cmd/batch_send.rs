@@ -158,8 +158,15 @@ impl BatchSendArgs {
             };
 
             if let Some(ref access_key) = tempo_access_key {
-                let raw_tx =
-                    tx_request.sign_with_access_key(&signer, access_key.wallet_address).await?;
+                let raw_tx = tx_request
+                    .sign_with_access_key(
+                        &provider,
+                        &signer,
+                        access_key.wallet_address,
+                        access_key.key_address,
+                        access_key.key_authorization.as_ref(),
+                    )
+                    .await?;
 
                 let cast = CastTxSender::new(&provider);
                 let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
