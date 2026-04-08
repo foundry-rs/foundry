@@ -1,6 +1,7 @@
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
+use foundry_config::{Chain, NamedChain};
 use foundry_evm_core::{
     precompiles::{
         BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
@@ -81,17 +82,14 @@ pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bo
         return true;
     }
     // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
-    if chain_id.is_some_and(|id| foundry_config::Chain::from_id(id).is_tempo())
+    if chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
         && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address) || TEMPO_TIP20_TOKENS.contains(&address))
     {
         return true;
     }
     // Celo transfer precompile (only on Celo chains).
     if chain_id.is_some_and(|id| {
-        matches!(
-            foundry_config::Chain::from_id(id).named(),
-            Some(foundry_config::NamedChain::Celo | foundry_config::NamedChain::CeloSepolia)
-        )
+        matches!(Chain::from_id(id).named(), Some(NamedChain::Celo | NamedChain::CeloSepolia))
     }) && address == CELO_TRANSFER
     {
         return true;
