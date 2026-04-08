@@ -353,10 +353,9 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             .with_chain_id(chain_id.map(|c| c.id()))
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_external(
-            &self.script_config.config,
-            chain_id,
-        )?;
+        let mut identifier = TraceIdentifiers::new()
+            .with_local(known_contracts)
+            .with_external(&self.script_config.config, chain_id)?;
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);

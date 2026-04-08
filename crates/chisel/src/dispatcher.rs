@@ -168,10 +168,8 @@ impl ChiselDispatcher {
             .with_chain_id(chain_id.map(|c| c.id()))
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_external(
-            &session_config.foundry_config,
-            chain_id,
-        )?;
+        let mut identifier =
+            TraceIdentifiers::new().with_external(&session_config.foundry_config, chain_id)?;
         if !identifier.is_empty() {
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &mut identifier);
