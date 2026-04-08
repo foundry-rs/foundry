@@ -3,14 +3,14 @@ use alloy_consensus::{
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, U256};
+use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_primitives::{
     TempoSignature,
-    transaction::{KeychainSignature, PrimitiveSignature, SignedKeyAuthorization},
+    transaction::{Call, KeychainSignature, PrimitiveSignature, SignedKeyAuthorization},
 };
 
 /// Composite transaction builder trait for Foundry transactions.
@@ -240,6 +240,13 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     /// on-chain as part of this transaction.
     fn set_key_authorization(&mut self, _key_authorization: SignedKeyAuthorization) {}
 
+    /// Converts a CREATE transaction's input/value into an AA-compatible call entry.
+    ///
+    /// Tempo AA transactions use a `calls` list instead of `to`+`input`. This method
+    /// extracts the CREATE data from the standard tx fields and pushes it as a call
+    /// with `TxKind::Create`. No-op for non-Tempo networks.
+    fn convert_create_to_call(&mut self) {}
+
     /// Signs the transaction using an access key (keychain mode).
     ///
     /// Builds the transaction, computes the keychain signing hash, signs with the access
@@ -418,6 +425,17 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn set_key_authorization(&mut self, key_authorization: SignedKeyAuthorization) {
         self.key_authorization = Some(key_authorization);
+    }
+
+    fn convert_create_to_call(&mut self) {
+        if self.calls.is_empty() {
+            let input = self.inner.input.input().cloned().unwrap_or_default();
+            let value = self.inner.value.unwrap_or(U256::ZERO);
+            self.calls.push(Call { to: TxKind::Create, value, input });
+            self.inner.input = Default::default();
+            self.inner.value = None;
+            self.inner.to = None;
+        }
     }
 
     async fn sign_with_access_key(
