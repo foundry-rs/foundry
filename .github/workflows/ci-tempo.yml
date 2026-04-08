@@ -1,0 +1,136 @@
+name: CI Tempo
+
+permissions: {}
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Tempo network to check"
+        required: true
+        type: choice
+        options:
+          - testnet
+          - devnet
+          - mainnet
+          - all
+      scripts:
+        description: "Which scripts to run"
+        required: false
+        type: choice
+        default: "both"
+        options:
+          - check
+          - deploy
+          - both
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  sanity-check:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      # Checkout the repository
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+
+      # Build and install binaries
+      - name: Build and install Foundry binaries
+        run: |
+          cargo install --path ./crates/forge --profile dev --force --locked
+          cargo install --path ./crates/cast --profile dev --force --locked
+          cargo install --path ./crates/anvil --profile dev --force --locked
+          cargo install --path ./crates/chisel --profile dev --force --locked
+
+      - name: Run MPP e2e test
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
+          MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
+          MPP_DEPOSIT: "1000000"
+        run: |
+          if [ -z "${TEMPO_KEYS_TOML_B64:-}" ]; then
+            echo "::warning::TEMPO_KEYS_TOML_B64 secret not set, skipping MPP e2e"
+            exit 0
+          fi
+          mkdir -p ~/.tempo/wallet
+          echo "$TEMPO_KEYS_TOML_B64" | tr -d '[:space:]' | base64 -d > ~/.tempo/wallet/keys.toml
+          ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"
+
+      - name: Run Tempo check on devnet
+        if: |
+          github.event_name == 'pull_request' ||
+          github.event.inputs.network == 'devnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo wallet tests on devnet
+        if: |
+          github.event_name == 'pull_request' ||
+          github.event.inputs.network == 'devnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+        run: ./.github/scripts/tempo-wallet.sh
+
+      - name: Run Tempo check on testnet
+        if: |
+          github.event.inputs.network == 'testnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo check on mainnet
+        if: |
+          github.event.inputs.network == 'mainnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_FEE_TOKEN: "0x20c0000000000000000000000000000000000000"
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          PRIVATE_KEY: ${{ secrets.THROW_AWAY_MAINNET_PKEY }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
