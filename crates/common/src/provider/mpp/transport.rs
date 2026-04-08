@@ -475,24 +475,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{
-        mpp::keys::discover_mpp_key, runtime_transport::RuntimeTransportBuilder,
-    };
+    use crate::provider::runtime_transport::RuntimeTransportBuilder;
     use alloy_json_rpc::{Id, Request, RequestMeta};
     use axum::{
         extract::State, http::StatusCode as AxumStatusCode, response::IntoResponse, routing::post,
     };
     use mpp::{
         MppError,
-        client::tempo::signing::{KeychainVersion, TempoSigningMode},
         protocol::core::{
-            Base64UrlJson, MethodName, IntentName, PaymentChallenge, PaymentCredential,
+            Base64UrlJson, IntentName, MethodName, PaymentChallenge, PaymentCredential,
             format_www_authenticate, parse_authorization,
         },
-    };
-    use std::sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
     };
 
     #[derive(Clone, Debug)]
@@ -553,9 +546,7 @@ mod tests {
         RequestPacket::Single(req.serialize().unwrap())
     }
 
-    async fn spawn_server(
-        app: axum::Router,
-    ) -> (String, tokio::task::JoinHandle<()>) {
+    async fn spawn_server(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
@@ -596,48 +587,48 @@ mod tests {
     #[tokio::test]
     async fn test_mpp_transport_402_then_success() {
         let (_, www_auth) = test_challenge();
-        let state = AppState { www_auth, call_count: Arc::new(AtomicU32::new(0)) };
+        let state = AppState { www_auth };
 
         #[derive(Clone)]
         struct AppState {
             www_auth: String,
-            call_count: Arc<AtomicU32>,
         }
 
-        let app = axum::Router::new()
-            .route(
-                "/",
-                post(
-                    |State(state): State<AppState>,
-                     req: axum::http::Request<axum::body::Body>| async move {
-                        if let Some(auth) = req.headers().get("authorization") {
-                            let auth_str = auth.to_str().unwrap();
-                            let credential = parse_authorization(auth_str).unwrap();
-                            assert_eq!(credential.challenge.id, "test-id-42");
-                            assert_eq!(credential.challenge.method.as_str(), "tempo");
-                            assert!(credential.source.is_some());
+        let app =
+            axum::Router::new()
+                .route(
+                    "/",
+                    post(
+                        |State(state): State<AppState>,
+                         req: axum::http::Request<axum::body::Body>| async move {
+                            if let Some(auth) = req.headers().get("authorization") {
+                                let auth_str = auth.to_str().unwrap();
+                                let credential = parse_authorization(auth_str).unwrap();
+                                assert_eq!(credential.challenge.id, "test-id-42");
+                                assert_eq!(credential.challenge.method.as_str(), "tempo");
+                                assert!(credential.source.is_some());
 
-                            (
-                                AxumStatusCode::OK,
-                                axum::Json(serde_json::json!({
-                                    "jsonrpc": "2.0",
-                                    "id": 1,
-                                    "result": "0xvalidated"
-                                })),
-                            )
-                                .into_response()
-                        } else {
-                            (
-                                AxumStatusCode::PAYMENT_REQUIRED,
-                                [("www-authenticate", state.www_auth)],
-                                "Payment Required",
-                            )
-                                .into_response()
-                        }
-                    },
-                ),
-            )
-            .with_state(state);
+                                (
+                                    AxumStatusCode::OK,
+                                    axum::Json(serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": 1,
+                                        "result": "0xvalidated"
+                                    })),
+                                )
+                                    .into_response()
+                            } else {
+                                (
+                                    AxumStatusCode::PAYMENT_REQUIRED,
+                                    [("www-authenticate", state.www_auth)],
+                                    "Payment Required",
+                                )
+                                    .into_response()
+                            }
+                        },
+                    ),
+                )
+                .with_state(state);
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(

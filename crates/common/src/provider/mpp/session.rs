@@ -274,14 +274,17 @@ impl SessionProvider {
         let signed_tx_hex = alloy_primitives::hex::encode_prefixed(&signed_tx);
         let voucher_sig_hex = alloy_primitives::hex::encode_prefixed(&voucher);
 
-        Ok((entry, SessionCredentialPayload::Open {
-            payload_type: "transaction".to_string(),
-            channel_id: channel_id.to_string(),
-            transaction: signed_tx_hex,
-            authorized_signer: self.authorized_signer.map(|a| a.to_string()),
-            cumulative_amount: options.initial_amount.to_string(),
-            signature: voucher_sig_hex,
-        }))
+        Ok((
+            entry,
+            SessionCredentialPayload::Open {
+                payload_type: "transaction".to_string(),
+                channel_id: channel_id.to_string(),
+                transaction: signed_tx_hex,
+                authorized_signer: self.authorized_signer.map(|a| a.to_string()),
+                cumulative_amount: options.initial_amount.to_string(),
+                signature: voucher_sig_hex,
+            },
+        ))
     }
 
     async fn create_topup_tx(
@@ -303,10 +306,8 @@ impl SessionProvider {
         }
 
         let approve_data =
-            ITIP20::approveCall::new((entry.escrow_contract, U256::from(additional)))
-                .abi_encode();
-        let topup_data =
-            IEscrow::topUpCall::new((entry.channel_id, additional)).abi_encode();
+            ITIP20::approveCall::new((entry.escrow_contract, U256::from(additional))).abi_encode();
+        let topup_data = IEscrow::topUpCall::new((entry.channel_id, additional)).abi_encode();
 
         let calls = vec![
             Call {
@@ -374,17 +375,23 @@ impl SessionProvider {
         &self,
         challenge: &PaymentChallenge,
     ) -> Result<PaymentCredential, MppError> {
-        let session_req: SessionRequest = challenge.request.decode()
-            .map_err(|e| MppError::invalid_challenge_reason(format!("failed to decode session request: {e}")))?;
+        let session_req: SessionRequest = challenge.request.decode().map_err(|e| {
+            MppError::invalid_challenge_reason(format!("failed to decode session request: {e}"))
+        })?;
 
         let chain_id = resolve_chain_id(challenge);
         let escrow_contract = resolve_escrow(challenge, chain_id, None)?;
-        let payee: Address = session_req.recipient.as_deref()
+        let payee: Address = session_req
+            .recipient
+            .as_deref()
             .ok_or_else(|| MppError::invalid_challenge_reason("missing recipient"))?
             .parse()
-            .map_err(|e| MppError::invalid_challenge_reason(format!("invalid recipient address: {e}")))?;
-        let currency: Address = session_req.currency.parse()
-            .map_err(|e| MppError::invalid_challenge_reason(format!("invalid currency address: {e}")))?;
+            .map_err(|e| {
+                MppError::invalid_challenge_reason(format!("invalid recipient address: {e}"))
+            })?;
+        let currency: Address = session_req.currency.parse().map_err(|e| {
+            MppError::invalid_challenge_reason(format!("invalid currency address: {e}"))
+        })?;
         let amount: u128 = session_req.parse_amount()?;
 
         let payer = match &self.signing_mode {
@@ -423,13 +430,16 @@ impl SessionProvider {
                         self.resolve_deposit(session_req.suggested_deposit.as_deref())?;
                     tracing::debug!(
                         cumulative = entry.cumulative_amount,
-                        amount, deposit, additional, "channel deposit exhausted, topping up"
+                        amount,
+                        deposit,
+                        additional,
+                        "channel deposit exhausted, topping up"
                     );
 
-                    let fee_payer_opt: Option<Address> = if session_req.fee_payer() { Some(payee) } else { None };
-                    let payload = self
-                        .create_topup_tx(&entry, additional, currency, fee_payer_opt)
-                        .await?;
+                    let fee_payer_opt: Option<Address> =
+                        if session_req.fee_payer() { Some(payee) } else { None };
+                    let payload =
+                        self.create_topup_tx(&entry, additional, currency, fee_payer_opt).await?;
 
                     if let Some(p) = self.persisted.lock().unwrap().get_mut(&key) {
                         let old_deposit: u128 = p.deposit.parse().unwrap_or(0);
@@ -479,7 +489,6 @@ impl SessionProvider {
                 },
             )
             .await?;
-        
 
         self.channels.lock().unwrap().insert(key.clone(), entry.clone());
         persist::upsert_channel(
@@ -504,13 +513,11 @@ mod tests {
     ) -> TempoSigningMode {
         if provisioned {
             match mode {
-                TempoSigningMode::Keychain { wallet, version, .. } => {
-                    TempoSigningMode::Keychain {
-                        wallet: *wallet,
-                        key_authorization: None,
-                        version: *version,
-                    }
-                }
+                TempoSigningMode::Keychain { wallet, version, .. } => TempoSigningMode::Keychain {
+                    wallet: *wallet,
+                    key_authorization: None,
+                    version: *version,
+                },
                 other => other.clone(),
             }
         } else {
@@ -541,9 +548,7 @@ mod tests {
         let wallet = Address::repeat_byte(0xAA);
         let signing_mode = TempoSigningMode::Keychain {
             wallet,
-            key_authorization: Some(Box::new(
-                unsafe { std::mem::zeroed() },
-            )),
+            key_authorization: Some(Box::new(unsafe { std::mem::zeroed() })),
             version: KeychainVersion::V2,
         };
         let provider = SessionProvider::new(signer, "https://rpc.example.com".into())
