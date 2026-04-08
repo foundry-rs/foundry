@@ -129,6 +129,23 @@ impl EvmOpts {
             .build()
     }
 
+    /// Infers the network configuration from the fork chain ID if not already set.
+    ///
+    /// When a fork URL is configured and the network has not been explicitly set,
+    /// this fetches the chain ID from the remote endpoint and calls
+    /// [`NetworkConfigs::with_chain_id`] to auto-enable the correct network
+    /// (e.g. Tempo, OP Stack) based on the chain ID.
+    pub async fn infer_network_from_fork(&mut self) {
+        if !self.networks.is_tempo()
+            && !self.networks.is_optimism()
+            && let Some(ref fork_url) = self.fork_url
+            && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(fork_url)
+            && let Ok(chain_id) = provider.get_chain_id().await
+        {
+            self.networks = self.networks.with_chain_id(chain_id);
+        }
+    }
+
     /// Returns a tuple with [`EvmEnv`], `TxEnv`, and the actual fork block number.
     ///
     /// If a `fork_url` is set, creates a provider and passes it to both `EvmOpts::fork_evm_env`

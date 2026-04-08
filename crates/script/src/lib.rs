@@ -14,8 +14,7 @@ extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::{AnyNetwork, Network};
-use alloy_provider::Provider as AlloyProvider;
+use alloy_network::Network;
 use alloy_primitives::{
     Address, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -274,14 +273,7 @@ impl ScriptArgs {
         let (_, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         // Auto-detect network from fork chain ID when not explicitly configured.
-        if !evm_opts.networks.is_tempo()
-            && !evm_opts.networks.is_optimism()
-            && let Some(ref fork_url) = evm_opts.fork_url
-            && let Ok(provider) = evm_opts.fork_provider_with_url::<AnyNetwork>(fork_url)
-            && let Ok(chain_id) = AlloyProvider::get_chain_id(&provider).await
-        {
-            evm_opts.networks = evm_opts.networks.with_chain_id(chain_id);
-        }
+        evm_opts.infer_network_from_fork().await;
 
         let is_tempo = evm_opts.networks.is_tempo();
 

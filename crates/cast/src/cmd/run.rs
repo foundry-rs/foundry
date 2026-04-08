@@ -5,7 +5,7 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
+use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
@@ -135,14 +135,7 @@ impl RunArgs {
         let mut evm_opts = figment.extract::<EvmOpts>()?;
 
         // Auto-detect network from fork chain ID when not explicitly configured.
-        if !evm_opts.networks.is_tempo()
-            && !evm_opts.networks.is_optimism()
-            && let Some(ref fork_url) = evm_opts.fork_url
-            && let Ok(provider) = evm_opts.fork_provider_with_url::<AnyNetwork>(fork_url)
-            && let Ok(chain_id) = provider.get_chain_id().await
-        {
-            evm_opts.networks = evm_opts.networks.with_chain_id(chain_id);
-        }
+        evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
             self.run_with_evm::<TempoEvmNetwork>().await
