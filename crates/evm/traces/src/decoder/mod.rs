@@ -1400,7 +1400,7 @@ mod tests {
     #[test]
     fn test_identify_addresses_skips_precompiles() {
         use crate::identifier::TraceIdentifier;
-        use foundry_evm_core::precompiles::SHA_256;
+        use foundry_evm_core::{precompiles::SHA_256, tempo::TEMPO_PRECOMPILE_ADDRESSES};
 
         // A mock identifier that records which addresses it was asked to identify.
         struct RecordingIdentifier {
@@ -1427,7 +1427,7 @@ mod tests {
         // Set the root node to the regular address.
         arena.nodes_mut()[0].trace.address = regular_addr;
 
-        // Add a precompile node (known address, and `maybe_precompile` = true).
+        // Add a standard EVM precompile node (known address, and `maybe_precompile` = true).
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
                 address: SHA_256,
@@ -1452,10 +1452,23 @@ mod tests {
             ..Default::default()
         });
 
+        // Add a Tempo precompile (not flagged by inspector, caught by is_known_precompile).
+        let tempo_precompile = TEMPO_PRECOMPILE_ADDRESSES[0];
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: tempo_precompile,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 3,
+            ..Default::default()
+        });
+
         let mut identifier = RecordingIdentifier { queried: Vec::new() };
         decoder.identify_addresses(&arena, &mut identifier);
 
-        // The identifier should only see the regular address, never the precompile.
+        // The identifier should only see the regular address, never any precompile.
         assert_eq!(identifier.queried, vec![regular_addr]);
     }
 }
