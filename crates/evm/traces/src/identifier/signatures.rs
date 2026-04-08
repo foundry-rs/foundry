@@ -318,10 +318,7 @@ mod tests {
         let reloaded = SignaturesCache::from(disk);
 
         // Known signature survives the round-trip.
-        assert_eq!(
-            reloaded.get(&known_selector),
-            Some(Some("transfer(address,uint256)".into()))
-        );
+        assert_eq!(reloaded.get(&known_selector), Some(Some("transfer(address,uint256)".into())));
         // Unknown signature is gone — it will be re-queried next session.
         assert_eq!(reloaded.get(&unknown_selector), None);
         assert!(!reloaded.contains_key(&unknown_selector));
