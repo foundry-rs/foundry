@@ -784,6 +784,7 @@ impl BundledState<TempoEvmNetwork> {
                 max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
                 ..Default::default()
             },
+            fee_token: self.script_config.fee_token,
             calls: calls.clone(),
             ..Default::default()
         };
