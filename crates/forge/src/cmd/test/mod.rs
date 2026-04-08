@@ -12,7 +12,9 @@ use crate::{
         identifier::SignaturesIdentifier,
     },
 };
+use alloy_network::AnyNetwork;
 use alloy_primitives::U256;
+use alloy_provider::Provider as AlloyProvider;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
@@ -337,6 +339,16 @@ impl TestArgs {
         } else {
             InternalTraceMode::None
         };
+
+        // Auto-detect Network from fork chain ID when not explicitly configured.
+        if !evm_opts.networks.is_tempo()
+            && !evm_opts.networks.is_optimism()
+            && let Some(ref fork_url) = evm_opts.fork_url
+            && let Ok(provider) = evm_opts.fork_provider_with_url::<AnyNetwork>(fork_url)
+            && let Ok(chain_id) = AlloyProvider::get_chain_id(&provider).await
+        {
+            evm_opts.networks = evm_opts.networks.with_chain_id(chain_id);
+        }
 
         // Dispatch based on network type.
         let (libraries, mut outcome) = if evm_opts.networks.is_tempo() {
