@@ -6,6 +6,7 @@ use foundry_compilers::{
 };
 use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
 use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
@@ -244,22 +245,25 @@ pub struct TraceResult {
 
 impl TraceResult {
     /// Create a new [`TraceResult`] from a [`RawCallResult`].
-    pub fn from_raw(raw: RawCallResult, trace_kind: TraceKind) -> Self {
+    pub fn from_raw<FEN: FoundryEvmNetwork>(
+        raw: RawCallResult<FEN>,
+        trace_kind: TraceKind,
+    ) -> Self {
         let RawCallResult { gas_used, traces, reverted, .. } = raw;
         Self { success: !reverted, traces: traces.map(|arena| vec![(trace_kind, arena)]), gas_used }
     }
 }
 
-impl From<DeployResult> for TraceResult {
-    fn from(result: DeployResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for TraceResult {
+    fn from(result: DeployResult<FEN>) -> Self {
         Self::from_raw(result.raw, TraceKind::Deployment)
     }
 }
 
-impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
-    type Error = EvmError;
+impl<FEN: FoundryEvmNetwork> TryFrom<Result<DeployResult<FEN>, EvmError<FEN>>> for TraceResult {
+    type Error = EvmError<FEN>;
 
-    fn try_from(value: Result<DeployResult, EvmError>) -> Result<Self, Self::Error> {
+    fn try_from(value: Result<DeployResult<FEN>, EvmError<FEN>>) -> Result<Self, Self::Error> {
         match value {
             Ok(result) => Ok(Self::from(result)),
             Err(EvmError::Execution(err)) => Ok(Self::from_raw(err.raw, TraceKind::Deployment)),
@@ -268,8 +272,8 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
-impl From<RawCallResult> for TraceResult {
-    fn from(result: RawCallResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<RawCallResult<FEN>> for TraceResult {
+    fn from(result: RawCallResult<FEN>) -> Self {
         Self::from_raw(result, TraceKind::Execution)
     }
 }

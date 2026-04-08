@@ -268,6 +268,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 call_details: CallDetails { target: address, calldata: calldata.clone() },
             }],
             new_coverage,
+            None,
         );
 
         // Handle `vm.assume`.

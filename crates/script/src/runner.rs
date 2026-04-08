@@ -2,7 +2,7 @@ use super::{ScriptConfig, ScriptResult};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_evm::revm::context::Transaction;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
@@ -10,7 +10,10 @@ use foundry_common::TransactionMaybeSigned;
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
-    core::{FoundryTransaction, evm::FoundryEvmNetwork},
+    core::{
+        FoundryTransaction,
+        evm::{FoundryEvmNetwork, TransactionRequestFor},
+    },
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
     revm::interpreter::{InstructionResult, return_ok},
@@ -74,7 +77,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     traces.push((TraceKind::Deployment, deploy_traces));
                 }
 
-                let mut tx_req = <FEN::Network as Network>::TransactionRequest::default();
+                let mut tx_req = TransactionRequestFor::<FEN>::default();
                 tx_req.set_from(self.evm_opts.sender);
                 tx_req.set_input(code.clone());
                 tx_req.set_nonce(sender_nonce + library_transactions.len() as u64);
@@ -107,7 +110,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         traces.push((TraceKind::Deployment, deploy_traces));
                     }
 
-                    let mut tx_req = <FEN::Network as Network>::TransactionRequest::default();
+                    let mut tx_req = TransactionRequestFor::<FEN>::default();
                     tx_req.set_from(self.evm_opts.sender);
                     tx_req.set_input(calldata);
                     tx_req.set_nonce(sender_nonce + library_transactions.len() as u64);

@@ -596,6 +596,30 @@ impl<N: Network> Backend<N> {
         Err(BlockchainError::TempoTransactionUnsupported)
     }
 
+    /// Builds the [`InspectorTxConfig`] from the backend's current settings.
+    fn inspector_tx_config(&self) -> InspectorTxConfig {
+        InspectorTxConfig {
+            print_traces: self.print_traces,
+            print_logs: self.print_logs,
+            enable_steps_tracing: self.enable_steps_tracing,
+            call_trace_decoder: self.call_trace_decoder.clone(),
+        }
+    }
+
+    /// Builds the [`PoolTxGasConfig`] from the given EVM environment.
+    fn pool_tx_gas_config(&self, evm_env: &EvmEnv) -> PoolTxGasConfig {
+        let spec_id = *evm_env.spec_id();
+        let is_cancun = spec_id >= SpecId::CANCUN;
+        let blob_params = self.blob_params();
+        PoolTxGasConfig {
+            disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
+            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
+            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
+            max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
+            is_cancun,
+        }
+    }
+
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> u64 {
         self.evm_env.read().block_env.gas_limit
@@ -1241,26 +1265,32 @@ impl<N: Network> Backend<N> {
     {
         let inspector = self.build_mining_inspector();
 
+        macro_rules! run {
+            ($evm:expr) => {{
+                self.inject_precompiles($evm.precompiles_mut());
+                let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
+                executor.apply_pre_execution_changes().expect("pre-execution changes failed");
+                let pool_result = execute_pool_transactions(
+                    &mut executor,
+                    pool_transactions,
+                    gas_config,
+                    inspector_tx_config,
+                    self.cheats(),
+                    validator,
+                );
+                let (evm, block_result) = executor.finish().expect("executor finish failed");
+                drop(evm);
+                (pool_result, block_result)
+            }};
+        }
+
         if self.is_optimism() {
             let op_env = EvmEnv::new(
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
                 evm_env.block_env.clone(),
             );
             let mut evm = OpEvmFactory::default().create_evm_with_inspector(db, op_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         } else if self.is_tempo() {
             let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
             let tempo_env = EvmEnv::new(
@@ -1272,37 +1302,11 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         } else {
             let mut evm =
                 EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         }
     }
 
@@ -1431,17 +1435,7 @@ impl<N: Network> Backend<N> {
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
 
         if self.print_traces {
@@ -1464,17 +1458,7 @@ impl<N: Network> Backend<N> {
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state: _ } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
@@ -2266,17 +2250,7 @@ impl<N: Network> Backend<N> {
             tx.pending_transaction.transaction.as_ref(),
             *tx.pending_transaction.sender(),
         )?;
-        let (exit_reason, gas_used, out, logs) = match result {
-            ExecutionResult::Success { reason, gas, logs, output, .. } => {
-                (reason.into(), gas.used(), Some(output), logs)
-            }
-            ExecutionResult::Revert { gas, output, logs, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
-            }
-            ExecutionResult::Halt { reason, gas, logs, .. } => {
-                (reason.into_instruction_result(), gas.used(), None, logs)
-            }
-        };
+        let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
 
         inspector.print_logs();
 
@@ -2496,22 +2470,8 @@ where
                 let excess_blob_gas =
                     if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
-                let blob_params = self.blob_params();
-
-                let inspector_tx_config = InspectorTxConfig {
-                    print_traces: self.print_traces,
-                    print_logs: self.print_logs,
-                    enable_steps_tracing: self.enable_steps_tracing,
-                    call_trace_decoder: self.call_trace_decoder.clone(),
-                };
-
-                let gas_config = PoolTxGasConfig {
-                    disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-                    tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-                    tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-                    max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-                    is_cancun,
-                };
+                let inspector_tx_config = self.inspector_tx_config();
+                let gas_config = self.pool_tx_gas_config(&evm_env);
 
                 let (pool_result, block_result) = self.execute_with_block_executor(
                     &mut **db,
@@ -2752,22 +2712,8 @@ where
             if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
         let excess_blob_gas = if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
-        let blob_params = self.blob_params();
-
-        let inspector_tx_config = InspectorTxConfig {
-            print_traces: self.print_traces,
-            print_logs: self.print_logs,
-            enable_steps_tracing: self.enable_steps_tracing,
-            call_trace_decoder: self.call_trace_decoder.clone(),
-        };
-
-        let gas_config = PoolTxGasConfig {
-            disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-            max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-            is_cancun,
-        };
+        let inspector_tx_config = self.inspector_tx_config();
+        let gas_config = self.pool_tx_gas_config(&evm_env);
 
         let (pool_result, block_result) = self.execute_with_block_executor(
             &mut cache_db,
@@ -3022,17 +2968,7 @@ where
             let ResultAndState { result, state: _ } =
                 self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
 
-            let (exit_reason, gas_used, out) = match result {
-                ExecutionResult::Success { reason, gas, output, .. } => {
-                    (reason.into(), gas.used(), Some(output))
-                }
-                ExecutionResult::Revert { gas, output, .. } => {
-                    (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-                }
-                ExecutionResult::Halt { reason, gas, .. } => {
-                    (reason.into_instruction_result(), gas.used(), None)
-                }
-            };
+            let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
 
             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
@@ -3263,24 +3199,9 @@ where
             evm_env.block_env = block_env_from_header(&block.header);
 
             let spec_id = *evm_env.spec_id();
-            let is_cancun = spec_id >= SpecId::CANCUN;
 
-            let blob_params = self.blob_params();
-
-            let inspector_tx_config = InspectorTxConfig {
-                print_traces: self.print_traces,
-                print_logs: self.print_logs,
-                enable_steps_tracing: self.enable_steps_tracing,
-                call_trace_decoder: self.call_trace_decoder.clone(),
-            };
-
-            let gas_config = PoolTxGasConfig {
-                disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-                tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-                tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-                max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-                is_cancun,
-            };
+            let inspector_tx_config = self.inspector_tx_config();
+            let gas_config = self.pool_tx_gas_config(&evm_env);
 
             self.execute_with_block_executor(
                 &mut cache_db,
@@ -4399,6 +4320,15 @@ where
     }
 }
 
+/// Replaces the cached hash of a [`Signed`] transaction, preserving the inner tx and signature.
+fn rehash<T>(signed: Signed<T>, hash: B256) -> Signed<T>
+where
+    T: alloy_consensus::transaction::RlpEcdsaEncodableTx,
+{
+    let (t, sig, _) = signed.into_parts();
+    Signed::new_unchecked(t, sig, hash)
+}
+
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     tx_hash: Option<B256>,
@@ -4502,31 +4432,11 @@ pub fn transaction_build(
         .expect("non-standard transactions are handled above");
 
     let envelope = match eth_envelope {
-        TxEnvelope::Legacy(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
-        }
-        TxEnvelope::Eip1559(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
-        }
-        TxEnvelope::Eip2930(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
-        }
-        TxEnvelope::Eip4844(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
-        }
-        TxEnvelope::Eip7702(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
-        }
+        TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
+        TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
+        TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
+        TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
+        TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 
     let tx = Transaction {
@@ -4579,6 +4489,23 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
+}
+
+/// Unpacks an [`ExecutionResult`] into its exit reason, gas used, output, and logs.
+fn unpack_execution_result<H: IntoInstructionResult>(
+    result: ExecutionResult<H>,
+) -> (InstructionResult, u64, Option<Output>, Vec<revm::primitives::Log>) {
+    match result {
+        ExecutionResult::Success { reason, gas, output, logs, .. } => {
+            (reason.into(), gas.used(), Some(output), logs)
+        }
+        ExecutionResult::Revert { gas, output, logs, .. } => {
+            (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
+        }
+        ExecutionResult::Halt { reason, gas, logs, .. } => {
+            (reason.into_instruction_result(), gas.used(), None, logs)
+        }
+    }
 }
 
 /// Converts a halt reason into an [`InstructionResult`].

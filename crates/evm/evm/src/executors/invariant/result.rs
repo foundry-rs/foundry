@@ -143,6 +143,12 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 && let Some(value) = I256::try_from_be_slice(&inv_result.result[..32])
             {
                 invariant_test.update_optimization_value(value, &invariant_run.inputs);
+                // Track the best value and its prefix length for this run
+                // (used for corpus persistence — materialized once at run end).
+                if invariant_run.optimization_value.is_none_or(|prev| value > prev) {
+                    invariant_run.optimization_value = Some(value);
+                    invariant_run.optimization_prefix_len = invariant_run.inputs.len();
+                }
             }
             call_results = Some(inv_result);
         } else {

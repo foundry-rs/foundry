@@ -1426,7 +1426,7 @@ Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
         cmd.assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
-[FAIL: invariant_shrink_big_sequence replay failure]
+[FAIL: condition met]
 	[Sequence] (original: [..], shrunk: 77)
 ...
 "#]]);
@@ -1952,6 +1952,73 @@ contract InvariantOptimizeNegativeTest is Test {
 [..]calldata=increase()[..]
 [..]calldata=increase()[..]
  invariant_optimize_negative() (best: 0, runs: 1, calls: 4)
+...
+"#]]);
+});
+
+// Test that optimization mode:
+// 1. Evaluates at every prefix regardless of check_interval (finds true max, not just last-call
+//    value)
+// 2. Persists the best value across runs via corpus directory
+forgetest_init!(invariant_optimization_check_interval_and_persistence, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        config.invariant.check_interval = 0;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test(
+        "InvariantOptimize.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract PeakHandler {
+    int256 public value;
+
+    // Value peaks at call 3, then drops.
+    function step() external {
+        value++;
+        if (value > 3) {
+            value = -100;
+        }
+    }
+}
+
+contract InvariantOptimizeTest is Test {
+    PeakHandler handler;
+
+    function setUp() public {
+        handler = new PeakHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 5
+    /// forge-config: default.invariant.check_interval = 0
+    function invariant_optimize_peak() public view returns (int256) {
+        return handler.value();
+    }
+}
+"#,
+    );
+
+    // Run 1: best should be 3 (prefix len 3), NOT -100 (depth 5).
+    // Validates check_interval=0 doesn't skip optimization sampling.
+    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] [..]
+[..]calldata=step()[..]
+[..]calldata=step()[..]
+[..]calldata=step()[..]
+ invariant_optimize_peak() (best: 3, runs: 1, calls: 5)
+...
+"#]]);
+
+    // Run 2: persisted best should survive across runs.
+    cmd.forge_fuse().args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+...
+ invariant_optimize_peak() (best: 3, runs: 1, calls: 5)
 ...
 "#]]);
 });

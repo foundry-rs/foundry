@@ -6,13 +6,13 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_network::{AnyNetwork, Ethereum, Network};
+use alloy_network::{AnyNetwork, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
 };
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionInput;
+use alloy_rpc_types::TransactionInputKind;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
@@ -24,7 +24,7 @@ use foundry_common::{
 use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    core::evm::EthEvmNetwork,
+    core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
@@ -41,11 +41,11 @@ use yansi::Paint;
 
 /// State after linking, contains the linked build data along with library addresses and optional
 /// array of libraries that need to be predeployed.
-pub struct LinkedState {
+pub struct LinkedState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig<EthEvmNetwork>,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
 }
 
@@ -62,10 +62,10 @@ pub struct ExecutionData {
     pub abi: JsonAbi,
 }
 
-impl LinkedState {
+impl<FEN: FoundryEvmNetwork> LinkedState<FEN> {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     /// This includes the function to call and the calldata to pass to it.
-    pub async fn prepare_execution(self) -> Result<PreExecutionState> {
+    pub async fn prepare_execution(self) -> Result<PreExecutionState<FEN>> {
         let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
 
         let target_contract = build_data.get_target_contract()?;
@@ -94,19 +94,19 @@ impl LinkedState {
 
 /// Same as [LinkedState], but also contains [ExecutionData].
 #[derive(Debug)]
-pub struct PreExecutionState {
+pub struct PreExecutionState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig<EthEvmNetwork>,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
 }
 
-impl PreExecutionState {
+impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
     /// Executes the script and returns the state after execution.
     /// Might require executing script twice in cases when we determine sender from execution.
-    pub async fn execute(mut self) -> Result<ExecutedState> {
+    pub async fn execute(mut self) -> Result<ExecutedState<FEN>> {
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
@@ -149,8 +149,8 @@ impl PreExecutionState {
     /// Executes the script using the provided runner and returns the [ScriptResult].
     pub async fn execute_with_runner(
         &self,
-        runner: &mut ScriptRunner<EthEvmNetwork>,
-    ) -> Result<ScriptResult<Ethereum>> {
+        runner: &mut ScriptRunner<FEN>,
+    ) -> Result<ScriptResult<FEN::Network>> {
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
@@ -190,7 +190,7 @@ impl PreExecutionState {
     /// them instead.
     fn maybe_new_sender(
         &self,
-        transactions: Option<&BroadcastableTransactions<Ethereum>>,
+        transactions: Option<&BroadcastableTransactions<FEN::Network>>,
     ) -> Result<Option<Address>> {
         let mut new_sender = None;
 
@@ -230,7 +230,7 @@ pub struct RpcData {
 
 impl RpcData {
     /// Iterates over script transactions and collects RPC urls.
-    fn from_transactions(txs: &BroadcastableTransactions<Ethereum>) -> Self {
+    fn from_transactions<N: Network>(txs: &BroadcastableTransactions<N>) -> Self {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
         let total_rpcs =
             txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
@@ -282,32 +282,33 @@ pub struct ExecutionArtifacts {
 }
 
 /// State after the script has been executed.
-pub struct ExecutedState {
+pub struct ExecutedState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig<EthEvmNetwork>,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
-    pub execution_result: ScriptResult<Ethereum>,
+    pub execution_result: ScriptResult<FEN::Network>,
 }
 
-impl ExecutedState {
+impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     /// Collects the data we need for simulation and various post-execution tasks.
-    pub async fn prepare_simulation(self) -> Result<PreSimulationState<Ethereum>> {
+    pub async fn prepare_simulation(self) -> Result<PreSimulationState<FEN>> {
         let returns = self.get_returns()?;
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
-        let mut txs: BroadcastableTransactions<Ethereum> =
+        let mut txs: BroadcastableTransactions<FEN::Network> =
             self.execution_result.transactions.clone().unwrap_or_default();
 
         // Ensure that unsigned transactions have both `data` and `input` populated to avoid
         // issues with eth_estimateGas and eth_sendTransaction requests.
         for tx in &mut txs {
-            if let Some(req) = tx.transaction.as_unsigned_mut() {
-                req.input =
-                    TransactionInput::maybe_both(std::mem::take(&mut req.input).into_input());
+            if let Some(req) = tx.transaction.as_unsigned_mut()
+                && let Some(input) = req.input().cloned()
+            {
+                *req = req.clone().with_input_kind(input, TransactionInputKind::Both);
             }
         }
         let rpc_data = RpcData::from_transactions(&txs);
@@ -400,7 +401,7 @@ impl ExecutedState {
     }
 }
 
-impl<N: Network> PreSimulationState<N> {
+impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     pub async fn show_json(&self) -> Result<()> {
         let mut result = self.execution_result.clone();
 

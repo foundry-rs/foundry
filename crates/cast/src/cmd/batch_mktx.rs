@@ -5,7 +5,6 @@
 
 use crate::{
     call_spec::CallSpec,
-    tempo::sign_with_access_key,
     tx::{self, CastTxBuilder},
 };
 use alloy_consensus::SignableTransaction;
@@ -164,7 +163,7 @@ impl BatchMakeTxArgs {
         };
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
-            let raw_tx = sign_with_access_key(tx, &signer, access_key.wallet_address).await?;
+            let raw_tx = tx.sign_with_access_key(&signer, access_key.wallet_address).await?;
             alloy_primitives::hex::encode(raw_tx)
         } else {
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;

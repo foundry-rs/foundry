@@ -23,7 +23,7 @@ use foundry_cli::{
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
     ProjectCompileOutput,
-    artifacts::output_selection::OutputSelection,
+    artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -40,11 +40,15 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use foundry_evm::{
+    core::evm::{
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+    },
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
 use rand::Rng;
 use regex::Regex;
+use revm::context::Transaction;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -315,13 +319,10 @@ impl TestArgs {
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 
-        // Determine print verbosity and executor verbosity.
-        let verbosity = evm_opts.verbosity;
+        // Determine executor verbosity.
         if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
             evm_opts.verbosity = 3;
         }
-
-        let (evm_env, tx_env, fork_block) = evm_opts.env().await?;
 
         // Enable internal tracing for more informative flamegraph.
         if should_draw && !self.decode_internal {
@@ -337,23 +338,30 @@ impl TestArgs {
             InternalTraceMode::None
         };
 
-        // Prepare the test builder.
-        let config = Arc::new(config);
-        let runner = MultiContractRunnerBuilder::new(config.clone())
-            .set_debug(should_debug)
-            .set_decode_internal(decode_internal)
-            .initial_balance(evm_opts.initial_balance)
-            .evm_spec(config.evm_spec_id())
-            .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
-            .enable_isolation(evm_opts.isolate)
-            .networks(evm_opts.networks)
-            .fail_fast(self.fail_fast)
-            .set_coverage(coverage)
-            .build::<MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
-
-        let libraries = runner.libraries.clone();
-        let mut outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
+        // Dispatch based on network type.
+        let (libraries, mut outcome) = if evm_opts.networks.is_tempo() {
+            self.build_and_run_tests::<TempoEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+            )
+            .await?
+        } else {
+            self.build_and_run_tests::<EthEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+            )
+            .await?
+        };
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -427,10 +435,44 @@ impl TestArgs {
         Ok(outcome)
     }
 
-    /// Run all tests that matches the filter predicate from a test runner
-    async fn run_tests_inner(
+    /// Build the test runner and execute tests for a specific network type.
+    #[allow(clippy::too_many_arguments)]
+    async fn build_and_run_tests<FEN: FoundryEvmNetwork>(
         &self,
-        mut runner: MultiContractRunner,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        filter: &ProjectPathsAwareFilter,
+        coverage: bool,
+        should_debug: bool,
+        decode_internal: InternalTraceMode,
+    ) -> eyre::Result<(Libraries, TestOutcome)> {
+        let verbosity = evm_opts.verbosity;
+        let (evm_env, tx_env, fork_block) =
+            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+
+        let config = Arc::new(config);
+        let runner = MultiContractRunnerBuilder::new(config.clone())
+            .set_debug(should_debug)
+            .set_decode_internal(decode_internal)
+            .initial_balance(evm_opts.initial_balance)
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .enable_isolation(evm_opts.isolate)
+            .networks(evm_opts.networks)
+            .fail_fast(self.fail_fast)
+            .set_coverage(coverage)
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
+
+        let libraries = runner.libraries.clone();
+        let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
+        Ok((libraries, outcome))
+    }
+
+    /// Run all tests that matches the filter predicate from a test runner
+    async fn run_tests_inner<FEN: FoundryEvmNetwork>(
+        &self,
+        mut runner: MultiContractRunner<FEN>,
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
@@ -470,7 +512,7 @@ impl TestArgs {
                 }
                 sh_warn!("{msg}")?;
             }
-            return Ok(TestOutcome::empty(Some(runner), false));
+            return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
         if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
@@ -512,17 +554,19 @@ impl TestArgs {
                 }
             });
             sh_println!("{}", serde_json::to_string(&results)?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
+            let kc = runner.known_contracts.clone();
+            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
+            let kc = runner.known_contracts.clone();
+            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         let remote_chain =
-            if runner.fork.is_some() { runner.tx_env.chain_id.map(Into::into) } else { None };
+            if runner.fork.is_some() { runner.tx_env.chain_id().map(Into::into) } else { None };
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();
@@ -865,7 +909,10 @@ impl TestArgs {
 
         // Reattach the task.
         match handle.await {
-            Ok(result) => outcome.runner = Some(result?),
+            Ok(result) => {
+                let runner = result?;
+                outcome.known_contracts = Some(runner.known_contracts);
+            }
             Err(e) => match e.try_into_panic() {
                 Ok(payload) => std::panic::resume_unwind(payload),
                 Err(e) => return Err(e.into()),
@@ -947,7 +994,10 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result<TestOutcome> {
+fn list<FEN: FoundryEvmNetwork>(
+    runner: MultiContractRunner<FEN>,
+    filter: &ProjectPathsAwareFilter,
+) -> Result<TestOutcome> {
     let results = runner.list(filter);
 
     if shell::is_json() {
@@ -961,7 +1011,7 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
             }
         }
     }
-    Ok(TestOutcome::empty(Some(runner), false))
+    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
 }
 
 /// Load persisted filter (with last test run failures) from file.
