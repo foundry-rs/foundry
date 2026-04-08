@@ -122,6 +122,13 @@ pub struct RunArgs {
     /// Enable the tx gas limit checks as imposed by Osaka (EIP-7825).
     #[arg(long)]
     pub enable_tx_gas_limit: bool,
+
+    /// Enable JIT compilation of EVM bytecodes using revmc.
+    ///
+    /// When enabled, EVM bytecodes are JIT-compiled to native code before execution,
+    /// which can significantly speed up replay of compute-heavy transactions.
+    #[arg(long)]
+    pub jit: bool,
 }
 
 impl RunArgs {
@@ -138,13 +145,26 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            self.run_with_evm::<TempoEvmNetwork>().await
+            if self.jit {
+                return Err(eyre::eyre!("--jit is not supported for Tempo networks"));
+            }
+            self.run_with_evm::<TempoEvmNetwork>(revmc::runtime::JitBackend::disabled()).await
         } else {
-            self.run_with_evm::<EthEvmNetwork>().await
+            let jit_backend = if self.jit {
+                let config = revmc::runtime::RuntimeConfig { blocking: true, ..Default::default() };
+                revmc::runtime::JitBackend::new(config)
+                    .map_err(|e| eyre::eyre!("failed to start JIT backend: {e}"))?
+            } else {
+                revmc::runtime::JitBackend::disabled()
+            };
+            self.run_with_evm::<EthEvmNetwork>(jit_backend).await
         }
     }
 
-    async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+    async fn run_with_evm<FEN: FoundryEvmNetwork>(
+        self,
+        jit_backend: revmc::runtime::JitBackend,
+    ) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
@@ -241,6 +261,8 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
+
+        executor.set_jit_backend(jit_backend);
 
         evm_env.cfg_env.set_spec(executor.spec_id());
 

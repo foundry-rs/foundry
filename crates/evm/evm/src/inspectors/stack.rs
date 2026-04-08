@@ -397,7 +397,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         with_cloned_context(ecx, |db, evm_env, journal_inner| {
             let mut evm = FEN::EvmFactory::default()
-                .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
+                .create_foundry_evm_with_inspector(
+                    db,
+                    evm_env,
+                    &mut inspector,
+                    revmc::runtime::JitBackend::disabled(),
+                )
                 .into_nested_evm();
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
@@ -416,7 +421,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let mut evm = FEN::EvmFactory::default()
-            .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
+            .create_foundry_evm_with_inspector(
+                db,
+                evm_env,
+                &mut inspector,
+                revmc::runtime::JitBackend::disabled(),
+            )
             .into_nested_evm();
         f(&mut evm)?;
         Ok(evm.to_evm_env())
@@ -769,7 +779,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             let (res, nested_env) = {
                 let (db, journal) = ecx.db_journal_inner_mut();
                 let mut evm = FEN::EvmFactory::default()
-                    .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
+                    .create_foundry_evm_with_inspector(
+                        db,
+                        evm_env,
+                        &mut inspector,
+                        revmc::runtime::JitBackend::disabled(),
+                    )
                     .into_nested_evm();
 
                 evm.journal_inner_mut().state = {

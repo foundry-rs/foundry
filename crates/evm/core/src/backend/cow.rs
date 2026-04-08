@@ -91,10 +91,12 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
+        let jit_backend = self.backend.jit_backend.clone();
         let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
             self,
             evm_env.clone(),
             inspector,
+            jit_backend,
         );
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;

@@ -177,7 +177,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, journal_inner| {
             let mut evm = FEN::EvmFactory::default()
-                .create_foundry_evm_with_inspector(db, evm_env, cheats)
+                .create_foundry_evm_with_inspector(
+                    db,
+                    evm_env,
+                    cheats,
+                    revmc::runtime::JitBackend::disabled(),
+                )
                 .into_nested_evm();
             *evm.journal_inner_mut() = journal_inner;
             f(&mut evm)?;
@@ -195,7 +200,12 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
         let mut evm = FEN::EvmFactory::default()
-            .create_foundry_evm_with_inspector(db, evm_env, cheats)
+            .create_foundry_evm_with_inspector(
+                db,
+                evm_env,
+                cheats,
+                revmc::runtime::JitBackend::disabled(),
+            )
             .into_nested_evm();
         f(&mut evm)?;
         Ok(evm.to_evm_env())

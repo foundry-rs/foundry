@@ -467,6 +467,8 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     active_fork_ids: Option<(LocalForkId, ForkLookupIndex)>,
     /// holds additional Backend data
     inner: BackendInner<FEN>,
+    /// Optional JIT compilation backend (revmc).
+    pub jit_backend: revmc::runtime::JitBackend,
 }
 
 impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
@@ -477,6 +479,7 @@ impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
             fork_init_journaled_state: self.fork_init_journaled_state.clone(),
             active_fork_ids: self.active_fork_ids,
             inner: self.inner.clone(),
+            jit_backend: self.jit_backend.clone(),
         }
     }
 }
@@ -489,6 +492,7 @@ impl<FEN: FoundryEvmNetwork> Debug for Backend<FEN> {
             .field("fork_init_journaled_state", &self.fork_init_journaled_state)
             .field("active_fork_ids", &self.active_fork_ids)
             .field("inner", &self.inner)
+            .field("jit_backend", &self.jit_backend)
             .finish()
     }
 }
@@ -525,6 +529,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
             inner,
+            jit_backend: revmc::runtime::JitBackend::disabled(),
         };
 
         if let Some(fork) = fork {
@@ -566,6 +571,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             inner: Default::default(),
+            jit_backend: self.jit_backend.clone(),
         }
     }
 
@@ -816,10 +822,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind());
+        let jit_backend = self.jit_backend.clone();
         let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
             self,
             evm_env.to_owned(),
             inspector,
+            jit_backend,
         );
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 

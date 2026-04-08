@@ -387,6 +387,9 @@ revm = { version = "36.0.0", default-features = false }
 revm-inspectors = { version = "0.36.0", features = ["serde"] }
 op-revm = { version = "17.0.0", default-features = false }
 
+# revmc
+revmc = { version = "0.1.0", default-features = false }
+
 ## cli
 anstream = "0.6"
 anstyle = "1.0"
@@ -559,6 +562,9 @@ alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = 
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
 # op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
 revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", branch = "alloy-2.0" }
+
+## revmc
+revmc = { path = "/home/doni/github/paradigmxyz/revmc/crates/revmc" }
 
 ## foundry
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", branch = "main" }

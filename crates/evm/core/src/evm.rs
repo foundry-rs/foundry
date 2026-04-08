@@ -170,6 +170,7 @@ pub trait FoundryEvmFactory:
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
+        jit_backend: revmc::runtime::JitBackend,
     ) -> Self::FoundryEvm<'db, I>;
 
     /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
@@ -196,11 +197,13 @@ impl FoundryEvmFactory for EthEvmFactory {
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
         inspector: I,
+        jit_backend: revmc::runtime::JitBackend,
     ) -> Self::FoundryEvm<'db, I> {
         let eth_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
-        let mut inner = eth_evm.into_inner();
-        inner.ctx.cfg.tx_chain_id_check = true;
+        let mut raw = eth_evm.into_inner();
+        raw.ctx.cfg.tx_chain_id_check = true;
 
+        let inner = revmc::revm_evm::JitEvm::new(raw, jit_backend);
         let mut evm = EthFoundryEvm { inner };
         evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
         evm
@@ -212,7 +215,15 @@ impl FoundryEvmFactory for EthEvmFactory {
         evm_env: EvmEnv,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = SpecId, Block = BlockEnv, Tx = TxEnv> + 'db> {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
+        Box::new(
+            self.create_foundry_evm_with_inspector(
+                db,
+                evm_env,
+                inspector,
+                revmc::runtime::JitBackend::disabled(),
+            )
+            .into_nested_evm(),
+        )
     }
 }
 
@@ -237,13 +248,15 @@ fn get_create2_factory_call_inputs(
     }
 }
 
-type EthRevmEvm<'db, I> = RevmEvm<
+type RawEthRevmEvm<'db, I> = RevmEvm<
     EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>,
     I,
     EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>,
     PrecompilesMap,
     EthFrame<EthInterpreter>,
 >;
+
+type EthRevmEvm<'db, I> = revmc::revm_evm::JitEvm<RawEthRevmEvm<'db, I>>;
 
 pub struct EthFoundryEvm<
     'db,
@@ -265,23 +278,21 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     type BlockEnv = BlockEnv;
 
     fn block(&self) -> &BlockEnv {
-        &self.inner.block
+        &self.inner.inner().block
     }
 
     fn chain_id(&self) -> u64 {
-        self.inner.ctx.cfg.chain_id
+        self.inner.inner().ctx.cfg.chain_id
     }
 
     fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        (&self.inner.ctx.journaled_state.database, &self.inner.inspector, &self.inner.precompiles)
+        let evm = self.inner.inner();
+        (&evm.ctx.journaled_state.database, &evm.inspector, &evm.precompiles)
     }
 
     fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
-        (
-            &mut self.inner.ctx.journaled_state.database,
-            &mut self.inner.inspector,
-            &mut self.inner.precompiles,
-        )
+        let evm = self.inner.inner_mut();
+        (&mut evm.ctx.journaled_state.database, &mut evm.inspector, &mut evm.precompiles)
     }
 
     fn set_inspector_enabled(&mut self, _enabled: bool) {
@@ -296,8 +307,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
 
         let mut handler = EthFoundryHandler::<I>::default();
         let result = handler.inspect_run(&mut self.inner)?;
-
-        Ok(ResultAndState::new(result, self.inner.ctx.journaled_state.inner.state.clone()))
+        Ok(ResultAndState::new(result, self.inner.inner().ctx.journaled_state.inner.state.clone()))
     }
 
     fn transact_system_call(
@@ -313,7 +323,8 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     where
         Self: Sized,
     {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.ctx;
+        let raw = self.inner.into_inner();
+        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = raw.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
@@ -325,7 +336,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     type Target = EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner.ctx
+        &self.inner.inner().ctx
     }
 }
 
@@ -333,7 +344,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     for EthFoundryEvm<'db, I>
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.ctx
+        &mut self.inner.inner_mut().ctx
     }
 }
 
@@ -485,13 +496,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
 impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> Handler
     for EthFoundryHandler<'db, I>
 {
-    type Evm = RevmEvm<
-        EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>,
-        I,
-        EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>,
-        PrecompilesMap,
-        EthFrame<EthInterpreter>,
-    >;
+    type Evm = EthRevmEvm<'db, I>;
     type Error = EVMError<DatabaseError>;
     type HaltReason = HaltReason;
 }
@@ -696,6 +701,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
+        _jit_backend: revmc::runtime::JitBackend,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
         let spec = *evm_env.spec_id();
@@ -719,7 +725,15 @@ impl FoundryEvmFactory for TempoEvmFactory {
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = TempoHardfork, Block = TempoBlockEnv, Tx = TempoTxEnv> + 'db>
     {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
+        Box::new(
+            self.create_foundry_evm_with_inspector(
+                db,
+                evm_env,
+                inspector,
+                revmc::runtime::JitBackend::disabled(),
+            )
+            .into_nested_evm(),
+        )
     }
 }
 

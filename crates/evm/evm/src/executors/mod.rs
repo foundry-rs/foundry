@@ -109,6 +109,8 @@ pub struct Executor<FEN: FoundryEvmNetwork> {
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
+    /// Optional JIT compilation backend for revmc.
+    jit_backend: revmc::runtime::JitBackend,
 }
 
 impl<FEN: FoundryEvmNetwork> Executor<FEN> {
@@ -142,6 +144,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             inspector,
             gas_limit,
             legacy_assertions,
+            jit_backend: revmc::runtime::JitBackend::disabled(),
         }
     }
 
@@ -154,7 +157,13 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
+            jit_backend: self.jit_backend.clone(),
         }
+    }
+
+    /// Sets the JIT compilation backend.
+    pub fn set_jit_backend(&mut self, jit_backend: revmc::runtime::JitBackend) {
+        self.jit_backend = jit_backend;
     }
 
     /// Returns a reference to the EVM backend.
@@ -560,7 +569,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        let jit_backend = self.jit_backend.clone();
         let backend = self.backend_mut();
+        backend.jit_backend = jit_backend;
         let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
         let mut result = convert_executed_result(
             evm_env,

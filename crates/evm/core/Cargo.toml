@@ -53,6 +53,7 @@ revm = { workspace = true, features = [
     "blst",
 ] }
 revm-inspectors.workspace = true
+revmc = { workspace = true, features = ["llvm"] }
 op-revm.workspace = true
 tempo-revm.workspace = true
 tempo-alloy.workspace = true
