@@ -4,8 +4,8 @@ use alloy_sol_types::{SolCall, abi, sol};
 use foundry_evm_core::{
     precompiles::{
         BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
-        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
-        MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
+        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
+        EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS},
 };
@@ -82,8 +82,17 @@ pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bo
     }
     // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
     if chain_id.is_some_and(|id| foundry_config::Chain::from_id(id).is_tempo())
-        && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address)
-            || TEMPO_TIP20_TOKENS.contains(&address))
+        && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address) || TEMPO_TIP20_TOKENS.contains(&address))
+    {
+        return true;
+    }
+    // Celo transfer precompile (only on Celo chains).
+    if chain_id.is_some_and(|id| {
+        matches!(
+            foundry_config::Chain::from_id(id).named(),
+            Some(foundry_config::NamedChain::Celo | foundry_config::NamedChain::CeloSepolia)
+        )
+    }) && address == CELO_TRANSFER
     {
         return true;
     }
