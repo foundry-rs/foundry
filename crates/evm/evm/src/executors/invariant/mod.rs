@@ -527,9 +527,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 invariant_test.test_data.failures.error =
                                     Some(InvariantFuzzError::Revert(case_data));
                                 result::RichInvariantResults::new(false, None)
-                            } else if !invariant_contract.is_optimization() {
-                                // In optimization mode, keep reverted calls to preserve
-                                // warp/roll values for correct replay during shrinking.
+                            } else if !invariant_contract.is_optimization()
+                                && !self.config.has_delay()
+                            {
+                                // Delay-enabled campaigns keep reverted calls so shrinking can
+                                // preserve their warp/roll contribution when building the final
+                                // counterexample.
                                 current_run.inputs.pop();
                                 result::RichInvariantResults::new(true, None)
                             } else {
