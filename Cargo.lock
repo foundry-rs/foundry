@@ -2708,6 +2708,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "itertools 0.14.0",
+ "op-alloy-consensus",
  "op-alloy-flz",
  "op-alloy-network",
  "rand 0.8.5",
