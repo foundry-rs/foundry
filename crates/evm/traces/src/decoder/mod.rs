@@ -94,6 +94,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the chain ID for network-specific precompile detection.
+    #[inline]
+    pub fn with_chain_id(mut self, chain_id: Option<u64>) -> Self {
+        self.decoder.chain_id = chain_id;
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -151,6 +158,9 @@ pub struct CallTraceDecoder {
 
     /// Disable showing of labels.
     pub disable_labels: bool,
+
+    /// The chain ID, used to determine network-specific precompiles.
+    pub chain_id: Option<u64>,
 }
 
 impl CallTraceDecoder {
@@ -216,6 +226,8 @@ impl CallTraceDecoder {
             debug_identifier: None,
 
             disable_labels: false,
+
+            chain_id: None,
         }
     }
 
@@ -250,7 +262,9 @@ impl CallTraceDecoder {
     ) -> Vec<IdentifiedAddress<'a>> {
         let nodes = arena.nodes().iter().filter(|node| {
             // Skip precompile addresses, they will never resolve externally.
-            if node.is_precompile() || precompiles::is_known_precompile(node.trace.address, 1) {
+            if node.is_precompile()
+                || precompiles::is_known_precompile(node.trace.address, self.chain_id)
+            {
                 return false;
             }
             let address = &node.trace.address;
@@ -395,7 +409,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace { label, ..Default::default() };
         }
 
-        if let Some(trace) = precompiles::decode(trace, 1) {
+        if let Some(trace) = precompiles::decode(trace, self.chain_id) {
             return trace;
         }
 
@@ -798,7 +812,7 @@ impl CallTraceDecoder {
                 // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER
                     || n.is_precompile()
-                    || precompiles::is_known_precompile(n.trace.address, 1)
+                    || precompiles::is_known_precompile(n.trace.address, self.chain_id)
                 {
                     return false;
                 }
@@ -1397,37 +1411,28 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_identify_addresses_skips_precompiles() {
-        use crate::identifier::TraceIdentifier;
-        use foundry_evm_core::{precompiles::SHA_256, tempo::TEMPO_PRECOMPILE_ADDRESSES};
+    // A mock identifier that records which addresses it was asked to identify.
+    struct RecordingIdentifier {
+        queried: Vec<Address>,
+    }
+    impl TraceIdentifier for RecordingIdentifier {
+        fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+            self.queried.extend(nodes.iter().map(|n| n.trace.address));
+            Vec::new()
+        }
+    }
 
-        // A mock identifier that records which addresses it was asked to identify.
-        struct RecordingIdentifier {
-            queried: Vec<Address>,
-        }
-        impl TraceIdentifier for RecordingIdentifier {
-            fn identify_addresses(
-                &mut self,
-                nodes: &[&CallTraceNode],
-            ) -> Vec<IdentifiedAddress<'_>> {
-                self.queried.extend(nodes.iter().map(|n| n.trace.address));
-                Vec::new()
-            }
-        }
+    #[test]
+    fn test_identify_addresses_skips_evm_precompiles() {
+        use foundry_evm_core::precompiles::SHA_256;
 
         let decoder = CallTraceDecoder::new();
 
-        // Build an arena with a root node (required by CallTraceArena::default) at a regular
-        // address, plus child nodes at the SHA-256 precompile (0x02) and another regular
-        // address.
         let mut arena = CallTraceArena::default();
         let regular_addr = Address::from([0x42; 20]);
-
-        // Set the root node to the regular address.
         arena.nodes_mut()[0].trace.address = regular_addr;
 
-        // Add a standard EVM precompile node (known address, and `maybe_precompile` = true).
+        // Standard EVM precompile flagged by the inspector.
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
                 address: SHA_256,
@@ -1439,8 +1444,7 @@ mod tests {
             ..Default::default()
         });
 
-        // Add a precompile node that is NOT flagged via `maybe_precompile` but IS a known
-        // address — tests the `is_known_precompile` path.
+        // Standard EVM precompile NOT flagged, caught by is_known_precompile.
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
                 address: SHA_256,
@@ -1452,7 +1456,26 @@ mod tests {
             ..Default::default()
         });
 
-        // Add a Tempo precompile (not flagged by inspector, caught by is_known_precompile).
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_identify_addresses_skips_tempo_precompiles() {
+        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
+
+        // Decoder with Tempo chain ID (4217).
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        // Tempo precompile — not flagged by inspector, caught by is_known_precompile
+        // only when chain_id is a Tempo chain.
         let tempo_precompile = TEMPO_PRECOMPILE_ADDRESSES[0];
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
@@ -1461,14 +1484,45 @@ mod tests {
                 maybe_precompile: None,
                 ..Default::default()
             },
-            idx: 3,
+            idx: 1,
             ..Default::default()
         });
 
         let mut identifier = RecordingIdentifier { queried: Vec::new() };
         decoder.identify_addresses(&arena, &mut identifier);
 
-        // The identifier should only see the regular address, never any precompile.
+        // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_identify_addresses_does_not_skip_tempo_precompiles_on_other_chains() {
+        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
+
+        // Decoder with Ethereum mainnet chain ID (1).
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(1);
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        let tempo_precompile = TEMPO_PRECOMPILE_ADDRESSES[0];
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: tempo_precompile,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        // On Ethereum, Tempo precompile addresses are regular contracts — should NOT be filtered.
+        assert_eq!(identifier.queried, vec![regular_addr, tempo_precompile]);
     }
 }

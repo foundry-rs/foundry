@@ -596,7 +596,8 @@ impl TestArgs {
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
             .with_label_disabled(self.disable_labels)
-            .with_verbosity(verbosity);
+            .with_verbosity(verbosity)
+            .with_chain_id(remote_chain.map(|c| c.id()));
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =

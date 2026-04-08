@@ -53,8 +53,8 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
-    // Standard EVM precompiles.
+pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bool {
+    // Standard EVM precompiles (all chains).
     let is_standard = address[..19].iter().all(|&x| x == 0)
         && matches!(
             address,
@@ -80,13 +80,19 @@ pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
     if is_standard {
         return true;
     }
-    // Tempo precompiles and TIP20 fee tokens.
-    TEMPO_PRECOMPILE_ADDRESSES.contains(&address) || TEMPO_TIP20_TOKENS.contains(&address)
+    // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
+    if chain_id.is_some_and(|id| foundry_config::Chain::from_id(id).is_tempo())
+        && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address)
+            || TEMPO_TIP20_TOKENS.contains(&address))
+    {
+        return true;
+    }
+    false
 }
 
 /// Tries to decode a precompile call. Returns `Some` if successful.
-pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTrace> {
-    if !is_known_precompile(trace.address, _chain_id) {
+pub(super) fn decode(trace: &CallTrace, chain_id: Option<u64>) -> Option<DecodedCallTrace> {
+    if !is_known_precompile(trace.address, chain_id) {
         return None;
     }
 

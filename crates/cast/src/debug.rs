@@ -56,7 +56,8 @@ pub(crate) async fn handle_traces(
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
-        .with_label_disabled(disable_label);
+        .with_label_disabled(disable_label)
+        .with_chain_id(Some(chain.id()));
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
