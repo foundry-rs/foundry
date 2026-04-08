@@ -519,7 +519,11 @@ impl CallTraceDecoder {
                     DynSolValue::FixedBytes(word, size) => &word[..*size],
                     _ => return None,
                 };
-                Some(vec![self.revert_decoder.decode(expected_revert, None)])
+                Some(
+                    std::iter::once(self.revert_decoder.decode(expected_revert, None))
+                        .chain(decoded.iter().skip(1).map(|value| self.format_value(value)))
+                        .collect(),
+                )
             }
             "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
                 // Redact private key in all cases
@@ -947,6 +951,37 @@ mod tests {
             .abi_encode_input(&[DynSolValue::Bytes(expected_revert_bytes.clone())])
             .unwrap();
 
+        let reverter = Address::from([0x11; 20]);
+        let expect_revert_bytes4_address_data = Function::parse("expectRevert(bytes4,address)")
+            .unwrap()
+            .abi_encode_input(&[
+                DynSolValue::FixedBytes(
+                    B256::right_padding_from(expected_revert_bytes4.as_slice()),
+                    4,
+                ),
+                DynSolValue::Address(reverter),
+            ])
+            .unwrap();
+
+        let count = 42_u64;
+        let expect_revert_bytes_count_data = Function::parse("expectRevert(bytes,uint64)")
+            .unwrap()
+            .abi_encode_input(&[
+                DynSolValue::Bytes(expected_revert_bytes.clone()),
+                DynSolValue::Uint(alloy_primitives::U256::from(count), 64),
+            ])
+            .unwrap();
+
+        let expect_revert_bytes_address_count_data =
+            Function::parse("expectRevert(bytes,address,uint64)")
+                .unwrap()
+                .abi_encode_input(&[
+                    DynSolValue::Bytes(expected_revert_bytes.clone()),
+                    DynSolValue::Address(reverter),
+                    DynSolValue::Uint(alloy_primitives::U256::from(count), 64),
+                ])
+                .unwrap();
+
         let expect_revert_empty_data =
             Function::parse("expectRevert()").unwrap().abi_encode_input(&[]).unwrap();
 
@@ -962,6 +997,33 @@ mod tests {
                 "expectRevert(bytes)",
                 expect_revert_bytes_data,
                 Some(vec![decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None)]),
+            ),
+            (
+                "expectRevert(bytes4,address)",
+                expect_revert_bytes4_address_data,
+                Some(vec![
+                    decoder.revert_decoder.decode(expected_revert_bytes4.as_slice(), None),
+                    decoder.format_value(&DynSolValue::Address(reverter)),
+                ]),
+            ),
+            (
+                "expectRevert(bytes,uint64)",
+                expect_revert_bytes_count_data,
+                Some(vec![
+                    decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None),
+                    decoder
+                        .format_value(&DynSolValue::Uint(alloy_primitives::U256::from(count), 64)),
+                ]),
+            ),
+            (
+                "expectRevert(bytes,address,uint64)",
+                expect_revert_bytes_address_count_data,
+                Some(vec![
+                    decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None),
+                    decoder.format_value(&DynSolValue::Address(reverter)),
+                    decoder
+                        .format_value(&DynSolValue::Uint(alloy_primitives::U256::from(count), 64)),
+                ]),
             ),
             ("expectRevert()", expect_revert_empty_data, None),
             // Should redact private key from traces in all cases:
