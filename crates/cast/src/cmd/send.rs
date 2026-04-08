@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, Network};
+use alloy_network::{Ethereum, EthereumWallet, Network};
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -99,7 +99,7 @@ impl SendTxArgs {
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
-            self.run_generic::<AnyNetwork>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None).await
         }
     }
 

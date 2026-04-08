@@ -4,7 +4,7 @@ use crate::{cmd::send::cast_send, format_uint_exp, tx::SendTxOpts};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{U64, U256};
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
@@ -353,7 +353,7 @@ impl Erc20Subcommand {
         if is_tempo {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
-            self.run_generic::<AnyNetwork>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None).await
         }
     }
 

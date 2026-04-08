@@ -3,7 +3,7 @@ use alloy_chains::Chain;
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256, hex};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -111,7 +111,7 @@ impl CreateArgs {
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
-            self.run_generic::<AnyNetwork>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None).await
         }
     }
 

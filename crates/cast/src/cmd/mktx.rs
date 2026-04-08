@@ -2,7 +2,7 @@ use crate::tx::{self, CastTxBuilder};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
 use alloy_signer::{Signature, Signer};
@@ -84,7 +84,7 @@ impl MakeTxArgs {
         if self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>().await
         } else {
-            self.run_generic::<AnyNetwork>().await
+            self.run_generic::<Ethereum>().await
         }
     }
 
