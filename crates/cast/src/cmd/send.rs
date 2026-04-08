@@ -3,6 +3,7 @@ use std::{path::PathBuf, str::FromStr, time::Duration};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet, Network};
+use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
@@ -16,7 +17,11 @@ use foundry_common::{
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
-use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
+use crate::{
+    cmd::tip20::iso4217_warning_message,
+    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
+};
+use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -50,6 +55,10 @@ pub struct SendTxArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from")]
     unlocked: bool,
+
+    /// Skip confirmation prompts (e.g. non-ISO 4217 currency warnings).
+    #[arg(long)]
+    force: bool,
 
     #[command(flatten)]
     tx: TransactionOpts,
@@ -105,7 +114,8 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, path } = self;
+        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
+            self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
@@ -142,6 +152,31 @@ impl SendTxArgs {
         } else {
             None
         };
+
+        // Validate ISO 4217 currency code for TIP20Factory createToken calls.
+        if let Some(ref to_addr) = to {
+            let is_factory = match to_addr {
+                NameOrAddress::Address(addr) => *addr == TIP20_FACTORY_ADDRESS,
+                NameOrAddress::Name(name) => {
+                    Address::from_str(name).ok() == Some(TIP20_FACTORY_ADDRESS)
+                }
+            };
+
+            if !force
+                && is_factory
+                && let Some(ref sig_str) = sig
+                && sig_str.starts_with("createToken")
+                && let Some(currency) = args.get(2)
+                && !is_iso4217_currency(currency)
+            {
+                sh_warn!("{}", iso4217_warning_message(currency))?;
+                let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
+                if !matches!(response.trim(), "y" | "Y") {
+                    sh_println!("Aborted.")?;
+                    return Ok(());
+                }
+            }
+        }
 
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;

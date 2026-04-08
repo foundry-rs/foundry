@@ -32,7 +32,7 @@ sol! {
 }
 
 /// Returns a warning message for non-ISO 4217 currency codes used in TIP-20 token creation.
-fn iso4217_warning_message(currency: &str) -> String {
+pub(crate) fn iso4217_warning_message(currency: &str) -> String {
     let hyperlink = |url: &str| format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\");
     let tip20_docs = hyperlink("https://docs.tempo.xyz/protocol/tip20/overview");
     let iso_docs = hyperlink("https://www.iso.org/iso-4217-currency-codes.html");
