@@ -27,7 +27,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use foundry_evm_networks::NetworkConfigs;
+
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
 use std::{
@@ -309,8 +309,6 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation.
     pub isolation: bool,
-    /// Networks with enabled features.
-    pub networks: NetworkConfigs,
     /// Whether to exit early on test failure or if test run interrupted.
     pub early_exit: EarlyExit,
 }
@@ -323,7 +321,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
 
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
-        self.networks = config.networks;
+        self.evm_opts.networks = config.networks;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
@@ -352,7 +350,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.tracing(self.trace_mode());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.networks(self.networks);
+        inspector.networks(self.evm_opts.networks);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -383,7 +381,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                     .trace_mode(self.trace_mode())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
-                    .networks(self.networks)
+                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
                     .set_analysis(analysis)
             })
@@ -422,8 +420,6 @@ pub struct MultiContractRunnerBuilder {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation
     pub isolation: bool,
-    /// Networks with enabled features.
-    pub networks: NetworkConfigs,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
 }
@@ -439,7 +435,6 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
-            networks: Default::default(),
             fail_fast: false,
         }
     }
@@ -481,11 +476,6 @@ impl MultiContractRunnerBuilder {
 
     pub fn enable_isolation(mut self, enable: bool) -> Self {
         self.isolation = enable;
-        self
-    }
-
-    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
-        self.networks = networks;
         self
     }
 
@@ -602,7 +592,6 @@ impl MultiContractRunnerBuilder {
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
-                networks: self.networks,
                 early_exit: EarlyExit::new(self.fail_fast),
                 config: self.config,
             },

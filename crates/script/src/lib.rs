@@ -12,7 +12,7 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-use crate::runner::ScriptRunner;
+use crate::{broadcast::BundledState, runner::ScriptRunner};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -122,10 +122,19 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub broadcast: bool,
 
-    /// Batch size of transactions.
+    /// Batch all broadcast transactions into a single Tempo batch transaction.
     ///
-    /// This is ignored and set to 1 if batching is not available or `--slow` is enabled.
-    #[arg(long, default_value = "100")]
+    /// When enabled, all vm.broadcast() calls are collected and sent as a single
+    /// atomic type 0x76 transaction instead of individual transactions.
+    /// This provides atomicity (all-or-nothing execution) and gas savings.
+    #[arg(long)]
+    pub batch: bool,
+
+    /// Number of calls per Tempo batch transaction.
+    ///
+    /// When `--batch` is enabled, splits the collected calls into multiple batch
+    /// transactions of at most this many calls each.
+    #[arg(long, requires = "batch", default_value = "100")]
     pub batch_size: usize,
 
     /// Skips on-chain simulation.
@@ -252,7 +261,7 @@ impl ScriptArgs {
             }
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts).await?;
+        let script_config = ScriptConfig::new(config, evm_opts, self.batch).await?;
 
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
@@ -261,14 +270,34 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        if self.load_config_and_evm_opts()?.1.networks.is_tempo() {
-            self.run_generic_script::<TempoEvmNetwork>().await
+        let is_tempo = self.load_config_and_evm_opts()?.1.networks.is_tempo();
+
+        if self.batch && !is_tempo {
+            eyre::bail!("--batch mode is only supported on Tempo networks");
+        }
+
+        if is_tempo {
+            let batch = self.batch;
+            let bundled = match self.prepare_bundled::<TempoEvmNetwork>().await? {
+                Some(bundled) => bundled,
+                None => return Ok(()),
+            };
+            let bundled = bundled.wait_for_pending().await?;
+            let broadcasted =
+                if batch { bundled.broadcast_batch().await? } else { bundled.broadcast().await? };
+            if broadcasted.args.verify {
+                broadcasted.verify().await?;
+            }
+            Ok(())
         } else {
             self.run_generic_script::<EthEvmNetwork>().await
         }
     }
 
-    async fn run_generic_script<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+    /// Prepares the bundled state (compile, simulate, bundle) and returns it
+    /// for broadcasting, or returns `None` if there's nothing to broadcast
+    /// (e.g., debug mode, no transactions, missing RPCs).
+    async fn prepare_bundled<FEN: FoundryEvmNetwork>(self) -> Result<Option<BundledState<FEN>>> {
         let state = self.preprocess::<FEN>().await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
@@ -291,8 +320,8 @@ impl ScriptArgs {
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
-                    Some(path) => pre_simulation.dump_debugger(&path),
-                    None => pre_simulation.run_debugger(),
+                    Some(path) => pre_simulation.dump_debugger(&path).map(|_| None),
+                    None => pre_simulation.run_debugger().map(|_| None),
                 };
             }
 
@@ -314,7 +343,7 @@ impl ScriptArgs {
                     sh_warn!("No transactions to broadcast.")?;
                 }
 
-                return Ok(());
+                return Ok(None);
             }
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
@@ -323,7 +352,7 @@ impl ScriptArgs {
                     sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
                 }
 
-                return Ok(());
+                return Ok(None);
             }
 
             pre_simulation.args.check_contract_sizes(
@@ -347,13 +376,22 @@ impl ScriptArgs {
                     "\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more."
                 )?;
             }
-            return Ok(());
+            return Ok(None);
         }
 
         // Exit early if something is wrong with verification options.
         if bundled.args.verify {
             bundled.verify_preflight_check()?;
         }
+
+        Ok(Some(bundled))
+    }
+
+    async fn run_generic_script<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+        let bundled = match self.prepare_bundled::<FEN>().await? {
+            Some(bundled) => bundled,
+            None => return Ok(()),
+        };
 
         // Wait for pending txes and broadcast others.
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
@@ -623,10 +661,12 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<String, Backend<FEN>>,
+    /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
+    pub batch: bool,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
-    pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
+    pub async fn new(config: Config, evm_opts: EvmOpts, batch: bool) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
         } else {
@@ -634,7 +674,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             1
         };
 
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default() })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {

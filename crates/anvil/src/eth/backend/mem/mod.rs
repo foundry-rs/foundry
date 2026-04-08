@@ -1265,26 +1265,32 @@ impl<N: Network> Backend<N> {
     {
         let inspector = self.build_mining_inspector();
 
+        macro_rules! run {
+            ($evm:expr) => {{
+                self.inject_precompiles($evm.precompiles_mut());
+                let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
+                executor.apply_pre_execution_changes().expect("pre-execution changes failed");
+                let pool_result = execute_pool_transactions(
+                    &mut executor,
+                    pool_transactions,
+                    gas_config,
+                    inspector_tx_config,
+                    self.cheats(),
+                    validator,
+                );
+                let (evm, block_result) = executor.finish().expect("executor finish failed");
+                drop(evm);
+                (pool_result, block_result)
+            }};
+        }
+
         if self.is_optimism() {
             let op_env = EvmEnv::new(
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
                 evm_env.block_env.clone(),
             );
             let mut evm = OpEvmFactory::default().create_evm_with_inspector(db, op_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         } else if self.is_tempo() {
             let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
             let tempo_env = EvmEnv::new(
@@ -1296,37 +1302,11 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         } else {
             let mut evm =
                 EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         }
     }
 
@@ -1455,17 +1435,7 @@ impl<N: Network> Backend<N> {
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
 
         if self.print_traces {
@@ -1488,17 +1458,7 @@ impl<N: Network> Backend<N> {
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state: _ } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
@@ -2290,17 +2250,7 @@ impl<N: Network> Backend<N> {
             tx.pending_transaction.transaction.as_ref(),
             *tx.pending_transaction.sender(),
         )?;
-        let (exit_reason, gas_used, out, logs) = match result {
-            ExecutionResult::Success { reason, gas, logs, output, .. } => {
-                (reason.into(), gas.used(), Some(output), logs)
-            }
-            ExecutionResult::Revert { gas, output, logs, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
-            }
-            ExecutionResult::Halt { reason, gas, logs, .. } => {
-                (reason.into_instruction_result(), gas.used(), None, logs)
-            }
-        };
+        let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
 
         inspector.print_logs();
 
@@ -3018,17 +2968,7 @@ where
             let ResultAndState { result, state: _ } =
                 self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
 
-            let (exit_reason, gas_used, out) = match result {
-                ExecutionResult::Success { reason, gas, output, .. } => {
-                    (reason.into(), gas.used(), Some(output))
-                }
-                ExecutionResult::Revert { gas, output, .. } => {
-                    (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-                }
-                ExecutionResult::Halt { reason, gas, .. } => {
-                    (reason.into_instruction_result(), gas.used(), None)
-                }
-            };
+            let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
 
             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
@@ -4549,6 +4489,23 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
+}
+
+/// Unpacks an [`ExecutionResult`] into its exit reason, gas used, output, and logs.
+fn unpack_execution_result<H: IntoInstructionResult>(
+    result: ExecutionResult<H>,
+) -> (InstructionResult, u64, Option<Output>, Vec<revm::primitives::Log>) {
+    match result {
+        ExecutionResult::Success { reason, gas, output, logs, .. } => {
+            (reason.into(), gas.used(), Some(output), logs)
+        }
+        ExecutionResult::Revert { gas, output, logs, .. } => {
+            (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
+        }
+        ExecutionResult::Halt { reason, gas, logs, .. } => {
+            (reason.into_instruction_result(), gas.used(), None, logs)
+        }
+    }
 }
 
 /// Converts a halt reason into an [`InstructionResult`].

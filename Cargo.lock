@@ -4691,6 +4691,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tempo-alloy",
+ "tempo-primitives",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

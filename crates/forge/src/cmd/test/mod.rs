@@ -459,7 +459,6 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
             .enable_isolation(evm_opts.isolate)
-            .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
