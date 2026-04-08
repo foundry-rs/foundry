@@ -16,7 +16,6 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxReceipt};
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
@@ -708,50 +707,6 @@ impl UIfmt for SignedAuthorization {
     }
 }
 
-impl<T> UIfmt for FoundryReceiptEnvelope<T>
-where
-    T: UIfmt + Clone + core::fmt::Debug + PartialEq + Eq,
-{
-    fn pretty(&self) -> String {
-        let receipt = self.as_receipt();
-        let deposit_info = match self {
-            Self::Deposit(d) => {
-                format!(
-                    "
-depositNonce         {}
-depositReceiptVersion {}",
-                    d.receipt.deposit_nonce.pretty(),
-                    d.receipt.deposit_receipt_version.pretty()
-                )
-            }
-            _ => String::new(),
-        };
-
-        format!(
-            "
-status               {}
-cumulativeGasUsed    {}
-logs                 {}
-logsBloom            {}
-type                 {}{}",
-            receipt.status.pretty(),
-            receipt.cumulative_gas_used.pretty(),
-            receipt.logs.pretty(),
-            self.logs_bloom().pretty(),
-            self.tx_type() as u8,
-            deposit_info
-        )
-    }
-}
-
-impl UIfmt for FoundryTxReceipt {
-    fn pretty(&self) -> String {
-        let mut pretty = pretty_receipt(&self.0.inner, self.0.inner.inner.tx_type() as u8);
-        pretty.push_str(&self.0.other.pretty());
-        pretty
-    }
-}
-
 pub trait UIfmtHeaderExt {
     fn size_pretty(&self) -> String;
     fn total_difficulty_pretty(&self) -> String;
@@ -820,12 +775,6 @@ impl UIfmtSignatureExt for OpTxEnvelope {
     }
 }
 
-impl UIfmtSignatureExt for FoundryTxEnvelope {
-    fn signature_pretty(&self) -> Option<(String, String, String)> {
-        self.clone().try_into_eth().ok().and_then(|envelope| envelope.signature_pretty())
-    }
-}
-
 impl UIfmtSignatureExt for TempoTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
         let sig = match self {
@@ -890,20 +839,6 @@ impl UIfmtReceiptExt for AnyTransactionReceipt {
 
     fn tx_type_pretty(&self) -> String {
         self.inner.inner.r#type.to_string()
-    }
-}
-
-impl UIfmtReceiptExt for FoundryTxReceipt {
-    fn logs_pretty(&self) -> String {
-        receipt_logs_pretty(&self.0.inner)
-    }
-
-    fn logs_bloom_pretty(&self) -> String {
-        receipt_logs_bloom_pretty(&self.0.inner)
-    }
-
-    fn tx_type_pretty(&self) -> String {
-        (self.0.inner.inner.tx_type() as u8).to_string()
     }
 }
 
@@ -1145,9 +1080,9 @@ fn fmt_timestamp(timestamp: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::Ethereum;
     use alloy_primitives::B256;
     use alloy_rpc_types::Authorization;
-    use foundry_primitives::FoundryNetwork;
     use similar_asserts::assert_eq;
     use std::str::FromStr;
 
@@ -1545,51 +1480,47 @@ yParity              0"
     #[test]
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
-        let block: <FoundryNetwork as Network>::BlockResponse =
-            serde_json::from_str(block).unwrap();
+        let block: <Ethereum as Network>::BlockResponse = serde_json::from_str(block).unwrap();
         let txs = match block.transactions() {
             BlockTransactions::Full(txes) => txes,
             _ => panic!("not full transactions"),
         };
 
-        assert_eq!(None, get_pretty_tx_attr::<FoundryNetwork>(&txs[0], ""));
-        assert_eq!(
-            Some("3".to_string()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "blockNumber")
-        );
+        assert_eq!(None, get_pretty_tx_attr::<Ethereum>(&txs[0], ""));
+        assert_eq!(Some("3".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "blockNumber"));
         assert_eq!(
             Some("0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a".to_string()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "from")
+            get_pretty_tx_attr::<Ethereum>(&txs[0], "from")
         );
-        assert_eq!(Some("90000".to_string()), get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "gas"));
+        assert_eq!(Some("90000".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "gas"));
         assert_eq!(
             Some("20000000000".to_string()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "gasPrice")
+            get_pretty_tx_attr::<Ethereum>(&txs[0], "gasPrice")
         );
         assert_eq!(
             Some("0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067".to_string()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "hash")
+            get_pretty_tx_attr::<Ethereum>(&txs[0], "hash")
         );
-        assert_eq!(Some("0x".to_string()), get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "input"));
-        assert_eq!(Some("2".to_string()), get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "nonce"));
+        assert_eq!(Some("0x".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "input"));
+        assert_eq!(Some("2".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "nonce"));
         assert_eq!(
             Some("0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88".to_string()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "r")
+            get_pretty_tx_attr::<Ethereum>(&txs[0], "r")
         );
         assert_eq!(
             Some("0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e".to_string()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "s")
+            get_pretty_tx_attr::<Ethereum>(&txs[0], "s")
         );
         assert_eq!(
             Some("0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e".into()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "to")
+            get_pretty_tx_attr::<Ethereum>(&txs[0], "to")
         );
         assert_eq!(
             Some("0".to_string()),
-            get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "transactionIndex")
+            get_pretty_tx_attr::<Ethereum>(&txs[0], "transactionIndex")
         );
-        assert_eq!(Some("27".to_string()), get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "v"));
-        assert_eq!(Some("0".to_string()), get_pretty_tx_attr::<FoundryNetwork>(&txs[0], "value"));
+        assert_eq!(Some("27".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "v"));
+        assert_eq!(Some("0".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "value"));
     }
 
     #[test]
@@ -1625,82 +1556,72 @@ yParity              0"
           }
         );
 
-        let block: <FoundryNetwork as Network>::BlockResponse =
-            serde_json::from_value(json).unwrap();
+        let block: <Ethereum as Network>::BlockResponse = serde_json::from_value(json).unwrap();
 
-        assert_eq!(None, get_pretty_block_attr::<FoundryNetwork>(&block, ""));
+        assert_eq!(None, get_pretty_block_attr::<Ethereum>(&block, ""));
         assert_eq!(
             Some("7".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "baseFeePerGas")
+            get_pretty_block_attr::<Ethereum>(&block, "baseFeePerGas")
         );
-        assert_eq!(
-            Some("1".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "difficulty")
-        );
+        assert_eq!(Some("1".to_string()), get_pretty_block_attr::<Ethereum>(&block, "difficulty"));
         assert_eq!(
             Some("0x0000000000000000000000000000000000000000000000000000000000000000".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "extraData")
+            get_pretty_block_attr::<Ethereum>(&block, "extraData")
         );
         assert_eq!(
             Some("653145".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "gasLimit")
+            get_pretty_block_attr::<Ethereum>(&block, "gasLimit")
         );
         assert_eq!(
             Some("653145".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "gasUsed")
+            get_pretty_block_attr::<Ethereum>(&block, "gasUsed")
         );
         assert_eq!(
             Some("0x0e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "hash")
+            get_pretty_block_attr::<Ethereum>(&block, "hash")
         );
-        assert_eq!(Some("0x0e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331".to_string()), get_pretty_block_attr::<FoundryNetwork>(&block, "logsBloom"));
+        assert_eq!(Some("0x0e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d15273310e670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331".to_string()), get_pretty_block_attr::<Ethereum>(&block, "logsBloom"));
         assert_eq!(
             Some("0x0000000000000000000000000000000000000001".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "miner")
+            get_pretty_block_attr::<Ethereum>(&block, "miner")
         );
         assert_eq!(
             Some("0x1010101010101010101010101010101010101010101010101010101010101010".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "mixHash")
+            get_pretty_block_attr::<Ethereum>(&block, "mixHash")
         );
         assert_eq!(
             Some("0x0000000000000000".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "nonce")
+            get_pretty_block_attr::<Ethereum>(&block, "nonce")
         );
-        assert_eq!(
-            Some("436".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "number")
-        );
+        assert_eq!(Some("436".to_string()), get_pretty_block_attr::<Ethereum>(&block, "number"));
         assert_eq!(
             Some("0x9646252be9520f6e71339a8df9c55e4d7619deeb018d2a3f2d21fc165dde5eb5".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "parentHash")
+            get_pretty_block_attr::<Ethereum>(&block, "parentHash")
         );
         assert_eq!(
             Some("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "transactionsRoot")
+            get_pretty_block_attr::<Ethereum>(&block, "transactionsRoot")
         );
         assert_eq!(
             Some("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "receiptsRoot")
+            get_pretty_block_attr::<Ethereum>(&block, "receiptsRoot")
         );
         assert_eq!(
             Some("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "sha3Uncles")
+            get_pretty_block_attr::<Ethereum>(&block, "sha3Uncles")
         );
-        assert_eq!(
-            Some("163591".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "size")
-        );
+        assert_eq!(Some("163591".to_string()), get_pretty_block_attr::<Ethereum>(&block, "size"));
         assert_eq!(
             Some("0xd5855eb08b3387c0af375e9cdb6acfc05eb8f519e419b874b6ff2ffda7ed1dff".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "stateRoot")
+            get_pretty_block_attr::<Ethereum>(&block, "stateRoot")
         );
         assert_eq!(
             Some("1424182926".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "timestamp")
+            get_pretty_block_attr::<Ethereum>(&block, "timestamp")
         );
         assert_eq!(
             Some("163591".to_string()),
-            get_pretty_block_attr::<FoundryNetwork>(&block, "totalDifficulty")
+            get_pretty_block_attr::<Ethereum>(&block, "totalDifficulty")
         );
 
         let pretty = pretty_generic_header_response(block.header());
@@ -1894,36 +1815,6 @@ to                   0x20C0000000000000000000000000000000000000
     }
 
     #[test]
-    fn test_foundry_tx_receipt_uifmt() {
-        use alloy_network::AnyTransactionReceipt;
-        use foundry_primitives::FoundryTxReceipt;
-
-        // Test UIfmt implementation for FoundryTxReceipt
-        let s = r#"{"type":"0x2","status":"0x1","cumulativeGasUsed":"0x5208","logs":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x1234567890123456789012345678901234567890123456789012345678901234","transactionIndex":"0x0","blockHash":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd","blockNumber":"0x1","gasUsed":"0x5208","effectiveGasPrice":"0x3b9aca00","from":"0x1234567890123456789012345678901234567890","to":"0x0987654321098765432109876543210987654321","contractAddress":null}"#;
-        let any_receipt: AnyTransactionReceipt = serde_json::from_str(s).unwrap();
-        let foundry_receipt = FoundryTxReceipt::try_from(any_receipt).unwrap();
-
-        let pretty_output = foundry_receipt.pretty();
-
-        // Check that essential fields are present in the output
-        assert!(pretty_output.contains("blockHash"));
-        assert!(pretty_output.contains("blockNumber"));
-        assert!(pretty_output.contains("status"));
-        assert!(pretty_output.contains("gasUsed"));
-        assert!(pretty_output.contains("transactionHash"));
-        assert!(pretty_output.contains("type"));
-
-        // Verify the transaction hash appears in the output
-        assert!(
-            pretty_output
-                .contains("0x1234567890123456789012345678901234567890123456789012345678901234")
-        );
-
-        // Verify status is pretty printed correctly (Eip658Value for successful transaction)
-        assert!(pretty_output.contains("1 (success)"));
-    }
-
-    #[test]
     fn test_ethereum_receipt_uifmt() {
         let s = r#"{"type":"0x2","status":"0x1","cumulativeGasUsed":"0x5208","logs":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x1234567890123456789012345678901234567890123456789012345678901234","transactionIndex":"0x0","blockHash":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd","blockNumber":"0x1","gasUsed":"0x5208","effectiveGasPrice":"0x3b9aca00","from":"0x1234567890123456789012345678901234567890","to":"0x0987654321098765432109876543210987654321","contractAddress":null}"#;
         let receipt: TransactionReceipt = serde_json::from_str(s).unwrap();
@@ -1963,38 +1854,35 @@ to                   0x20C0000000000000000000000000000000000000
             "contractAddress": null
         });
 
-        let receipt: <FoundryNetwork as Network>::ReceiptResponse =
+        let receipt: <Ethereum as Network>::ReceiptResponse =
             serde_json::from_value(receipt_json).unwrap();
 
         // Test basic receipt attributes
         assert_eq!(
             Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string()),
-            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "blockHash")
+            get_pretty_receipt_attr::<Ethereum>(&receipt, "blockHash")
         );
         assert_eq!(
             Some("1".to_string()),
-            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "blockNumber")
+            get_pretty_receipt_attr::<Ethereum>(&receipt, "blockNumber")
         );
         assert_eq!(
             Some("0x1234567890123456789012345678901234567890123456789012345678901234".to_string()),
-            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "transactionHash")
+            get_pretty_receipt_attr::<Ethereum>(&receipt, "transactionHash")
         );
         assert_eq!(
             Some("21000".to_string()),
-            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "gasUsed")
+            get_pretty_receipt_attr::<Ethereum>(&receipt, "gasUsed")
         );
         assert_eq!(
             Some("true".to_string()),
-            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "status")
+            get_pretty_receipt_attr::<Ethereum>(&receipt, "status")
         );
         assert_eq!(
-            Some("2".to_string()),
-            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "type")
+            Some("EIP-1559".to_string()),
+            get_pretty_receipt_attr::<Ethereum>(&receipt, "type")
         );
-        assert_eq!(
-            Some("[]".to_string()),
-            get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "logs")
-        );
-        assert!(get_pretty_receipt_attr::<FoundryNetwork>(&receipt, "logsBloom").is_some());
+        assert_eq!(Some("[]".to_string()), get_pretty_receipt_attr::<Ethereum>(&receipt, "logs"));
+        assert!(get_pretty_receipt_attr::<Ethereum>(&receipt, "logsBloom").is_some());
     }
 }

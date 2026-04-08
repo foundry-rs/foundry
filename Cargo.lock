@@ -5009,7 +5009,6 @@ dependencies = [
  "chrono",
  "eyre",
  "foundry-macros",
- "foundry-primitives",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "revm",
