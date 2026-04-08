@@ -5320,6 +5320,7 @@ dependencies = [
 name = "foundry-evm-hardforks"
 version = "1.6.0"
 dependencies = [
+ "alloy-chains",
  "alloy-hardforks",
  "alloy-op-hardforks",
  "alloy-rpc-types",
