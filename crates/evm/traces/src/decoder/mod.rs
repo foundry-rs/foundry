@@ -249,6 +249,10 @@ impl CallTraceDecoder {
         identifier: &'a mut impl TraceIdentifier,
     ) -> Vec<IdentifiedAddress<'a>> {
         let nodes = arena.nodes().iter().filter(|node| {
+            // Skip precompile addresses, they will never resolve externally.
+            if node.is_precompile() || precompiles::is_known_precompile(node.trace.address, 1) {
+                return false;
+            }
             let address = &node.trace.address;
             !self.labels.contains_key(address) || !self.contracts.contains_key(address)
         });
@@ -1391,5 +1395,67 @@ mod tests {
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
             assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
+    }
+
+    #[test]
+    fn test_identify_addresses_skips_precompiles() {
+        use crate::identifier::TraceIdentifier;
+        use foundry_evm_core::precompiles::SHA_256;
+
+        // A mock identifier that records which addresses it was asked to identify.
+        struct RecordingIdentifier {
+            queried: Vec<Address>,
+        }
+        impl TraceIdentifier for RecordingIdentifier {
+            fn identify_addresses(
+                &mut self,
+                nodes: &[&CallTraceNode],
+            ) -> Vec<IdentifiedAddress<'_>> {
+                self.queried.extend(nodes.iter().map(|n| n.trace.address));
+                Vec::new()
+            }
+        }
+
+        let decoder = CallTraceDecoder::new();
+
+        // Build an arena with a root node (required by CallTraceArena::default) at a regular
+        // address, plus child nodes at the SHA-256 precompile (0x02) and another regular
+        // address.
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+
+        // Set the root node to the regular address.
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        // Add a precompile node (known address, and `maybe_precompile` = true).
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: SHA_256,
+                depth: 1,
+                maybe_precompile: Some(true),
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+
+        // Add a precompile node that is NOT flagged via `maybe_precompile` but IS a known
+        // address — tests the `is_known_precompile` path.
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: SHA_256,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 2,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        // The identifier should only see the regular address, never the precompile.
+        assert_eq!(identifier.queried, vec![regular_addr]);
     }
 }
