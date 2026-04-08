@@ -1,11 +1,11 @@
 //! Estimates the data availability size of a block for opstack.
 
 use alloy_consensus::BlockHeader;
-use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Encodable2718};
+use alloy_network::{AnyNetwork, BlockResponse, Ethereum, Network, eip2718::Encodable2718};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
-use eyre::Ok;
+use eyre::Result;
 use foundry_cli::{
     opts::{NetworkVariant, RpcOpts},
     utils::LoadConfig,
@@ -29,19 +29,25 @@ pub struct DAEstimateArgs {
 
 impl DAEstimateArgs {
     /// Load the RPC URL from the config file.
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let Self { block, rpc, network } = self;
         let config = rpc.load_config()?;
+        let network = match network {
+            Some(n) => n,
+            None => {
+                let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
+                provider.get_chain_id().await?.into()
+            }
+        };
         match network {
-            Some(NetworkVariant::Optimism) => da_estimate::<Optimism>(&config, block).await,
-            Some(NetworkVariant::Tempo) => da_estimate::<TempoNetwork>(&config, block).await,
-            // Ethereum (default)
-            _ => da_estimate::<Ethereum>(&config, block).await,
+            NetworkVariant::Optimism => da_estimate::<Optimism>(&config, block).await,
+            NetworkVariant::Tempo => da_estimate::<TempoNetwork>(&config, block).await,
+            NetworkVariant::Ethereum => da_estimate::<Ethereum>(&config, block).await,
         }
     }
 }
 
-pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> eyre::Result<()> {
+pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Result<()> {
     let provider = ProviderBuilder::<N>::from_config(config)?.build()?;
     let block =
         provider.get_block(block_id).full().await?.ok_or_else(|| eyre::eyre!("Block not found"))?;
