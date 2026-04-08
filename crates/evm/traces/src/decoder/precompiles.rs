@@ -81,19 +81,15 @@ pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bo
         return true;
     }
     // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
-    if chain_id.is_some_and(|id| foundry_config::Chain::from_id(id).is_tempo())
+    // Tempo=4217, TempoModerato=42431, TempoTestnet=42429
+    if chain_id.is_some_and(|id| matches!(id, 4217 | 42431 | 42429))
         && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address) || TEMPO_TIP20_TOKENS.contains(&address))
     {
         return true;
     }
     // Celo transfer precompile (only on Celo chains).
-    if chain_id.is_some_and(|id| {
-        matches!(
-            foundry_config::Chain::from_id(id).named(),
-            Some(foundry_config::NamedChain::Celo | foundry_config::NamedChain::CeloSepolia)
-        )
-    }) && address == CELO_TRANSFER
-    {
+    // Celo=42220, CeloSepolia=11142220
+    if chain_id.is_some_and(|id| matches!(id, 42220 | 11142220)) && address == CELO_TRANSFER {
         return true;
     }
     false
