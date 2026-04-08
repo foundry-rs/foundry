@@ -96,7 +96,7 @@ impl NetworkConfigs {
         // Only infer network if no explicit network is already set
         if !self.celo && !self.tempo && !self.optimism {
             let chain = Chain::from_id(chain_id);
-            if let Ok(NamedChain::Celo | NamedChain::CeloSepolia) = NamedChain::try_from(chain_id) {
+            if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
                 self.celo = true;
             } else if chain.is_tempo() {
                 self.tempo = true;
