@@ -2703,6 +2703,7 @@ dependencies = [
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
+ "foundry-primitives",
  "foundry-test-utils",
  "foundry-wallets",
  "futures",

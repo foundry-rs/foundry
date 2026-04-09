@@ -5,7 +5,7 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_network::{BlockResponse, Network, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressSet, HashMap},
@@ -38,6 +38,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
 };
+use foundry_primitives::FoundryNetwork;
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block};
 
@@ -138,13 +139,26 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            self.run_with_evm::<TempoEvmNetwork>().await
+            self.run_with_provider::<TempoEvmNetwork, <TempoEvmNetwork as FoundryEvmNetwork>::Network>().await
+        } else if evm_opts.networks.is_optimism() {
+            // OP Stack chains include deposit transactions (type 0x7e) that the
+            // `Ethereum` network type cannot deserialize. Use `FoundryNetwork` as the
+            // provider network, which supports all transaction types.
+            self.run_with_provider::<EthEvmNetwork, FoundryNetwork>().await
         } else {
-            self.run_with_evm::<EthEvmNetwork>().await
+            self.run_with_provider::<EthEvmNetwork, <EthEvmNetwork as FoundryEvmNetwork>::Network>().await
         }
     }
 
-    async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+    async fn run_with_provider<FEN, N>(self) -> Result<()>
+    where
+        FEN: FoundryEvmNetwork,
+        N: Network,
+        N::TransactionResponse: TransactionResponse + AsRef<N::TxEnvelope>,
+        N::TxEnvelope: SignerRecoverable,
+        N::BlockResponse: BlockResponse<Header: BlockHeader>,
+        TxEnvFor<FEN>: FromRecoveredTx<N::TxEnvelope>,
+    {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
@@ -157,7 +171,7 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?
+        let provider = ProviderBuilder::<N>::from_config(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
             .build()?;
 
@@ -217,7 +231,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Prague);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
+            apply_chain_and_block_specific_env_changes::<N, _, _>(
                 &mut evm_env,
                 block,
                 config.networks,
