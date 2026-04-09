@@ -238,7 +238,7 @@ impl RunArgs {
                     evm_env.cfg_env.chain_id,
                     block.header().timestamp(),
                 ) {
-                    evm_env.cfg_env.set_spec(hardfork.into());
+                    evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
                 } else if block.header().excess_blob_gas().is_some() {
                     evm_version = Some(EvmVersion::Cancun);
                 }
@@ -270,7 +270,7 @@ impl RunArgs {
 
         executor.set_jit_backend(jit_backend);
 
-        evm_env.cfg_env.set_spec(executor.spec_id());
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {

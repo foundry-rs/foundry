@@ -87,7 +87,7 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         }
         let gas_limit = gas_limit.unwrap_or(evm_env.block_env.gas_limit());
         if let Some(spec) = spec {
-            evm_env.cfg_env.set_spec(spec);
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
         }
         Executor::new(db, evm_env, tx_env, stack.build(), gas_limit, legacy_assertions)
     }
