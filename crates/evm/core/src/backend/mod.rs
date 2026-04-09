@@ -1,7 +1,7 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    FoundryBlock, FoundryInspectorExt, FoundryTransaction,
+    FoundryBlock, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
@@ -12,7 +12,7 @@ use crate::{
     utils::get_blob_base_fee_update_fraction,
 };
 use alloy_consensus::{BlockHeader, Typed2718};
-use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx};
+use alloy_evm::{Evm, EvmEnv, EvmFactory};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
@@ -22,7 +22,6 @@ use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
-use foundry_primitives::FoundryTxEnvelope;
 use itertools::Itertools;
 use revm::{
     Database, DatabaseCommit, JournalEntry,
@@ -961,8 +960,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let mut evm = FEN::EvmFactory::default().create_evm(replay_db, evm_env);
 
             for tx in &txs_to_replay {
-                let foundry_tx = FoundryTxEnvelope::try_from(tx.clone())?;
-                let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&foundry_tx, tx.from());
+                let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
                 trace!(tx=?tx.tx_hash(), "committing transaction");
                 evm.transact_commit(tx_env).wrap_err("backend: failed committing transaction")?;
             }
@@ -1355,8 +1353,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             let fork = self.inner.get_fork_by_id_mut(id)?;
             fork.backend().get_transaction(transaction)?
         };
-        let foundry_tx = FoundryTxEnvelope::try_from(tx.clone())?;
-        let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&foundry_tx, tx.from());
+        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
         // the current context, but we're assuming the user wants to transact the transaction as it

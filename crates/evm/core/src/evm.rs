@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
+    FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, DEFAULT_CREATE2_DEPLOYER_CODEHASH, TEST_CONTRACT_ADDRESS},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_genesis_inner},
@@ -23,7 +24,6 @@ use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
-use foundry_primitives::FoundryTxEnvelope;
 use op_alloy_network::Optimism;
 use op_revm::OpHaltReason;
 use revm::{
@@ -98,10 +98,7 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
                                     + Serialize,
             ReceiptResponse: FoundryReceiptResponse,
         >;
-    type EvmFactory: FoundryEvmFactory<
-        Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>
-                + FromRecoveredTx<FoundryTxEnvelope>,
-    >;
+    type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -147,7 +144,7 @@ pub trait FoundryEvmFactory:
     EvmFactory<
         Spec: Into<SpecId> + FromEvmVersion + Default + Display + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
-        Tx: Clone + Debug + FoundryTransaction + Default + Send + Sync,
+        Tx: Clone + Debug + FoundryTransaction + FromAnyRpcTransaction + Default + Send + Sync,
         HaltReason: IntoInstructionResult,
         Precompiles = PrecompilesMap,
     > + Clone
