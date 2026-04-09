@@ -22,10 +22,19 @@ use foundry_evm_core::{
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
         MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
+    tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS},
 };
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
+use tempo_contracts::precompiles::{
+    IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20Factory, ITIP403Registry, IValidatorConfig,
+};
+use tempo_precompiles::{
+    ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
+};
 
 mod precompiles;
 
@@ -192,6 +201,18 @@ impl CallTraceDecoder {
                 (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
                 (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
                 (P256_VERIFY, "P256VERIFY".to_string()),
+                // Tempo
+                (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
+                (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
+                (TIP20_FACTORY_ADDRESS, "TIP20Factory".to_string()),
+                (STABLECOIN_DEX_ADDRESS, "StablecoinDex".to_string()),
+                (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
+                (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
+                (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
+                (PATH_USD_ADDRESS, "PathUSD".to_string()),
+                (ALPHA_USD_ADDRESS, "AlphaUSD".to_string()),
+                (BETA_USD_ADDRESS, "BetaUSD".to_string()),
+                (THETA_USD_ADDRESS, "ThetaUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
@@ -200,11 +221,29 @@ impl CallTraceDecoder {
             functions: console::hh::abi::functions()
                 .into_values()
                 .chain(Vm::abi::functions().into_values())
+                // Tempo
+                .chain(IFeeManager::abi::functions().into_values())
+                .chain(ITIP20::abi::functions().into_values())
+                .chain(ITIP403Registry::abi::functions().into_values())
+                .chain(ITIP20Factory::abi::functions().into_values())
+                .chain(IStablecoinDEX::abi::functions().into_values())
+                .chain(INonce::abi::functions().into_values())
+                .chain(IValidatorConfig::abi::functions().into_values())
+                .chain(IAccountKeychain::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
             events: console::ds::abi::events()
                 .into_values()
+                // Tempo
+                .chain(IFeeManager::abi::events().into_values())
+                .chain(ITIP20::abi::events().into_values())
+                .chain(ITIP403Registry::abi::events().into_values())
+                .chain(ITIP20Factory::abi::events().into_values())
+                .chain(IStablecoinDEX::abi::events().into_values())
+                .chain(INonce::abi::events().into_values())
+                .chain(IValidatorConfig::abi::events().into_values())
+                .chain(IAccountKeychain::abi::events().into_values())
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
