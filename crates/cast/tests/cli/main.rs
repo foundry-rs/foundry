@@ -4971,3 +4971,36 @@ casttest!(cast_decode_tx_tempo, |_prj, cmd| {
 casttest!(cast_decode_tx_invalid, |_prj, cmd| {
     cmd.args(["decode-tx", "0xinvalid"]).assert_failure();
 });
+
+// Test that `cast run --evm-version` correctly updates gas parameters for historical blocks.
+// Mainnet tx 0xb856d9...d05d9647 is a Homestead-era tx (block 1,625,693).
+// EXP gas pricing differs between Homestead (10 gas/byte) and Spurious Dragon+ (50 gas/byte).
+// Without the fix, `set_spec()` only updated the spec discriminant but not the gas_params table,
+// so the executor would use stale (latest) gas pricing even when `--evm-version homestead` is set.
+casttest!(run_evm_version_updates_gas_params, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    let tx = "0xb856d9c8dffeaa317d89ed6abba861d007a708c54971da91233abcd2d05d9647";
+
+    // Run with --evm-version homestead: gas must match on-chain gasUsed (166651).
+    let homestead_output = cmd
+        .args(["run", tx, "--quick", "--rpc-url", rpc.as_str(), "--evm-version", "homestead"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        homestead_output.contains("Gas used: 166651"),
+        "expected Homestead gas (166651), got: {homestead_output}"
+    );
+
+    // Run with --evm-version spuriousDragon: higher gas due to EXP repricing (50 vs 10 gas/byte).
+    let sd_output = cmd
+        .cast_fuse()
+        .args(["run", tx, "--quick", "--rpc-url", rpc.as_str(), "--evm-version", "spuriousDragon"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        sd_output.contains("Gas used: 177241"),
+        "expected Spurious Dragon gas (177241), got: {sd_output}"
+    );
+});
