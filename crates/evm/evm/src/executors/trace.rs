@@ -37,7 +37,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
-            .spec_id(evm_spec_id::<SpecFor<FEN>>(version.unwrap_or_default()))
+            .spec_id_opt(version.map(evm_spec_id::<SpecFor<FEN>>))
             .build(env.0, env.1, db);
 
         // Apply the state overrides.

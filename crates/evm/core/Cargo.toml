@@ -23,7 +23,7 @@ foundry-evm-networks.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-evm = { workspace = true, features = ["rpc"] }
+alloy-evm = { workspace = true, features = ["rpc", "op"] }
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
 alloy-json-abi.workspace = true
@@ -53,6 +53,8 @@ revm = { workspace = true, features = [
     "blst",
 ] }
 revm-inspectors.workspace = true
+op-alloy-consensus = { workspace = true, features = ["k256"] }
+op-alloy-network.workspace = true
 op-revm.workspace = true
 tempo-revm.workspace = true
 tempo-alloy.workspace = true

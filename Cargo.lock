@@ -4975,6 +4975,8 @@ dependencies = [
  "itertools 0.14.0",
  "jiff",
  "num-format",
+ "op-alloy-network",
+ "op-alloy-rpc-types",
  "path-slash",
  "regex",
  "reqwest 0.13.2",
@@ -5257,6 +5259,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "op-alloy-consensus",
+ "op-alloy-network",
  "op-revm",
  "parking_lot",
  "revm",
@@ -5320,6 +5323,7 @@ dependencies = [
 name = "foundry-evm-hardforks"
 version = "1.6.0"
 dependencies = [
+ "alloy-chains",
  "alloy-hardforks",
  "alloy-op-hardforks",
  "alloy-rpc-types",
@@ -5371,6 +5375,8 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "tempfile",
+ "tempo-contracts",
+ "tempo-precompiles",
  "tokio",
  "tracing",
  "yansi",

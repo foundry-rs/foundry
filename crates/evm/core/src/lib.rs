@@ -14,6 +14,8 @@ use revm_inspectors::access_list::AccessListInspector;
 /// Map keyed by breakpoints char to their location (contract address, pc)
 pub type Breakpoints = HashMap<char, (Address, usize)>;
 
+use op_alloy_consensus as _;
+
 #[macro_use]
 extern crate tracing;
 
