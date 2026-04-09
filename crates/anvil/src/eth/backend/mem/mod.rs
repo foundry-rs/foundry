@@ -3360,7 +3360,13 @@ where
 
         {
             // Unwind the storage back to the common ancestor first
-            self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+            let removed_blocks =
+                self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+
+            // Clean up in-memory and on-disk states for removed blocks
+            let removed_hashes: Vec<_> =
+                removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+            self.states.write().remove_block_states(&removed_hashes);
 
             // Set environment back to common block
             let mut env = self.evm_env.write();

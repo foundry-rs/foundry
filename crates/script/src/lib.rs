@@ -137,6 +137,10 @@ pub struct ScriptArgs {
     #[arg(long, requires = "batch", default_value = "100")]
     pub batch_size: usize,
 
+    /// Tempo fee token address for paying transaction fees.
+    #[arg(long = "tempo.fee-token", value_name = "ADDRESS")]
+    pub fee_token: Option<Address>,
+
     /// Skips on-chain simulation.
     #[arg(long)]
     pub skip_simulation: bool,
@@ -261,7 +265,7 @@ impl ScriptArgs {
             }
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts, self.batch).await?;
+        let script_config = ScriptConfig::new(config, evm_opts, self.batch, self.fee_token).await?;
 
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
@@ -668,10 +672,17 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub backends: HashMap<String, Backend<FEN>>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
     pub batch: bool,
+    /// Tempo fee token address for paying transaction fees.
+    pub fee_token: Option<Address>,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
-    pub async fn new(config: Config, evm_opts: EvmOpts, batch: bool) -> Result<Self> {
+    pub async fn new(
+        config: Config,
+        evm_opts: EvmOpts,
+        batch: bool,
+        fee_token: Option<Address>,
+    ) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
         } else {
@@ -679,7 +690,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             1
         };
 
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, fee_token })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {

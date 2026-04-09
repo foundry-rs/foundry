@@ -127,7 +127,10 @@ impl MakeTxArgs {
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
-            let from = eth.wallet.from.unwrap_or(Address::ZERO);
+            // Resolve the signer to derive the actual sender address, since the
+            // sponsor hash commits to the sender.
+            let signer = eth.wallet.signer().await?;
+            let from = signer.address();
             let (tx, _) = tx_builder.build(from).await?;
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")

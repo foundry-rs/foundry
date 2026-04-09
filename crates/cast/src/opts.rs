@@ -1131,7 +1131,14 @@ pub enum CastSubcommand {
 
     /// Decodes a raw signed EIP 2718 typed transaction
     #[command(visible_aliases = &["dt", "decode-tx"])]
-    DecodeTransaction { tx: Option<String> },
+    DecodeTransaction {
+        /// Encoded transaction
+        tx: Option<String>,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
+    },
 
     /// Recovery an EIP-7702 authority from a Authorization JSON string.
     #[command(visible_aliases = &["decode-auth"])]

@@ -242,7 +242,7 @@ impl RunArgs {
             None,
         )?;
 
-        evm_env.cfg_env.set_spec(executor.spec_id());
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {
