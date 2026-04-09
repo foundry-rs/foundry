@@ -220,6 +220,7 @@ impl RunArgs {
                 ) {
                     evm_env.cfg_env.set_spec(hardfork.into());
                 } else if block.header().excess_blob_gas().is_some() {
+                    // TODO: add glamsterdam header field checks in the future
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }

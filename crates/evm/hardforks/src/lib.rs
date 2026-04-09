@@ -111,6 +111,8 @@ impl FoundryHardfork {
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Optimism(fork));
         }
+        // TODO: add tempo support after https://github.com/tempoxyz/tempo/pull/3514 release
+        // providing TempoHardfork::from_chain_and_timestamp
         None
     }
 }
