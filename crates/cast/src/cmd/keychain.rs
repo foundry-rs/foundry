@@ -121,9 +121,9 @@ pub enum KeychainSubcommand {
         #[arg(long = "limit", value_parser = parse_limit)]
         limits: Vec<TokenLimit>,
 
-        /// Call scope restriction in TARGET[:SELECTORS[@RECIPIENTS]] format.
-        /// TARGET alone allows all calls. TARGET:transfer,approve restricts to those selectors.
-        /// TARGET:transfer@0x123 restricts selector to specific recipients.
+        /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+        /// TARGET alone allows all calls. `TARGET:transfer,approve` restricts to those selectors.
+        /// `TARGET:transfer@0x123` restricts selector to specific recipients.
         #[arg(long = "scope", value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
@@ -194,7 +194,7 @@ pub enum KeychainSubcommand {
         /// The key address.
         key_address: Address,
 
-        /// Call scope restriction in TARGET[:SELECTORS[@RECIPIENTS]] format.
+        /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
         #[arg(long = "scope", required = true, value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
