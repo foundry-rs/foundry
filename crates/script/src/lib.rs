@@ -47,8 +47,9 @@ use foundry_config::{
 use foundry_evm::{
     backend::Backend,
     core::{
-        Breakpoints,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+        Breakpoints, FoundryTransaction,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        tempo::PATH_USD_ADDRESS,
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -277,7 +278,13 @@ impl ScriptArgs {
             }
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts, self.batch, self.fee_token).await?;
+        let fee_token = if evm_opts.networks.is_tempo() && self.fee_token.is_none() {
+            Some(PATH_USD_ADDRESS)
+        } else {
+            self.fee_token
+        };
+
+        let script_config = ScriptConfig::new(config, evm_opts, self.batch, fee_token).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
@@ -742,7 +749,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         debug: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (evm_env, tx_env, fork_block) = self.evm_opts.env().await?;
+        let (evm_env, mut tx_env, fork_block) = self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
@@ -784,6 +791,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(target),
+                            self.fee_token,
                         )
                         .into(),
                     )
@@ -791,6 +799,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .enable_isolation(self.evm_opts.isolate)
             });
         }
+
+        // Propagate fee token to the transaction environment so that internal EVM calls
+        // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
+        tx_env.set_fee_token(self.fee_token);
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
