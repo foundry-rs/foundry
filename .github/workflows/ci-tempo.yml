@@ -56,10 +56,8 @@ jobs:
       # Build and install binaries
       - name: Build and install Foundry binaries
         run: |
-          cargo install --path ./crates/forge --profile dev --force --locked
-          cargo install --path ./crates/cast --profile dev --force --locked
-          cargo install --path ./crates/anvil --profile dev --force --locked
-          cargo install --path ./crates/chisel --profile dev --force --locked
+          cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
+          echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       # TODO(upstream): re-enable when mpp is supported https://github.com/foundry-rs/foundry/pull/14192
       # - name: Run MPP e2e test
