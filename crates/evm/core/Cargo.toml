@@ -54,6 +54,7 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 op-alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-op-evm.workspace = true
 op-alloy-network.workspace = true
 op-revm.workspace = true
 tempo-revm.workspace = true
