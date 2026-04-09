@@ -6,12 +6,12 @@ use std::{
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_dyn_abi::{DynSolValue, EventExt};
 use alloy_json_abi::Event;
-use alloy_network::Network;
 use alloy_primitives::{
     Address, Bytes, LogData as RawLog, U256, hex,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
 use foundry_common::{abi::get_indexed_event, fmt::format_token};
+use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_traces::DecodedCallLog;
 use revm::{
     context::{ContextTr, JournalTr},
@@ -164,28 +164,28 @@ impl CreateScheme {
 }
 
 impl Cheatcode for expectCall_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, data } = self;
         expect_call(state, callee, data, None, None, None, 1, ExpectedCallType::NonCount)
     }
 }
 
 impl Cheatcode for expectCall_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, data, count } = self;
         expect_call(state, callee, data, None, None, None, *count, ExpectedCallType::Count)
     }
 }
 
 impl Cheatcode for expectCall_2Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, data } = self;
         expect_call(state, callee, data, Some(msgValue), None, None, 1, ExpectedCallType::NonCount)
     }
 }
 
 impl Cheatcode for expectCall_3Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, data, count } = self;
         expect_call(
             state,
@@ -201,7 +201,7 @@ impl Cheatcode for expectCall_3Call {
 }
 
 impl Cheatcode for expectCall_4Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, gas, data } = self;
         expect_call(
             state,
@@ -217,7 +217,7 @@ impl Cheatcode for expectCall_4Call {
 }
 
 impl Cheatcode for expectCall_5Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, gas, data, count } = self;
         expect_call(
             state,
@@ -233,7 +233,7 @@ impl Cheatcode for expectCall_5Call {
 }
 
 impl Cheatcode for expectCallMinGas_0Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, minGas, data } = self;
         expect_call(
             state,
@@ -249,7 +249,7 @@ impl Cheatcode for expectCallMinGas_0Call {
 }
 
 impl Cheatcode for expectCallMinGas_1Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, minGas, data, count } = self;
         expect_call(
             state,
@@ -265,10 +265,7 @@ impl Cheatcode for expectCallMinGas_1Call {
 }
 
 impl Cheatcode for expectEmit_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
@@ -282,10 +279,7 @@ impl Cheatcode for expectEmit_0Call {
 }
 
 impl Cheatcode for expectEmit_1Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
@@ -299,30 +293,21 @@ impl Cheatcode for expectEmit_1Call {
 }
 
 impl Cheatcode for expectEmit_2Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], None, false, 1)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { emitter } = *self;
         expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], Some(emitter), false, 1)
     }
 }
 
 impl Cheatcode for expectEmit_4Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, count } = *self;
         expect_emit(
             ccx.state,
@@ -336,10 +321,7 @@ impl Cheatcode for expectEmit_4Call {
 }
 
 impl Cheatcode for expectEmit_5Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter, count } = *self;
         expect_emit(
             ccx.state,
@@ -353,30 +335,21 @@ impl Cheatcode for expectEmit_5Call {
 }
 
 impl Cheatcode for expectEmit_6Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { count } = *self;
         expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], None, false, count)
     }
 }
 
 impl Cheatcode for expectEmit_7Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { emitter, count } = *self;
         expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], Some(emitter), false, count)
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
@@ -390,10 +363,7 @@ impl Cheatcode for expectEmitAnonymous_0Call {
 }
 
 impl Cheatcode for expectEmitAnonymous_1Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
@@ -407,54 +377,42 @@ impl Cheatcode for expectEmitAnonymous_1Call {
 }
 
 impl Cheatcode for expectEmitAnonymous_2Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], None, true, 1)
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_3Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { emitter } = *self;
         expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], Some(emitter), true, 1)
     }
 }
 
 impl Cheatcode for expectCreateCall {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bytecode, deployer } = self;
         expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create)
     }
 }
 
 impl Cheatcode for expectCreate2Call {
-    fn apply<SPEC, BLOCK, N: Network>(&self, state: &mut Cheatcodes<SPEC, BLOCK, N>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { bytecode, deployer } = self;
         expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create2)
     }
 }
 
 impl Cheatcode for expectRevert_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         expect_revert(ccx.state, None, ccx.ecx.journal().depth(), false, false, None, 1)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -469,30 +427,21 @@ impl Cheatcode for expectRevert_1Call {
 }
 
 impl Cheatcode for expectRevert_2Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData), ccx.ecx.journal().depth(), false, false, None, 1)
     }
 }
 
 impl Cheatcode for expectRevert_3Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { reverter } = self;
         expect_revert(ccx.state, None, ccx.ecx.journal().depth(), false, false, Some(*reverter), 1)
     }
 }
 
 impl Cheatcode for expectRevert_4Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, reverter } = self;
         expect_revert(
             ccx.state,
@@ -507,10 +456,7 @@ impl Cheatcode for expectRevert_4Call {
 }
 
 impl Cheatcode for expectRevert_5Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, reverter } = self;
         expect_revert(
             ccx.state,
@@ -525,20 +471,14 @@ impl Cheatcode for expectRevert_5Call {
 }
 
 impl Cheatcode for expectRevert_6Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { count } = self;
         expect_revert(ccx.state, None, ccx.ecx.journal().depth(), false, false, None, *count)
     }
 }
 
 impl Cheatcode for expectRevert_7Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, count } = self;
         expect_revert(
             ccx.state,
@@ -553,10 +493,7 @@ impl Cheatcode for expectRevert_7Call {
 }
 
 impl Cheatcode for expectRevert_8Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, count } = self;
         expect_revert(
             ccx.state,
@@ -571,10 +508,7 @@ impl Cheatcode for expectRevert_8Call {
 }
 
 impl Cheatcode for expectRevert_9Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { reverter, count } = self;
         expect_revert(
             ccx.state,
@@ -589,10 +523,7 @@ impl Cheatcode for expectRevert_9Call {
 }
 
 impl Cheatcode for expectRevert_10Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, reverter, count } = self;
         expect_revert(
             ccx.state,
@@ -607,10 +538,7 @@ impl Cheatcode for expectRevert_10Call {
 }
 
 impl Cheatcode for expectRevert_11Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, reverter, count } = self;
         expect_revert(
             ccx.state,
@@ -625,10 +553,7 @@ impl Cheatcode for expectRevert_11Call {
 }
 
 impl Cheatcode for expectPartialRevert_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -643,10 +568,7 @@ impl Cheatcode for expectPartialRevert_0Call {
 }
 
 impl Cheatcode for expectPartialRevert_1Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, reverter } = self;
         expect_revert(
             ccx.state,
@@ -661,19 +583,13 @@ impl Cheatcode for expectPartialRevert_1Call {
 }
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         expect_revert(ccx.state, None, ccx.ecx.journal().depth(), true, false, None, 1)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_1Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -688,30 +604,21 @@ impl Cheatcode for _expectCheatcodeRevert_1Call {
 }
 
 impl Cheatcode for _expectCheatcodeRevert_2Call {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData), ccx.ecx.journal().depth(), true, false, None, 1)
     }
 }
 
 impl Cheatcode for expectSafeMemoryCall {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.ecx.journal().depth().try_into()?)
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ccx.state.allowed_mem_writes.remove(&ccx.ecx.journal().depth().try_into()?);
         Ok(Default::default())
@@ -719,10 +626,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 }
 
 impl Cheatcode for expectSafeMemoryCallCall {
-    fn apply_stateful<CTX: ContextTr, N: Network>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX, N>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, (ccx.ecx.journal().depth() + 1).try_into()?)
     }
@@ -759,8 +663,8 @@ impl RevertParameters for ExpectedRevert {
 ///   address(0xc4f3) and selector `0xd34db33f` to be made at least once. If the amount of calls is
 ///   0, the test will fail. If the call is made more than once, the test will pass.
 #[expect(clippy::too_many_arguments)] // It is what it is
-fn expect_call<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn expect_call<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     target: &Address,
     calldata: &Bytes,
     value: Option<&U256>,
@@ -826,8 +730,8 @@ fn expect_call<SPEC, BLOCK, N: Network>(
     Ok(Default::default())
 }
 
-fn expect_emit<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn expect_emit<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     depth: usize,
     checks: [bool; 5],
     address: Option<Address>,
@@ -856,8 +760,8 @@ fn expect_emit<SPEC, BLOCK, N: Network>(
     Ok(Default::default())
 }
 
-pub(crate) fn handle_expect_emit<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     log: &alloy_primitives::Log,
     mut interpreter: Option<&mut Interpreter>,
 ) -> Option<&'static str> {
@@ -1095,8 +999,8 @@ impl LogCountMap {
     }
 }
 
-fn expect_create<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn expect_create<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     bytecode: Bytes,
     deployer: Address,
     create_scheme: CreateScheme,
@@ -1107,8 +1011,8 @@ fn expect_create<SPEC, BLOCK, N: Network>(
     Ok(Default::default())
 }
 
-fn expect_revert<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn expect_revert<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     reason: Option<&[u8]>,
     depth: usize,
     cheatcode: bool,
@@ -1370,8 +1274,8 @@ fn name_mismatched_logs(
     format!("{actual_name} != expected {expected_name}")
 }
 
-fn expect_safe_memory<SPEC, BLOCK, N: Network>(
-    state: &mut Cheatcodes<SPEC, BLOCK, N>,
+fn expect_safe_memory<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     start: u64,
     end: u64,
     depth: u64,

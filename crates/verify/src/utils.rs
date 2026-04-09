@@ -19,7 +19,7 @@ use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVer
 use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::decode::RevertDecoder,
+    core::{decode::RevertDecoder, evm::EthEvmNetwork},
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::TraceMode,
@@ -268,15 +268,15 @@ pub async fn get_tracing_executor(
     fork_blk_num: u64,
     evm_version: EvmVersion,
     evm_opts: EvmOpts,
-) -> Result<(EvmEnv, TxEnv, TracingExecutor)> {
+) -> Result<(EvmEnv, TxEnv, TracingExecutor<EthEvmNetwork>)> {
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
     let (evm_env, tx_env, fork, _chain, networks) =
-        TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
+        TracingExecutor::<EthEvmNetwork>::get_fork_material(fork_config, evm_opts).await?;
 
-    let executor = TracingExecutor::new(
+    let executor = TracingExecutor::<EthEvmNetwork>::new(
         (evm_env.clone(), tx_env.clone()),
         fork,
         Some(fork_config.evm_version),
@@ -297,14 +297,14 @@ pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: Ne
 }
 
 pub fn deploy_contract(
-    executor: &mut TracingExecutor,
+    executor: &mut TracingExecutor<EthEvmNetwork>,
     evm_env: &EvmEnv,
     tx_env: &TxEnv,
     spec_id: SpecId,
     to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
     let mut evm_env = evm_env.clone();
-    evm_env.cfg_env.set_spec(spec_id);
+    evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
 
     if to.is_some_and(|to| to.is_call()) {
         let TxKind::Call(to) = to.unwrap() else { unreachable!() };
@@ -350,7 +350,7 @@ pub fn deploy_contract(
 }
 
 pub async fn get_runtime_codes(
-    executor: &mut TracingExecutor,
+    executor: &mut TracingExecutor<EthEvmNetwork>,
     provider: &impl Provider<AnyNetwork>,
     address: Address,
     fork_address: Address,

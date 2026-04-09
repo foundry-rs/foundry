@@ -693,9 +693,8 @@ impl<T: Transaction> ReadyTransactions<T> {
                     {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(tx.hash()));
-                    } else {
-                        trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                     }
+                    trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                 }
 
                 unlocked_tx.extend(to_remove.unlocks.iter().copied())

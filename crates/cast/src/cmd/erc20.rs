@@ -4,7 +4,7 @@ use crate::{cmd::send::cast_send, format_uint_exp, tx::SendTxOpts};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{U64, U256};
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
@@ -15,13 +15,13 @@ use foundry_cli::{
     utils::{LoadConfig, get_chain, get_provider},
 };
 use foundry_common::{
+    FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
@@ -353,7 +353,7 @@ impl Erc20Subcommand {
         if is_tempo {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
-            self.run_generic::<AnyNetwork>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None).await
         }
     }
 
@@ -575,27 +575,22 @@ fn apply_tempo_access_key<N: Network>(
 /// provisioned on-chain.
 async fn send_tempo_keychain<P: Provider<TempoNetwork>>(
     provider: &P,
-    mut tx: <TempoNetwork as Network>::TransactionRequest,
+    tx: <TempoNetwork as Network>::TransactionRequest,
     signer: &WalletSigner,
     access_key: &TempoAccessKeyConfig,
     cast_async: bool,
     confirmations: u64,
     timeout: u64,
 ) -> eyre::Result<()> {
-    // Only include key_authorization if the key is not yet provisioned on-chain.
-    if let Some(ref auth) = access_key.key_authorization
-        && !crate::tempo::is_key_provisioned(
+    let raw_tx = tx
+        .sign_with_access_key(
             provider,
+            signer,
             access_key.wallet_address,
             access_key.key_address,
+            access_key.key_authorization.as_ref(),
         )
-        .await
-    {
-        tx.set_key_authorization(auth.clone());
-    }
-
-    let raw_tx =
-        foundry_wallets::tempo::sign_with_access_key(tx, signer, access_key.wallet_address).await?;
+        .await?;
 
     let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
 

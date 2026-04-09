@@ -94,6 +94,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     core::precompiles::EC_RECOVER,
     decode::RevertDecoder,
+    hardfork::FoundryHardfork,
     inspectors::AccessListInspector,
     traces::{
         CallTraceDecoder, FourByteInspector, GethTraceBuilder, TracingInspector,
@@ -219,6 +220,8 @@ pub struct Backend<N: Network> {
     evm_env: Arc<RwLock<EvmEnv>>,
     /// Network configuration (optimism, custom precompiles, etc.)
     networks: NetworkConfigs,
+    /// The active hardfork.
+    hardfork: FoundryHardfork,
     /// This is set if this is currently forked off another client.
     fork: Arc<RwLock<Option<ClientFork>>>,
     /// Provides time related info, like timestamp.
@@ -261,6 +264,7 @@ impl<N: Network> Clone for Backend<N> {
             states: self.states.clone(),
             evm_env: self.evm_env.clone(),
             networks: self.networks,
+            hardfork: self.hardfork,
             fork: self.fork.clone(),
             time: self.time.clone(),
             cheats: self.cheats.clone(),
@@ -487,6 +491,11 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
+    /// Returns the active hardfork.
+    pub fn hardfork(&self) -> FoundryHardfork {
+        self.hardfork
+    }
+
     /// Returns the precompiles for the current spec.
     pub fn precompiles(&self) -> BTreeMap<String, Address> {
         let spec_id = self.spec_id();
@@ -585,6 +594,30 @@ impl<N: Network> Backend<N> {
             return Ok(());
         }
         Err(BlockchainError::TempoTransactionUnsupported)
+    }
+
+    /// Builds the [`InspectorTxConfig`] from the backend's current settings.
+    fn inspector_tx_config(&self) -> InspectorTxConfig {
+        InspectorTxConfig {
+            print_traces: self.print_traces,
+            print_logs: self.print_logs,
+            enable_steps_tracing: self.enable_steps_tracing,
+            call_trace_decoder: self.call_trace_decoder.clone(),
+        }
+    }
+
+    /// Builds the [`PoolTxGasConfig`] from the given EVM environment.
+    fn pool_tx_gas_config(&self, evm_env: &EvmEnv) -> PoolTxGasConfig {
+        let spec_id = *evm_env.spec_id();
+        let is_cancun = spec_id >= SpecId::CANCUN;
+        let blob_params = self.blob_params();
+        PoolTxGasConfig {
+            disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
+            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
+            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
+            max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
+            is_cancun,
+        }
     }
 
     /// Returns the block gas limit
@@ -780,7 +813,9 @@ impl<N: Network> Backend<N> {
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
         for tx in block.body.transactions {
-            traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
+            if let Some(mined_tx) = storage.transactions.get(&tx.hash()) {
+                traces.extend(mined_tx.parity_traces());
+            }
         }
         Some(traces)
     }
@@ -936,6 +971,27 @@ impl<N: Network> Backend<N> {
         if is_arbitrum(self.chain_id().to::<u64>()) {
             // Set `l1BlockNumber` field.
             block.other.insert("l1BlockNumber".to_string(), number.into());
+        }
+
+        // Add Tempo-specific header fields for compatibility with TempoNetwork provider.
+        if self.is_tempo() {
+            let timestamp = block.header.timestamp();
+            let gas_limit = block.header.gas_limit();
+            block.other.insert(
+                "timestampMillis".to_string(),
+                serde_json::Value::String(format!("0x{:x}", timestamp.saturating_mul(1000))),
+            );
+            block.other.insert(
+                "mainBlockGeneralGasLimit".to_string(),
+                serde_json::Value::String(format!("0x{gas_limit:x}")),
+            );
+            block
+                .other
+                .insert("sharedGasLimit".to_string(), serde_json::Value::String("0x0".to_string()));
+            block.other.insert(
+                "timestampMillisPart".to_string(),
+                serde_json::Value::String("0x0".to_string()),
+            );
         }
 
         AnyRpcBlock::from(block)
@@ -1209,26 +1265,32 @@ impl<N: Network> Backend<N> {
     {
         let inspector = self.build_mining_inspector();
 
+        macro_rules! run {
+            ($evm:expr) => {{
+                self.inject_precompiles($evm.precompiles_mut());
+                let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
+                executor.apply_pre_execution_changes().expect("pre-execution changes failed");
+                let pool_result = execute_pool_transactions(
+                    &mut executor,
+                    pool_transactions,
+                    gas_config,
+                    inspector_tx_config,
+                    self.cheats(),
+                    validator,
+                );
+                let (evm, block_result) = executor.finish().expect("executor finish failed");
+                drop(evm);
+                (pool_result, block_result)
+            }};
+        }
+
         if self.is_optimism() {
             let op_env = EvmEnv::new(
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
                 evm_env.block_env.clone(),
             );
             let mut evm = OpEvmFactory::default().create_evm_with_inspector(db, op_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         } else if self.is_tempo() {
             let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
             let tempo_env = EvmEnv::new(
@@ -1240,37 +1302,11 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         } else {
             let mut evm =
                 EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         }
     }
 
@@ -1395,17 +1431,7 @@ impl<N: Network> Backend<N> {
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
 
         if self.print_traces {
@@ -1428,17 +1454,7 @@ impl<N: Network> Backend<N> {
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state: _ } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
@@ -1864,9 +1880,14 @@ impl<N: Network> Backend<N> {
             states = states.disk_path(cache_path);
         }
 
-        let (slots_in_an_epoch, precompile_factory, disable_pool_balance_checks) = {
+        let (slots_in_an_epoch, precompile_factory, disable_pool_balance_checks, hardfork) = {
             let cfg = node_config.read().await;
-            (cfg.slots_in_an_epoch, cfg.precompile_factory.clone(), cfg.disable_pool_balance_checks)
+            (
+                cfg.slots_in_an_epoch,
+                cfg.precompile_factory.clone(),
+                cfg.disable_pool_balance_checks,
+                cfg.get_hardfork(),
+            )
         };
 
         let backend = Self {
@@ -1875,6 +1896,7 @@ impl<N: Network> Backend<N> {
             states: Arc::new(RwLock::new(states)),
             evm_env: env,
             networks,
+            hardfork,
             fork,
             time: TimeManager::new(start_timestamp),
             cheats: Default::default(),
@@ -1963,7 +1985,7 @@ impl<N: Network> Backend<N> {
             let chain_id = self.evm_env.read().cfg_env.chain_id;
             let timestamp = self.genesis.timestamp;
             let test_accounts: Vec<Address> = self.genesis.accounts.clone();
-            let hardfork = tempo_chainspec::hardfork::TempoHardfork::default();
+            let hardfork = TempoHardfork::from(self.hardfork);
             let mut db = self.db.write().await;
             crate::eth::backend::tempo::initialize_tempo_precompiles(
                 &mut **db,
@@ -2224,17 +2246,7 @@ impl<N: Network> Backend<N> {
             tx.pending_transaction.transaction.as_ref(),
             *tx.pending_transaction.sender(),
         )?;
-        let (exit_reason, gas_used, out, logs) = match result {
-            ExecutionResult::Success { reason, gas, logs, output, .. } => {
-                (reason.into(), gas.used(), Some(output), logs)
-            }
-            ExecutionResult::Revert { gas, output, logs, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
-            }
-            ExecutionResult::Halt { reason, gas, logs, .. } => {
-                (reason.into_instruction_result(), gas.used(), None, logs)
-            }
-        };
+        let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
 
         inspector.print_logs();
 
@@ -2454,22 +2466,8 @@ where
                 let excess_blob_gas =
                     if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
-                let blob_params = self.blob_params();
-
-                let inspector_tx_config = InspectorTxConfig {
-                    print_traces: self.print_traces,
-                    print_logs: self.print_logs,
-                    enable_steps_tracing: self.enable_steps_tracing,
-                    call_trace_decoder: self.call_trace_decoder.clone(),
-                };
-
-                let gas_config = PoolTxGasConfig {
-                    disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-                    tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-                    tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-                    max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-                    is_cancun,
-                };
+                let inspector_tx_config = self.inspector_tx_config();
+                let gas_config = self.pool_tx_gas_config(&evm_env);
 
                 let (pool_result, block_result) = self.execute_with_block_executor(
                     &mut **db,
@@ -2710,22 +2708,8 @@ where
             if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
         let excess_blob_gas = if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
-        let blob_params = self.blob_params();
-
-        let inspector_tx_config = InspectorTxConfig {
-            print_traces: self.print_traces,
-            print_logs: self.print_logs,
-            enable_steps_tracing: self.enable_steps_tracing,
-            call_trace_decoder: self.call_trace_decoder.clone(),
-        };
-
-        let gas_config = PoolTxGasConfig {
-            disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-            max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-            is_cancun,
-        };
+        let inspector_tx_config = self.inspector_tx_config();
+        let gas_config = self.pool_tx_gas_config(&evm_env);
 
         let (pool_result, block_result) = self.execute_with_block_executor(
             &mut cache_db,
@@ -2980,17 +2964,7 @@ where
             let ResultAndState { result, state: _ } =
                 self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
 
-            let (exit_reason, gas_used, out) = match result {
-                ExecutionResult::Success { reason, gas, output, .. } => {
-                    (reason.into(), gas.used(), Some(output))
-                }
-                ExecutionResult::Revert { gas, output, .. } => {
-                    (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-                }
-                ExecutionResult::Halt { reason, gas, .. } => {
-                    (reason.into_instruction_result(), gas.used(), None)
-                }
-            };
+            let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
 
             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
@@ -3046,11 +3020,11 @@ where
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
                     return Ok(f(Box::new(state_db), block_env_from_header(&block.header)));
-                } else {
-                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                    if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                        return Ok(f(Box::new(state), block_env_from_header(&block.header)));
-                    }
+                }
+
+                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                    return Ok(f(Box::new(state), block_env_from_header(&block.header)));
                 }
             }
 
@@ -3221,24 +3195,9 @@ where
             evm_env.block_env = block_env_from_header(&block.header);
 
             let spec_id = *evm_env.spec_id();
-            let is_cancun = spec_id >= SpecId::CANCUN;
 
-            let blob_params = self.blob_params();
-
-            let inspector_tx_config = InspectorTxConfig {
-                print_traces: self.print_traces,
-                print_logs: self.print_logs,
-                enable_steps_tracing: self.enable_steps_tracing,
-                call_trace_decoder: self.call_trace_decoder.clone(),
-            };
-
-            let gas_config = PoolTxGasConfig {
-                disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-                tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-                tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-                max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-                is_cancun,
-            };
+            let inspector_tx_config = self.inspector_tx_config();
+            let gas_config = self.pool_tx_gas_config(&evm_env);
 
             self.execute_with_block_executor(
                 &mut cache_db,
@@ -3363,7 +3322,12 @@ where
         })
         .await?
     }
+}
 
+impl<N: Network> Backend<N>
+where
+    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+{
     /// Rollback the chain to a common height.
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
@@ -3392,7 +3356,13 @@ where
 
         {
             // Unwind the storage back to the common ancestor first
-            self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+            let removed_blocks =
+                self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+
+            // Clean up in-memory and on-disk states for removed blocks
+            let removed_hashes: Vec<_> =
+                removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+            self.states.write().remove_block_states(&removed_hashes);
 
             // Set environment back to common block
             let mut env = self.evm_env.write();
@@ -3440,6 +3410,259 @@ where
         }
 
         Ok(())
+    }
+
+    /// Returns the traces for the given transaction
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        #[cfg(feature = "js-tracer")]
+        if let Some(tracer_type) = opts.tracer.as_ref()
+            && tracer_type.is_js()
+        {
+            return self
+                .trace_tx_with_js_tracer(hash, tracer_type.as_str().to_string(), opts.clone())
+                .await;
+        }
+
+        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()).await {
+            return trace;
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_transaction(hash, opts).await?);
+        }
+
+        Ok(GethTrace::Default(Default::default()))
+    }
+
+    fn geth_trace(
+        &self,
+        tx: &MinedTransaction<N>,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
+
+        if let Some(tracer) = tracer {
+            match tracer {
+                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                    GethDebugBuiltInTracerType::FourByteTracer => {
+                        let inspector = FourByteInspector::default();
+                        let res = self.replay_tx_with_inspector(
+                            tx.info.transaction_hash,
+                            inspector,
+                            |_, _, inspector, _, _| FourByteFrame::from(inspector).into(),
+                        )?;
+                        return Ok(res);
+                    }
+                    GethDebugBuiltInTracerType::CallTracer => {
+                        return match tracer_config.into_call_config() {
+                            Ok(call_config) => {
+                                let inspector = TracingInspector::new(
+                                    TracingInspectorConfig::from_geth_call_config(&call_config),
+                                );
+                                let frame = self.replay_tx_with_inspector(
+                                    tx.info.transaction_hash,
+                                    inspector,
+                                    |_, _, inspector, _, _| {
+                                        inspector
+                                            .geth_builder()
+                                            .geth_call_traces(
+                                                call_config,
+                                                tx.receipt.cumulative_gas_used(),
+                                            )
+                                            .into()
+                                    },
+                                )?;
+                                Ok(frame)
+                            }
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::PreStateTracer => {
+                        return match tracer_config.into_pre_state_config() {
+                            Ok(pre_state_config) => {
+                                let inspector = TracingInspector::new(
+                                    TracingInspectorConfig::from_geth_prestate_config(
+                                        &pre_state_config,
+                                    ),
+                                );
+                                let frame = self.replay_tx_with_inspector(
+                                    tx.info.transaction_hash,
+                                    inspector,
+                                    |state, db, inspector, _, _| {
+                                        inspector.geth_builder().geth_prestate_traces(
+                                            &state,
+                                            &pre_state_config,
+                                            db,
+                                        )
+                                    },
+                                )??;
+                                Ok(frame.into())
+                            }
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::NoopTracer
+                    | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::Erc7562Tracer
+                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
+                },
+                GethDebugTracerType::JsTracer(_code) => {}
+            }
+
+            return Ok(NoopFrame::default().into());
+        }
+
+        // default structlog tracer
+        Ok(GethTraceBuilder::new(tx.info.traces.clone())
+            .geth_traces(
+                tx.receipt.cumulative_gas_used(),
+                tx.info.out.clone().unwrap_or_default(),
+                config,
+            )
+            .into())
+    }
+
+    async fn mined_geth_trace_transaction(
+        &self,
+        hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Option<Result<GethTrace, BlockchainError>> {
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
+    }
+
+    /// returns all receipts for the given transactions
+    fn get_receipts(
+        &self,
+        tx_hashes: impl IntoIterator<Item = TxHash>,
+    ) -> Vec<FoundryReceiptEnvelope> {
+        let storage = self.blockchain.storage.read();
+        let mut receipts = vec![];
+
+        for hash in tx_hashes {
+            if let Some(tx) = storage.transactions.get(&hash) {
+                receipts.push(tx.receipt.clone());
+            }
+        }
+
+        receipts
+    }
+
+    pub async fn transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> Result<Option<FoundryTxReceipt>, BlockchainError> {
+        if let Some(receipt) = self.mined_transaction_receipt(hash) {
+            return Ok(Some(receipt.inner));
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let receipt = fork.transaction_receipt(hash).await?;
+            let number = self.convert_block_number(
+                receipt.clone().and_then(|r| r.block_number()).map(BlockNumber::from),
+            );
+
+            if fork.predates_fork_inclusive(number) {
+                return Ok(receipt);
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Returns all transaction receipts of the block
+    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
+        let mut receipts = Vec::new();
+        let block = self.get_block(id)?;
+
+        for transaction in block.body.transactions {
+            let receipt = self.mined_transaction_receipt(transaction.hash())?;
+            receipts.push(receipt.inner);
+        }
+
+        Some(receipts)
+    }
+
+    /// Returns the transaction receipt for the given hash
+    pub(crate) fn mined_transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
+        let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
+            self.blockchain.get_transaction_by_hash(&hash)?;
+
+        let index = info.transaction_index as usize;
+        let block = self.blockchain.get_block_by_hash(&block_hash)?;
+        let transaction = block.body.transactions[index].clone();
+
+        // Cancun specific
+        let excess_blob_gas = block.header.excess_blob_gas();
+        let blob_gas_price =
+            alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
+        let blob_gas_used = transaction.blob_gas_used();
+
+        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
+
+        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
+        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
+
+        let tx_receipt = tx_receipt.convert_logs_rpc(
+            BlockNumHash::new(block.header.number(), block_hash),
+            block.header.timestamp(),
+            info.transaction_hash,
+            info.transaction_index,
+            next_log_index,
+        );
+
+        let receipt = TransactionReceipt {
+            inner: tx_receipt,
+            transaction_hash: info.transaction_hash,
+            transaction_index: Some(info.transaction_index),
+            block_number: Some(block.header.number()),
+            gas_used: info.gas_used,
+            contract_address: info.contract_address,
+            effective_gas_price,
+            block_hash: Some(block_hash),
+            from: info.from,
+            to: info.to,
+            blob_gas_price: Some(blob_gas_price),
+            blob_gas_used,
+        };
+
+        // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
+        let mut inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
+        if self.is_tempo() {
+            inner = inner.with_fee_payer(info.from);
+        }
+        Some(MinedTransactionReceipt { inner, out: info.out })
+    }
+
+    /// Returns the blocks receipts for the given number
+    pub async fn block_receipts(
+        &self,
+        number: BlockId,
+    ) -> Result<Option<Vec<FoundryTxReceipt>>, BlockchainError> {
+        if let Some(receipts) = self.mined_block_receipts(number) {
+            return Ok(Some(receipts));
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let number = match self.ensure_block_number(Some(number)).await {
+                Err(_) => return Ok(None),
+                Ok(n) => n,
+            };
+
+            if fork.predates_fork_inclusive(number) {
+                let receipts = fork.block_receipts(number).await?;
+
+                return Ok(receipts);
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -3796,256 +4019,6 @@ impl Backend<FoundryNetwork> {
         .await?
     }
 
-    /// returns all receipts for the given transactions
-    fn get_receipts(
-        &self,
-        tx_hashes: impl IntoIterator<Item = TxHash>,
-    ) -> Vec<FoundryReceiptEnvelope> {
-        let storage = self.blockchain.storage.read();
-        let mut receipts = vec![];
-
-        for hash in tx_hashes {
-            if let Some(tx) = storage.transactions.get(&hash) {
-                receipts.push(tx.receipt.clone());
-            }
-        }
-
-        receipts
-    }
-
-    /// Returns the traces for the given transaction
-    pub async fn debug_trace_transaction(
-        &self,
-        hash: B256,
-        opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace, BlockchainError> {
-        #[cfg(feature = "js-tracer")]
-        if let Some(tracer_type) = opts.tracer.as_ref()
-            && tracer_type.is_js()
-        {
-            return self
-                .trace_tx_with_js_tracer(hash, tracer_type.as_str().to_string(), opts.clone())
-                .await;
-        }
-
-        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()).await {
-            return trace;
-        }
-
-        if let Some(fork) = self.get_fork() {
-            return Ok(fork.debug_trace_transaction(hash, opts).await?);
-        }
-
-        Ok(GethTrace::Default(Default::default()))
-    }
-
-    fn geth_trace(
-        &self,
-        tx: &MinedTransaction<FoundryNetwork>,
-        opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
-
-        if let Some(tracer) = tracer {
-            match tracer {
-                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
-                    GethDebugBuiltInTracerType::FourByteTracer => {
-                        let inspector = FourByteInspector::default();
-                        let res = self.replay_tx_with_inspector(
-                            tx.info.transaction_hash,
-                            inspector,
-                            |_, _, inspector, _, _| FourByteFrame::from(inspector).into(),
-                        )?;
-                        return Ok(res);
-                    }
-                    GethDebugBuiltInTracerType::CallTracer => {
-                        return match tracer_config.into_call_config() {
-                            Ok(call_config) => {
-                                let inspector = TracingInspector::new(
-                                    TracingInspectorConfig::from_geth_call_config(&call_config),
-                                );
-                                let frame = self.replay_tx_with_inspector(
-                                    tx.info.transaction_hash,
-                                    inspector,
-                                    |_, _, inspector, _, _| {
-                                        inspector
-                                            .geth_builder()
-                                            .geth_call_traces(
-                                                call_config,
-                                                tx.receipt.cumulative_gas_used(),
-                                            )
-                                            .into()
-                                    },
-                                )?;
-                                Ok(frame)
-                            }
-                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
-                        };
-                    }
-                    GethDebugBuiltInTracerType::PreStateTracer => {
-                        return match tracer_config.into_pre_state_config() {
-                            Ok(pre_state_config) => {
-                                let inspector = TracingInspector::new(
-                                    TracingInspectorConfig::from_geth_prestate_config(
-                                        &pre_state_config,
-                                    ),
-                                );
-                                let frame = self.replay_tx_with_inspector(
-                                    tx.info.transaction_hash,
-                                    inspector,
-                                    |state, db, inspector, _, _| {
-                                        inspector.geth_builder().geth_prestate_traces(
-                                            &state,
-                                            &pre_state_config,
-                                            db,
-                                        )
-                                    },
-                                )??;
-                                Ok(frame.into())
-                            }
-                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
-                        };
-                    }
-                    GethDebugBuiltInTracerType::NoopTracer
-                    | GethDebugBuiltInTracerType::MuxTracer
-                    | GethDebugBuiltInTracerType::Erc7562Tracer
-                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
-                },
-                GethDebugTracerType::JsTracer(_code) => {}
-            }
-
-            return Ok(NoopFrame::default().into());
-        }
-
-        // default structlog tracer
-        Ok(GethTraceBuilder::new(tx.info.traces.clone())
-            .geth_traces(
-                tx.receipt.cumulative_gas_used(),
-                tx.info.out.clone().unwrap_or_default(),
-                config,
-            )
-            .into())
-    }
-
-    async fn mined_geth_trace_transaction(
-        &self,
-        hash: B256,
-        opts: GethDebugTracingOptions,
-    ) -> Option<Result<GethTrace, BlockchainError>> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
-    }
-
-    pub async fn transaction_receipt(
-        &self,
-        hash: B256,
-    ) -> Result<Option<FoundryTxReceipt>, BlockchainError> {
-        if let Some(receipt) = self.mined_transaction_receipt(hash) {
-            return Ok(Some(receipt.inner));
-        }
-
-        if let Some(fork) = self.get_fork() {
-            let receipt = fork.transaction_receipt(hash).await?;
-            let number = self.convert_block_number(
-                receipt.clone().and_then(|r| r.block_number()).map(BlockNumber::from),
-            );
-
-            if fork.predates_fork_inclusive(number) {
-                return Ok(receipt);
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Returns all transaction receipts of the block
-    pub fn mined_block_receipts(&self, id: impl Into<BlockId>) -> Option<Vec<FoundryTxReceipt>> {
-        let mut receipts = Vec::new();
-        let block = self.get_block(id)?;
-
-        for transaction in block.body.transactions {
-            let receipt = self.mined_transaction_receipt(transaction.hash())?;
-            receipts.push(receipt.inner);
-        }
-
-        Some(receipts)
-    }
-
-    /// Returns the transaction receipt for the given hash
-    pub(crate) fn mined_transaction_receipt(
-        &self,
-        hash: B256,
-    ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
-        let MinedTransaction { info, receipt: tx_receipt, block_hash, .. } =
-            self.blockchain.get_transaction_by_hash(&hash)?;
-
-        let index = info.transaction_index as usize;
-        let block = self.blockchain.get_block_by_hash(&block_hash)?;
-        let transaction = block.body.transactions[index].clone();
-
-        // Cancun specific
-        let excess_blob_gas = block.header.excess_blob_gas();
-        let blob_gas_price =
-            alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
-        let blob_gas_used = transaction.blob_gas_used();
-
-        let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
-
-        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
-        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
-
-        let tx_receipt = tx_receipt.convert_logs_rpc(
-            BlockNumHash::new(block.header.number(), block_hash),
-            block.header.timestamp(),
-            info.transaction_hash,
-            info.transaction_index,
-            next_log_index,
-        );
-
-        let receipt = TransactionReceipt {
-            inner: tx_receipt,
-            transaction_hash: info.transaction_hash,
-            transaction_index: Some(info.transaction_index),
-            block_number: Some(block.header.number()),
-            gas_used: info.gas_used,
-            contract_address: info.contract_address,
-            effective_gas_price,
-            block_hash: Some(block_hash),
-            from: info.from,
-            to: info.to,
-            blob_gas_price: Some(blob_gas_price),
-            blob_gas_used,
-        };
-
-        // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
-        let inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
-        Some(MinedTransactionReceipt { inner, out: info.out })
-    }
-
-    /// Returns the blocks receipts for the given number
-    pub async fn block_receipts(
-        &self,
-        number: BlockId,
-    ) -> Result<Option<Vec<FoundryTxReceipt>>, BlockchainError> {
-        if let Some(receipts) = self.mined_block_receipts(number) {
-            return Ok(Some(receipts));
-        }
-
-        if let Some(fork) = self.get_fork() {
-            let number = match self.ensure_block_number(Some(number)).await {
-                Err(_) => return Ok(None),
-                Ok(n) => n,
-            };
-
-            if fork.predates_fork_inclusive(number) {
-                let receipts = fork.block_receipts(number).await?;
-
-                return Ok(receipts);
-            }
-        }
-
-        Ok(None)
-    }
-
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         // Try to get the mined transaction by hash
         if let Some(tx) = self.mined_transaction_by_hash(hash)
@@ -4077,7 +4050,10 @@ fn get_pool_transactions_nonce(
 }
 
 #[async_trait::async_trait]
-impl TransactionValidator<FoundryTxEnvelope> for Backend<FoundryNetwork> {
+impl<N: Network> TransactionValidator<FoundryTxEnvelope> for Backend<N>
+where
+    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+{
     async fn validate_pool_transaction(
         &self,
         tx: &PendingTransaction<FoundryTxEnvelope>,
@@ -4346,6 +4322,15 @@ impl TransactionValidator<FoundryTxEnvelope> for Backend<FoundryNetwork> {
     }
 }
 
+/// Replaces the cached hash of a [`Signed`] transaction, preserving the inner tx and signature.
+fn rehash<T>(signed: Signed<T>, hash: B256) -> Signed<T>
+where
+    T: alloy_consensus::transaction::RlpEcdsaEncodableTx,
+{
+    let (t, sig, _) = signed.into_parts();
+    Signed::new_unchecked(t, sig, hash)
+}
+
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     tx_hash: Option<B256>,
@@ -4449,31 +4434,11 @@ pub fn transaction_build(
         .expect("non-standard transactions are handled above");
 
     let envelope = match eth_envelope {
-        TxEnvelope::Legacy(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
-        }
-        TxEnvelope::Eip1559(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
-        }
-        TxEnvelope::Eip2930(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
-        }
-        TxEnvelope::Eip4844(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
-        }
-        TxEnvelope::Eip7702(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
-        }
+        TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
+        TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
+        TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
+        TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
+        TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 
     let tx = Transaction {
@@ -4528,37 +4493,28 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
     false
 }
 
+/// Unpacks an [`ExecutionResult`] into its exit reason, gas used, output, and logs.
+fn unpack_execution_result<H: IntoInstructionResult>(
+    result: ExecutionResult<H>,
+) -> (InstructionResult, u64, Option<Output>, Vec<revm::primitives::Log>) {
+    match result {
+        ExecutionResult::Success { reason, gas, output, logs, .. } => {
+            (reason.into(), gas.used(), Some(output), logs)
+        }
+        ExecutionResult::Revert { gas, output, logs, .. } => {
+            (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
+        }
+        ExecutionResult::Halt { reason, gas, logs, .. } => {
+            (reason.into_instruction_result(), gas.used(), None, logs)
+        }
+    }
+}
+
 /// Converts a halt reason into an [`InstructionResult`].
 ///
 /// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
 /// so that anvil code doesn't need to match on each variant directly.
-pub trait IntoInstructionResult {
-    fn into_instruction_result(self) -> InstructionResult;
-}
-
-impl IntoInstructionResult for HaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        self.into()
-    }
-}
-
-impl IntoInstructionResult for OpHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Base(eth_h) => eth_h.into(),
-            Self::FailedDeposit => InstructionResult::Stop,
-        }
-    }
-}
-
-impl IntoInstructionResult for TempoHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Ethereum(eth_h) => eth_h.into(),
-            _ => InstructionResult::PrecompileError,
-        }
-    }
-}
+pub use foundry_evm::core::evm::IntoInstructionResult;
 
 #[cfg(test)]
 mod tests {

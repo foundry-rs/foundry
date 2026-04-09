@@ -17,17 +17,20 @@ use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, FuzzCorpusConfig};
 use foundry_evm::{
     constants::CALLER,
+    core::evm::FoundryEvmNetwork,
     decode::RevertDecoder,
     executors::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            InvariantExecutor, InvariantFuzzError, check_sequence, replay_error, replay_run,
+            CheckSequenceOptions, InvariantExecutor, InvariantFuzzError, check_sequence,
+            replay_error, replay_run,
         },
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
-        invariant::InvariantContract, strategies::EvmFuzzState,
+        invariant::{InvariantContract, InvariantSettings},
+        strategies::EvmFuzzState,
     },
     traces::{TraceKind, TraceMode, load_contracts},
 };
@@ -39,6 +42,7 @@ use std::{
     borrow::Cow,
     cmp::min,
     collections::BTreeMap,
+    ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -54,13 +58,13 @@ use tracing::Span;
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 /// A type that executes all tests of a contract
-pub struct ContractRunner<'a> {
+pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     /// The name of the contract.
     name: &'a str,
     /// The data of the contract.
     contract: &'a TestContract,
     /// The EVM executor.
-    executor: Executor,
+    executor: Executor<FEN>,
     /// Overall test run progress.
     progress: Option<&'a TestsProgress>,
     /// The handle to the tokio runtime.
@@ -68,13 +72,13 @@ pub struct ContractRunner<'a> {
     /// The span of the contract.
     span: tracing::Span,
     /// The contract-level configuration.
-    tcfg: Cow<'a, TestRunnerConfig>,
+    tcfg: Cow<'a, TestRunnerConfig<FEN>>,
     /// The parent runner.
-    mcr: &'a MultiContractRunner,
+    mcr: &'a MultiContractRunner<FEN>,
 }
 
-impl<'a> std::ops::Deref for ContractRunner<'a> {
-    type Target = Cow<'a, TestRunnerConfig>;
+impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
+    type Target = Cow<'a, TestRunnerConfig<FEN>>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -82,15 +86,15 @@ impl<'a> std::ops::Deref for ContractRunner<'a> {
     }
 }
 
-impl<'a> ContractRunner<'a> {
+impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     pub fn new(
         name: &'a str,
         contract: &'a TestContract,
-        executor: Executor,
+        executor: Executor<FEN>,
         progress: Option<&'a TestsProgress>,
         tokio_handle: &'a tokio::runtime::Handle,
         span: Span,
-        mcr: &'a MultiContractRunner,
+        mcr: &'a MultiContractRunner<FEN>,
     ) -> Self {
         Self {
             name,
@@ -457,13 +461,13 @@ impl<'a> ContractRunner<'a> {
 }
 
 /// Executes a single test function, returning a [`TestResult`].
-struct FunctionRunner<'a> {
+struct FunctionRunner<'a, FEN: FoundryEvmNetwork> {
     /// The function-level configuration.
-    tcfg: Cow<'a, TestRunnerConfig>,
+    tcfg: Cow<'a, TestRunnerConfig<FEN>>,
     /// The EVM executor.
-    executor: Cow<'a, Executor>,
+    executor: Cow<'a, Executor<FEN>>,
     /// The parent runner.
-    cr: &'a ContractRunner<'a>,
+    cr: &'a ContractRunner<'a, FEN>,
     /// The address of the test contract.
     address: Address,
     /// The test setup result.
@@ -472,8 +476,8 @@ struct FunctionRunner<'a> {
     result: TestResult,
 }
 
-impl<'a> std::ops::Deref for FunctionRunner<'a> {
-    type Target = Cow<'a, TestRunnerConfig>;
+impl<'a, FEN: FoundryEvmNetwork> Deref for FunctionRunner<'a, FEN> {
+    type Target = Cow<'a, TestRunnerConfig<FEN>>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -481,8 +485,8 @@ impl<'a> std::ops::Deref for FunctionRunner<'a> {
     }
 }
 
-impl<'a> FunctionRunner<'a> {
-    fn new(cr: &'a ContractRunner<'a>, setup: &'a TestSetup) -> Self {
+impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
+    fn new(cr: &'a ContractRunner<'a, FEN>, setup: &'a TestSetup) -> Self {
         Self {
             tcfg: match &cr.tcfg {
                 Cow::Borrowed(tcfg) => Cow::Borrowed(tcfg),
@@ -527,13 +531,7 @@ impl<'a> FunctionRunner<'a> {
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::TableTest => self.run_table_test(func),
             TestFunctionKind::InvariantTest => {
-                let test_bytecode = &self.cr.contract.bytecode;
-                self.run_invariant_test(
-                    func,
-                    call_after_invariant,
-                    identified_contracts.unwrap(),
-                    test_bytecode,
-                )
+                self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
             }
             _ => unreachable!(),
         }
@@ -715,7 +713,6 @@ impl<'a> FunctionRunner<'a> {
         func: &Function,
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
-        test_bytecode: &Bytes,
     ) -> TestResult {
         // First, run the test normally to see if it needs to be skipped.
         if let Err(EvmError::Skip(reason)) = self.executor.call(
@@ -758,6 +755,15 @@ impl<'a> FunctionRunner<'a> {
             InvariantContract::new(self.address, func, call_after_invariant, &self.cr.contract.abi);
         let show_solidity = invariant_config.show_solidity;
 
+        // Compute current invariant settings for failure validation.
+        let current_settings = match evm.compute_settings(self.address) {
+            Ok(s) => s,
+            Err(e) => {
+                self.result.invariant_setup_fail(e);
+                return self.result;
+            }
+        };
+
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
@@ -768,7 +774,7 @@ impl<'a> FunctionRunner<'a> {
 
         // Try to replay recorded failure if any.
         if let Some(mut call_sequence) =
-            persisted_call_sequence(failure_file.as_path(), test_bytecode)
+            persisted_call_sequence(failure_file.as_path(), &current_settings)
         {
             // Create calls from failed sequence and check if invariant still broken.
             let txes = call_sequence
@@ -786,14 +792,17 @@ impl<'a> FunctionRunner<'a> {
                     }
                 })
                 .collect::<Vec<BasicTxDetails>>();
-            if let Ok((success, replayed_entirely)) = check_sequence(
+            if let Ok((success, replayed_entirely, replay_reason)) = check_sequence(
                 self.clone_executor(),
                 &txes,
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
-                invariant_config.fail_on_revert,
-                invariant_contract.call_after_invariant,
+                CheckSequenceOptions {
+                    fail_on_revert: invariant_config.fail_on_revert,
+                    call_after_invariant: invariant_contract.call_after_invariant,
+                    rd: Some(self.revert_decoder()),
+                },
             ) && !success
             {
                 let warn = format!(
@@ -832,18 +841,19 @@ impl<'a> FunctionRunner<'a> {
                             failure_dir.as_path(),
                             failure_file.as_path(),
                             &call_sequence,
-                            test_bytecode,
+                            &current_settings,
                         );
                     }
+                    Ok(_) => {}
                     Err(err) => {
                         error!(%err, "Failed to replay invariant error");
                     }
-                    _ => {}
                 }
 
                 self.result.invariant_replay_fail(
                     replayed_entirely,
                     &invariant_contract.invariant_function.name,
+                    replay_reason,
                     call_sequence,
                 );
                 return self.result;
@@ -902,7 +912,7 @@ impl<'a> FunctionRunner<'a> {
                                         failure_dir.as_path(),
                                         failure_file.as_path(),
                                         &call_sequence,
-                                        test_bytecode,
+                                        &current_settings,
                                     );
 
                                     let original_seq_len =
@@ -917,10 +927,10 @@ impl<'a> FunctionRunner<'a> {
                                         call_sequence,
                                     ))
                                 }
+                                Ok(_) => {}
                                 Err(err) => {
                                     error!(%err, "Failed to replay invariant error");
                                 }
-                                _ => {}
                             }
                         }
                     };
@@ -1126,7 +1136,7 @@ impl<'a> FunctionRunner<'a> {
         fuzzer_with_cases(self.config.fuzz.seed, config.runs, config.max_assume_rejects)
     }
 
-    fn clone_executor(&self) -> Executor {
+    fn clone_executor(&self) -> Executor<FEN> {
         self.executor.clone().into_owned()
     }
 
@@ -1177,26 +1187,27 @@ fn fuzzer_with_cases(seed: Option<U256>, cases: u32, max_global_rejects: u32) ->
 struct InvariantPersistedFailure {
     /// Recorded counterexample.
     call_sequence: Vec<BaseCounterExample>,
-    /// Bytecode of the test contract that generated the counterexample.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    driver_bytecode: Option<Bytes>,
+    /// Invariant settings when the counterexample was generated.
+    /// Used to determine if the counterexample is still valid.
+    settings: InvariantSettings,
 }
 
 /// Helper function to load failed call sequence from file.
-/// Ignores failure if generated with different test contract than the current one.
-fn persisted_call_sequence(path: &Path, bytecode: &Bytes) -> Option<Vec<BaseCounterExample>> {
+/// Ignores failure if generated with different invariant settings than the current ones.
+fn persisted_call_sequence(
+    path: &Path,
+    current_settings: &InvariantSettings,
+) -> Option<Vec<BaseCounterExample>> {
     foundry_common::fs::read_json_file::<InvariantPersistedFailure>(path).ok().and_then(
         |persisted_failure| {
-            if let Some(persisted_bytecode) = &persisted_failure.driver_bytecode {
-                // Ignore persisted sequence if test bytecode doesn't match.
-                if !bytecode.eq(persisted_bytecode) {
-                    let _= sh_warn!("\
-                            Failure from {:?} file was ignored because test contract bytecode has changed.",
-                        path
-                    );
-                    return None;
-                }
-            };
+            if let Some(diff) = persisted_failure.settings.diff(current_settings) {
+                let _ = sh_warn!(
+                    "Failure from {:?} file was ignored because invariant test settings have changed: {}",
+                    path,
+                    diff
+                );
+                return None;
+            }
             Some(persisted_failure.call_sequence)
         },
     )
@@ -1223,7 +1234,7 @@ fn record_invariant_failure(
     failure_dir: &Path,
     failure_file: &Path,
     call_sequence: &[BaseCounterExample],
-    test_bytecode: &Bytes,
+    settings: &InvariantSettings,
 ) {
     if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
         error!(%err, "Failed to create invariant failure dir");
@@ -1234,7 +1245,7 @@ fn record_invariant_failure(
         failure_file,
         &InvariantPersistedFailure {
             call_sequence: call_sequence.to_owned(),
-            driver_bytecode: Some(test_bytecode.clone()),
+            settings: settings.clone(),
         },
     ) {
         error!(%err, "Failed to record call sequence");

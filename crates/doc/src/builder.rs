@@ -146,13 +146,12 @@ impl DocBuilder {
                                 if from_library {
                                     // Ignore failures for library files
                                     return Ok(files);
-                                } else {
-                                    return Err(eyre::eyre!(
-                                        "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                                        path.display(),
-                                        err
-                                    ));
                                 }
+                                return Err(eyre::eyre!(
+                                    "Failed to parse Solidity code for {}\nDebug info: {:?}",
+                                    path.display(),
+                                    err
+                                ));
                             }
                         };
 

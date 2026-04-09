@@ -3,10 +3,7 @@ use crate::{
         backend::cheats::CheatsManager, error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    mem::{
-        IntoInstructionResult,
-        inspector::{AnvilInspector, InspectorTxConfig},
-    },
+    mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
 use alloy_consensus::{
     Eip658Value, Transaction, TransactionEnvelope, TxReceipt,
@@ -31,7 +28,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
-use foundry_evm::core::env::FoundryTransaction;
+use foundry_evm::core::{env::FoundryTransaction, evm::IntoInstructionResult};
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use revm::{
     Database, DatabaseCommit,

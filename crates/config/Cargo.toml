@@ -23,8 +23,6 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 
-revm.workspace = true
-
 solar.workspace = true
 
 dirs.workspace = true

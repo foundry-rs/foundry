@@ -1,11 +1,7 @@
 use std::fmt::Debug;
 
 pub use alloy_evm::EvmEnv;
-use alloy_evm::{FromRecoveredTx, ToTxEnv};
-use alloy_network::{AnyRpcTransaction, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types::Transaction as RpcTransaction;
-use op_alloy_rpc_types::Transaction as OpRpcTransaction;
 use op_revm::{
     OpTransaction,
     transaction::{OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE},
@@ -21,7 +17,6 @@ use revm::{
     inspector::JournalExt,
     primitives::{TxKind, hardfork::SpecId},
 };
-use tempo_primitives::TempoTxEnvelope;
 use tempo_revm::{TempoBlockEnv, TempoTxEnv};
 
 use crate::backend::JournaledState;
@@ -196,6 +191,11 @@ pub trait FoundryTransaction: Transaction {
 
     /// Sets the max fee per blob gas.
     fn set_max_fee_per_blob_gas(&mut self, max_fee_per_blob_gas: u128);
+
+    /// Sets the EIP-7702 signed authorization list.
+    fn set_signed_authorization(&mut self, auth: Vec<SignedAuthorization>) {
+        *self.authorization_list_mut() = auth.into_iter().map(Either::Left).collect();
+    }
 
     // `OpTransaction` methods
 
@@ -574,203 +574,15 @@ impl<
     }
 }
 
-/// Abstraction trait for converting any RPC transaction into corresponding `TxEnv`.
-///
-/// This trait bridges the gap between different network RPC transaction types and the EVM's
-/// `TxEnv`:
-/// - For [`RpcTransaction`] (Ethereum): delegates to [`ToTxEnv`].
-/// - For [`AnyRpcTransaction`] (AnyNetwork): extracts the inner [`alloy_consensus::TxEnvelope`] via
-///   [`as_envelope()`](alloy_network::AnyTxEnvelope::as_envelope) then delegates to
-///   [`FromRecoveredTx`].
-/// - For [`OpRpcTransaction`] (Optimism): delegates to [`ToTxEnv`].
-pub trait TryAnyToTxEnv<TxEnv> {
-    /// Tries to convert this RPC transaction into a [`TxEnv`].
-    fn try_any_to_tx_env(&self) -> eyre::Result<TxEnv>;
-}
-
-impl TryAnyToTxEnv<TxEnv> for RpcTransaction {
-    fn try_any_to_tx_env(&self) -> eyre::Result<TxEnv> {
-        Ok(self.as_recovered().to_tx_env())
-    }
-}
-
-impl TryAnyToTxEnv<TxEnv> for AnyRpcTransaction {
-    fn try_any_to_tx_env(&self) -> eyre::Result<TxEnv> {
-        if let Some(envelope) = self.as_envelope() {
-            Ok(TxEnv::from_recovered_tx(envelope, self.from()))
-        } else {
-            eyre::bail!("cannot convert unknown transaction type to TxEnv")
-        }
-    }
-}
-
-impl TryAnyToTxEnv<OpTransaction<TxEnv>> for OpRpcTransaction {
-    fn try_any_to_tx_env(&self) -> eyre::Result<OpTransaction<TxEnv>> {
-        Ok(self.as_recovered().to_tx_env())
-    }
-}
-
-impl TryAnyToTxEnv<TempoTxEnv> for RpcTransaction<TempoTxEnvelope> {
-    fn try_any_to_tx_env(&self) -> eyre::Result<TempoTxEnv> {
-        Ok(self.as_recovered().to_tx_env())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{Sealed, Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
-    use alloy_network::{AnyTxEnvelope, AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
     use alloy_op_evm::OpEvmFactory;
-    use alloy_primitives::Signature;
-    use alloy_rpc_types::TransactionInfo;
-    use alloy_serde::WithOtherFields;
     use foundry_evm_hardforks::TempoHardfork;
-    use op_alloy_consensus::{OpTxEnvelope, TxDeposit, transaction::OpTransactionInfo};
     use op_revm::OpSpecId;
     use revm::database::EmptyDB;
     use tempo_evm::TempoEvmFactory;
-    use tempo_primitives::{TempoSignature, TempoTransaction, transaction::PrimitiveSignature};
-
-    fn make_signed_eip1559() -> Signed<TxEip1559> {
-        Signed::new_unchecked(
-            TxEip1559 {
-                chain_id: 1,
-                nonce: 42,
-                gas_limit: 21001,
-                to: TxKind::Call(Address::with_last_byte(0xBB)),
-                value: U256::from(101),
-                ..Default::default()
-            },
-            Signature::new(U256::ZERO, U256::ZERO, false),
-            B256::ZERO,
-        )
-    }
-
-    #[test]
-    fn try_any_to_tx_env_for_eth_and_any_transactions() {
-        let from = Address::random();
-        let signed_tx = make_signed_eip1559();
-        let tx = RpcTransaction::from_transaction(
-            Recovered::new_unchecked(signed_tx.into(), from),
-            TransactionInfo::default(),
-        );
-        let tx_env: TxEnv = tx.try_any_to_tx_env().unwrap();
-
-        assert_eq!(tx_env.caller, from);
-        assert_eq!(tx_env.nonce, 42);
-        assert_eq!(tx_env.gas_limit, 21001);
-        assert_eq!(tx_env.value, U256::from(101));
-        assert_eq!(tx_env.kind, TxKind::Call(Address::with_last_byte(0xBB)));
-
-        // Wrap as AnyRpcTransaction (Ethereum variant) via From<Transaction<TxEnvelope>>.
-        let any_tx = <AnyRpcTransaction as From<RpcTransaction>>::from(tx);
-        let any_tx_env: TxEnv = any_tx.try_any_to_tx_env().unwrap();
-
-        // TxEnv from AnyRpcTransaction must be the same
-        assert_eq!(tx_env, any_tx_env);
-    }
-
-    #[test]
-    fn try_any_to_tx_env_for_op_transactions() {
-        let from = Address::random();
-        let signed_tx = make_signed_eip1559();
-
-        // Build the eth TxEnv to compare against op base
-        let eth_tx = RpcTransaction::from_transaction(
-            Recovered::new_unchecked(signed_tx.clone().into(), from),
-            TransactionInfo::default(),
-        );
-        let expected_base: TxEnv = eth_tx.try_any_to_tx_env().unwrap();
-
-        let op_tx = OpRpcTransaction::from_transaction(
-            Recovered::new_unchecked(signed_tx.into(), from),
-            OpTransactionInfo::default(),
-        );
-        let op_tx_env: OpTransaction<TxEnv> = op_tx.try_any_to_tx_env().unwrap();
-
-        assert_eq!(op_tx_env.base, expected_base);
-
-        // Test with Deposit tx
-        let op_deposit_tx = OpRpcTransaction::from_transaction(
-            Recovered::new_unchecked(
-                OpTxEnvelope::Deposit(Sealed::new(TxDeposit {
-                    from,
-                    mint: 1111,
-                    ..Default::default()
-                })),
-                from,
-            ),
-            OpTransactionInfo::default(),
-        );
-        let op_deposit_tx_env: OpTransaction<TxEnv> = op_deposit_tx.try_any_to_tx_env().unwrap();
-
-        assert_eq!(op_deposit_tx_env.deposit.mint, Some(1111));
-        assert_eq!(op_deposit_tx_env.base.caller, from);
-    }
-
-    #[test]
-    fn try_any_to_tx_env_unknown_envelope_errors() {
-        let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
-            hash: B256::ZERO,
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(0xFF),
-                fields: Default::default(),
-                memo: Default::default(),
-            },
-        });
-        let from = Address::random();
-        let any_tx = AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
-            inner: Recovered::new_unchecked(unknown, from),
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            effective_gas_price: None,
-            block_timestamp: None,
-        }));
-
-        let result = any_tx.try_any_to_tx_env().unwrap_err();
-        assert!(result.to_string().contains("unknown transaction type"));
-    }
-
-    #[test]
-    fn try_any_to_tx_env_for_tempo_transactions() {
-        let from = Address::random();
-        let fee_token = Some(Address::random());
-        let nonce_key = U256::from(4242);
-        let valid_after = Some(1800000000);
-        let tempo_tx =
-            TempoTransaction {
-                chain_id: 42431,
-                nonce: 42,
-                gas_limit: 424242,
-                fee_token,
-                nonce_key,
-                valid_after,
-                ..Default::default()
-            }
-            .into_signed(TempoSignature::Primitive(PrimitiveSignature::Secp256k1(
-                Signature::new(U256::ZERO, U256::ZERO, false),
-            )));
-
-        // Build the eth TxEnv to compare against op base
-        let rpc_tempo_tx = RpcTransaction::from_transaction(
-            Recovered::new_unchecked(tempo_tx.into(), from),
-            TransactionInfo::default(),
-        );
-
-        let tx_env: TempoTxEnv = rpc_tempo_tx.try_any_to_tx_env().unwrap();
-        assert_eq!(tx_env.inner.caller, from);
-        assert_eq!(tx_env.inner.nonce, 42);
-        assert_eq!(tx_env.inner.gas_limit, 424242);
-        assert_eq!(tx_env.inner.chain_id, Some(42431));
-        assert_eq!(tx_env.fee_token, fee_token);
-
-        let tempo_tx_env = tx_env.tempo_tx_env.unwrap();
-        assert_eq!(tempo_tx_env.nonce_key, nonce_key);
-        assert_eq!(tempo_tx_env.valid_after, valid_after);
-    }
 
     #[test]
     fn eth_evm_foundry_context_ext_implementation() {

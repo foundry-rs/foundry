@@ -2,6 +2,7 @@
 //!
 //! Smart contract scripting.
 
+#![recursion_limit = "256"]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -11,9 +12,9 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-use crate::runner::ScriptRunner;
+use crate::{broadcast::BundledState, runner::ScriptRunner};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::Ethereum;
+use alloy_network::Network;
 use alloy_primitives::{
     Address, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -45,7 +46,10 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
-    core::Breakpoints,
+    core::{
+        Breakpoints,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    },
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
@@ -118,11 +122,24 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub broadcast: bool,
 
-    /// Batch size of transactions.
+    /// Batch all broadcast transactions into a single Tempo batch transaction.
     ///
-    /// This is ignored and set to 1 if batching is not available or `--slow` is enabled.
-    #[arg(long, default_value = "100")]
+    /// When enabled, all vm.broadcast() calls are collected and sent as a single
+    /// atomic type 0x76 transaction instead of individual transactions.
+    /// This provides atomicity (all-or-nothing execution) and gas savings.
+    #[arg(long)]
+    pub batch: bool,
+
+    /// Number of calls per Tempo batch transaction.
+    ///
+    /// When `--batch` is enabled, splits the collected calls into multiple batch
+    /// transactions of at most this many calls each.
+    #[arg(long, requires = "batch", default_value = "100")]
     pub batch_size: usize,
+
+    /// Tempo fee token address for paying transaction fees.
+    #[arg(long = "tempo.fee-token", value_name = "ADDRESS")]
+    pub fee_token: Option<Address>,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -227,9 +244,9 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    pub async fn preprocess(self) -> Result<PreprocessedState> {
+    pub async fn preprocess<FEN: FoundryEvmNetwork>(self) -> Result<PreprocessedState<FEN>> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
-        let browser_wallet = self.wallets.browser_signer::<Ethereum>().await?;
+        let browser_wallet = self.wallets.browser_signer::<FEN::Network>().await?;
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -248,7 +265,7 @@ impl ScriptArgs {
             }
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts).await?;
+        let script_config = ScriptConfig::new(config, evm_opts, self.batch, self.fee_token).await?;
 
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
@@ -257,7 +274,40 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let state = self.preprocess().await?;
+        let (_, mut evm_opts) = self.load_config_and_evm_opts()?;
+
+        // Auto-detect network from fork chain ID when not explicitly configured.
+        evm_opts.infer_network_from_fork().await;
+
+        let is_tempo = evm_opts.networks.is_tempo();
+
+        if self.batch && !is_tempo {
+            eyre::bail!("--batch mode is only supported on Tempo networks");
+        }
+
+        if is_tempo {
+            let batch = self.batch;
+            let bundled = match self.prepare_bundled::<TempoEvmNetwork>().await? {
+                Some(bundled) => bundled,
+                None => return Ok(()),
+            };
+            let bundled = bundled.wait_for_pending().await?;
+            let broadcasted =
+                if batch { bundled.broadcast_batch().await? } else { bundled.broadcast().await? };
+            if broadcasted.args.verify {
+                broadcasted.verify().await?;
+            }
+            Ok(())
+        } else {
+            self.run_generic_script::<EthEvmNetwork>().await
+        }
+    }
+
+    /// Prepares the bundled state (compile, simulate, bundle) and returns it
+    /// for broadcasting, or returns `None` if there's nothing to broadcast
+    /// (e.g., debug mode, no transactions, missing RPCs).
+    async fn prepare_bundled<FEN: FoundryEvmNetwork>(self) -> Result<Option<BundledState<FEN>>> {
+        let state = self.preprocess::<FEN>().await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
@@ -279,8 +329,8 @@ impl ScriptArgs {
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
-                    Some(path) => pre_simulation.dump_debugger(&path),
-                    None => pre_simulation.run_debugger(),
+                    Some(path) => pre_simulation.dump_debugger(&path).map(|_| None),
+                    None => pre_simulation.run_debugger().map(|_| None),
                 };
             }
 
@@ -302,7 +352,7 @@ impl ScriptArgs {
                     sh_warn!("No transactions to broadcast.")?;
                 }
 
-                return Ok(());
+                return Ok(None);
             }
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
@@ -311,7 +361,7 @@ impl ScriptArgs {
                     sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
                 }
 
-                return Ok(());
+                return Ok(None);
             }
 
             pre_simulation.args.check_contract_sizes(
@@ -335,13 +385,22 @@ impl ScriptArgs {
                     "\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more."
                 )?;
             }
-            return Ok(());
+            return Ok(None);
         }
 
         // Exit early if something is wrong with verification options.
         if bundled.args.verify {
             bundled.verify_preflight_check()?;
         }
+
+        Ok(Some(bundled))
+    }
+
+    async fn run_generic_script<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+        let bundled = match self.prepare_bundled::<FEN>().await? {
+            Some(bundled) => bundled,
+            None => return Ok(()),
+        };
 
         // Wait for pending txes and broadcast others.
         let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
@@ -415,9 +474,9 @@ impl ScriptArgs {
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.
-    fn check_contract_sizes(
+    fn check_contract_sizes<N: Network>(
         &self,
-        result: &ScriptResult,
+        result: &ScriptResult<N>,
         known_contracts: &ContractsByArtifact,
         create2_deployer: Address,
     ) -> Result<()> {
@@ -534,8 +593,9 @@ impl Provider for ScriptArgs {
     }
 }
 
-#[derive(Default, Serialize, Clone)]
-pub struct ScriptResult {
+#[derive(Serialize, Clone)]
+#[serde(bound = "")]
+pub struct ScriptResult<N: Network> {
     pub success: bool,
     #[serde(rename = "raw_logs")]
     pub logs: Vec<Log>,
@@ -543,14 +603,30 @@ pub struct ScriptResult {
     pub gas_used: u64,
     pub labeled_addresses: AddressHashMap<String>,
     #[serde(skip)]
-    pub transactions: Option<BroadcastableTransactions<Ethereum>>,
+    pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
 }
 
-impl ScriptResult {
+impl<N: Network> Default for ScriptResult<N> {
+    fn default() -> Self {
+        Self {
+            success: Default::default(),
+            logs: Default::default(),
+            traces: Default::default(),
+            gas_used: Default::default(),
+            labeled_addresses: Default::default(),
+            transactions: Default::default(),
+            returned: Default::default(),
+            address: Default::default(),
+            breakpoints: Default::default(),
+        }
+    }
+}
+
+impl<N: Network> ScriptResult<N> {
     pub fn get_created_contracts(
         &self,
         known_contracts: &ContractsByArtifact,
@@ -579,24 +655,34 @@ impl ScriptResult {
 }
 
 #[derive(Serialize)]
-struct JsonResult<'a> {
+#[serde(bound = "")]
+struct JsonResult<'a, N: Network> {
     logs: Vec<String>,
     returns: &'a HashMap<String, NestedValue>,
     #[serde(flatten)]
-    result: &'a ScriptResult,
+    result: &'a ScriptResult<N>,
 }
 
 #[derive(Clone, Debug)]
-pub struct ScriptConfig {
+pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
-    pub backends: HashMap<String, Backend>,
+    pub backends: HashMap<String, Backend<FEN>>,
+    /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
+    pub batch: bool,
+    /// Tempo fee token address for paying transaction fees.
+    pub fee_token: Option<Address>,
 }
 
-impl ScriptConfig {
-    pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
+impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
+    pub async fn new(
+        config: Config,
+        evm_opts: EvmOpts,
+        batch: bool,
+        fee_token: Option<Address>,
+    ) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
         } else {
@@ -604,7 +690,7 @@ impl ScriptConfig {
             1
         };
 
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default() })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, fee_token })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -618,7 +704,7 @@ impl ScriptConfig {
         Ok(())
     }
 
-    async fn get_runner(&mut self) -> Result<ScriptRunner> {
+    async fn get_runner(&mut self) -> Result<ScriptRunner<FEN>> {
         self._get_runner(None, false).await
     }
 
@@ -628,7 +714,7 @@ impl ScriptConfig {
         script_wallets: Wallets,
         debug: bool,
         target: ArtifactId,
-    ) -> Result<ScriptRunner> {
+    ) -> Result<ScriptRunner<FEN>> {
         self._get_runner(Some((known_contracts, script_wallets, target)), debug).await
     }
 
@@ -636,7 +722,7 @@ impl ScriptConfig {
         &mut self,
         cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
-    ) -> Result<ScriptRunner> {
+    ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
         let (evm_env, tx_env, fork_block) = self.evm_opts.env().await?;
 
@@ -644,7 +730,8 @@ impl ScriptConfig {
             match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
-                    let fork = self.evm_opts.get_fork(&self.config, &evm_env, fork_block);
+                    let fork =
+                        self.evm_opts.get_fork(&self.config, evm_env.cfg_env.chain_id, fork_block);
                     let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
@@ -658,7 +745,7 @@ impl ScriptConfig {
         };
 
         // We need to enable tracing to decode contract names: local or external.
-        let mut builder = ExecutorBuilder::new()
+        let mut builder = ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
@@ -694,6 +781,7 @@ impl ScriptConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::Ethereum;
     use foundry_config::{NamedChain, UnresolvedEnvVarError};
     use std::fs;
     use tempfile::tempdir;
@@ -747,7 +835,7 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--disable-code-size-limit"]);
         assert!(args.disable_code_size_limit);
 
-        let result = ScriptResult::default();
+        let result = ScriptResult::<Ethereum>::default();
         let contracts = ContractsByArtifact::default();
         let create = Address::ZERO;
         assert!(args.check_contract_sizes(&result, &contracts, create).is_ok());

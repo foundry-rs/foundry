@@ -1,4 +1,4 @@
-use alloy_network::Ethereum;
+use alloy_network::Network;
 use alloy_primitives::map::{HashMap, hash_map::Entry};
 use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
 use eyre::{Result, WrapErr};
@@ -7,18 +7,23 @@ use foundry_config::Chain;
 use std::{ops::Deref, sync::Arc};
 
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
-#[derive(Default)]
-pub struct ProvidersManager {
-    pub inner: HashMap<String, ProviderInfo>,
+pub struct ProvidersManager<N: Network> {
+    pub inner: HashMap<String, ProviderInfo<N>>,
 }
 
-impl ProvidersManager {
+impl<N: Network> Default for ProvidersManager<N> {
+    fn default() -> Self {
+        Self { inner: Default::default() }
+    }
+}
+
+impl<N: Network> ProvidersManager<N> {
     /// Get or initialize the RPC provider.
     pub async fn get_or_init_provider(
         &mut self,
         rpc: &str,
         is_legacy: bool,
-    ) -> Result<&ProviderInfo> {
+    ) -> Result<&ProviderInfo<N>> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
@@ -29,8 +34,8 @@ impl ProvidersManager {
     }
 }
 
-impl Deref for ProvidersManager {
-    type Target = HashMap<String, ProviderInfo>;
+impl<N: Network> Deref for ProvidersManager<N> {
+    type Target = HashMap<String, ProviderInfo<N>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -39,8 +44,8 @@ impl Deref for ProvidersManager {
 
 /// Holds related metadata to each provider RPC.
 #[derive(Debug)]
-pub struct ProviderInfo {
-    pub provider: Arc<RootProvider<Ethereum>>,
+pub struct ProviderInfo<N: Network> {
+    pub provider: Arc<RootProvider<N>>,
     pub chain: u64,
     pub gas_price: GasPrice,
 }
@@ -52,7 +57,7 @@ pub enum GasPrice {
     EIP1559(Result<Eip1559Estimation>),
 }
 
-impl ProviderInfo {
+impl<N: Network> ProviderInfo<N> {
     pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
         let provider = Arc::new(ProviderBuilder::new(rpc).build()?);
         let chain = provider.get_chain_id().await?;

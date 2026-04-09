@@ -7,7 +7,6 @@
 use crate::{
     call_spec::CallSpec,
     cmd::send::cast_send,
-    tempo::sign_with_access_key,
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -20,8 +19,7 @@ use foundry_cli::{
     opts::TransactionOpts,
     utils::{self, LoadConfig, parse_function_args},
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use std::time::Duration;
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::Call;
@@ -160,8 +158,15 @@ impl BatchSendArgs {
             };
 
             if let Some(ref access_key) = tempo_access_key {
-                let raw_tx =
-                    sign_with_access_key(tx_request, &signer, access_key.wallet_address).await?;
+                let raw_tx = tx_request
+                    .sign_with_access_key(
+                        &provider,
+                        &signer,
+                        access_key.wallet_address,
+                        access_key.key_address,
+                        access_key.key_authorization.as_ref(),
+                    )
+                    .await?;
 
                 let cast = CastTxSender::new(&provider);
                 let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();

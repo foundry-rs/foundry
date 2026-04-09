@@ -1,13 +1,16 @@
 use crate::executors::{
-    EarlyExit, Executor,
+    EarlyExit, EvmError, Executor, RawCallResult,
     invariant::{call_after_invariant_function, call_invariant_function, execute_tx},
 };
 use alloy_primitives::{Address, Bytes, I256, U256};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::constants::MAGIC_ASSUME;
+use foundry_evm_core::{
+    FoundryBlock, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
+};
 use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
+use revm::context::Block;
 
 /// Shrinker for a call sequence failure.
 /// Iterates sequence call sequence top down and removes calls one by one.
@@ -59,16 +62,24 @@ fn apply_warp_roll(call: &BasicTxDetails, warp: U256, roll: U256) -> BasicTxDeta
 }
 
 /// Applies warp/roll adjustments directly to the executor's environment.
-fn apply_warp_roll_to_env(executor: &mut Executor, warp: U256, roll: U256) {
+fn apply_warp_roll_to_env<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    warp: U256,
+    roll: U256,
+) {
     if warp > U256::ZERO || roll > U256::ZERO {
-        executor.evm_env_mut().block_env.timestamp += warp;
-        executor.evm_env_mut().block_env.number += roll;
+        let ts = executor.evm_env().block_env.timestamp();
+        let num = executor.evm_env().block_env.number();
+        executor.evm_env_mut().block_env.set_timestamp(ts + warp);
+        executor.evm_env_mut().block_env.set_number(num + roll);
 
         let block_env = executor.evm_env().block_env.clone();
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             if let Some(block) = cheatcodes.block.as_mut() {
-                block.timestamp += warp;
-                block.number += roll;
+                let bts = block.timestamp();
+                let bnum = block.number();
+                block.set_timestamp(bts + warp);
+                block.set_number(bnum + roll);
             } else {
                 cheatcodes.block = Some(block_env);
             }
@@ -76,11 +87,11 @@ fn apply_warp_roll_to_env(executor: &mut Executor, warp: U256, roll: U256) {
     }
 }
 
-pub(crate) fn shrink_sequence(
+pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
     invariant_contract: &InvariantContract<'_>,
     calls: &[BasicTxDetails],
-    executor: &Executor,
+    executor: &Executor<FEN>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
@@ -113,13 +124,16 @@ pub(crate) fn shrink_sequence(
             shrinker.current().collect(),
             target_address,
             calldata.clone(),
-            config.fail_on_revert,
-            invariant_contract.call_after_invariant,
+            CheckSequenceOptions {
+                fail_on_revert: config.fail_on_revert,
+                call_after_invariant: invariant_contract.call_after_invariant,
+                rd: None,
+            },
         ) {
             // If candidate sequence still fails, shrink until shortest possible.
-            Ok((false, _)) if shrinker.included_calls.count() == 1 => break,
+            Ok((false, _, _)) if shrinker.included_calls.count() == 1 => break,
             // Restore last removed call as it caused sequence to pass invariant.
-            Ok((true, _)) => shrinker.included_calls.set(call_idx),
+            Ok((true, _, _)) => shrinker.included_calls.set(call_idx),
             _ => {}
         }
 
@@ -139,15 +153,14 @@ pub(crate) fn shrink_sequence(
 /// persisted failures.
 /// Returns the result of invariant check (and afterInvariant call if needed) and if sequence was
 /// entirely applied.
-pub fn check_sequence(
-    mut executor: Executor,
+pub fn check_sequence<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
     test_address: Address,
     calldata: Bytes,
-    fail_on_revert: bool,
-    call_after_invariant: bool,
-) -> eyre::Result<(bool, bool)> {
+    options: CheckSequenceOptions<'_>,
+) -> eyre::Result<(bool, bool, Option<String>)> {
     // Apply the call sequence.
     for call_index in sequence {
         let tx = &calls[call_index];
@@ -156,22 +169,51 @@ pub fn check_sequence(
         // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
         // are replayed with a modified version of test driver (that use new `vm.assume`
         // cheatcodes).
-        if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
+        if call_result.reverted
+            && options.fail_on_revert
+            && call_result.result.as_ref() != MAGIC_ASSUME
+        {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
-            return Ok((false, false));
+            return Ok((false, false, call_failure_reason(call_result, options.rd)));
         }
     }
 
     // Check the invariant for call sequence.
-    let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
-    // Check after invariant result if invariant is success and `afterInvariant` function is
-    // declared.
-    if success && call_after_invariant {
-        (_, success) = call_after_invariant_function(&executor, test_address)?;
+    let (invariant_result, mut success) =
+        call_invariant_function(&executor, test_address, calldata)?;
+    if !success {
+        return Ok((false, true, call_failure_reason(invariant_result, options.rd)));
     }
 
-    Ok((success, true))
+    // Check after invariant result if invariant is success and `afterInvariant` function is
+    // declared.
+    if success && options.call_after_invariant {
+        let (after_invariant_result, after_invariant_success) =
+            call_after_invariant_function(&executor, test_address)?;
+        success = after_invariant_success;
+        if !success {
+            return Ok((false, true, call_failure_reason(after_invariant_result, options.rd)));
+        }
+    }
+
+    Ok((success, true, None))
+}
+
+pub struct CheckSequenceOptions<'a> {
+    pub fail_on_revert: bool,
+    pub call_after_invariant: bool,
+    pub rd: Option<&'a RevertDecoder>,
+}
+
+fn call_failure_reason<FEN: FoundryEvmNetwork>(
+    call_result: RawCallResult<FEN>,
+    rd: Option<&RevertDecoder>,
+) -> Option<String> {
+    match call_result.into_evm_error(rd) {
+        EvmError::Execution(err) => Some(err.reason),
+        _ => None,
+    }
 }
 
 /// Shrinks a call sequence to the shortest sequence that still produces the target optimization
@@ -181,11 +223,11 @@ pub fn check_sequence(
 /// Unlike `shrink_sequence` (for check mode), this function:
 /// - Accumulates warp/roll values from removed calls into the next kept call
 /// - Checks for target value equality rather than invariant failure
-pub(crate) fn shrink_sequence_value(
+pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
     invariant_contract: &InvariantContract<'_>,
     calls: &[BasicTxDetails],
-    executor: &Executor,
+    executor: &Executor<FEN>,
     target_value: I256,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
@@ -261,8 +303,8 @@ pub(crate) fn shrink_sequence_value(
 ///
 /// Returns `None` if the invariant call fails or doesn't return a valid int256.
 /// Unlike `check_sequence`, this applies warp/roll from ALL calls (including removed ones).
-pub fn check_sequence_value(
-    mut executor: Executor,
+pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
     test_address: Address,

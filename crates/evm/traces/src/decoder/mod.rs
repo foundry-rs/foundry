@@ -512,7 +512,28 @@ impl CallTraceDecoder {
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
-            "expectRevert" => Some(vec![self.revert_decoder.decode(data, None)]),
+            "expectRevert" => {
+                let decoded = match data.get(SELECTOR_LEN..) {
+                    Some(data) => func.abi_decode_input(data).ok(),
+                    None => None,
+                };
+                let Some(decoded) = decoded else {
+                    return Some(vec![self.revert_decoder.decode(data, None)]);
+                };
+                let Some(first) = decoded.first() else {
+                    return Some(vec![self.revert_decoder.decode(data, None)]);
+                };
+                let expected_revert = match first {
+                    DynSolValue::Bytes(bytes) => bytes.as_slice(),
+                    DynSolValue::FixedBytes(word, size) => &word[..*size],
+                    _ => return None,
+                };
+                Some(
+                    std::iter::once(self.revert_decoder.decode(expected_revert, None))
+                        .chain(decoded.iter().skip(1).map(|value| self.format_value(value)))
+                        .collect(),
+                )
+            }
             "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
@@ -919,8 +940,113 @@ mod tests {
     fn test_should_redact() {
         let decoder = CallTraceDecoder::new();
 
+        let expected_revert_bytes4 = vec![0xde, 0xad, 0xbe, 0xef];
+        let expect_revert_bytes4_data = Function::parse("expectRevert(bytes4)")
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::FixedBytes(
+                B256::right_padding_from(expected_revert_bytes4.as_slice()),
+                4,
+            )])
+            .unwrap();
+
+        let expected_revert_bytes = hex!(
+            "08c379a000000000000000000000000000000000000000000000000000000000\
+             0000002000000000000000000000000000000000000000000000000000000000\
+             00000004626f6f6d000000000000000000000000000000000000000000000000"
+        )
+        .to_vec();
+        let expect_revert_bytes_data = Function::parse("expectRevert(bytes)")
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::Bytes(expected_revert_bytes.clone())])
+            .unwrap();
+
+        let reverter = Address::from([0x11; 20]);
+        let expect_revert_bytes4_address_data = Function::parse("expectRevert(bytes4,address)")
+            .unwrap()
+            .abi_encode_input(&[
+                DynSolValue::FixedBytes(
+                    B256::right_padding_from(expected_revert_bytes4.as_slice()),
+                    4,
+                ),
+                DynSolValue::Address(reverter),
+            ])
+            .unwrap();
+
+        let count = 42_u64;
+        let expect_revert_bytes_count_data = Function::parse("expectRevert(bytes,uint64)")
+            .unwrap()
+            .abi_encode_input(&[
+                DynSolValue::Bytes(expected_revert_bytes.clone()),
+                DynSolValue::Uint(alloy_primitives::U256::from(count), 64),
+            ])
+            .unwrap();
+
+        let expect_revert_bytes_address_count_data =
+            Function::parse("expectRevert(bytes,address,uint64)")
+                .unwrap()
+                .abi_encode_input(&[
+                    DynSolValue::Bytes(expected_revert_bytes.clone()),
+                    DynSolValue::Address(reverter),
+                    DynSolValue::Uint(alloy_primitives::U256::from(count), 64),
+                ])
+                .unwrap();
+
+        let expect_revert_runtime_data = expected_revert_bytes4.clone();
+
         // [function_signature, data, expected]
         let cheatcode_input_test_cases = vec![
+            // Should decode the expected revert payload, not full cheatcode calldata:
+            (
+                "expectRevert(bytes4)",
+                expect_revert_bytes4_data,
+                Some(vec![decoder.revert_decoder.decode(expected_revert_bytes4.as_slice(), None)]),
+            ),
+            (
+                "expectRevert(bytes)",
+                expect_revert_bytes_data,
+                Some(vec![decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None)]),
+            ),
+            (
+                "expectRevert(bytes4)",
+                expect_revert_runtime_data.clone(),
+                Some(vec![
+                    decoder.revert_decoder.decode(expect_revert_runtime_data.as_slice(), None),
+                ]),
+            ),
+            (
+                "expectRevert(bytes4,address)",
+                expect_revert_bytes4_address_data,
+                Some(vec![
+                    decoder.revert_decoder.decode(expected_revert_bytes4.as_slice(), None),
+                    decoder.format_value(&DynSolValue::Address(reverter)),
+                ]),
+            ),
+            (
+                "expectRevert(bytes,uint64)",
+                expect_revert_bytes_count_data,
+                Some(vec![
+                    decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None),
+                    decoder
+                        .format_value(&DynSolValue::Uint(alloy_primitives::U256::from(count), 64)),
+                ]),
+            ),
+            (
+                "expectRevert(bytes,address,uint64)",
+                expect_revert_bytes_address_count_data,
+                Some(vec![
+                    decoder.revert_decoder.decode(expected_revert_bytes.as_slice(), None),
+                    decoder.format_value(&DynSolValue::Address(reverter)),
+                    decoder
+                        .format_value(&DynSolValue::Uint(alloy_primitives::U256::from(count), 64)),
+                ]),
+            ),
+            (
+                "expectRevert()",
+                expect_revert_runtime_data.clone(),
+                Some(vec![
+                    decoder.revert_decoder.decode(expect_revert_runtime_data.as_slice(), None),
+                ]),
+            ),
             // Should redact private key from traces in all cases:
             ("addr(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("createWallet(string)", vec![], Some(vec!["<pk>".to_string()])),

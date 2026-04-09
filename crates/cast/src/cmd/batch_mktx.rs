@@ -5,7 +5,6 @@
 
 use crate::{
     call_spec::CallSpec,
-    tempo::sign_with_access_key,
     tx::{self, CastTxBuilder},
 };
 use alloy_consensus::SignableTransaction;
@@ -20,8 +19,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, LoadConfig, parse_function_args},
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::Call;
 
@@ -165,7 +163,15 @@ impl BatchMakeTxArgs {
         };
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
-            let raw_tx = sign_with_access_key(tx, &signer, access_key.wallet_address).await?;
+            let raw_tx = tx
+                .sign_with_access_key(
+                    &provider,
+                    &signer,
+                    access_key.wallet_address,
+                    access_key.key_address,
+                    access_key.key_authorization.as_ref(),
+                )
+                .await?;
             alloy_primitives::hex::encode(raw_tx)
         } else {
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;

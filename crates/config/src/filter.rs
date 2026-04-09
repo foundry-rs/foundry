@@ -59,9 +59,8 @@ impl GlobMatcher {
         if path.is_relative() && Path::new(self.glob().glob()).is_absolute() {
             if let Ok(canonicalized_path) = dunce::canonicalize(path) {
                 return self.matcher.is_match(&canonicalized_path);
-            } else {
-                return false;
             }
+            return false;
         }
 
         false

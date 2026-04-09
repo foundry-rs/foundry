@@ -1,28 +1,28 @@
 use crate::executors::{Executor, ExecutorBuilder};
-use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, evm_spec_id};
-use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
+use foundry_evm_core::{
+    backend::Backend,
+    evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    fork::CreateFork,
+    opts::EvmOpts,
+};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceMode;
-use revm::{
-    context::{Transaction, TxEnv},
-    primitives::hardfork::SpecId,
-    state::Bytecode,
-};
+use revm::{context::Transaction, state::Bytecode};
 use std::ops::{Deref, DerefMut};
 
 /// A default executor with tracing enabled
-pub struct TracingExecutor {
-    executor: Executor,
+pub struct TracingExecutor<FEN: FoundryEvmNetwork> {
+    executor: Executor<FEN>,
 }
 
-impl TracingExecutor {
+impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     pub fn new(
-        env: (EvmEnv, TxEnv),
+        env: (EvmEnvFor<FEN>, TxEnvFor<FEN>),
         fork: CreateFork,
         version: Option<EvmVersion>,
         trace_mode: TraceMode,
@@ -33,11 +33,11 @@ impl TracingExecutor {
         let db = Backend::spawn(Some(fork))?;
         // configures a bare version of the evm executor: no cheatcode and log_collector inspector
         // is enabled, tracing will be enabled only for the targeted transaction
-        let mut executor = ExecutorBuilder::new()
+        let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
-            .spec_id(evm_spec_id(version.unwrap_or_default()))
+            .spec_id(evm_spec_id::<SpecFor<FEN>>(version.unwrap_or_default()))
             .build(env.0, env.1, db);
 
         // Apply the state overrides.
@@ -73,7 +73,7 @@ impl TracingExecutor {
     }
 
     /// Returns the spec id of the executor
-    pub fn spec_id(&self) -> SpecId {
+    pub fn spec_id(&self) -> SpecFor<FEN> {
         self.executor.spec_id()
     }
 
@@ -81,13 +81,14 @@ impl TracingExecutor {
     pub async fn get_fork_material(
         config: &mut Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(EvmEnv, TxEnv, CreateFork, Chain, NetworkConfigs)> {
+    ) -> eyre::Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, CreateFork, Chain, NetworkConfigs)> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
-        let (evm_env, tx_env, fork_block) = evm_opts.env::<_, _, TxEnv>().await?;
+        let (evm_env, tx_env, fork_block) =
+            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
-        let fork = evm_opts.get_fork(config, &evm_env, fork_block).unwrap();
+        let fork = evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block).unwrap();
         let networks = evm_opts.networks.with_chain_id(evm_env.cfg_env.chain_id);
         config.labels.extend(networks.precompiles_label());
 
@@ -96,15 +97,15 @@ impl TracingExecutor {
     }
 }
 
-impl Deref for TracingExecutor {
-    type Target = Executor;
+impl<FEN: FoundryEvmNetwork> Deref for TracingExecutor<FEN> {
+    type Target = Executor<FEN>;
 
     fn deref(&self) -> &Self::Target {
         &self.executor
     }
 }
 
-impl DerefMut for TracingExecutor {
+impl<FEN: FoundryEvmNetwork> DerefMut for TracingExecutor<FEN> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.executor
     }

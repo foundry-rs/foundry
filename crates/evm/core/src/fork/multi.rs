@@ -6,7 +6,7 @@
 use super::CreateFork;
 use crate::FoundryBlock;
 use alloy_evm::EvmEnv;
-use alloy_network::Network;
+use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{U256, map::HashMap};
 use foundry_config::Config;
 use foundry_fork_db::{
@@ -591,10 +591,11 @@ async fn create_fork<
     // created via cheatcodes, where evm_opts is cloned from the base config).
     fork.evm_opts.fork_url = Some(fork.url.clone());
 
-    let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
-
     // Initialise the fork environment.
-    let (evm_env, number) = fork.evm_opts.fork_evm_env::<_, BLOCK, _, _>(&provider).await?;
+    // Here we use [`AnyNetwork`] to maximize compatibility with custom chains, aligned with
+    // `EvmOpts::env` impl.
+    let any_provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
+    let (evm_env, number) = fork.evm_opts.fork_evm_env::<_, BLOCK, _, _>(&any_provider).await?;
     let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), fork.url.clone());
 
     // Determine the cache path if caching is enabled.
@@ -604,6 +605,7 @@ async fn create_fork<
         None
     };
 
+    let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork_id = ForkId::new(&fork.url, Some(number));

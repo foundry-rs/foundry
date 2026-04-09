@@ -689,7 +689,7 @@ impl WalletSubcommands {
                         )?;
                     } else {
                         sh_println!(
-                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: 0x{}",
+                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: {}",
                             nonce,
                             chain_id,
                             wallet.address(),

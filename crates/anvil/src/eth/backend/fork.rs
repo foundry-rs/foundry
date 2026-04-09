@@ -383,8 +383,7 @@ impl<N: Network> ClientFork<N> {
                         return self.transaction_by_hash(*tx_hash).await;
                     }
                 }
-                // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
+                BlockTransactions::Uncle => {}
             }
         }
         Ok(None)
@@ -408,8 +407,7 @@ impl<N: Network> ClientFork<N> {
                         return self.transaction_by_hash(*tx_hash).await;
                     }
                 }
-                // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
+                BlockTransactions::Uncle => {}
             }
         }
         Ok(None)

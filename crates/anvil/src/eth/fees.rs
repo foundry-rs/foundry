@@ -438,22 +438,6 @@ impl FeeDetails {
                     max_fee_per_blob_gas: None,
                 })
             }
-            (_, max_fee, max_priority, None) => {
-                // eip-1559
-                // Ensure `max_priority_fee_per_gas` is less or equal to `max_fee_per_gas`.
-                if let Some(max_priority) = max_priority {
-                    let max_fee = max_fee.unwrap_or_default();
-                    if max_priority > max_fee {
-                        return Err(BlockchainError::InvalidFeeInput);
-                    }
-                }
-                Ok(Self {
-                    gas_price: max_fee,
-                    max_fee_per_gas: max_fee,
-                    max_priority_fee_per_gas: max_priority,
-                    max_fee_per_blob_gas: None,
-                })
-            }
             (_, max_fee, max_priority, max_fee_per_blob_gas) => {
                 // eip-1559
                 // Ensure `max_priority_fee_per_gas` is less or equal to `max_fee_per_gas`.

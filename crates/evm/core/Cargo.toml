@@ -38,9 +38,8 @@ alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
+alloy-rlp.workspace = true
 foundry-fork-db.workspace = true
-op-alloy-rpc-types.workspace = true
-tempo-primitives.workspace = true
 
 revm = { workspace = true, features = [
     "std",
@@ -56,6 +55,7 @@ revm = { workspace = true, features = [
 revm-inspectors.workspace = true
 op-revm.workspace = true
 tempo-revm.workspace = true
+tempo-alloy.workspace = true
 tempo-chainspec.workspace = true
 tempo-contracts.workspace = true
 tempo-evm.workspace = true

@@ -29,6 +29,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use tempo_chainspec::hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -230,6 +231,8 @@ impl NodeArgs {
             Some(hf) => {
                 if self.evm.networks.is_optimism() {
                     Some(OpHardfork::from_str(hf)?.into())
+                } else if self.evm.networks.is_tempo() {
+                    Some(TempoHardfork::from_str(hf)?.into())
                 } else {
                     Some(EthereumHardfork::from_str(hf)?.into())
                 }

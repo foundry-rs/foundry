@@ -1,11 +1,17 @@
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
+use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, U256};
-use alloy_rpc_types::SignedAuthorization;
-use tempo_alloy::TempoNetwork;
-use tempo_primitives::transaction::SignedKeyAuthorization;
+use alloy_primitives::{Address, B256, Signature, TxKind, U256};
+use alloy_provider::Provider;
+use alloy_signer::Signer;
+use eyre::Result;
+use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
+use tempo_primitives::{
+    TempoSignature,
+    transaction::{Call, KeychainSignature, PrimitiveSignature, SignedKeyAuthorization},
+};
 
 /// Composite transaction builder trait for Foundry transactions.
 ///
@@ -233,6 +239,30 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     /// Embeds a [`SignedKeyAuthorization`] in the transaction body, provisioning the access key
     /// on-chain as part of this transaction.
     fn set_key_authorization(&mut self, _key_authorization: SignedKeyAuthorization) {}
+
+    /// Converts a CREATE transaction into an AA-compatible call entry.
+    ///
+    /// Tempo AA transactions use a `calls` list instead of `to`+`input`. Must be
+    /// called before gas estimation so the RPC sees the correct tx structure.
+    /// No-op for non-Tempo networks.
+    fn convert_create_to_call(&mut self) {}
+
+    /// Signs the transaction using an access key (keychain mode).
+    ///
+    /// If `key_authorization` is provided and the key is not yet provisioned on-chain,
+    /// embeds the authorization in the transaction before signing.
+    ///
+    /// The default implementation returns an error. Only `TempoNetwork` supports this.
+    fn sign_with_access_key(
+        self,
+        _provider: &impl Provider<N>,
+        _signer: &(impl Signer + Sync),
+        _wallet_address: Address,
+        _key_address: Address,
+        _key_authorization: Option<&SignedKeyAuthorization>,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send {
+        async { eyre::bail!("access key signing is not supported for this network") }
+    }
 }
 
 impl FoundryTransactionBuilder<Ethereum> for <Ethereum as Network>::TransactionRequest {
@@ -381,5 +411,55 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn set_key_authorization(&mut self, key_authorization: SignedKeyAuthorization) {
         self.key_authorization = Some(key_authorization);
+    }
+
+    fn convert_create_to_call(&mut self) {
+        if self.calls.is_empty() && self.inner.to.is_some_and(|to| to.is_create()) {
+            let input = self.inner.input.input().cloned().unwrap_or_default();
+            let value = self.inner.value.unwrap_or(U256::ZERO);
+            self.calls.push(Call { to: TxKind::Create, value, input });
+            self.inner.input = Default::default();
+            self.inner.value = None;
+            self.inner.to = None;
+        }
+    }
+
+    fn sign_with_access_key(
+        mut self,
+        provider: &impl Provider<TempoNetwork>,
+        signer: &(impl Signer + Sync),
+        wallet_address: Address,
+        key_address: Address,
+        key_authorization: Option<&SignedKeyAuthorization>,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send {
+        let auth = key_authorization.cloned();
+        let provisioning_fut = provider.get_keychain_key(wallet_address, key_address);
+
+        async move {
+            if let Some(auth) = auth {
+                let is_provisioned =
+                    provisioning_fut.await.map(|info| info.keyId != Address::ZERO).unwrap_or(false);
+
+                if !is_provisioned {
+                    self.set_key_authorization(auth);
+                }
+            }
+
+            let tempo_tx = self
+                .build_aa()
+                .map_err(|e| eyre::eyre!("failed to build Tempo AA transaction: {e}"))?;
+
+            let sig_hash = tempo_tx.signature_hash();
+            let signing_hash = KeychainSignature::signing_hash(sig_hash, wallet_address);
+            let raw_sig = signer.sign_hash(&signing_hash).await?;
+
+            let keychain_sig =
+                KeychainSignature::new(wallet_address, PrimitiveSignature::Secp256k1(raw_sig));
+            let aa_signed = tempo_tx.into_signed(TempoSignature::Keychain(keychain_sig));
+
+            let mut buf = Vec::new();
+            aa_signed.encode_2718(&mut buf);
+            Ok(buf)
+        }
     }
 }

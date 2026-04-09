@@ -121,6 +121,7 @@ foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 op-alloy-rpc-types.workspace = true
+tempo-alloy.workspace = true
 
 [features]
 default = ["cli", "jemalloc"]
