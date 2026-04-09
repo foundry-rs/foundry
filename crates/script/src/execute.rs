@@ -340,6 +340,8 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         &self,
         known_contracts: &ContractsByArtifact,
     ) -> Result<CallTraceDecoder> {
+        let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
+
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(self.execution_result.labeled_addresses.clone())
             .with_verbosity(self.script_config.evm_opts.verbosity)
@@ -348,12 +350,12 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 &self.script_config.config,
             )?)
             .with_label_disabled(self.args.disable_labels)
+            .with_chain_id(chain_id.map(|c| c.id()))
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_external(
-            &self.script_config.config,
-            self.script_config.evm_opts.get_remote_chain_id().await,
-        )?;
+        let mut identifier = TraceIdentifiers::new()
+            .with_local(known_contracts)
+            .with_external(&self.script_config.config, chain_id)?;
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);

@@ -22,10 +22,19 @@ use foundry_evm_core::{
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
         MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
+    tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS},
 };
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
+use tempo_contracts::precompiles::{
+    IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20Factory, ITIP403Registry, IValidatorConfig,
+};
+use tempo_precompiles::{
+    ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
+};
 
 mod precompiles;
 
@@ -94,6 +103,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the chain ID for network-specific precompile detection.
+    #[inline]
+    pub fn with_chain_id(mut self, chain_id: Option<u64>) -> Self {
+        self.decoder.chain_id = chain_id;
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -151,6 +167,9 @@ pub struct CallTraceDecoder {
 
     /// Disable showing of labels.
     pub disable_labels: bool,
+
+    /// The chain ID, used to determine network-specific precompiles.
+    pub chain_id: Option<u64>,
 }
 
 impl CallTraceDecoder {
@@ -192,6 +211,18 @@ impl CallTraceDecoder {
                 (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
                 (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
                 (P256_VERIFY, "P256VERIFY".to_string()),
+                // Tempo
+                (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
+                (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
+                (TIP20_FACTORY_ADDRESS, "TIP20Factory".to_string()),
+                (STABLECOIN_DEX_ADDRESS, "StablecoinDex".to_string()),
+                (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
+                (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
+                (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
+                (PATH_USD_ADDRESS, "PathUSD".to_string()),
+                (ALPHA_USD_ADDRESS, "AlphaUSD".to_string()),
+                (BETA_USD_ADDRESS, "BetaUSD".to_string()),
+                (THETA_USD_ADDRESS, "ThetaUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
@@ -200,11 +231,29 @@ impl CallTraceDecoder {
             functions: console::hh::abi::functions()
                 .into_values()
                 .chain(Vm::abi::functions().into_values())
+                // Tempo
+                .chain(IFeeManager::abi::functions().into_values())
+                .chain(ITIP20::abi::functions().into_values())
+                .chain(ITIP403Registry::abi::functions().into_values())
+                .chain(ITIP20Factory::abi::functions().into_values())
+                .chain(IStablecoinDEX::abi::functions().into_values())
+                .chain(INonce::abi::functions().into_values())
+                .chain(IValidatorConfig::abi::functions().into_values())
+                .chain(IAccountKeychain::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
             events: console::ds::abi::events()
                 .into_values()
+                // Tempo
+                .chain(IFeeManager::abi::events().into_values())
+                .chain(ITIP20::abi::events().into_values())
+                .chain(ITIP403Registry::abi::events().into_values())
+                .chain(ITIP20Factory::abi::events().into_values())
+                .chain(IStablecoinDEX::abi::events().into_values())
+                .chain(INonce::abi::events().into_values())
+                .chain(IValidatorConfig::abi::events().into_values())
+                .chain(IAccountKeychain::abi::events().into_values())
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
@@ -216,6 +265,8 @@ impl CallTraceDecoder {
             debug_identifier: None,
 
             disable_labels: false,
+
+            chain_id: None,
         }
     }
 
@@ -249,6 +300,12 @@ impl CallTraceDecoder {
         identifier: &'a mut impl TraceIdentifier,
     ) -> Vec<IdentifiedAddress<'a>> {
         let nodes = arena.nodes().iter().filter(|node| {
+            // Skip precompile addresses, they will never resolve externally.
+            if node.is_precompile()
+                || precompiles::is_known_precompile(node.trace.address, self.chain_id)
+            {
+                return false;
+            }
             let address = &node.trace.address;
             !self.labels.contains_key(address) || !self.contracts.contains_key(address)
         });
@@ -391,7 +448,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace { label, ..Default::default() };
         }
 
-        if let Some(trace) = precompiles::decode(trace, 1) {
+        if let Some(trace) = precompiles::decode(trace, self.chain_id) {
             return trace;
         }
 
@@ -794,7 +851,7 @@ impl CallTraceDecoder {
                 // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER
                     || n.is_precompile()
-                    || precompiles::is_known_precompile(n.trace.address, 1)
+                    || precompiles::is_known_precompile(n.trace.address, self.chain_id)
                 {
                     return false;
                 }
@@ -1391,5 +1448,120 @@ mod tests {
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
             assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
+    }
+
+    // A mock identifier that records which addresses it was asked to identify.
+    struct RecordingIdentifier {
+        queried: Vec<Address>,
+    }
+    impl TraceIdentifier for RecordingIdentifier {
+        fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+            self.queried.extend(nodes.iter().map(|n| n.trace.address));
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn test_identify_addresses_skips_evm_precompiles() {
+        use foundry_evm_core::precompiles::SHA_256;
+
+        let decoder = CallTraceDecoder::new();
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        // Standard EVM precompile flagged by the inspector.
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: SHA_256,
+                depth: 1,
+                maybe_precompile: Some(true),
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+
+        // Standard EVM precompile NOT flagged, caught by is_known_precompile.
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: SHA_256,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 2,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_identify_addresses_skips_tempo_precompiles() {
+        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
+
+        // Decoder with Tempo chain ID (4217).
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        // Tempo precompile — not flagged by inspector, caught by is_known_precompile
+        // only when chain_id is a Tempo chain.
+        let tempo_precompile = TEMPO_PRECOMPILE_ADDRESSES[0];
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: tempo_precompile,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        // On a Tempo chain, the Tempo precompile should be filtered out.
+        assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_identify_addresses_does_not_skip_tempo_precompiles_on_other_chains() {
+        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
+
+        // Decoder with Ethereum mainnet chain ID (1).
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(1);
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        let tempo_precompile = TEMPO_PRECOMPILE_ADDRESSES[0];
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: tempo_precompile,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        // On Ethereum, Tempo precompile addresses are regular contracts — should NOT be filtered.
+        assert_eq!(identifier.queried, vec![regular_addr, tempo_precompile]);
     }
 }

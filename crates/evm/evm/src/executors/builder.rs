@@ -19,8 +19,8 @@ pub struct ExecutorBuilder<FEN: FoundryEvmNetwork> {
     stack: InspectorStackBuilder<BlockEnvFor<FEN>>,
     /// The gas limit.
     gas_limit: Option<u64>,
-    /// The spec.
-    spec: SpecFor<FEN>,
+    /// The spec override. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
+    spec: Option<SpecFor<FEN>>,
     legacy_assertions: bool,
 }
 
@@ -30,7 +30,7 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
         Self {
             stack: InspectorStackBuilder::new(),
             gas_limit: None,
-            spec: Default::default(),
+            spec: None,
             legacy_assertions: false,
         }
     }
@@ -52,8 +52,14 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
     /// Sets the EVM spec to use.
     #[inline]
     pub fn spec_id(mut self, spec: SpecFor<FEN>) -> Self {
-        self.spec = spec;
+        self.spec = Some(spec);
         self
+    }
+
+    /// Optionally sets the EVM spec. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
+    #[inline]
+    pub fn spec_id_opt(self, spec: Option<SpecFor<FEN>>) -> Self {
+        if let Some(spec) = spec { self.spec_id(spec) } else { self }
     }
 
     /// Sets the executor gas limit.
@@ -86,7 +92,9 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
             stack.gas_price = Some(tx_env.gas_price());
         }
         let gas_limit = gas_limit.unwrap_or(evm_env.block_env.gas_limit());
-        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+        if let Some(spec) = spec {
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+        }
         Executor::new(db, evm_env, tx_env, stack.build(), gas_limit, legacy_assertions)
     }
 }

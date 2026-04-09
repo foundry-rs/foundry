@@ -1568,6 +1568,27 @@ Transaction successfully executed.
 "#]]);
 });
 
+// Regression test: pre-Berlin tx (block 12243999) must use Istanbul gas costs.
+// Without correct hardfork resolution, this tx OOGs under Prague/Berlin cold SLOAD costs.
+casttest!(run_pre_berlin_tx_uses_correct_spec, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    cmd.args([
+        "run",
+        "-v",
+        "0xbb4dece05b8d41a2f79475f76daccf7abdd816f6813897cd02ef8509205ebecb",
+        "--quick",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
 // tests that `cast --to-base` commands are working correctly.
 casttest!(to_base, |_prj, cmd| {
     let values = [

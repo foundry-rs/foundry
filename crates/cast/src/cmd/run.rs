@@ -35,6 +35,7 @@ use foundry_evm::{
         evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
+    hardforks::FoundryHardfork,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
 };
@@ -209,12 +210,18 @@ impl RunArgs {
         if let Some(block) = &block {
             evm_env.block_env = block_env_from_header(block.header());
 
-            // TODO: we need a smarter way to map the block to the corresponding evm_version for
-            // commonly used chains
+            // Resolve the correct spec for the block using the same approach as reth: walk
+            // known chain activation conditions to find the latest active fork. Falls back
+            // to a blob-gas heuristic for unknown chains.
             if evm_version.is_none() {
-                // if the block has the excess_blob_gas field, we assume it's a Cancun block
-                if block.header().excess_blob_gas().is_some() {
-                    evm_version = Some(EvmVersion::Prague);
+                if let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
+                    evm_env.cfg_env.chain_id,
+                    block.header().timestamp(),
+                ) {
+                    evm_env.cfg_env.set_spec(hardfork.into());
+                } else if block.header().excess_blob_gas().is_some() {
+                    // TODO: add glamsterdam header field checks in the future
+                    evm_version = Some(EvmVersion::Cancun);
                 }
             }
             apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
