@@ -304,7 +304,7 @@ pub fn deploy_contract(
     to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
     let mut evm_env = evm_env.clone();
-    evm_env.cfg_env.set_spec(spec_id);
+    evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
 
     if to.is_some_and(|to| to.is_call()) {
         let TxKind::Call(to) = to.unwrap() else { unreachable!() };
