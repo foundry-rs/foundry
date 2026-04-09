@@ -5,6 +5,8 @@ use clap::Parser;
 use foundry_common::FoundryTransactionBuilder;
 use std::str::FromStr;
 
+use crate::utils::parse_fee_token_address;
+
 /// CLI options for Tempo transactions.
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Tempo")]
@@ -16,7 +18,7 @@ pub struct TempoOpts {
     ///
     /// If this is not set, the fee token is chosen according to network rules. See the Tempo docs
     /// for more information.
-    #[arg(long = "tempo.fee-token")]
+    #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
 
     /// Nonce key for Tempo parallelizable nonces.
@@ -134,4 +136,25 @@ impl TempoOpts {
 
 fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS};
+
+    #[test]
+    fn parse_fee_token_id() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.fee-token",
+            "0x20C0000000000000000000000000000000000002",
+        ])
+        .unwrap();
+        assert_eq!(opts.fee_token, Some(BETA_USD_ADDRESS),);
+
+        // AlphaUSD token ID is 1u64
+        let opts_with_id = TempoOpts::try_parse_from(["", "--tempo.fee-token", "1"]).unwrap();
+        assert_eq!(opts_with_id.fee_token, Some(ALPHA_USD_ADDRESS),);
+    }
 }
