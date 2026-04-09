@@ -23,6 +23,7 @@ use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
+use op_alloy_network::Optimism;
 use op_revm::OpHaltReason;
 use revm::{
     Context,
@@ -111,6 +112,14 @@ pub struct TempoEvmNetwork;
 impl FoundryEvmNetwork for TempoEvmNetwork {
     type Network = TempoNetwork;
     type EvmFactory = TempoEvmFactory;
+}
+
+// TODO: use `OpEvmFactory` once the FoundryEvmFactory impl is available for it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OpEvmNetwork;
+impl FoundryEvmNetwork for OpEvmNetwork {
+    type Network = Optimism;
+    type EvmFactory = EthEvmFactory;
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
