@@ -7,7 +7,11 @@
 extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
-use alloy_consensus::BlockHeader;
+
+use alloy_consensus::{
+    BlockHeader,
+    transaction::{Recovered, SignerRecoverable},
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
@@ -35,8 +39,8 @@ use foundry_common::{
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
-use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, future::Either};
+use op_alloy_consensus as _;
 
 use rayon::prelude::*;
 use serde::Serialize;
@@ -2348,15 +2352,22 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_network::Ethereum;
     /// use cast::SimpleCast as Cast;
     ///
     /// let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
-    /// let tx_envelope = Cast::decode_raw_transaction(&tx)?;
+    /// let tx_envelope = Cast::decode_raw_transaction::<Ethereum>(&tx)?;
     /// # Ok::<(), eyre::Report>(())
-    pub fn decode_raw_transaction(tx: &str) -> Result<FoundryTxEnvelope> {
+    pub fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
+        tx: &str,
+    ) -> Result<String> {
         let tx_hex = hex::decode(tx)?;
-        let tx = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
-        Ok(tx)
+        let tx: N::TxEnvelope = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
+        if let Ok(signer) = tx.recover_signer() {
+            Ok(serde_json::to_string_pretty(&Recovered::new_unchecked(tx, signer))?)
+        } else {
+            Ok(serde_json::to_string_pretty(&tx)?)
+        }
     }
 }
 

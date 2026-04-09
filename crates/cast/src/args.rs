@@ -5,7 +5,6 @@ use crate::{
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
 };
-use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
@@ -787,16 +786,18 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
-        CastSubcommand::DecodeTransaction { tx } => {
+        CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
-            let tx = SimpleCast::decode_raw_transaction(&tx)?;
-
-            if let Ok(signer) = tx.recover() {
-                let recovered = Recovered::new_unchecked(tx, signer);
-                sh_println!("{}", serde_json::to_string_pretty(&recovered)?)?;
-            } else {
-                sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
-            }
+            let decoded_tx = match network {
+                Some(NetworkVariant::Optimism) => {
+                    SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
+                }
+                Some(NetworkVariant::Tempo) => {
+                    SimpleCast::decode_raw_transaction::<TempoNetwork>(&tx)?
+                }
+                _ => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
+            };
+            sh_println!("{}", serde_json::to_string_pretty(&decoded_tx)?)?;
         }
         CastSubcommand::RecoverAuthority { auth } => {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;

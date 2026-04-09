@@ -121,13 +121,13 @@ impl TempoOpts {
         }
 
         // Force AA tx type if sponsoring or printing sponsor hash.
-        if self.sponsor_signature.is_some() || self.print_sponsor_hash {
-            if tx.nonce_key().is_none() {
-                tx.set_nonce_key(U256::ZERO);
-            }
-            if let Some(sig) = self.sponsor_signature {
-                tx.set_fee_payer_signature(sig);
-            }
+        // Note: the fee_payer_signature is NOT set here. It must be applied AFTER
+        // gas estimation so that `--tempo.print-sponsor-hash` and
+        // `--tempo.sponsor-signature` produce identical gas estimates. Callers
+        // should call `set_fee_payer_signature` on the built tx request.
+        if (self.sponsor_signature.is_some() || self.print_sponsor_hash) && tx.nonce_key().is_none()
+        {
+            tx.set_nonce_key(U256::ZERO);
         }
     }
 }
