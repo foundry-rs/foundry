@@ -425,24 +425,21 @@ impl ShellOut {
         justified: bool,
     ) -> Result<()> {
         let buffer = Self::format_message(status, message, style, justified)?;
-        self.stderr().write_all(&buffer)?;
-        Ok(())
+        write_all_best_effort(self.stderr(), &buffer)
     }
 
     /// Write a styled fragment
     fn write_stdout(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
         let mut buffer = Vec::new();
         write!(buffer, "{style}{fragment}{style:#}")?;
-        self.stdout().write_all(&buffer)?;
-        Ok(())
+        write_all_best_effort(self.stdout(), &buffer)
     }
 
     /// Write a styled fragment
     fn write_stderr(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
         let mut buffer = Vec::new();
         write!(buffer, "{style}{fragment}{style:#}")?;
-        self.stderr().write_all(&buffer)?;
-        Ok(())
+        write_all_best_effort(self.stderr(), &buffer)
     }
 
     /// Gets stdout as a [`io::Write`](Write) trait object.
@@ -487,6 +484,18 @@ impl ShellOut {
     }
 }
 
+/// Like [`Write::write_all`] but treats `BrokenPipe` as success.
+///
+/// This prevents crashes when forge output is piped to a consumer that exits
+/// early (e.g. `tee`, `head`).
+fn write_all_best_effort(mut writer: impl Write, buffer: &[u8]) -> Result<()> {
+    match writer.write_all(buffer) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 impl ColorChoice {
     /// Converts our color choice to [`anstream`]'s version.
     fn to_anstream_color_choice(self) -> anstream::ColorChoice {
@@ -504,5 +513,45 @@ fn supports_color(choice: anstream::ColorChoice) -> bool {
         | anstream::ColorChoice::AlwaysAnsi
         | anstream::ColorChoice::Auto => true,
         anstream::ColorChoice::Never => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_all_best_effort_ignores_broken_pipe() {
+        struct BrokenPipeWriter;
+
+        impl Write for BrokenPipeWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken pipe"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        assert!(write_all_best_effort(BrokenPipeWriter, b"hello").is_ok());
+    }
+
+    #[test]
+    fn write_all_best_effort_preserves_other_errors() {
+        struct FailingWriter;
+
+        impl Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("boom"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let err = write_all_best_effort(FailingWriter, b"hello").unwrap_err();
+        assert!(err.to_string().contains("boom"));
     }
 }

@@ -1,7 +1,10 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
+    TestFunctionExt,
+    preprocessor::DynamicTestLinkingPreprocessor,
+    shell,
+    term::{SafeStdoutReporter, SpinnerReporter},
 };
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
@@ -16,7 +19,7 @@ use foundry_compilers::{
     info::ContractInfo as CompilerContractInfo,
     multi::{MultiCompiler, MultiCompilerSettings},
     project::Preprocessor,
-    report::{BasicStdoutReporter, NoReporter, Report},
+    report::{NoReporter, Report},
     solc::SolcSettings,
 };
 use num_format::{Locale, ToFormattedString};
@@ -566,7 +569,7 @@ pub fn with_compilation_reporter<O>(
         if std::io::stdout().is_terminal() {
             Report::new(SpinnerReporter::spawn(project_root))
         } else {
-            Report::new(BasicStdoutReporter::default())
+            Report::new(SafeStdoutReporter)
         }
     };
 

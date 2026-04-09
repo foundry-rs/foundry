@@ -6,7 +6,7 @@ use foundry_compilers::{
 use itertools::Itertools;
 use semver::Version;
 use std::{
-    io,
+    fmt, io,
     io::{IsTerminal, prelude::*},
     path::{Path, PathBuf},
     sync::{
@@ -209,9 +209,96 @@ impl Reporter for SpinnerReporter {
     }
 }
 
+/// A pipe-safe [`Reporter`] for non-terminal stdout.
+///
+/// This is a drop-in replacement for [`BasicStdoutReporter`] that gracefully
+/// handles `BrokenPipe` errors instead of panicking via `println!()`.  Some
+/// widely-deployed `tee` implementations (notably uutils-coreutils ≤ 0.8) close
+/// the pipe early when there is a pause between writes (e.g. during Solc
+/// compilation), so we must treat `BrokenPipe` as non-fatal.
+///
+/// **Maintenance note:** the format strings here intentionally mirror those in
+/// [`BasicStdoutReporter`].  If the upstream reporter changes its output,
+/// update this implementation to match.
+///
+/// [`BasicStdoutReporter`]: foundry_compilers::report::BasicStdoutReporter
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SafeStdoutReporter;
+
+impl Reporter for SafeStdoutReporter {
+    fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
+        write_report_line(
+            io::stdout().lock(),
+            format_args!(
+                "Compiling {} files with {} {}.{}.{}",
+                dirty_files.len(),
+                compiler_name,
+                version.major,
+                version.minor,
+                version.patch
+            ),
+        );
+    }
+
+    fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
+        write_report_line(
+            io::stdout().lock(),
+            format_args!(
+                "{} {}.{}.{} finished in {duration:.2?}",
+                compiler_name, version.major, version.minor, version.patch
+            ),
+        );
+    }
+
+    fn on_solc_installation_start(&self, version: &Version) {
+        write_report_line(
+            io::stdout().lock(),
+            format_args!("installing solc version \"{version}\""),
+        );
+    }
+
+    fn on_solc_installation_success(&self, version: &Version) {
+        write_report_line(
+            io::stdout().lock(),
+            format_args!("Successfully installed solc {version}"),
+        );
+    }
+
+    fn on_solc_installation_error(&self, version: &Version, error: &str) {
+        write_report_line(
+            io::stderr().lock(),
+            format_args!("Failed to install solc {version}: {error}"),
+        );
+    }
+
+    fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
+        if imports.is_empty() {
+            return;
+        }
+
+        write_report_line(
+            io::stdout().lock(),
+            format_args!("{}", report::format_unresolved_imports(imports, remappings)),
+        );
+    }
+}
+
+/// Write a single line to `writer`, silently discarding `BrokenPipe` errors.
+///
+/// Any other I/O error is logged at `trace` level rather than propagated,
+/// because [`Reporter`] callbacks have no way to signal failure.
+fn write_report_line(mut writer: impl io::Write, args: fmt::Arguments<'_>) {
+    if let Err(err) = writeln!(writer, "{args}")
+        && err.kind() != io::ErrorKind::BrokenPipe
+    {
+        trace!(target: "foundry_common::term", ?err, "failed to write compiler report output");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     #[ignore]
@@ -243,5 +330,45 @@ mod tests {
         //       weird-erc20/=lib/weird-erc20/src/
         //       ds-test/=lib/ds-test/src/
         //       openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
+    }
+
+    #[test]
+    fn write_report_line_ignores_broken_pipe() {
+        struct BrokenPipeWriter;
+
+        impl io::Write for BrokenPipeWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        write_report_line(BrokenPipeWriter, format_args!("hello"));
+    }
+
+    #[test]
+    fn write_report_line_writes_newline_terminated_output() {
+        #[derive(Clone, Default)]
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl io::Write for BufferWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = BufferWriter::default();
+        let buffer = writer.0.clone();
+        write_report_line(writer, format_args!("hello"));
+
+        assert_eq!(String::from_utf8(buffer.lock().unwrap().clone()).unwrap(), "hello\n");
     }
 }
