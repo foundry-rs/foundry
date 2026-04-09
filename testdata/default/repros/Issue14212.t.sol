@@ -39,7 +39,8 @@ contract Issue14212Test is Test {
         // Roll to a regular tx in block 30434326 which also contains deposit txs.
         // This calls get_full_block internally which must deserialize the entire
         // block including the deposit tx.
-        vm.rollFork(0xe2f4bffbcc88dd94cabf9b15e2318df0afc2ec895012274d0ecec3d27d6da3e2);
+        bytes32 txHash = 0xe2f4bffbcc88dd94cabf9b15e2318df0afc2ec895012274d0ecec3d27d6da3e2;
+        vm.rollFork(txHash);
     }
 
     /// vm.transact on an OP deposit tx on Optimism mainnet.
