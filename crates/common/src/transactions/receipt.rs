@@ -7,6 +7,7 @@ use alloy_provider::{
 use alloy_rpc_types::{BlockId, TransactionReceipt};
 use eyre::Result;
 use foundry_common_fmt::{UIfmt, UIfmtReceiptExt, get_pretty_receipt_attr};
+use op_alloy_rpc_types::OpTransactionReceipt;
 use serde::{Deserialize, Serialize};
 use tempo_alloy::rpc::TempoTransactionReceipt;
 
@@ -19,6 +20,12 @@ pub trait FoundryReceiptResponse {
 impl FoundryReceiptResponse for TransactionReceipt {
     fn set_contract_address(&mut self, contract_address: Address) {
         self.contract_address = Some(contract_address);
+    }
+}
+
+impl FoundryReceiptResponse for OpTransactionReceipt {
+    fn set_contract_address(&mut self, contract_address: Address) {
+        self.inner.contract_address = Some(contract_address);
     }
 }
 

@@ -7,6 +7,8 @@ use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
+use op_alloy_network::Optimism;
+use op_alloy_rpc_types::OpTransactionRequest;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_primitives::{
     TempoSignature,
@@ -340,6 +342,20 @@ impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::Transact
 
     fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
         self.authorization_list = Some(authorization_list);
+    }
+}
+
+impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
+    fn reset_gas_limit(&mut self) {
+        self.as_mut().gas = None;
+    }
+
+    fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
+        self.as_ref().authorization_list.as_ref()
+    }
+
+    fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
+        self.as_mut().authorization_list = Some(authorization_list);
     }
 }
 
