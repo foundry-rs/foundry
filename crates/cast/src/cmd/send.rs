@@ -2,7 +2,8 @@ use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, Network};
+use alloy_network::{Ethereum, EthereumWallet, Network};
+use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
@@ -16,7 +17,11 @@ use foundry_common::{
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
-use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
+use crate::{
+    cmd::tip20::iso4217_warning_message,
+    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
+};
+use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -50,6 +55,10 @@ pub struct SendTxArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from")]
     unlocked: bool,
+
+    /// Skip confirmation prompts (e.g. non-ISO 4217 currency warnings).
+    #[arg(long)]
+    force: bool,
 
     #[command(flatten)]
     tx: TransactionOpts,
@@ -90,7 +99,7 @@ impl SendTxArgs {
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
-            self.run_generic::<AnyNetwork>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None).await
         }
     }
 
@@ -105,9 +114,11 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, path } = self;
+        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
+            self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
+        let sponsor_signature = tx.tempo.sponsor_signature;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -143,6 +154,31 @@ impl SendTxArgs {
             None
         };
 
+        // Validate ISO 4217 currency code for TIP20Factory createToken calls.
+        if let Some(ref to_addr) = to {
+            let is_factory = match to_addr {
+                NameOrAddress::Address(addr) => *addr == TIP20_FACTORY_ADDRESS,
+                NameOrAddress::Name(name) => {
+                    Address::from_str(name).ok() == Some(TIP20_FACTORY_ADDRESS)
+                }
+            };
+
+            if !force
+                && is_factory
+                && let Some(ref sig_str) = sig
+                && sig_str.starts_with("createToken")
+                && let Some(currency) = args.get(2)
+                && !is_iso4217_currency(currency)
+            {
+                sh_warn!("{}", iso4217_warning_message(currency))?;
+                let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
+                if !matches!(response.trim(), "y" | "Y") {
+                    sh_println!("Aborted.")?;
+                    return Ok(());
+                }
+            }
+        }
+
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
 
@@ -165,7 +201,12 @@ impl SendTxArgs {
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
-            let from = send_tx.eth.wallet.from.unwrap_or(config.sender);
+            // Use the pre-resolved signer to derive the actual sender address, since the
+            // sponsor hash commits to the sender.
+            let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
+                eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
+            })?;
+            let from = signer.address();
             let (tx, _) = builder.build(from).await?;
             let hash = tx
                 .compute_sponsor_hash(from)
@@ -223,7 +264,7 @@ impl SendTxArgs {
             let cast = CastTxSender::new(&provider);
             cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
         // Case 3:
-        // Tempo access key (keychain) signing. Uses `sign_with_access_key_provisioning` which
+        // Tempo access key (keychain) signing. Uses `sign_with_access_key` which
         // handles the provisioning check and embeds `key_authorization` when needed.
         } else if let Some(ak) = access_key {
             let signer = match pre_resolved_signer {
@@ -235,7 +276,7 @@ impl SendTxArgs {
             let (tx_request, _) = builder.build(from).await?;
 
             let raw_tx = tx_request
-                .sign_with_access_key_provisioning(
+                .sign_with_access_key(
                     &provider,
                     &signer,
                     ak.wallet_address,
@@ -261,7 +302,13 @@ impl SendTxArgs {
 
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
-            let (tx_request, _) = builder.build(&signer).await?;
+            let (mut tx_request, _) = builder.build(&signer).await?;
+
+            // Apply sponsor signature after gas estimation so the estimate is
+            // consistent with what `--tempo.print-sponsor-hash` computes.
+            if let Some(sig) = sponsor_signature {
+                tx_request.set_fee_payer_signature(sig);
+            }
 
             let wallet = EthereumWallet::from(signer);
             let provider = AlloyProviderBuilder::<_, _, N>::default()

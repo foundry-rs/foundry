@@ -1,7 +1,6 @@
 //! Test outcomes.
 
 use crate::{
-    MultiContractRunner,
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
@@ -10,9 +9,9 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
-use foundry_common::{get_contract_name, get_file_name, shell};
+use foundry_common::{ContractsByArtifact, get_contract_name, get_file_name, shell};
 use foundry_evm::{
-    core::Breakpoints,
+    core::{Breakpoints, evm::FoundryEvmNetwork},
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
@@ -44,8 +43,8 @@ pub struct TestOutcome {
     pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
-    /// The runner used to execute the tests.
-    pub runner: Option<MultiContractRunner>,
+    /// Known contracts from the test run (used for coverage).
+    pub known_contracts: Option<ContractsByArtifact>,
     /// The fuzz seed used for the test run.
     pub fuzz_seed: Option<U256>,
 }
@@ -53,17 +52,24 @@ pub struct TestOutcome {
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
     pub fn new(
-        runner: Option<MultiContractRunner>,
+        known_contracts: Option<ContractsByArtifact>,
         results: BTreeMap<String, SuiteResult>,
         allow_failure: bool,
         fuzz_seed: Option<U256>,
     ) -> Self {
-        Self { results, allow_failure, last_run_decoder: None, gas_report: None, runner, fuzz_seed }
+        Self {
+            results,
+            allow_failure,
+            last_run_decoder: None,
+            gas_report: None,
+            known_contracts,
+            fuzz_seed,
+        }
     }
 
     /// Creates a new empty test outcome.
-    pub fn empty(runner: Option<MultiContractRunner>, allow_failure: bool) -> Self {
-        Self::new(runner, BTreeMap::new(), allow_failure, None)
+    pub fn empty(known_contracts: Option<ContractsByArtifact>, allow_failure: bool) -> Self {
+        Self::new(known_contracts, BTreeMap::new(), allow_failure, None)
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -592,11 +598,11 @@ impl TestResult {
 
     /// Returns the result for single test. Merges execution results (logs, labeled addresses,
     /// traces and coverages) in initial setup results.
-    pub fn single_result(
+    pub fn single_result<FEN: FoundryEvmNetwork>(
         &mut self,
         success: bool,
         reason: Option<String>,
-        raw_call_result: RawCallResult,
+        raw_call_result: RawCallResult<FEN>,
     ) {
         self.kind = TestKind::Unit {
             gas: raw_call_result.gas_used.saturating_sub(raw_call_result.stipend),
@@ -788,7 +794,7 @@ impl TestResult {
     }
 
     /// Merges the given raw call result into `self`.
-    pub fn extend(&mut self, call_result: RawCallResult) {
+    pub fn extend<FEN: FoundryEvmNetwork>(&mut self, call_result: RawCallResult<FEN>) {
         extend!(self, call_result, TraceKind::Execution);
     }
 
@@ -1000,7 +1006,11 @@ impl TestSetup {
         Self { reason: Some(reason), skipped: true, ..Default::default() }
     }
 
-    pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {
+    pub fn extend<FEN: FoundryEvmNetwork>(
+        &mut self,
+        raw: RawCallResult<FEN>,
+        trace_kind: TraceKind,
+    ) {
         extend!(self, raw, trace_kind);
     }
 

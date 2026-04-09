@@ -19,21 +19,21 @@ pub struct TempoOpts {
     #[arg(long = "tempo.fee-token")]
     pub fee_token: Option<Address>,
 
-    /// Nonce sequence key for Tempo transactions.
+    /// Nonce key for Tempo parallelizable nonces.
     ///
-    /// When set, builds a Tempo (type 0x76) transaction with the specified nonce sequence key.
-    ///
-    /// If this is not set, the protocol sequence key (0) will be used.
+    /// When set, builds a Tempo (type 0x76) transaction with the specified nonce key,
+    /// allowing multiple transactions with the same nonce but different keys
+    /// to be executed in parallel. If not set, the protocol nonce key (0) will be used.
     ///
     /// For more information see <https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction#parallelizable-nonces>.
-    #[arg(long = "tempo.seq")]
-    pub sequence_key: Option<U256>,
+    #[arg(long = "tempo.nonce-key", value_name = "NONCE_KEY")]
+    pub nonce_key: Option<U256>,
 
     /// Sponsor (fee payer) signature for Tempo sponsored transactions.
     ///
     /// The sponsor signs the `fee_payer_signature_hash` to commit to paying gas fees
     /// on behalf of the sender. Provide as a hex-encoded signature.
-    #[arg(long = "tempo.sponsor-sig", value_parser = parse_signature)]
+    #[arg(long = "tempo.sponsor-signature", value_parser = parse_signature)]
     pub sponsor_signature: Option<Signature>,
 
     /// Print the sponsor signature hash and exit.
@@ -76,7 +76,7 @@ impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
     pub fn is_tempo(&self) -> bool {
         self.fee_token.is_some()
-            || self.sequence_key.is_some()
+            || self.nonce_key.is_some()
             || self.sponsor_signature.is_some()
             || self.print_sponsor_hash
             || self.key_id.is_some()
@@ -100,7 +100,7 @@ impl TempoOpts {
             if let Some(nonce) = nonce {
                 tx.set_nonce(nonce);
             }
-            if let Some(nonce_key) = self.sequence_key {
+            if let Some(nonce_key) = self.nonce_key {
                 tx.set_nonce_key(nonce_key);
             }
         }
@@ -121,13 +121,13 @@ impl TempoOpts {
         }
 
         // Force AA tx type if sponsoring or printing sponsor hash.
-        if self.sponsor_signature.is_some() || self.print_sponsor_hash {
-            if tx.nonce_key().is_none() {
-                tx.set_nonce_key(U256::ZERO);
-            }
-            if let Some(sig) = self.sponsor_signature {
-                tx.set_fee_payer_signature(sig);
-            }
+        // Note: the fee_payer_signature is NOT set here. It must be applied AFTER
+        // gas estimation so that `--tempo.print-sponsor-hash` and
+        // `--tempo.sponsor-signature` produce identical gas estimates. Callers
+        // should call `set_fee_payer_signature` on the built tx request.
+        if (self.sponsor_signature.is_some() || self.print_sponsor_hash) && tx.nonce_key().is_none()
+        {
+            tx.set_nonce_key(U256::ZERO);
         }
     }
 }

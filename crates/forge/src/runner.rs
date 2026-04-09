@@ -17,7 +17,7 @@ use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, FuzzCorpusConfig};
 use foundry_evm::{
     constants::CALLER,
-    core::evm::EthEvmNetwork,
+    core::evm::FoundryEvmNetwork,
     decode::RevertDecoder,
     executors::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
@@ -42,6 +42,7 @@ use std::{
     borrow::Cow,
     cmp::min,
     collections::BTreeMap,
+    ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -57,13 +58,13 @@ use tracing::Span;
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 /// A type that executes all tests of a contract
-pub struct ContractRunner<'a> {
+pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     /// The name of the contract.
     name: &'a str,
     /// The data of the contract.
     contract: &'a TestContract,
     /// The EVM executor.
-    executor: Executor<EthEvmNetwork>,
+    executor: Executor<FEN>,
     /// Overall test run progress.
     progress: Option<&'a TestsProgress>,
     /// The handle to the tokio runtime.
@@ -71,13 +72,13 @@ pub struct ContractRunner<'a> {
     /// The span of the contract.
     span: tracing::Span,
     /// The contract-level configuration.
-    tcfg: Cow<'a, TestRunnerConfig>,
+    tcfg: Cow<'a, TestRunnerConfig<FEN>>,
     /// The parent runner.
-    mcr: &'a MultiContractRunner,
+    mcr: &'a MultiContractRunner<FEN>,
 }
 
-impl<'a> std::ops::Deref for ContractRunner<'a> {
-    type Target = Cow<'a, TestRunnerConfig>;
+impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
+    type Target = Cow<'a, TestRunnerConfig<FEN>>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -85,15 +86,15 @@ impl<'a> std::ops::Deref for ContractRunner<'a> {
     }
 }
 
-impl<'a> ContractRunner<'a> {
+impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     pub fn new(
         name: &'a str,
         contract: &'a TestContract,
-        executor: Executor<EthEvmNetwork>,
+        executor: Executor<FEN>,
         progress: Option<&'a TestsProgress>,
         tokio_handle: &'a tokio::runtime::Handle,
         span: Span,
-        mcr: &'a MultiContractRunner,
+        mcr: &'a MultiContractRunner<FEN>,
     ) -> Self {
         Self {
             name,
@@ -460,13 +461,13 @@ impl<'a> ContractRunner<'a> {
 }
 
 /// Executes a single test function, returning a [`TestResult`].
-struct FunctionRunner<'a> {
+struct FunctionRunner<'a, FEN: FoundryEvmNetwork> {
     /// The function-level configuration.
-    tcfg: Cow<'a, TestRunnerConfig>,
+    tcfg: Cow<'a, TestRunnerConfig<FEN>>,
     /// The EVM executor.
-    executor: Cow<'a, Executor<EthEvmNetwork>>,
+    executor: Cow<'a, Executor<FEN>>,
     /// The parent runner.
-    cr: &'a ContractRunner<'a>,
+    cr: &'a ContractRunner<'a, FEN>,
     /// The address of the test contract.
     address: Address,
     /// The test setup result.
@@ -475,8 +476,8 @@ struct FunctionRunner<'a> {
     result: TestResult,
 }
 
-impl<'a> std::ops::Deref for FunctionRunner<'a> {
-    type Target = Cow<'a, TestRunnerConfig>;
+impl<'a, FEN: FoundryEvmNetwork> Deref for FunctionRunner<'a, FEN> {
+    type Target = Cow<'a, TestRunnerConfig<FEN>>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -484,8 +485,8 @@ impl<'a> std::ops::Deref for FunctionRunner<'a> {
     }
 }
 
-impl<'a> FunctionRunner<'a> {
-    fn new(cr: &'a ContractRunner<'a>, setup: &'a TestSetup) -> Self {
+impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
+    fn new(cr: &'a ContractRunner<'a, FEN>, setup: &'a TestSetup) -> Self {
         Self {
             tcfg: match &cr.tcfg {
                 Cow::Borrowed(tcfg) => Cow::Borrowed(tcfg),
@@ -1136,7 +1137,7 @@ impl<'a> FunctionRunner<'a> {
         fuzzer_with_cases(self.config.fuzz.seed, config.runs, config.max_assume_rejects)
     }
 
-    fn clone_executor(&self) -> Executor<EthEvmNetwork> {
+    fn clone_executor(&self) -> Executor<FEN> {
         self.executor.clone().into_owned()
     }
 

@@ -1,6 +1,5 @@
 use crate::{
     cmd::{erc20::build_provider_with_signer, send::cast_send},
-    tempo::{is_iso4217_currency, iso4217_warning_message},
     tx::{CastTxSender, SendTxOpts},
 };
 use alloy_ens::NameOrAddress;
@@ -16,7 +15,7 @@ use foundry_cli::{
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
-use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
+use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 
 sol! {
     #[sol(rpc)]
@@ -30,6 +29,29 @@ sol! {
             bytes32 salt
         ) external returns (address token);
     }
+}
+
+/// Returns a warning message for non-ISO 4217 currency codes used in TIP-20 token creation.
+pub(crate) fn iso4217_warning_message(currency: &str) -> String {
+    let hyperlink = |url: &str| format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\");
+    let tip20_docs = hyperlink("https://docs.tempo.xyz/protocol/tip20/overview");
+    let iso_docs = hyperlink("https://www.iso.org/iso-4217-currency-codes.html");
+
+    format!(
+        "\"{currency}\" is not a recognized ISO 4217 currency code.\n\
+         \n\
+         If the token you are trying to deploy is a fiat-backed stablecoin, Tempo strongly\n\
+         recommends that the currency code field be the ISO-4217 currency code of the fiat\n\
+         currency your token tracks (e.g. \"USD\", \"EUR\", \"GBP\").\n\
+         \n\
+         The currency field is IMMUTABLE after token creation and affects fee payment\n\
+         eligibility, DEX routing, and quote token pairing. Only \"USD\"-denominated tokens\n\
+         can be used to pay transaction fees on Tempo.\n\
+         \n\
+         Learn more:\n  \
+         - Tempo TIP-20 docs: {tip20_docs}\n  \
+         - ISO 4217 standard: {iso_docs}"
+    )
 }
 
 /// TIP-20 token operations (Tempo).
@@ -183,7 +205,7 @@ impl Tip20Subcommand {
                     tx.set_key_id(access_key.key_address);
 
                     let raw_tx = tx
-                        .sign_with_access_key_provisioning(
+                        .sign_with_access_key(
                             &provider,
                             signer,
                             access_key.wallet_address,

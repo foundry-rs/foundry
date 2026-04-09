@@ -37,10 +37,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::{
-        FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
-        spec_id_from_ethereum_hardfork,
-    },
+    hardfork::{FoundryHardfork, OpHardfork},
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -1269,16 +1266,8 @@ impl NodeConfig {
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
                 Some(chain_id)
             } else if self.hardfork.is_none() {
-                // Auto-adjust hardfork if not specified, but only if we're forking mainnet.
                 let chain_id =
                     provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-                if alloy_chains::NamedChain::Mainnet == chain_id {
-                    let hardfork: EthereumHardfork =
-                        ethereum_hardfork_from_block_tag(fork_block_number);
-
-                    evm_env.cfg_env.spec = spec_id_from_ethereum_hardfork(hardfork);
-                    self.hardfork = Some(FoundryHardfork::Ethereum(hardfork));
-                }
                 Some(U256::from(chain_id))
             } else {
                 None
@@ -1343,6 +1332,15 @@ latest block number: {latest_block}"
             evm_env.cfg_env.chain_id = chain_id;
             chain_id
         };
+
+        // Auto-detect hardfork from chain activation data if not explicitly set.
+        if self.hardfork.is_none()
+            && let Some(hardfork) =
+                FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
+        {
+            evm_env.cfg_env.spec = SpecId::from(hardfork);
+            self.hardfork = Some(hardfork);
+        }
 
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none()

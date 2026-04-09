@@ -1,5 +1,5 @@
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
@@ -132,7 +132,7 @@ pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
 pub trait FoundryEvmFactory:
     EvmFactory<
-        Spec: Into<SpecId> + FromEvmVersion + Default + Copy + Unpin + Send + 'static,
+        Spec: Into<SpecId> + FromEvmVersion + Default + Display + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
         Tx: Clone + Debug + FoundryTransaction + Default + Send + Sync,
         HaltReason: IntoInstructionResult,

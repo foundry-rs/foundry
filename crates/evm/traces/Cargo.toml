@@ -32,6 +32,9 @@ alloy-primitives = { workspace = true, features = [
 alloy-sol-types.workspace = true
 revm-inspectors.workspace = true
 
+tempo-contracts.workspace = true
+tempo-precompiles.workspace = true
+
 async-trait.workspace = true
 eyre.workspace = true
 futures.workspace = true
