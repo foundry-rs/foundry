@@ -589,21 +589,35 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
-                // Display metrics in progress bar.
-                if edge_coverage_enabled {
-                    progress.set_message(format!("{}", &corpus_manager.metrics));
+                // Display current best value and/or corpus metrics in progress bar.
+                let best = invariant_test.test_data.optimization_best_value;
+                if edge_coverage_enabled || best.is_some() {
+                    let mut msg = String::new();
+                    if let Some(best) = best {
+                        msg.push_str(&format!("best: {best}"));
+                    }
+                    if edge_coverage_enabled {
+                        if !msg.is_empty() {
+                            msg.push_str(", ");
+                        }
+                        msg.push_str(&format!("{}", &corpus_manager.metrics));
+                    }
+                    progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
             {
-                // Display metrics inline if corpus dir set.
-                let metrics = json!({
+                // Display corpus metrics inline as JSON.
+                let mut metrics = json!({
                     "timestamp": SystemTime::now()
                         .duration_since(UNIX_EPOCH)?
                         .as_secs(),
                     "invariant": invariant_contract.invariant_function.name,
                     "metrics": &corpus_manager.metrics,
                 });
+                if let Some(best) = invariant_test.test_data.optimization_best_value {
+                    metrics["optimization_best"] = json!(best.to_string());
+                }
                 let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
                 last_metrics_report = Instant::now();
             }
