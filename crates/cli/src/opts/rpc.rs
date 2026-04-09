@@ -1,4 +1,4 @@
-use crate::opts::ChainValueParser;
+use crate::opts::{ChainValueParser, RpcCommonOpts};
 use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
@@ -19,24 +19,9 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Rpc options")]
 pub struct RpcOpts {
-    /// The RPC endpoint, default value is http://localhost:8545.
-    #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
-    pub url: Option<String>,
-
-    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
-    ///
-    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
-    /// client to accept invalid certificates.
-    #[arg(short = 'k', long = "insecure", default_value = "false")]
-    pub accept_invalid_certs: bool,
-
-    /// Disable automatic proxy detection.
-    ///
-    /// Use this in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox) where
-    /// system proxy detection causes crashes. When enabled, HTTP_PROXY/HTTPS_PROXY environment
-    /// variables and system proxy settings will be ignored.
-    #[arg(long = "no-proxy", alias = "disable-proxy", default_value = "false")]
-    pub no_proxy: bool,
+    /// Common RPC options (URL, timeout, rate limiting, etc.).
+    #[command(flatten)]
+    pub common: RpcCommonOpts,
 
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
@@ -57,14 +42,6 @@ pub struct RpcOpts {
     /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc"]'
     #[arg(long, env = "ETH_RPC_JWT_SECRET")]
     pub jwt_secret: Option<String>,
-
-    /// Timeout for the RPC request in seconds.
-    ///
-    /// The specified timeout will be used to override the default timeout for RPC requests.
-    ///
-    /// Default value: 45
-    #[arg(long, env = "ETH_RPC_TIMEOUT")]
-    pub rpc_timeout: Option<u64>,
 
     /// Specify custom headers for RPC requests.
     #[arg(long, alias = "headers", env = "ETH_RPC_HEADERS", value_delimiter(','))]
@@ -90,13 +67,11 @@ impl figment::Provider for RpcOpts {
 impl RpcOpts {
     /// Returns the RPC endpoint.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let url = match (self.flashbots, self.url.as_deref(), config) {
-            (true, ..) => Some(Cow::Borrowed(FLASHBOTS_URL)),
-            (false, Some(url), _) => Some(Cow::Borrowed(url)),
-            (false, None, Some(config)) => config.get_rpc_url().transpose()?,
-            (false, None, None) => None,
-        };
-        Ok(url)
+        if self.flashbots {
+            Ok(Some(Cow::Borrowed(FLASHBOTS_URL)))
+        } else {
+            self.common.url(config)
+        }
     }
 
     /// Returns the JWT secret.
@@ -110,24 +85,15 @@ impl RpcOpts {
     }
 
     pub fn dict(&self) -> Dict {
-        let mut dict = Dict::new();
-        if let Ok(Some(url)) = self.url(None) {
-            dict.insert("eth_rpc_url".into(), url.into_owned().into());
+        let mut dict = self.common.dict();
+        if self.flashbots {
+            dict.insert("eth_rpc_url".into(), FLASHBOTS_URL.into());
         }
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
         }
-        if let Some(rpc_timeout) = self.rpc_timeout {
-            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
-        }
         if let Some(headers) = &self.rpc_headers {
             dict.insert("eth_rpc_headers".into(), headers.clone().into());
-        }
-        if self.accept_invalid_certs {
-            dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
-        }
-        if self.no_proxy {
-            dict.insert("eth_rpc_no_proxy".into(), true.into());
         }
         if self.curl {
             dict.insert("eth_rpc_curl".into(), true.into());

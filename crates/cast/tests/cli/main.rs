@@ -3977,7 +3977,7 @@ Error: Failed to estimate gas: server returned an error response: error code 3: 
 
 // <https://basescan.org/block/30558838>
 casttest!(estimate_base_da, |_prj, cmd| {
-    cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
+    cmd.args(["da-estimate", "30558838", "--rpc-url", "https://mainnet.base.org/"])
         .assert_success()
         .stdout_eq(str![[r#"
 Estimated data availability size for block 30558838 with 225 transactions: 52916546100
