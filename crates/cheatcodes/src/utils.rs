@@ -227,9 +227,8 @@ impl Cheatcode for interceptInitcodeCall {
         let Self {} = self;
         if state.intercept_next_create_call {
             bail!("vm.interceptInitcode() has already been called")
-        } else {
-            state.intercept_next_create_call = true;
         }
+        state.intercept_next_create_call = true;
         Ok(Default::default())
     }
 }
