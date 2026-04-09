@@ -29,7 +29,7 @@ use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::LoadConfig,
+    utils::{LoadConfig, parse_fee_token_address},
 };
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
@@ -48,7 +48,7 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -138,7 +138,7 @@ pub struct ScriptArgs {
     pub batch_size: usize,
 
     /// Tempo fee token address for paying transaction fees.
-    #[arg(long = "tempo.fee-token", value_name = "ADDRESS")]
+    #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
 
     /// Skips on-chain simulation.
@@ -306,6 +306,8 @@ impl ScriptArgs {
                 broadcasted.verify().await?;
             }
             Ok(())
+        } else if evm_opts.networks.is_optimism() {
+            self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await
         } else {
             self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
         }

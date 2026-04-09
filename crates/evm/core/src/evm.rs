@@ -23,6 +23,7 @@ use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
+use foundry_primitives::FoundryTxEnvelope;
 use op_alloy_network::Optimism;
 use op_revm::OpHaltReason;
 use revm::{
@@ -97,7 +98,10 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
                                     + Serialize,
             ReceiptResponse: FoundryReceiptResponse,
         >;
-    type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
+    type EvmFactory: FoundryEvmFactory<
+        Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>
+                + FromRecoveredTx<FoundryTxEnvelope>,
+    >;
 }
 
 #[derive(Clone, Copy, Debug, Default)]

@@ -349,7 +349,7 @@ impl CreateArgs {
 
         let is_args_empty = args.is_empty();
         let mut deployer =
-            factory.deploy_tokens(args.clone()).context("failed to deploy contract").map_err(|e| {
+            factory.deploy_tokens(args.clone(), self.tx.tempo.fee_token).context("failed to deploy contract").map_err(|e| {
                 if is_args_empty {
                     e.wrap_err("no arguments provided for contract constructor; consider --constructor-args or --constructor-args-path")
                 } else {
@@ -681,7 +681,11 @@ impl<N: Network, P: Provider<N> + Clone> DeploymentTxFactory<N, P> {
     pub fn deploy_tokens(
         self,
         params: Vec<DynSolValue>,
-    ) -> Result<Deployer<N, P>, ContractDeploymentError> {
+        fee_token: Option<Address>,
+    ) -> Result<Deployer<N, P>, ContractDeploymentError>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         // Encode the constructor args & concatenate with the bytecode if necessary
         let data: Bytes = match (self.abi.constructor(), params.is_empty()) {
             (None, false) => return Err(ContractDeploymentError::ConstructorError),
@@ -699,7 +703,9 @@ impl<N: Network, P: Provider<N> + Clone> DeploymentTxFactory<N, P> {
         // create the tx object. Since we're deploying a contract, `to` is `None`
         let mut tx = N::TransactionRequest::default();
         tx.set_input(data);
-
+        if let Some(fee_token) = fee_token {
+            tx.set_fee_token(fee_token);
+        }
         Ok(Deployer { client: self.client.clone(), tx, confs: 1, timeout: self.timeout })
     }
 }
