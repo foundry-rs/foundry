@@ -340,8 +340,9 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
                 return;
             }
 
-            if changed_sol_test_files.is_empty() {
-                // Reuse the old test files if a non-test file was changed.
+            if !changed_sol_test_files.is_empty() {
+                *last_test_files.lock() = changed_sol_test_files.clone();
+            } else {
                 let last = last_test_files.lock();
                 if last.is_empty() {
                     return;
