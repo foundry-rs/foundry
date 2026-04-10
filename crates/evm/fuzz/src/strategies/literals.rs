@@ -489,4 +489,120 @@ mod tests {
     fn assert_word(literals: &LiteralMaps, ty: DynSolType, value: B256, msg: &str) {
         assert!(literals.words.get(&ty).is_some_and(|set| set.contains(&value)), "{}", msg);
     }
+
+    #[test]
+    fn test_from_fuzz_literals_address() {
+        let addr = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+        let dict = LiteralsDictionary::from_fuzz_literals(
+            vec![FuzzLiteral::Address(addr)],
+            usize::MAX,
+        );
+        let maps = dict.get();
+        assert!(
+            maps.words
+                .get(&DynSolType::Address)
+                .is_some_and(|set| set.contains(&addr.into_word())),
+            "Expected address in dictionary"
+        );
+    }
+
+    #[test]
+    fn test_from_fuzz_literals_uint() {
+        let val = U256::from(42u64);
+        let dict = LiteralsDictionary::from_fuzz_literals(
+            vec![FuzzLiteral::Uint(val)],
+            usize::MAX,
+        );
+        let maps = dict.get();
+        let b = B256::from(val);
+        // Should appear in all uint sizes that can fit 42
+        for bits in [8, 16, 32, 64, 128, 256] {
+            assert!(
+                maps.words
+                    .get(&DynSolType::Uint(bits))
+                    .is_some_and(|set| set.contains(&b)),
+                "Expected uint in Uint({bits}) set"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_fuzz_literals_int() {
+        let val = I256::try_from(-777i32).unwrap();
+        let dict = LiteralsDictionary::from_fuzz_literals(
+            vec![FuzzLiteral::Int(val)],
+            usize::MAX,
+        );
+        let maps = dict.get();
+        let b = B256::from(val.into_raw());
+        for bits in [16, 32, 64, 128, 256] {
+            assert!(
+                maps.words
+                    .get(&DynSolType::Int(bits))
+                    .is_some_and(|set| set.contains(&b)),
+                "Expected int in Int({bits}) set"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_fuzz_literals_string() {
+        let dict = LiteralsDictionary::from_fuzz_literals(
+            vec![FuzzLiteral::String("hello".to_string())],
+            usize::MAX,
+        );
+        let maps = dict.get();
+        assert!(maps.strings.contains("hello"), "Expected string in dictionary");
+        // Also check keccak hash was stored
+        let hash = keccak256(b"hello");
+        assert!(
+            maps.words
+                .get(&DynSolType::FixedBytes(32))
+                .is_some_and(|set| set.contains(&hash)),
+            "Expected keccak hash in FixedBytes(32) set"
+        );
+    }
+
+    #[test]
+    fn test_from_fuzz_literals_max_cap() {
+        // Create many literals but cap at 3
+        let literals: Vec<FuzzLiteral> = (0..100u64)
+            .map(|i| FuzzLiteral::Address(Address::with_last_byte(i as u8)))
+            .collect();
+        let dict = LiteralsDictionary::from_fuzz_literals(literals, 3);
+        let maps = dict.get();
+        let addr_count = maps
+            .words
+            .get(&DynSolType::Address)
+            .map_or(0, |set| set.len());
+        assert_eq!(addr_count, 3, "Expected exactly 3 addresses due to max cap");
+    }
+
+    #[test]
+    fn test_from_fuzz_literals_fixed_bytes() {
+        let value = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
+        let dict = LiteralsDictionary::from_fuzz_literals(
+            vec![FuzzLiteral::FixedBytes { value: value.clone(), size: 4 }],
+            usize::MAX,
+        );
+        let maps = dict.get();
+        let padded = B256::right_padding_from(&value);
+        assert!(
+            maps.words
+                .get(&DynSolType::FixedBytes(4))
+                .is_some_and(|set| set.contains(&padded)),
+            "Expected fixed bytes in FixedBytes(4) set"
+        );
+    }
+
+    #[test]
+    fn test_from_fuzz_literals_dyn_bytes() {
+        let value = Bytes::from_static(&[0xca, 0xfe]);
+        let dict = LiteralsDictionary::from_fuzz_literals(
+            vec![FuzzLiteral::DynBytes(value.clone())],
+            usize::MAX,
+        );
+        let maps = dict.get();
+        assert!(maps.bytes.contains(&value), "Expected dynamic bytes in dictionary");
+    }
 }

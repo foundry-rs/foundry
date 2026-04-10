@@ -27,7 +27,8 @@ pub struct InlineConfigEntry {
     pub function: Option<String>,
     /// The location in source for error reporting, e.g. `"10:5"`.
     pub line: String,
-    /// Raw configuration lines, e.g. `"default.fuzz.runs = 1024"`.
+    /// Raw configuration lines. Each string must include the `forge-config:` prefix,
+    /// e.g. `"forge-config: default.fuzz.runs = 1024"`.
     pub config_values: Vec<String>,
 }
 
@@ -233,5 +234,52 @@ fn extend_value(value: &mut Value, new: &Value) {
             extend_dict(dict, new_dict);
         }
         (value, new) => *value = new.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_entries_empty() {
+        let config = InlineConfig::from_entries(vec![], &[Profile::Default]).unwrap();
+        assert!(!config.contains_contract("Foo"));
+    }
+
+    #[test]
+    fn test_from_entries_function_level() {
+        let entry = InlineConfigEntry {
+            contract: "src/Test.sol:TestContract".to_string(),
+            function: Some("testFoo".to_string()),
+            line: "10:5".to_string(),
+            config_values: vec!["forge-config: default.fuzz.runs = 512".to_string()],
+        };
+        let config = InlineConfig::from_entries(vec![entry], &[Profile::Default]).unwrap();
+        assert!(config.contains_function("src/Test.sol:TestContract", "testFoo"));
+    }
+
+    #[test]
+    fn test_from_entries_contract_level() {
+        let entry = InlineConfigEntry {
+            contract: "src/Test.sol:TestContract".to_string(),
+            function: None,
+            line: "5:1".to_string(),
+            config_values: vec!["forge-config: default.fuzz.runs = 256".to_string()],
+        };
+        let config = InlineConfig::from_entries(vec![entry], &[Profile::Default]).unwrap();
+        assert!(config.contains_contract("src/Test.sol:TestContract"));
+    }
+
+    #[test]
+    fn test_from_entries_invalid_profile() {
+        let entry = InlineConfigEntry {
+            contract: "src/Test.sol:TestContract".to_string(),
+            function: Some("testBar".to_string()),
+            line: "10:5".to_string(),
+            config_values: vec!["forge-config: nonexistent.fuzz.runs = 100".to_string()],
+        };
+        let result = InlineConfig::from_entries(vec![entry], &[Profile::Default]);
+        assert!(result.is_err(), "Expected error for invalid profile");
     }
 }
