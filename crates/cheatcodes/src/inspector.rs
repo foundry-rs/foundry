@@ -596,8 +596,24 @@ impl Default for Cheatcodes {
 /// to the object-safe host trait.
 struct CheatcodeHostImpl<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
     ecx: &'a mut FoundryContextFor<'db, FEN>,
+    /// Deal records for revert rollback (shared with Cheatcodes state).
+    eth_deals: &'a mut Vec<DealRecord>,
     caller: Address,
     gas_limit: u64,
+}
+
+impl<FEN: FoundryEvmNetwork> CheatcodeHostImpl<'_, '_, FEN> {
+    fn is_precompile(&self, address: &Address) -> bool {
+        self.ecx.journal().precompile_addresses().contains(address)
+    }
+
+    fn ensure_not_precompile(&self, address: &Address) -> crate::Result<()> {
+        if self.is_precompile(address) {
+            Err(fmt_err!("cannot use precompile {address} as an argument"))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> crate::CheatcodeHost for CheatcodeHostImpl<'_, '_, FEN> {
@@ -623,6 +639,7 @@ impl<FEN: FoundryEvmNetwork> crate::CheatcodeHost for CheatcodeHostImpl<'_, '_, 
     }
 
     fn store(&mut self, account: Address, slot: U256, value: U256) -> crate::Result<()> {
+        self.ensure_not_precompile(&account)?;
         // Match the same write path as the built-in vm.store cheatcode.
         self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
         self.ecx.journal_mut().touch_account(account);
@@ -630,17 +647,20 @@ impl<FEN: FoundryEvmNetwork> crate::CheatcodeHost for CheatcodeHostImpl<'_, '_, 
         Ok(())
     }
 
-    fn set_balance(&mut self, account: Address, value: U256) -> crate::Result<()> {
-        // Match the same write path as the built-in vm.deal cheatcode.
+    fn set_balance(&mut self, account: Address, new_balance: U256) -> crate::Result<()> {
+        // Match the same write path as the built-in vm.deal cheatcode,
+        // including DealRecord for revert rollback.
         self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
         self.ecx.journal_mut().touch_account(account);
         let acc =
             self.ecx.journal_mut().evm_state_mut().get_mut(&account).expect("account is loaded");
-        acc.info.balance = value;
+        let old_balance = std::mem::replace(&mut acc.info.balance, new_balance);
+        self.eth_deals.push(DealRecord { address: account, old_balance, new_balance });
         Ok(())
     }
 
     fn set_code(&mut self, account: Address, code: Bytes) -> crate::Result<()> {
+        self.ensure_not_precompile(&account)?;
         // Match the same write path as the built-in vm.etch cheatcode.
         use revm::bytecode::Bytecode;
         self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
@@ -765,8 +785,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let calldata = call.input.bytes(ecx);
 
                 for handler in &handlers {
-                    let mut host: CheatcodeHostImpl<'_, '_, FEN> =
-                        CheatcodeHostImpl { ecx: &mut *ecx, caller, gas_limit: call.gas_limit };
+                    let mut host: CheatcodeHostImpl<'_, '_, FEN> = CheatcodeHostImpl {
+                        ecx: &mut *ecx,
+                        eth_deals: &mut self.eth_deals,
+                        caller,
+                        gas_limit: call.gas_limit,
+                    };
                     match handler.call(&mut host, &calldata) {
                         crate::ExternalCheatcodeOutcome::Return(retdata) => {
                             return Ok(retdata);
